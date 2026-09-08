@@ -42,6 +42,9 @@
     <ProjectReference Include="../../tools/Packet.SoundModem.Ota/Packet.SoundModem.Ota.csproj" />
     <!-- Dev tool under test: the unknown-mode WAV sweep (MultiDecode/*Tests). -->
     <ProjectReference Include="../../tools/Packet.SoundModem.MultiDecode/Packet.SoundModem.MultiDecode.csproj" />
+    <!-- Dev tool under test: the corpus benchmark, and in particular the FLAC decoder that
+         reads the WA8LMF tracks (TncTest/*Tests). -->
+    <ProjectReference Include="../../tools/Packet.SoundModem.TncTest/Packet.SoundModem.TncTest.csproj" />
   </ItemGroup>
 
   <ItemGroup>

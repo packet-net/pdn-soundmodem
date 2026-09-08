@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>sm-tnctest</AssemblyName>
+    <RootNamespace>Packet.SoundModem.TncTest</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- A 40 minute stereo track is a quarter of a gigabyte per channel before the resampler
+         has allocated anything, so the run is worth doing on the server collector. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- pdn-decode's audio plumbing, referenced rather than copied. The resampler is the
+         reason: a CD is 44100 Hz and the AFSK chain runs at 12000, so every score here passes
+         through an interpolator, and a benchmark that resampled differently from the forensic
+         decode tool would produce numbers that could not be chased back to a decode. The frame
+         formatter comes along for the frame listing, and its AX.25 validation is what this
+         tool's "AX.25-shaped" count means. -->
+    <ProjectReference Include="../Packet.SoundModem.MultiDecode/Packet.SoundModem.MultiDecode.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The FLAC decoder is checked against the format's own MD5 on real files at run time, and
+         against a hand-built stream exercising every subframe shape in the test project. -->
+    <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
+  </ItemGroup>
+
+</Project>
