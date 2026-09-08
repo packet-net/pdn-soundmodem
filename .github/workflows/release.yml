@@ -158,9 +158,15 @@ jobs:
 
       - name: Build and pack the npm package
         run: |
+          set -euo pipefail
           web/build.sh --aot
-          npm --prefix web/package pkg set version=${{ steps.version.outputs.version }}
-          npm --prefix web/package pack --pack-destination "$PWD/artifacts"
+          # cd rather than --prefix: `npm pkg` and `npm pack` read the manifest from the
+          # working directory on some npm versions whatever --prefix says, and this runner is
+          # one of them - it went looking for a package.json at the repository root and the
+          # release stopped there, after the WebAssembly build had already succeeded.
+          artifacts="$PWD/artifacts"
+          version="${{ steps.version.outputs.version }}"
+          ( cd web/package && npm pkg set version="$version" && npm pack --pack-destination "$artifacts" )
 
       # The bundle's boot config names every asset the loader will fetch, and a missing one
       # is fatal at start-up rather than a lost debug aid. So check the tarball against that
