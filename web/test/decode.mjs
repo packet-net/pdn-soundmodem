@@ -1,12 +1,13 @@
-// The wasm modem bundle under Node - the harness that says whether WebAssembly changed a
-// decode. Two commands:
+// The modem bundle under Node - the harness that says whether WebAssembly changed a decode.
+// Two commands:
 //
-//   node main.mjs decode <file.wav> <mode>   decode a WAV, print each frame as hex
-//   node main.mjs loopback <mode>            modulate a frame, feed it back, decode it
+//   node decode.mjs decode <file.wav> <mode>   decode a WAV, print each frame as hex
+//   node decode.mjs loopback <mode>            modulate a frame, feed it back, decode it
 //
-// `decode` output is diffed against wasm/parity (the same calls against the native build).
+// The `decode` output is diffed against web/parity, which makes the same calls against the
+// native build. If WebAssembly ever changes a decode, that diff is what says so.
 import { readFileSync } from 'node:fs'
-import { dotnet } from './_framework/dotnet.js'
+import { dotnet } from '../package/_framework/dotnet.js'
 
 const { getAssemblyExports, getConfig } = await dotnet.withDiagnosticTracing(false).create()
 const Modem = (await getAssemblyExports(getConfig().mainAssemblyName)).Modem
@@ -120,5 +121,5 @@ if (command === 'decode') {
   }
 } else {
   console.log('modes:', Modem.Modes().join(' '))
-  console.log('usage: node main.mjs decode <file.wav> <mode> | loopback <mode> [audioRate]')
+  console.log('usage: node decode.mjs decode <file.wav> <mode> | loopback <mode> [audioRate]')
 }

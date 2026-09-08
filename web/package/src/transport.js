@@ -1,18 +1,16 @@
-// The adapter that makes a sound-card modem look like a TNC to @packet-net/ax25.
+// The modem as a transport: the slot a KISS TNC on a serial port occupies, filled by a sound
+// card instead.
 //
-// The library's seam is already the right shape for this: Ax25Transport carries RAW AX.25
-// frames ("no KISS framing - that's the transport's job"), and CarrierSense is a plain
-// "is the channel busy right now?" that the listener consults before it keys up. So there is
-// nothing to change in @packet-net/ax25 or in a page built on it: construct
-// `new Ax25Listener(transport, { myCall, carrierSense: transport })` and a browser tab is a
-// complete station.
+// This file imports nothing. It satisfies a transport contract by shape - `start`, `send`,
+// `stop`, and a `channelBusy()` for carrier sense - so any link layer that wants raw AX.25
+// frames from somewhere can take them from here without either side knowing about the other.
+// A station picks its modem the way it always has: a TNC on a lead, or the sound card.
 
 /**
  * Classic p-persistent CSMA, AX.25 §6.4.2 - the same loop the C# SoundModemChannel runs:
  * while the channel is busy, wait a slot; when it is clear, roll p, and on a failed roll wait
- * a slot and try again. It lives here rather than in the library because it is a property of
- * a shared half-duplex radio channel, and the library's own gate deliberately only knows how
- * to wait for clear.
+ * a slot and try again. It belongs to the modem rather than to a link layer because it is a
+ * property of a shared half-duplex radio channel: whoever owns the PTT owns the contention.
  */
 async function contend({ channelBusy, persistence, slotTimeMs, signal }) {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -24,16 +22,18 @@ async function contend({ channelBusy, persistence, slotTimeMs, signal }) {
   }
 }
 
-/** An Ax25Transport (and a CarrierSense) backed by a {@link SoundModem}. */
+/** A transport, and a carrier-sense source, backed by a {@link SoundModem}. */
 export class SoundModemTransport {
   /**
-   * @param modem an open SoundModem
+   * @param {import('./modem.js').SoundModem} modem an open SoundModem
    * @param options KISS channel-access parameters, in KISS units: persistence 0-255 where
    *   p = (value + 1) / 256, slot time and TXDELAY in milliseconds. The defaults are the
    *   daemon's.
    */
   constructor(modem, { txDelayMs = 300, persistence = 63, slotTimeMs = 100 } = {}) {
     this.modem = modem
+    /** @type {(() => void) | undefined} */
+    this.unsubscribe = undefined
     this.txDelayMs = txDelayMs
     this.persistence = persistence
     this.slotTimeMs = slotTimeMs
@@ -42,12 +42,20 @@ export class SoundModemTransport {
     this.queue = Promise.resolve()
   }
 
+  /**
+   * @param {(frame: Uint8Array) => void} onFrame
+   * @returns {Promise<void>}
+   */
   async start(onFrame) {
     this.unsubscribe?.()
     this.unsubscribe = this.modem.onFrame(onFrame)
     this.running = true
   }
 
+  /**
+   * @param {Uint8Array} axBytes one AX.25 frame, no flags and no FCS
+   * @returns {Promise<void>}
+   */
   async send(axBytes) {
     if (!this.running) throw new Error('transport not started')
     const send = this.queue.then(async () => {
@@ -69,6 +77,9 @@ export class SoundModemTransport {
     this.unsubscribe = undefined
   }
 
-  /** CarrierSense: null would mean "cannot tell", and this modem always can. */
+  /**
+   * Carrier sense: a null would mean "cannot tell", and this modem always can.
+   * @returns {boolean}
+   */
   channelBusy() { return this.modem.channelBusy() }
 }

@@ -9,8 +9,8 @@
 //
 //   node two-stations.mjs [mode]
 import { Ax25Listener, Callsign } from '@packet-net/ax25'
-import { SoundModemTransport } from '../sm-transport.js'
-import { dotnet } from '../_framework/dotnet.js'
+import { SoundModemTransport } from '../package/src/transport.js'
+import { dotnet } from '../package/_framework/dotnet.js'
 
 const MODE = process.argv[2] ?? 'afsk1200'
 const AUDIO_RATE = 48000

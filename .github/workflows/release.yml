@@ -1,12 +1,16 @@
 name: release
 
 # The release pipeline for a `v*` tag: test, then build the pdn-soundmodem NuGet package
-# (modem core library) and the .deb packages (daemon + systemd unit) for amd64/arm64/armhf,
-# attach the .debs to a GitHub Release, and push the package to nuget.org.
+# (modem core library), the @packet-net/soundmodem npm package (the same core compiled to
+# WebAssembly, for the browser) and the .deb packages (daemon + systemd unit) for
+# amd64/arm64/armhf, attach them to a GitHub Release, and push to nuget.org and npmjs.com.
+#
+# All three carry the same version, from the same tag, built from the same commit: a station
+# on a browser page and a station on a Debian box are then provably running the same modem.
 #
 # workflow_dispatch runs build everything and leave it as workflow artifacts without
 # releasing anything - a full dry run of the pipeline. Set `publish: true` to also cut the
-# GitHub Release and push to NuGet.
+# GitHub Release and push to NuGet and npm.
 #
 # Runs as a single job on purpose: the runner is self-hosted and memory-bounded, so the
 # three self-contained publishes go one at a time, and keeping them in one job avoids
@@ -41,6 +45,7 @@ jobs:
     timeout-minutes: 40
     env:
       NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +68,12 @@ jobs:
             exit 1
           }
           command -v gh >/dev/null || { echo "::error::gh CLI is missing on this runner"; exit 1; }
+          # The npm package is built here too, which needs Node for the type declarations
+          # and the pack. Fail in preflight rather than 20 minutes in.
+          command -v npm >/dev/null || {
+            echo "::error::npm is missing - this job builds @packet-net/soundmodem"
+            exit 1
+          }
 
       - name: Resolve version
         id: version
@@ -138,6 +149,45 @@ jobs:
             --output ./artifacts \
             -p:Version=${{ steps.version.outputs.version }}
 
+      # The browser modem. AOT is the shipped build: the download is 2.8 MB gzipped against
+      # 1.4 MB for the interpreter, paid once and cached, and it buys roughly 3.5x the CPU
+      # headroom on every station for ever - which matters most on the phones and the slow
+      # modes. The workload install is a no-op once the runner has it.
+      - name: Install the WebAssembly workload
+        run: dotnet workload install wasm-tools
+
+      - name: Build and pack the npm package
+        run: |
+          web/build.sh --aot
+          npm --prefix web/package pkg set version=${{ steps.version.outputs.version }}
+          npm --prefix web/package pack --pack-destination "$PWD/artifacts"
+
+      # The bundle's boot config names every asset the loader will fetch, and a missing one
+      # is fatal at start-up rather than a lost debug aid. So check the tarball against that
+      # manifest here, where it is still cheap to fix - not from a bug report saying the page
+      # never loads.
+      - name: Verify the npm package is complete
+        run: |
+          work="$(mktemp -d)"
+          tar xzf ./artifacts/packet-net-soundmodem-*.tgz -C "$work"
+          missing=0
+          for asset in $(grep -oE '"[A-Za-z0-9_.\-]+\.(wasm|js|symbols|dat)"' \
+                          web/package/_framework/dotnet.boot.js | tr -d '"' | sort -u); do
+            if [ ! -f "$work/package/_framework/$asset" ]; then
+              echo "::error::the npm package is missing $asset, which its boot config requires"
+              missing=1
+            fi
+          done
+          [ "$missing" = 0 ] || exit 1
+          modes=$(cd "$work/package" && node --input-type=module -e "
+            import { dotnet } from './_framework/dotnet.js'
+            const rt = await dotnet.withDiagnosticTracing(false).create()
+            const M = (await rt.getAssemblyExports(rt.getConfig().mainAssemblyName)).Modem
+            console.log(M.Modes().length)
+          " | tail -1)
+          [ "${modes:-0}" -gt 0 ] || { echo "::error::the packed bundle does not load"; exit 1; }
+          echo "packed bundle loads, $modes modes"
+
       - name: Build .deb packages
         run: |
           set -euo pipefail
@@ -176,7 +226,7 @@ jobs:
       - name: Checksums
         working-directory: ./artifacts
         run: |
-          sha256sum *.deb *.nupkg > SHA256SUMS
+          sha256sum *.deb *.nupkg *.tgz > SHA256SUMS
           cat SHA256SUMS
 
       - uses: actions/upload-artifact@v4
@@ -206,11 +256,11 @@ jobs:
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "release $TAG exists - replacing its assets and notes"
-            gh release upload "$TAG" ./artifacts/*.deb ./artifacts/*.nupkg ./artifacts/SHA256SUMS --clobber
+            gh release upload "$TAG" ./artifacts/*.deb ./artifacts/*.nupkg ./artifacts/*.tgz ./artifacts/SHA256SUMS --clobber
             gh release edit "$TAG" --notes-file /tmp/relnotes.md
           else
             gh release create "$TAG" \
-              ./artifacts/*.deb ./artifacts/*.nupkg ./artifacts/SHA256SUMS \
+              ./artifacts/*.deb ./artifacts/*.nupkg ./artifacts/*.tgz ./artifacts/SHA256SUMS \
               --target "$GITHUB_SHA" \
               --title "pdn-soundmodem $VERSION" \
               --notes-file /tmp/relnotes.md \
@@ -236,3 +286,19 @@ jobs:
       - name: Warn if NUGET_API_KEY missing
         if: steps.version.outputs.publish == 'true' && env.NUGET_API_KEY == ''
         run: echo "::warning::NUGET_API_KEY is not visible to this repo - NuGet push skipped (the GitHub Release still has the .debs). Grant the org secret access to pdn-soundmodem."
+
+      - name: Push to npmjs.com
+        if: steps.version.outputs.publish == 'true' && env.NPM_TOKEN != ''
+        run: |
+          set -euo pipefail
+          # A scoped package is private by default and its first publish is refused without
+          # this; it is harmless on every publish after that.
+          npm config set //registry.npmjs.org/:_authToken "${NPM_TOKEN}"
+          npm publish ./artifacts/packet-net-soundmodem-${{ steps.version.outputs.version }}.tgz \
+            --access public
+        env:
+          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/.npmrc
+
+      - name: Warn if NPM_TOKEN missing
+        if: steps.version.outputs.publish == 'true' && env.NPM_TOKEN == ''
+        run: echo "::warning::NPM_TOKEN is not visible to this repo - npm push skipped (the GitHub Release still has the .tgz). Grant the org secret access to pdn-soundmodem."

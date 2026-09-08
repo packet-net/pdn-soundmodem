@@ -1,0 +1,17 @@
+{
+  "//": "Types are emitted from the JSDoc on plain ESM JavaScript. The sources ship as they are written: a browser and a CDN load them unbundled, and there is no transpiled copy that could drift from the code that was tested.",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "types",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2022",
+    "lib": ["es2022", "dom"],
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.js"]
+}

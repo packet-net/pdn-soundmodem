@@ -83,11 +83,11 @@
 </main>
 
 <script type="module">
-// The page is deliberately thin: everything radio lives in sm-modem.js (the wasm core plus
-// the audio graph and PTT) and sm-transport.js (the @packet-net/ax25 adapter). What is left
-// here is wiring and a monitor pane.
-import { SoundModem, SerialPtt, NoPtt } from './sm-modem.js'
-import { SoundModemTransport } from './sm-transport.js'
+// The page is deliberately thin. Everything radio lives in @packet-net/soundmodem - the wasm
+// core, the audio graph, the PTT line and the CSMA contention - and the link layer is
+// @packet-net/ax25, which neither knows nor cares that its frames arrived through a sound
+// card rather than a TNC. What is left here is wiring and a monitor pane.
+import { SoundModem, SerialPtt, NoPtt, SoundModemTransport } from '../package/src/index.js'
 
 const AX25 = '@packet-net/ax25@0.17.0'
 const { Ax25Listener, Callsign, decodeFrame, classify } = await import(`https://esm.sh/${AX25}`)

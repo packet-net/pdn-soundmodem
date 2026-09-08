@@ -16,6 +16,11 @@
     <AssemblyName>pdn-modem-wasm</AssemblyName>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <WasmMainJSPath>main.mjs</WasmMainJSPath>
+    <!-- No native symbol map. It is 180 kB of debug aid that the boot config then lists as a
+         required asset, so a package that ships without it fails to start rather than merely
+         losing stack-trace detail - which is how it was found. Not generating it keeps the
+         bundle and its own manifest consistent. -->
+    <WasmEmitSymbolMap>false</WasmEmitSymbolMap>
   </PropertyGroup>
 
   <ItemGroup>

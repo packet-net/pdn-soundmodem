@@ -1,0 +1,61 @@
+{
+  "name": "@packet-net/soundmodem",
+  "version": "0.0.0-dev",
+  "description": "A sound card instead of a TNC: the pdn-soundmodem DSP core in WebAssembly, with a Web Audio graph and serial PTT, producing and consuming raw AX.25 frames in the browser.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./src/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./rx-worklet.js": "./src/rx-worklet.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/**",
+    "types/**",
+    "_framework/**",
+    "!_framework/**/*.map",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "scripts": {
+    "types": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  },
+  "keywords": [
+    "packet-radio",
+    "ax25",
+    "il2p",
+    "soundmodem",
+    "modem",
+    "afsk",
+    "bpsk",
+    "qpsk",
+    "webassembly",
+    "web-audio",
+    "web-serial",
+    "amateur-radio",
+    "ham-radio"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/packet-net/pdn-soundmodem.git",
+    "directory": "web/package"
+  },
+  "homepage": "https://github.com/packet-net/pdn-soundmodem/tree/main/web",
+  "bugs": {
+    "url": "https://github.com/packet-net/pdn-soundmodem/issues"
+  },
+  "author": "Tom Fanning M0LTE and Packet.NET contributors",
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,48 @@
+@packet-net/soundmodem
+======================
+
+This package is offered under the GNU Affero General Public License, version 3 or later
+(see LICENSE). That is not a relicensing of anything: the modem it ships already combines
+AGPL-3.0-or-later and GPL-3.0-or-later components, and AGPL-3.0-or-later is the licence the
+combination has to be conveyed under.
+
+What is in the box, and under what
+----------------------------------
+
+AGPL-3.0-or-later:
+  src/**                     this package's JavaScript (the audio graph, PTT and adapter)
+  _framework/M0LTE.Dsp.wasm       FFT, FIR, decimator, upsampler, spectrum
+  _framework/M0LTE.Fec.wasm       CRC-16/X-25, Hamming(7,4), Reed-Solomon, Viterbi
+  _framework/M0LTE.FecLdpc.wasm   LDPC codec
+  _framework/M0LTE.Ofdm.wasm      OFDM modem
+
+GPL-3.0-or-later:
+  _framework/Packet.SoundModem.wasm   the modem core: modulators, demodulators, framing
+  _framework/M0LTE.Il2p.wasm          the IL2P frame codec
+  _framework/pdn-modem-wasm.wasm      the JavaScript-facing surface of the core
+
+MIT:
+  _framework/dotnet.*, _framework/System.*   the .NET WebAssembly runtime and base library
+                                             (c) .NET Foundation and contributors
+
+The GPL-3.0-or-later parts remain GPL-3.0-or-later. GPLv3 section 13 expressly permits
+combining a GPL-covered work with AGPLv3 work and conveying the result, with AGPL section
+13's network-interaction requirement applying to the combination. That is the arrangement
+here, and it is the same one pdn-soundmodem itself already runs on.
+
+Provenance
+----------
+
+The modem core contains work derived from QtSoundModem (GPLv3+, (c) Andrei Kopanchuk UZ7HO,
+ported to C++/Qt by John Wiseman G8BPQ) and from Dire Wolf (GPL-2.0-or-later, (c) John
+Langner WB2OSZ). Individual algorithms name their source in the comments of the C# they were
+ported into. The FEC and protocol layers are implemented from the published specifications
+(IL2P v0.6, FX.25) against those specifications' own test vectors.
+
+Corresponding source
+--------------------
+
+Everything in this package other than the .NET runtime is built from
+https://github.com/packet-net/pdn-soundmodem, at the tag matching this package's version, and
+from the M0LTE.* packages named above, whose sources are linked from their NuGet listings. The
+.NET runtime's source is at https://github.com/dotnet/runtime.

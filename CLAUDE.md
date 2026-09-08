@@ -96,6 +96,8 @@ src/Packet.SoundModem/       the core library (NuGet: pdn-soundmodem)
 tests/Packet.SoundModem.Tests/
 tools/Packet.SoundModem.Decode/       sm-decode: one file, one mode you already know
 tools/Packet.SoundModem.MultiDecode/  pdn-decode: sweep every mode over a file nobody labelled
+web/                         the same core compiled to WebAssembly, published to npm as
+                             @packet-net/soundmodem - a sound card where a KISS TNC would be
 docs/plan.md                 phase plan + status - keep it current as you work
 docs/pdn-decode.md           the sweep tool, and why its default set is the whole catalogue
 ```
