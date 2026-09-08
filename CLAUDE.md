@@ -97,6 +97,8 @@ tests/Packet.SoundModem.Tests/
 tools/Packet.SoundModem.Decode/       sm-decode: one file, one mode you already know
 tools/Packet.SoundModem.MultiDecode/  pdn-decode: sweep every mode over a file nobody labelled
 tools/Packet.SoundModem.TncTest/      sm-tnctest: score a decoder against a recorded corpus
+web/                         the same core compiled to WebAssembly, published to npm as
+                             @packet-net/soundmodem - a sound card where a KISS TNC would be
 docs/plan.md                 phase plan + status - keep it current as you work
 docs/pdn-decode.md           the sweep tool, and why its default set is the whole catalogue
 docs/tnc-test-cd.md          the WA8LMF corpus benchmark, its scoring rules and standing scores

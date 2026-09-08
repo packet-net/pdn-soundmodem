@@ -1,0 +1,4 @@
+# Build output: `./build.sh` puts the WebAssembly bundle and the emitted types here.
+package/_framework/
+package/types/
+node_modules/
