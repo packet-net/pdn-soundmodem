@@ -148,6 +148,68 @@ is what the bank is really for, and the flat file alone would have hidden that.
 The one track in the set whose true count is known, which is why it is worth running: it is the
 harness's own check that it is not losing frames somewhere between the file and the modem.
 
+### 2026-09-08: longer bank filters and a repair engine take Track 1 to 1021
+
+Two receive-path changes, measured on the **tnc-test.m0lte.uk re-cut of the corpus** (the 2009
+disc image re-released with the filenames put right - a second or two of file edit away from the
+version-2 files the tables above were taken on, worth one frame of score difference, so every
+number here is quoted against a baseline re-measured on the same files rather than against the
+table above).
+
+**The bank's filters doubled in length** - the branch band-pass from 256 taps to 512 and the I/Q
+low-pass from 128 to 256, at 12 kHz. The Bell 202 tones sit ±500-525 Hz out; the 128-tap
+low-pass's transition band starts at ~495 Hz, so the tones were being decided on its skirt.
+Longer filters put them wholly inside the passband and sharpen the skirts against the
+adjacent-channel and sub-audible junk a real discriminator recording carries. The *lone* decoder
+keeps the old lengths: 21 ms of LPF memory against 0.83 ms bits smears a flag preamble's two-bit
+mark blips into a marginal eye, and a single demodulator has no branch diversity to cover it
+(measured: Track 3 falls 65 → 3, Track 2 547 → 418 with the long filters alone).
+
+**The AX.25 deframer learned chase repair** (`HdlcRepairPolicy`, the HDLC sibling of the IL2P
+receiver's chase decoding): a frame whose FCS fails is offered confidence-ordered bit flips -
+the weakest-soft singles, then pairs among the weakest - and a frame that slipped a bit is
+realigned by delete/insert at its weakest raw positions. Both `afsk1200` and `afsk1200-multi`
+run it. A repaired frame is delivered through `FrameDecoded` with `ChasedBits` set, never
+through the plain frame sink, and only after three gates: strict AX.25 structure (callsign
+character classes, terminated address field, **UI control only** - a search must never fabricate
+a link-state frame, and PID among the three the protocol's users carry), payload-protocol
+cross-checks (an NMEA sentence must carry a valid XOR checksum; an APRS position-bearing format
+must keep its character-class skeleton), and an echo gate that drops a repaired copy landing
+within 350 ms and ten bytes of a clean decode - the dominant false-delivery class, a corrupted
+read of a burst another branch already copied cleanly, invisible to content dedupe because its
+bytes differ by exactly the damage.
+
+| File | Receiver | Before | After | Newly decoded | No longer decoded |
+|---|---|---|---|---|---|
+| 01 flat | `afsk1200-multi` | 1008 | **1021** | 12 contents | 3 contents |
+| 01 flat | `afsk1200` | 963 | **980** | 16 contents | 0 |
+| 02 de-emphasised | `afsk1200-multi` | 1013 | **1021** | 7 contents | 0 |
+| 02 de-emphasised | `afsk1200` | 547 | 547 | 0 | 0 |
+| 03 Mic-E bursts | `afsk1200-multi` | 100 | **100 of 100, 1 distinct** | 0 | 0 |
+| 04 drive test | `afsk1200-multi` | 107 | **110** | 3 contents | 0 |
+
+The single decoder's +17 on Track 1 is pure repair (its filters did not move, and nothing it
+used to decode was lost). The bank's +13 decomposes as +7 from the filters (1008 → 1015 on the
+bench harness, which reshuffles the marginal bursts - the 12 newly decoded and 3 no longer
+decoded contents are that reshuffle plus the repairs, against the baseline) and +6 from repair
+(1015 → 1021). Track 4 lands on 110, which is the ~110 beacons the recording is documented to
+carry, two of them repaired WA8LMF Mic-E frames filling real gaps in the beacon sequence.
+
+**The false-pass record, because a repair engine is only as good as its refusals.** Track 03 is
+the canary: a hundred transmissions of one known frame, so any delivered content that is not
+that frame is a fabrication - the engine repairs dozens of reads of it raw and delivers zero
+extra frames, one distinct content, on every budget tried up to twice the shipped one. On
+Track 01, every repaired delivery was cross-checked against the run's own clean population:
+each one's source callsign is a station the receiver also decoded cleanly elsewhere, and the
+survivors carry valid NMEA checksums or intact APRS/Mic-E skeletons. Pre-gate prototypes
+delivered ~8 corrupted-payload fabrications per run on Track 01; the shipped gates refuse them
+(a few tens per run are rejected, counted in `HdlcDeframer`'s diagnostics) at the cost of the
+occasional genuine frame whose payload damage the skeleton checks read as corruption - the
+trade the gates exist to make.
+
+The engine is pinned by `HdlcRepairTests` (single/pair/header repairs, both slip directions,
+each gate, and the rule that a clean FCS pass is never gated) and `RepairEchoGateTests`.
+
 ## Reading the corpus
 
 The tracks are FLAC, and this tool decodes FLAC itself (`FlacReader`) rather than asking for a
