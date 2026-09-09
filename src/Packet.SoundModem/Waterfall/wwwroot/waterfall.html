@@ -1457,7 +1457,7 @@ function tagsFor(ev) {
   if (has("missed")) tags.push(["missed", "GAP", "Frames between this one and the last heard from this side were missed, here or by the other side"]);
   if (has("repeat")) tags.push(["repeat", `AGAIN x${ev.count}`, "The same request, still unanswered, sent again"]);
   else if (has("poll")) tags.push(["poll", "POLL", "Waited for an acknowledgement that did not come, and is now asking for one"]);
-  if (has("reject")) tags.push(["reject", "REJECT", "Asks the other side to go back and resend"]);
+  if (has("reject")) tags.push(["reject", "REJECT", "Asks the other side to send something again - a REJ goes back to the named frame and everything after it, an SREJ asks for that one frame only. The words on the line say which"]);
   if (has("busy")) tags.push(["busy", "BUSY", "Cannot take more data for now"]);
   if (has("refused")) tags.push(["refused", "REFUSED", "The other side will not connect"]);
   if (has("timeout")) tags.push(["timeout", "NO ANSWER", "Nothing answered for longer than any station keeps trying, so this is given up on"]);
