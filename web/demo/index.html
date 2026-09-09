@@ -83,14 +83,37 @@
 </main>
 
 <script type="module">
-// The page is deliberately thin. Everything radio lives in @packet-net/soundmodem - the wasm
-// core, the audio graph, the PTT line and the CSMA contention - and the link layer is
-// @packet-net/ax25, which neither knows nor cares that its frames arrived through a sound
-// card rather than a TNC. What is left here is wiring and a monitor pane.
-import { SoundModem, SerialPtt, NoPtt, SoundModemTransport } from '../package/src/index.js'
+// The page is deliberately thin, and has no build step. Everything radio lives in
+// @packet-net/soundmodem - the wasm core, the audio graph, the PTT line and the CSMA
+// contention - and the link layer is @packet-net/ax25, which neither knows nor cares that its
+// frames arrived through a sound card rather than a TNC. What is left here is wiring and a
+// monitor pane. Both packages load from a CDN at run time, so this file is the whole demo.
 
-const AX25 = '@packet-net/ax25@0.17.0'
-const { Ax25Listener, Callsign, decodeFrame, classify } = await import(`https://esm.sh/${AX25}`)
+// Package specs are the single source of truth for the import URLs and for the version the
+// banner reports, so what is on screen cannot drift from what is loaded. Bump them here only.
+const PKG = {
+  soundmodem: '@packet-net/soundmodem@0.62.0',
+  ax25: '@packet-net/ax25@0.17.0',
+}
+
+// jsDelivr for the modem, and not as a preference. The package is already plain ESM with no
+// dependencies, so it needs no transform - and it must not get one. esm.sh bundles each module
+// and returns a re-export stub for the AudioWorklet, which a worklet cannot follow, because
+// worklet scope has no module resolution: registerProcessor would never run and the modem would
+// be deaf. jsDelivr serves the files exactly as published, which keeps every
+// `new URL(..., import.meta.url)` inside the package resolving to the WebAssembly bundle and to
+// the worklet. esm.sh is fine for @packet-net/ax25, which is ordinary dependency-resolving code.
+const jsdelivr = (spec) => `https://cdn.jsdelivr.net/npm/${spec}/src/index.js`
+const esm = (spec) => `https://esm.sh/${spec}`
+
+// ?local loads the modem from the working tree instead, for developing the package and this
+// page together. Serve web/ rather than web/demo/ for that path to resolve, and run build.sh
+// first so the WebAssembly bundle is there.
+const local = new URLSearchParams(location.search).has('local')
+const modemUrl = local ? '../package/src/index.js' : jsdelivr(PKG.soundmodem)
+
+const { SoundModem, SerialPtt, NoPtt, SoundModemTransport } = await import(modemUrl)
+const { Ax25Listener, Callsign, decodeFrame, classify } = await import(esm(PKG.ax25))
 
 const $ = (id) => document.getElementById(id)
 const log = (text, kind = '') => {
@@ -111,7 +134,8 @@ for (const mode of modem.modes) {
   $('mode').append(option)
 }
 $('mode').value = 'afsk1200'
-$('banner').textContent = `${modem.modes.length} modes loaded, ready`
+const version = local ? 'working tree' : PKG.soundmodem.slice(PKG.soundmodem.lastIndexOf('@') + 1)
+$('banner').textContent = `soundmodem ${version}, ${modem.modes.length} modes, ready`
 log('modem core loaded. pick a mode and an input, then Start.', 'sys')
 
 // Device names only appear after the user has granted audio access, so ask first.
