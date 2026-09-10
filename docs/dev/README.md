@@ -8,7 +8,7 @@ Every file in this folder opens with a status line saying what it describes and 
 
 | Path | What it is |
 |---|---|
-| [roadmap.md](roadmap.md) | The one living roadmap: what is open and what is parked. [waveform-roadmap.md](waveform-roadmap.md) and [rx-roadmap.md](rx-roadmap.md) are merged into it in a later PR. |
+| [roadmap.md](roadmap.md) | The one living roadmap: what is open and what is parked. [waveform-roadmap.md](waveform-roadmap.md) and [rx-roadmap.md](rx-roadmap.md) are waiting on a later PR: waveform-roadmap.md is merged into it and deleted, and rx-roadmap.md goes to the archive once its open items are in roadmap.md. |
 | [plan.md](plan.md) | The plan record: the decisions of 2026-07-14, the phases and the blocked list. Its amendment log is closed and lives in [archive/plan-amendment-log.md](archive/plan-amendment-log.md). |
 | [mode-validation.md](mode-validation.md) | The validation ledger: how each mode string in the catalogue has been proven, with a dated append-only record. |
 | [ardop-design.md](ardop-design.md) | ARDOP design and scoping notes. The implementation is the M0LTE.Ardop package. |
