@@ -339,7 +339,12 @@ jobs:
       - name: publish
         run: |
           set -euo pipefail
-          tgz="artifacts/packet-net-soundmodem-${{ needs.release.outputs.version }}.tgz"
+          # The ./ is load-bearing. Without it npm reads a path containing a
+          # slash as a GitHub shorthand spec and tries to FETCH it:
+          #   npm error code EALLOWGIT
+          #   Refusing to fetch "github:artifacts/packet-net-soundmodem-0.63.0.tgz"
+          # which is what broke the v0.63.0 publish.
+          tgz="./artifacts/packet-net-soundmodem-${{ needs.release.outputs.version }}.tgz"
           test -f "$tgz" || { echo "::error::$tgz missing from the release artifact"; exit 1; }
           # --access public because a scoped package is private by default and a
           # first publish is refused without it; harmless on every one after.
