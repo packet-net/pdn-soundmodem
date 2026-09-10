@@ -43,9 +43,11 @@ jobs:
     # A normal run is about 11 minutes; 40 leaves headroom for three architectures and the
     # asset uploads while still catching a wedge on the same shared self-hosted runner.
     timeout-minutes: 40
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
     env:
       NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -241,6 +243,7 @@ jobs:
           path: |
             artifacts/*.deb
             artifacts/*.nupkg
+            artifacts/*.tgz
             artifacts/SHA256SUMS
           if-no-files-found: error
 
@@ -293,18 +296,51 @@ jobs:
         if: steps.version.outputs.publish == 'true' && env.NUGET_API_KEY == ''
         run: echo "::warning::NUGET_API_KEY is not visible to this repo - NuGet push skipped (the GitHub Release still has the .debs). Grant the org secret access to pdn-soundmodem."
 
-      - name: Push to npmjs.com
-        if: steps.version.outputs.publish == 'true' && env.NPM_TOKEN != ''
+  # The npm leg is split out onto a GitHub-hosted runner, which is a DELIBERATE
+  # EXCEPTION to the self-hosted-only rule and the only one in this repo. npm
+  # refuses a provenance attestation built anywhere else ("Unsupported GitHub
+  # Actions runner environment: self-hosted"), and trusted publishing generates
+  # provenance by default. The release job above cannot move: it needs the .NET
+  # wasm workload and builds three .deb architectures. So it hands the already
+  # built tarball over as an artifact and this job does nothing but publish it.
+  # Same commit, same workflow run, so the attestation still describes the build
+  # it came from.
+  publish-npm:
+    name: publish @packet-net/soundmodem to npmjs.com
+    needs: release
+    if: needs.release.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Trusted publishing (OIDC), configured at the npmjs end against
+    # packet-net/pdn-soundmodem + this workflow file. No NPM_TOKEN: the runner
+    # mints a short-lived id-token per run, so there is no secret to expire.
+    # The old token had, which is what prompted this (packet-net/ax25sdl#83).
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org/'
+
+      - name: ensure an npm that speaks trusted publishing
+        # Trusted publishing needs npm >= 11.5.1. Pin the CLI forward rather
+        # than inheriting whatever the node image bundles.
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pdn-soundmodem-${{ needs.release.outputs.version }}
+          path: artifacts
+
+      - name: publish
         run: |
           set -euo pipefail
-          # A scoped package is private by default and its first publish is refused without
-          # this; it is harmless on every publish after that.
-          npm config set //registry.npmjs.org/:_authToken "${NPM_TOKEN}"
-          npm publish ./artifacts/packet-net-soundmodem-${{ steps.version.outputs.version }}.tgz \
-            --access public
-        env:
-          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/.npmrc
-
-      - name: Warn if NPM_TOKEN missing
-        if: steps.version.outputs.publish == 'true' && env.NPM_TOKEN == ''
-        run: echo "::warning::NPM_TOKEN is not visible to this repo - npm push skipped (the GitHub Release still has the .tgz). Grant the org secret access to pdn-soundmodem."
+          tgz="artifacts/packet-net-soundmodem-${{ needs.release.outputs.version }}.tgz"
+          test -f "$tgz" || { echo "::error::$tgz missing from the release artifact"; exit 1; }
+          # --access public because a scoped package is private by default and a
+          # first publish is refused without it; harmless on every one after.
+          npm publish "$tgz" --access public
