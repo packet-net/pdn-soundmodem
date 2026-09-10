@@ -25,7 +25,7 @@ using Packet.SoundModem.Ms110d;
 //
 // The command line is described once, in Usage.cs, which is what --help prints. The flags are
 // parsed in the switch below and a --config file is then loaded over them; UsageTests reads that
-// switch and fails if a flag it parses is missing from the usage text, so the two cannot drift.
+// switch and fails if its flags and the usage text's differ, so the two cannot drift.
 
 string device = "default";
 int captureRate = 48000;
@@ -57,11 +57,8 @@ double? dialHz = null;
 double? twoToneSeconds = null;
 (double Hz, double Seconds)? singleTone = null;
 bool qualityFrames = false;
-// PSK detection method. --psk-detector overrides it for every PSK mode; unset, the modes pick
-// their measured-best default: BPSK defaults to Differential (on real off-air HF, benchmarked
-// against a NinoTNC, differential + the frequency-diversity bank matches/beats coherent because
-// real carriers arrive off-frequency with short preambles - reversing the coherent default of
-// #5), while QPSK stays Coherent (its V.26A interop was validated coherent, #5/#6).
+// PSK detection method. --psk-detector overrides it for every PSK mode; unset, every PSK mode
+// uses ModemCatalog.DefaultDetectorFor (differential; the history is on that method).
 PskDetector? pskDetectorOverride = null;
 string? pagingSpec = null;
 int? ardopPort = null;
@@ -78,8 +75,8 @@ string? flexDaxCh = null;
 string? mixerShow = null;
 
 // Nothing on the command line used to start a station on the default sound card with one
-// afsk1200 modem and KISS on 8105. That station is still one flag away (--config with an empty
-// file gives the same thing, and the installed service always passes --config), but a bare
+// afsk1200 modem and KISS on 8105. That station is still one flag away (--config with a file
+// holding {} gives the same thing, and the installed service always passes --config), but a bare
 // command is far more often somebody finding out what the program is, so it gets the usage and
 // an exit code that says nothing ran.
 if (args.Length == 0)
@@ -344,8 +341,8 @@ if (dialHz is double dial)
 }
 
 // Headless FlexRadio slice params: CLI flags override the config's Flex section, which
-// overrides FlexTuning's defaults (14.100000 MHz / ANT1 / DIGU / DAX 1). --flex-daxch applies
-// to both headless and attach.
+// overrides FlexTuning's defaults (14.100000 MHz / ANT1 / DIGU / DAX 2 headless, 1 attached).
+// --flex-daxch applies to both headless and attach.
 var flexTuning = new FlexTuning
 {
     Frequency = flexFreq ?? flexConfig?.Frequency ?? "14.100000",

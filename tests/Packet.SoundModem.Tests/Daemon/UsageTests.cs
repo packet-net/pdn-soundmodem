@@ -18,36 +18,36 @@ namespace Packet.SoundModem.Tests.Daemon;
 public class UsageTests
 {
     [Fact]
-    public void Every_Flag_The_Parser_Accepts_Is_In_The_Usage_Text_In_The_Parser_Order()
+    public void The_Usage_Text_Lists_Exactly_The_Flags_The_Parser_Accepts_In_The_Parser_Order()
     {
         string program = Path.Combine(
             FindRepoRoot(), "src", "Packet.SoundModem.Daemon", "Program.cs");
         string source = File.ReadAllText(program);
 
         // The argument switch is the only place in the file a case label is a "--" string.
-        List<string> flags = Regex.Matches(source, "case \"(--[a-z0-9-]+)\":")
+        List<string> parsed = Regex.Matches(source, "case \"(--[a-z0-9-]+)\":")
             .Select(m => m.Groups[1].Value)
             .ToList();
 
-        flags.Should().HaveCountGreaterThan(
+        parsed.Should().HaveCountGreaterThan(
             20,
             "the argument switch in Program.cs is found by a regex over its case labels; if "
             + "that found almost nothing the switch changed shape, and the regex needs updating "
             + "rather than this test deleting");
-        flags.Should().OnlyHaveUniqueItems();
+        parsed.Should().OnlyHaveUniqueItems();
 
-        var positions = new List<int>();
-        foreach (string flag in flags)
-        {
-            int at = Usage.Text.IndexOf($"\n  {flag} ", StringComparison.Ordinal);
-            at.Should().BeGreaterThan(
-                -1, $"{flag} is parsed by Program.cs, so Usage.cs has to describe it on a line "
-                  + "of its own under Options");
-            positions.Add(at);
-        }
+        // An option's line starts at column 2 with its flag. Continuation lines are indented
+        // further, the synopsis lines start with the program name and the prose after the
+        // options starts at column 0, so none of those match.
+        List<string> described = Regex.Matches(Usage.Text, "\n  (--[a-z0-9-]+)")
+            .Select(m => m.Groups[1].Value)
+            .ToList();
 
-        positions.Should().BeInAscendingOrder(
-            "the usage lists the flags in the order the parser's switch does");
+        described.Should().Equal(
+            parsed,
+            "every flag Program.cs parses has to be described on a line of its own under "
+            + "Options, no line may describe a flag the parser no longer has, and the usage "
+            + "lists them in the order the parser's switch does");
     }
 
     [Fact]
