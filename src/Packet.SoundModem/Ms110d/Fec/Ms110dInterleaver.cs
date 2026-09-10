@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Ms110d.Fec;
 /// "Interleaver Size in Bits". TX <b>loads</b> punctured bit B(n) at
 /// (n × increment) mod size and <b>fetches</b> linearly 0,1,2,…; RX inverts with
 /// llr[n] = rx[(n·increment) mod size]. Sizes and increments for 3 kHz come from Tables
-/// D-XXXVII / D-LI (<c>docs/ms110d/tables/d37-interleaver-3khz.csv</c>,
+/// D-XXXVII / D-LI (<c>docs/dev/ms110d/tables/d37-interleaver-3khz.csv</c>,
 /// <c>d51-interleaver-increments-3khz.csv</c>).
 /// </summary>
 /// <remarks>

@@ -1,6 +1,6 @@
 # sm-iqcapture - ka9q_ubersdr IQ capture
 
-Records an IQ stream from a [ka9q_ubersdr](https://github.com/madpsy/ka9q_ubersdr) / UberSDR instance to a 16-bit stereo WAV (I = left, Q = right) plus a JSON sidecar. Built for the MS110D one-way OTA test - see [`docs/ms110d/ota-capture-client-plan.md`](../../docs/ms110d/ota-capture-client-plan.md) for the design and the documented wire protocol, and [`docs/ms110d/evidence/2026-07-24-ota-c0/`](../../docs/ms110d/evidence/2026-07-24-ota-c0) for the instrument audit.
+Records an IQ stream from a [ka9q_ubersdr](https://github.com/madpsy/ka9q_ubersdr) / UberSDR instance to a 16-bit stereo WAV (I = left, Q = right) plus a JSON sidecar. Built for the MS110D one-way OTA test - see [`docs/dev/archive/ms110d/ota-capture-client-plan.md`](../../docs/dev/archive/ms110d/ota-capture-client-plan.md) for the design and the documented wire protocol, and [`docs/dev/archive/ms110d/evidence/2026-07-24-ota-c0/`](../../docs/dev/archive/ms110d/evidence/2026-07-24-ota-c0) for the instrument audit.
 
 One session per invocation (one WAV). Drive per-pass reconnect from a script - a fresh process per ladder pass - rather than reconnecting mid-file, so each file is one contiguous GPS-timestamped session.
 

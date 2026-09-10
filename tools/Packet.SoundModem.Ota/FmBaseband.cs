@@ -17,7 +17,7 @@ public sealed class FmModulatorOptions
 
     /// <summary>
     /// The peak frequency deviation, in Hz, that <see cref="ReferenceAmplitude"/> of audio maps to.
-    /// This is the mode's <b>Tgt Dev</b> from <c>docs/mode-modulation-reference.md</c> - the whole
+    /// This is the mode's <b>Tgt Dev</b> from <c>docs/dev/mode-modulation-reference.md</c> - the whole
     /// point of the FM path is that the drive is calibrated so the achieved peak deviation of the
     /// signal is this value, not the channel spacing.
     /// </summary>

@@ -112,7 +112,7 @@ public sealed class WaterfallOptions
     /// matters: the credit contains an anchor built around an escaped name, so a server-supplied
     /// sentence would be either unescapable or a second way for somebody else's words to reach a
     /// visitor's browser as markup. Two sentences live in the page, one per kind, and only which
-    /// of them to use crosses the wire. See <c>docs/uplink-plan.md</c> 4.4.
+    /// of them to use crosses the wire. See <c>docs/dev/archive/uplink-plan.md</c> 4.4.
     /// </remarks>
     public string? ReceiverKind { get; set; }
 
@@ -1754,7 +1754,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// <remarks>
     /// <para>A mapping now, not a rule. The verdict is taken when the frame is decoded, by the
     /// modem's own limits (<see cref="Modems.IFrameSpanSource.FrameLevels"/>, measured in
-    /// <c>docs/receive-levels.md</c>), and arrives here on
+    /// <c>docs/dev/receive-levels.md</c>), and arrives here on
     /// <see cref="Modems.FrameQuality.Level"/> or on a relayed row. This class no longer knows
     /// what a threshold is, which is the point: it used to look one up by mode name, and a name
     /// that did not match left every C4FSK frame taking the wrong pair.</para>
@@ -1833,7 +1833,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             clipped = clipped is true ? true : (bool?)null,
             // The verdict, made when the frame was decoded rather than here: the deciding
             // modem's own limits said so (IFrameSpanSource.FrameLevels, and
-            // docs/receive-levels.md for where each number was measured), and this only picks
+            // docs/dev/receive-levels.md for where each number was measured), and this only picks
             // the word for it. Absent is a frame with nothing to say about it, which is most of
             // them and is what "the level is fine" looks like.
             level = LevelTag(level),

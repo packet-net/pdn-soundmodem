@@ -6,14 +6,14 @@ namespace Packet.SoundModem.Tests.Modems;
 
 /// <summary>
 /// Env-gated QC pass over a NinoTNC capture corpus (the studybox bench,
-/// docs/ninotnc-loop.md): every WAV decodes through its paired catalog mode, expecting
+/// docs/dev/bench/ninotnc-loop.md): every WAV decodes through its paired catalog mode, expecting
 /// the number of frames the capture driver transmitted. Not a gate - an instrument for
 /// corpus quality control. <c>NINO_CORPUS_DIR</c> points at the corpus,
 /// <c>NINO_CORPUS_FRAMES</c> (default 3) the expected per-file frame count.
 /// </summary>
 public class NinoCorpusQcTests
 {
-    // DIP → catalog mode, the docs/ninotnc-loop.md §Results pairing (C4FSK rows added
+    // DIP → catalog mode, the docs/dev/bench/ninotnc-loop.md §Results pairing (C4FSK rows added
     // when those modes landed with the FM work).
     private static readonly Dictionary<string, string> DipToMode = new()
     {

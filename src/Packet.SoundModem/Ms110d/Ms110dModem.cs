@@ -189,7 +189,7 @@ public sealed class Ms110dModem : IModem, IHardwareControllable
     }
 
     /// <summary>
-    /// What the validation ledger (docs/mode-validation.md) says about a waveform's standing
+    /// What the validation ledger (docs/dev/mode-validation.md) says about a waveform's standing
     /// on the D.6.1 Poor channel, for the journal at configuration and SETHW time - so the
     /// product says what the record says (Poor-gate successor program G3). Null for the
     /// waveforms that are hard-gated on Poor and on-air proven. Plain ASCII, one line.

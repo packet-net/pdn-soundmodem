@@ -15,7 +15,7 @@ namespace Packet.SoundModem.Daemon;
 /// <see cref="Station"/> over an <see cref="UplinkAudioInput"/>, and a
 /// <see cref="WaterfallWebServer"/> routed under <c>/r/&lt;slug&gt;/</c> exactly as a receiver's
 /// is. Everything a visitor sees therefore comes out of code that already runs in production; the
-/// only new thing is where the samples came from. See <c>docs/uplink-plan.md</c> 4.1.</para>
+/// only new thing is where the samples came from. See <c>docs/dev/archive/uplink-plan.md</c> 4.1.</para>
 /// <para><b>The decodes stay the station's own.</b> This process runs no modem for a relayed
 /// station and never will: what the page lists is what that operator's daemon decoded, with their
 /// modes, their diversity settings and their dial, pushed in through

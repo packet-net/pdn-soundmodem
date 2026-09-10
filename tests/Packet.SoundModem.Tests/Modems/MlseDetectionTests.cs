@@ -91,7 +91,7 @@ public class MlseDetectionTests
         // kill the trellis too, because no symbol-rate equaliser restores timing. So this
         // asserts only that the MLSE detector reads through the deep echo; the fading A/B
         // lives on the sim ladder, where the honest answer today is parity
-        // (docs/rx-roadmap.md workstream 5).
+        // (docs/dev/rx-roadmap.md workstream 5).
         float[] audio = WithPaddingAndNoise(
             TwoPath(ModulateFrame(TestFrame), echoGain: 1.0, echoSymbols: 0.6),
             noiseSigma: 0.10f, seed: 9);

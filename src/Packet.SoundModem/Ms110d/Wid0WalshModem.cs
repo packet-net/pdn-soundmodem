@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Ms110d;
 /// <summary>
 /// Waveform-ID 0 Walsh orthogonal data modulation (75 bps): after the preamble, WN 0 sends
 /// no mini-probes - each channel symbol is a 32-chip Walsh sequence carrying one coded and
-/// interleaved di-bit (D.5.2 final paragraph, <c>docs/ms110d/tables/walsh-data-sequence-prose.md</c>),
+/// interleaved di-bit (D.5.2 final paragraph, <c>docs/dev/ms110d/tables/walsh-data-sequence-prose.md</c>),
 /// chip-wise modulo-8 combined with the Trinomial (159, 31) scramble sequence (D.5.1.4).
 /// </summary>
 /// <remarks>

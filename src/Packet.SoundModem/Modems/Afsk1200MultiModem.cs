@@ -183,7 +183,7 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
     /// <remarks>a bank of 1200 baud AFSK discriminators, which is the family whose normalisation floor sets
     /// the quiet edge. Stated here rather than delegated because the branches are
     /// <see cref="AfskDemodulator"/> instances rather than modems, and a demodulator does not
-    /// publish this (docs/receive-levels.md).</remarks>
+    /// publish this (docs/dev/receive-levels.md).</remarks>
     public FrameLevelLimits FrameLevels => FrameLevelLimits.QuietSensitive;
 
     /// <inheritdoc />

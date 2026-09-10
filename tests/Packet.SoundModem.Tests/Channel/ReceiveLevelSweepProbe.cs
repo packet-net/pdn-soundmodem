@@ -6,7 +6,7 @@ using Packet.SoundModem.Modems;
 namespace Packet.SoundModem.Tests.Channel;
 
 /// <summary>
-/// The measurement run behind <c>docs/receive-levels.md</c>: for every receive mode that can
+/// The measurement run behind <c>docs/dev/receive-levels.md</c>: for every receive mode that can
 /// place its own frames, how much link margin the mode loses at each receive level, from well
 /// past full scale down to the converter's own floor.
 /// </summary>

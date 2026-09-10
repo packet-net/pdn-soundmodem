@@ -725,7 +725,7 @@ public sealed class BpskDemodulator
     /// truncated pulse's own stopband (−54 dB one baud out) already exceeds what the old
     /// band-pass provided against a neighbouring modem on the same audio. Shared with
     /// <see cref="QpskDemodulator"/>, whose differential path learned the same lesson in
-    /// the QPSK campaign (docs/qpsk/plan.md Q1-2).</summary>
+    /// the QPSK campaign (docs/dev/archive/qpsk/plan.md Q1-2).</summary>
     internal static float[] MatchedFilterTaps(int sampleRate, int baud, double rollOff)
     {
         int samplesPerSymbol = sampleRate / baud;

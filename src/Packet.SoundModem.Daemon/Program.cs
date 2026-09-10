@@ -38,7 +38,7 @@ double? dialFrequency = null;
 FrameLogConfig? frameLogConfig = null;
 // 300 ms is a RADIO allowance, not a modem requirement - the modems themselves acquire
 // from 0-20 ms TXDELAY in every mode (150 ms for qpsk2400 facing a NinoTNC), measured and
-// CI-enforced (NinoTncParityTests; docs/ninotnc-loop.md § How short can TXDELAY be?).
+// CI-enforced (NinoTncParityTests; docs/dev/bench/ninotnc-loop.md § How short can TXDELAY be?).
 // The default budgets for a real transmitter's PTT-to-RF settling, which the wired bench
 // cannot see and which routinely needs 100-300 ms on FM gear. Wired links, data-port
 // radios and bench rigs should configure this down; issue #3 has the full derivation.
@@ -2230,7 +2230,7 @@ else if (deviceIsFlex)
     }
 
     // Two headless instances that both take the default DAX channel displace each other, which
-    // is exactly how this station lost its slice for six days (docs/flex-integration.md §12).
+    // is exactly how this station lost its slice for six days (docs/dev/archive/flex-integration.md §12).
     // Said at bring-up, while it can still be acted on.
     if (flex.Station.DaxChannelWarning is string daxWarning)
     {
@@ -2814,7 +2814,7 @@ DeadFeedDevice deadFeedDevice =
 // one socket the station dials out on. Nothing here is reachable without a "publish" block, and
 // nothing about a station that has one depends on it - the uplink writes a journal line and
 // retries for ever, and it never faults the station, sets the exit code or touches the radio
-// (docs/uplink-plan.md, decision 8). It is the waterfall server's relay, so it is offered exactly
+// (docs/dev/archive/uplink-plan.md, decision 8). It is the waterfall server's relay, so it is offered exactly
 // what the page is already being shown.
 Packet.SoundModem.Waterfall.UplinkClient? uplink = null;
 // Not on a --two-tone run: a monitor site should not be dialled, credited with a station and

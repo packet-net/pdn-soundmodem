@@ -69,7 +69,7 @@ public class CoherentDetectionTests
     /// inverted deliberately, one family at a time, as each campaign closed the classic
     /// differential give-away: BPSK with PR #236's decision-feedback carrier reference, and
     /// the QPSK family with the 2026-08-07 campaign's matched filter and DPLL timing
-    /// (docs/qpsk/plan.md Q1-2/Q1-3 - the QPSK decision itself is still the one-symbol
+    /// (docs/dev/archive/qpsk/plan.md Q1-2/Q1-3 - the QPSK decision itself is still the one-symbol
     /// conjugate product; a decision-feedback reference is the campaign's open follow-up,
     /// which would move these rows from "matches" toward "beats"). A regression that
     /// quietly returns a differential path to its plain unmatched form turns this red.

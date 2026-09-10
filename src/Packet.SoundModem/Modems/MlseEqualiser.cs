@@ -18,7 +18,7 @@ namespace Packet.SoundModem.Modems;
 /// The preamble training rule (see AdaptTaps) parks the main energy in the middle tap, so the
 /// model spans one pre-cursor and one post-cursor lag - a pre-cursor-heavy timing phase fits
 /// as well as a post-cursor one.</para>
-/// <para><b>What this buys, measured honestly (2026-08-06 A/B, docs/rx-roadmap.md).</b>
+/// <para><b>What this buys, measured honestly (2026-08-06 A/B, docs/dev/rx-roadmap.md).</b>
 /// Parity with the DF-DD baseline on every rung measured - AWGN, CFO, Good, Moderate, Poor -
 /// and no more. The frames CCIR Poor takes from this receiver die of timing wander, composite
 /// spectral nulls and flat outage, none of which a symbol-rate trellis can address, and the

@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Ms110d;
 /// N 32-chip blocks, then M super-frames of [Fixed (9 Walsh channel symbols, or 1 when M=1)]
 /// [4 downcount symbols c3…c0][5 WID symbols w4…w0], all 8PSK chips at 2400 Bd. Walsh
 /// expansion and PN scrambling per D.5.2.1.1 (Tables D-XIV, D-XVIII/XIX/XX); prose anchored in
-/// <c>docs/ms110d/tables/preamble-fixed-tlc-prose.md</c>.
+/// <c>docs/dev/ms110d/tables/preamble-fixed-tlc-prose.md</c>.
 /// </summary>
 /// <remarks>
 /// Open point O-1 (design §2.3): the 3 kHz Fixed subsection is 288 chips against the 256-entry
@@ -93,7 +93,7 @@ public sealed class PreambleGenerator
     /// d9d8d7d6 = WN, d5d4 = interleaver, d3 = 0 for K=7 / 1 for K=9,
     /// d2 = d9^d8^d7, d1 = d7^d6^d5, d0 = d5^d4^d3. The explicit checksum mapping is
     /// implemented; the D-XVII "lsb of w1 shall be 0" prose oddity (O-3) is recorded in
-    /// <c>docs/ms110d/README.md</c>, not silently resolved.</summary>
+    /// <c>docs/dev/ms110d/README.md</c>, not silently resolved.</summary>
     internal static byte[] EncodeWid(int wn, Ms110dInterleaverKind interleaver, int constraintLength)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(wn, 0);

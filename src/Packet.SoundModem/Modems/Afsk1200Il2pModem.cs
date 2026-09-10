@@ -141,7 +141,7 @@ public sealed class Afsk1200Il2pModem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     /// <remarks>the same 1200 baud AFSK front end as <see cref="Afsk1200Modem"/>, so the same absolute floor
-    /// in the discriminator and the same quiet edge; the framing above it does not touch levels (docs/receive-levels.md).</remarks>
+    /// in the discriminator and the same quiet edge; the framing above it does not touch levels (docs/dev/receive-levels.md).</remarks>
     public FrameLevelLimits FrameLevels => FrameLevelLimits.QuietSensitive;
 
     /// <inheritdoc />

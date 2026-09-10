@@ -77,7 +77,7 @@ public static class FrameLevelText
 /// desired/optimal levels are". They now are - by decoding real frames through a real channel at
 /// every level from 24 dB past full scale down to the converter's own floor, and measuring how
 /// much link margin each mode loses there. The method, the tables and the arithmetic behind every
-/// number below are in <c>docs/receive-levels.md</c>; the summary is that the catalogue splits
+/// number below are in <c>docs/dev/receive-levels.md</c>; the summary is that the catalogue splits
 /// into three, and the split is a property of the slicer.</para>
 /// <list type="bullet">
 /// <item><description><see cref="Default"/> - every mode whose slicer is a sign or an angle test,
@@ -101,7 +101,7 @@ public static class FrameLevelText
 /// The quiet thresholds are therefore derived from the probe's reported-peak column and not from
 /// the level the sweep set, which on a working link sits 1 to 7 dB under it; on a link close to
 /// its own decode knee the gap is at the top of that range, so the quiet badge is late by a few
-/// dB there. <c>docs/receive-levels.md</c> section 6 does the arithmetic and says how much.</para>
+/// dB there. <c>docs/dev/receive-levels.md</c> section 6 does the arithmetic and says how much.</para>
 /// <para><b>The clip flag is a separate, unconditional trigger</b> and always has been: a
 /// converter that ran out of codes is a fact about the station rather than a prediction, and it
 /// costs at least a decibel on every mode measured. It is only available where the station has a
@@ -119,7 +119,7 @@ public readonly record struct FrameLevelLimits(double LoudPeakDbFs, double Quiet
     /// </summary>
     /// <remarks>
     /// Not a preference: the sum of what the hardware notes in this tree already say a receiving
-    /// station cannot control. <c>docs/hardware/tm8100-cm108-interface-notes.md</c> sets the
+    /// station cannot control. <c>docs/dev/hardware/tm8100-cm108-interface-notes.md</c> sets the
     /// interface at -12 dBFS for 60% of class deviation and works out that 100% then lands at
     /// -7.6, so the deviation stations actually run spans 4.4 dB; the same radio's published
     /// receive-tap level is a plus or minus 10% band, which is another 1.8 dB across it. That is
@@ -151,7 +151,7 @@ public readonly record struct FrameLevelLimits(double LoudPeakDbFs, double Quiet
     /// below any real card's</b>: the reading includes the input noise, so it cannot sit under
     /// the card's own idle level, which on CM108-class hardware with the gain up is nearer -60 to
     /// -70 dBFS. On that hardware this badge cannot fire at all, which is the honest consequence
-    /// of the measurement rather than a bug - see <c>docs/receive-levels.md</c> section 6.</para>
+    /// of the measurement rather than a bug - see <c>docs/dev/receive-levels.md</c> section 6.</para>
     /// </remarks>
     public static FrameLevelLimits Default { get; } = new(0, -72);
 

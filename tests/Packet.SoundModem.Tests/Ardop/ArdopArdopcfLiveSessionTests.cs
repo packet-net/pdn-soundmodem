@@ -11,7 +11,7 @@ namespace Packet.SoundModem.Tests.Ardop;
 /// <summary>
 /// The decisive live tests: full ARQ sessions between our engine and a live ardopcf
 /// (git a7c9228) over the snd-aloop virtual audio cable, both roles - both ends
-/// FSKONLY (the Phase B exit, docs/ardop-design.md §6.2 rung 3 / §7) and unrestricted
+/// FSKONLY (the Phase B exit, docs/dev/ardop-design.md §6.2 rung 3 / §7) and unrestricted
 /// mixed-mode where the gearshift must climb into the PSK/QAM rungs (the Phase C
 /// exit). ardopcf runs its own ALSA on loopback device 0 and is driven over its TCP
 /// host interface; our side is the same <see cref="ArdopArqStation"/> the hermetic
@@ -22,7 +22,7 @@ namespace Packet.SoundModem.Tests.Ardop;
 /// Gated on two environment variables so CI stays hermetic: <c>ARDOPCF</c> (path to the
 /// ardopcf binary) and <c>ARDOP_ALOOP_CARD</c> (the snd-aloop card index, e.g. 4).
 /// ALSA device access needs the audio group: run under <c>sg audio</c>
-/// (docs/qtsm-loop.md). One ardopcf instance at a time - the tests are serialized by
+/// (docs/dev/bench/qtsm-loop.md). One ardopcf instance at a time - the tests are serialized by
 /// xUnit's per-class collection.
 /// </remarks>
 public class ArdopArdopcfLiveSessionTests(ITestOutputHelper output)

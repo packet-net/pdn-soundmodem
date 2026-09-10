@@ -15,7 +15,7 @@ namespace Packet.SoundModem.Waterfall;
 
 /// <summary>
 /// What a station's <c>publish</c> block says: where to publish, what credential to present, and
-/// who is publishing. Section 4.3 of <c>docs/uplink-plan.md</c>; the daemon validates every one of
+/// who is publishing. Section 4.3 of <c>docs/dev/archive/uplink-plan.md</c>; the daemon validates every one of
 /// these before one of these records is built, so nothing here re-checks an operator's typing.
 /// </summary>
 /// <remarks>
@@ -74,7 +74,7 @@ public sealed record UplinkSettings
 /// sentence, and carrying one thing back - how many people are watching.
 /// </summary>
 /// <remarks>
-/// <para>Phase 2 of <c>docs/uplink-plan.md</c>; section 4.2 is normative for the wire and 4.3 for
+/// <para>Phase 2 of <c>docs/dev/archive/uplink-plan.md</c>; section 4.2, now docs/dev/uplink-wire-format.md, is normative for the wire and 4.3 for
 /// this class. A station with no <c>publish</c> block never builds one of these, and
 /// <see cref="WaterfallWebServer.Relay"/> stays null.</para>
 /// <para><b>It cannot act on the station, structurally</b> (4.6). It holds a

@@ -10,7 +10,7 @@ namespace Packet.SoundModem.Modems;
 /// <para><b>Explicit paths only, never ambient discovery.</b> There is no directory scan, no
 /// probing beside the executable and no environment variable, because a file appearing on disk
 /// must never change what a station transmits. Something told this loader a path, and the config
-/// that said so is the audit trail. See <c>docs/modem-binding.md</c>.</para>
+/// that said so is the audit trail. See <c>docs/dev/modem-plugins.md</c>.</para>
 /// <para><b>Failures are named and non-fatal.</b> <see cref="Load"/> does not throw for anything
 /// a plugin or an operator can get wrong: it returns a <see cref="ModemPluginLoad"/> carrying the
 /// reason, so a station starts without that mode and says why, rather than refusing to start at

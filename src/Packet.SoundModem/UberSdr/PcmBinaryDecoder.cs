@@ -19,7 +19,7 @@ public readonly record struct PcmPacket(
 /// Decodes ka9q_ubersdr binary PCM/IQ packets (the <c>pcm</c> / <c>pcm-zstd</c> WebSocket
 /// wire format). Direct port of <c>clients/iq-recorder/pcm_decoder.go</c>
 /// (<c>DecodePCMBinary</c>) from https://github.com/madpsy/ka9q_ubersdr (GPL-3.0), which is
-/// compatible with this repo's GPL-3.0-or-later. See docs/ms110d/ota-capture-client-plan.md
+/// compatible with this repo's GPL-3.0-or-later. See docs/dev/archive/ms110d/ota-capture-client-plan.md
 /// for the documented protocol.
 ///
 /// <para>Hybrid header strategy (after zstd decompression, if any):</para>

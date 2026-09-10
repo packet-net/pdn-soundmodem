@@ -4,8 +4,8 @@ namespace Packet.SoundModem.Ms110d;
 
 /// <summary>
 /// MIL-STD-188-110D Appendix D constants for the 3 kHz serial-tone waveform. Every array here
-/// is transcribed from the dual-verified tables in <c>docs/ms110d/tables/</c> (see
-/// <c>docs/ms110d/README.md</c> § Ledger clearance) - nothing is re-derived. File names cited
+/// is transcribed from the dual-verified tables in <c>docs/dev/ms110d/tables/</c> (see
+/// <c>docs/dev/ms110d/README.md</c> § Ledger clearance) - nothing is re-derived. File names cited
 /// per member.
 /// </summary>
 public static class Ms110dTables

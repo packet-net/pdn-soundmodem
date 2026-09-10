@@ -47,7 +47,7 @@ Then, `systemctl restart pdn-soundmodem`, open your browser: `http://my-host:809
 All planned modem families are implemented and bench-proven. **The complete mode table -
 every mode with its capabilities and verification level - is at
 [docs/modes.md](docs/modes.md)**; per-mode validation provenance lives in the
-[mode validation ledger](docs/mode-validation.md). What exists today:
+[mode validation ledger](docs/dev/mode-validation.md). What exists today:
 
 - **IL2P codec** (spec draft v0.6, including IL2P+CRC): full frame encode/decode - Type 0/1
   headers, packet-synchronous scrambling, Reed-Solomon FEC (GF(2⁸) 0x11D), payload block
@@ -59,7 +59,7 @@ implemented and bench-proven bidirectionally against a real NinoTNC (firmware 3.
 wired CM108 loop - 9600 GFSK (AX.25 + IL2P+CRC), 4800 GFSK, 3600/2400/600 QPSK,
 1200/300 BPSK, 1200 AFSK (AX.25 + IL2P+CRC) and 300 HF AFSK (AX.25/IL2P/IL2P+CRC), plus
 FX.25 on 1200 AFSK and C4FSK (modes 1/3, 9600 + 19200). See
-[docs/ninotnc-loop.md](docs/ninotnc-loop.md) § Coverage.
+[docs/dev/bench/ninotnc-loop.md](docs/dev/bench/ninotnc-loop.md) § Coverage.
 
 **Interop is per-mode and explicit - never traded away.** Every mode states which peers it
 interoperates with, and NinoTNC compatibility is never given up to suit another modem:
@@ -125,7 +125,7 @@ interoperates with, and NinoTNC compatibility is never given up to suit another 
   detector: the fractional probe-to-probe tap change beyond the common rotation, classified
   by recurring excursions over a min-tracking noise floor. The Poor-channel (Watterson
   2-path Rayleigh) masks are the current research frontier - banked measured-not-gated in
-  Phase A, at-mask gated in Phase B (see docs/ms110d/phase-a-closeout.md and issues #64/#65).
+  Phase A, at-mask gated in Phase B (see docs/dev/archive/ms110d/phase-a-closeout.md and issues #64/#65).
   **Phase C** (higher-order QAM, WN 9-12) is still to come. No open App-D
   receiver existed before this one, so there is no external oracle: the interop-critical spec
   tables were transcribed twice independently and diffed to zero value conflicts, and a
@@ -133,7 +133,7 @@ interoperates with, and NinoTNC compatibility is never given up to suit another 
   the FreeDV modes it carries the family-standard IL2P+CRC payload (a pdn↔pdn convention -
   App D defines no data-link framing; STANAG 5066 is that layer and is not implemented), so
   it is a robust HF *bit pipe*, not a connected-ARQ port (ARDOP is the connected one). Runs
-  on the 48 kHz DSP path (native 9600 Hz). Design + verified tables: [docs/ms110d/](docs/ms110d/).
+  on the 48 kHz DSP path (native 9600 Hz). Design + verified tables: [docs/dev/ms110d/](docs/dev/ms110d/).
 
 **Per-modem audio centre (QtSoundModem-style).** Each narrow modem's audio centre is
 settable with the third field of `--modem N:MODE:FREQ` (or `"frequency"` in the config), on
@@ -146,11 +146,11 @@ audio centre, and the spec-fixed waveforms (`freedv-*`, `ms110d-*`, POCSAG, ARDO
 pinned by their standards - a `:FREQ` on any of those is rejected, not silently ignored.
 
 The QtSoundModem cross-validation matrix (which QtSM `ModemType` each of our modes pairs
-with, both directions) is in [docs/qtsm-loop.md](docs/qtsm-loop.md) § Results.
+with, both directions) is in [docs/dev/bench/qtsm-loop.md](docs/dev/bench/qtsm-loop.md) § Results.
 
 **See it - the browser waterfall.** `--waterfall 8107` (or the `"waterfall"` config section) serves a self-contained web page - no external assets, nothing to install - with a 30 fps spectrum view over a scrolling waterfall of the shared audio passband:
 
-![Browser waterfall: two modems overlaid on the passband, each decoded frame tagged on its burst with callsign, SNR and frequency offset](docs/waterfall.png)
+![Browser waterfall: two modems overlaid on the passband, each decoded frame tagged on its burst with callsign, SNR and frequency offset](docs/images/waterfall.png)
 
 - **Every configured modem is drawn over the passband** - band shading and centre line from its *measured* occupied bandwidth (at start-up each modem modulates a throwaway frame and the ITU-R SM.443 99 % OBW of that audio is what gets shaded, so any mode, including future ones, is drawn correctly with no table to maintain).
 - **Audio and RF frequency scales together**: enter the rig's dial frequency (and USB/LSB) and the ruler, modem chips and hover readout all show absolute RF alongside audio Hz; the dial is per-browser retunable, with a config default.

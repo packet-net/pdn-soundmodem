@@ -8,7 +8,7 @@ namespace Packet.SoundModem.Tests.Channel;
 /// <summary>
 /// The cells the two frame level badges rest on, re-run: the thresholds in
 /// <see cref="FrameLevelLimits"/> are only right while each mode's cliff is still outside the
-/// band <c>docs/receive-levels.md</c> declares safe, and a demodulator change could move one
+/// band <c>docs/dev/receive-levels.md</c> declares safe, and a demodulator change could move one
 /// without touching a number.
 /// </summary>
 /// <remarks>
@@ -28,7 +28,7 @@ public class ReceiveLevelCliffTests
     private const int Trials = 12;
 
     /// <summary>
-    /// Each mode's reference knee at -18 dBFS from docs/receive-levels.md section 4, plus 4 dB -
+    /// Each mode's reference knee at -18 dBFS from docs/dev/receive-levels.md section 4, plus 4 dB -
     /// a working link with a little margin, which is the condition a badge is advice about.
     /// </summary>
     /// <remarks>
@@ -63,7 +63,7 @@ public class ReceiveLevelCliffTests
     {
         Copies(mode, peakDbFs: 6, WorkingSnrFor(mode)).Should().BeGreaterThanOrEqualTo(
             Trials * 3 / 4,
-            $"{mode} loses at most a decibel at six dB of overdrive (docs/receive-levels.md #4), "
+            $"{mode} loses at most a decibel at six dB of overdrive (docs/dev/receive-levels.md #4), "
                 + "which is what lets its loud badge sit at the top of the scale rather than "
                 + "under it");
     }
@@ -109,7 +109,7 @@ public class ReceiveLevelCliffTests
         Copies(mode, FrameLevelLimits.Default.QuietPeakDbFs, WorkingSnrFor(mode))
             .Should().BeGreaterThanOrEqualTo(
                 Trials * 3 / 4,
-                $"{mode} is flat to -84 dBFS (docs/receive-levels.md #5), so its badge at "
+                $"{mode} is flat to -84 dBFS (docs/dev/receive-levels.md #5), so its badge at "
                     + "-72 still has the station spread in hand");
     }
 
@@ -198,7 +198,7 @@ public class ReceiveLevelCliffTests
                 : FrameLevelLimits.Default;
 
             source.FrameLevels.Should().Be(
-                expected, $"{mode} is measured in docs/receive-levels.md sections 4 and 5");
+                expected, $"{mode} is measured in docs/dev/receive-levels.md sections 4 and 5");
         }
 
         placeable.Should().HaveCount(22, "which is every packet mode in the catalogue");

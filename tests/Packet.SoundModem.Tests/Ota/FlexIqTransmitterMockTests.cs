@@ -96,7 +96,7 @@ public sealed class FlexIqTransmitterMockTests
             //    for that same packet - so TransmitAsync's Drain() can return, and this method can
             //    resume, while the last packet's samples have not yet landed in the mock's list.
             // 2. The radio (real or mocked) never stops asking for transmit buffers while the
-            //    waveform is registered, keyed or not (docs/flex-integration.md 9.2), and the sink
+            //    waveform is registered, keyed or not (docs/dev/archive/flex-integration.md 9.2), and the sink
             //    keeps answering until the post-unkey UNKEY_REQUESTED status has round-tripped and
             //    the ring has been seen empty - an indeterminate, scheduler-dependent number of
             //    all-zero packets that get captured as extra trailing silence in the meantime.

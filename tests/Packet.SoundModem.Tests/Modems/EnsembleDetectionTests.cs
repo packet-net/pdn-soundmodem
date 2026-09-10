@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Tests.Modems;
 /// <see cref="ModemOptions.SecondDetector"/> runs every diversity position under both
 /// detectors and delivers the union through the existing content dedupe. These tests pin
 /// the mechanism - the union's measured value on real traffic (+1.1 % deliverable on the
-/// capture campaign's opening evening) lives in docs/rx-roadmap.md, not in a fixture, since
+/// capture campaign's opening evening) lives in docs/dev/rx-roadmap.md, not in a fixture, since
 /// no deterministic single burst separates the detectors (the workstream 5 finding).
 /// </summary>
 public class EnsembleDetectionTests

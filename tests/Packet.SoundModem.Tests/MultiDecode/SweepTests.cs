@@ -116,7 +116,7 @@ public class SweepTests
         // defaulted to FmModeProfiles.IsFmMode, which answers "which modes reach the air as
         // frequency modulation" - a question about modulators. The question asked here is what can
         // arrive through an FM receiver, and Nino's switch map groups the shaped-PSK modes
-        // "Shaped PSK - SSB radios, or FM radios" (docs/mode-modulation-reference.md). The first
+        // "Shaped PSK - SSB radios, or FM radios" (docs/dev/mode-modulation-reference.md). The first
         // real off-air corpus was bpsk1200 through an FM radio and the FM-native sweep read none
         // of it.
         string[] swept = [.. Sweep.PacketModes().Select(e => e.Mode)];

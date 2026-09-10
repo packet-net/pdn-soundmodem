@@ -6,8 +6,12 @@ Operating notes for Claude Code (and other agents) working in `packet-net/pdn-so
 
 A headless (no GUI) soundcard packet modem in C#/.NET 10, serving both the PDN node
 (in-process transport with native DCD) and standalone use (KISS-TCP daemon). Read
-[docs/plan.md](docs/plan.md) for the phase plan and current status, and the founding research at
-`packet.net/docs/research/headless-soundmodem.md` for the full design rationale.
+[docs/dev/plan.md](docs/dev/plan.md) for the decisions and phases, and the founding research at
+`packet.net/docs/research/headless-soundmodem.md` for the full design rationale. The plan's
+amendment log is closed and lives in
+[docs/dev/archive/plan-amendment-log.md](docs/dev/archive/plan-amendment-log.md); do not add to
+it. Open work is tracked in one place, [docs/dev/roadmap.md](docs/dev/roadmap.md), and
+[docs/dev/mode-validation.md](docs/dev/mode-validation.md) is the ledger.
 
 ## Licence rules (hard)
 
@@ -33,7 +37,7 @@ header bit clear; Dire Wolf sets it. We encode it clear and ignore it on receive
 
 ## Mode validation ledger (keep it current)
 
-[docs/mode-validation.md](docs/mode-validation.md) is the living record of every mode/submode's
+[docs/dev/mode-validation.md](docs/dev/mode-validation.md) is the living record of every mode/submode's
 validation status (simulation + on-air) and its provenance. **Standing rule: whenever you prove a
 modem/mode works - especially one that was *not* working before - add a dated entry to the ledger**
 naming the mode, the broken→working transition, and the commit/PR/issue that did it, and update its
@@ -51,8 +55,8 @@ row in the matrix. A fix isn't finished until the ledger records it.
 - **No em dashes or en dashes, anywhere.** Not in code, comments, docs, commit messages or
   PR bodies. Use a hyphen, a comma, a semicolon or a full stop. This is Tom's house style and
   it is not negotiable: he has never typed one. Every one that was in this repo got there from
-  an agent, starting with the scaffold commit. Frozen evidence bundles
-  (`docs/ms110d/evidence/`) and verbatim transcriptions (`docs/refs/`) are records, so they
+  an agent, starting with the scaffold commit. Frozen records (`docs/dev/archive/`, closed
+  plans and evidence bundles) and verbatim transcriptions (`docs/dev/refs/`) are records, so they
   keep whatever they were written with.
 - Printable strings are ASCII: `->` not an arrow, `,` not a middle dot. `journalctl`'s pager
   under a C locale renders anything above 0x7F as `<E2><80><94>`, and a station's console is
@@ -73,7 +77,7 @@ row in the matrix. A fix isn't finished until the ledger records it.
   nothing in the mixer pass needs the PCM (`--mixer-show` reads a card on a running station) and
   a shorter gap is still worth having: keep the whole block above the
   `AlsaAudioOutput`/`AlsaAudioInput` construction in `Program.cs`. `StartUpOrderTests` pins it;
-  [docs/roadmap.md](docs/roadmap.md) #17 has the measurements.
+  [docs/dev/roadmap.md](docs/dev/roadmap.md) #17 has the measurements.
 - CI: every workflow job MUST target `[self-hosted, Linux, X64]` - no GitHub-hosted
   runners (no minutes budget). Same rule as packet.net.
 - PRs merge on locally-run green tests (`dotnet test`); fix forward.
@@ -99,13 +103,20 @@ tools/Packet.SoundModem.MultiDecode/  pdn-decode: sweep every mode over a file n
 tools/Packet.SoundModem.TncTest/      sm-tnctest: score a decoder against a recorded corpus
 web/                         the same core compiled to WebAssembly, published to npm as
                              @packet-net/soundmodem - a sound card where a KISS TNC would be
-docs/plan.md                 phase plan + status - keep it current as you work
+docs/                        the user guide and reference (being written; docs/README.md is its front page)
+docs/modes.md                the mode table, exact against the catalogue
 docs/pdn-decode.md           the sweep tool, and why its default set is the whole catalogue
-docs/tnc-test-cd.md          the WA8LMF corpus benchmark, its scoring rules and standing scores
+docs/hardware/               the Tait TM8100 wiring guide, a user document
+docs/dev/                    developer documents; nothing here is user documentation
+docs/dev/roadmap.md          the one place open work is tracked
+docs/dev/plan.md             the plan record: decisions and phases; its amendment log is closed
+docs/dev/mode-validation.md  the ledger
+docs/dev/bench/tnc-test-cd.md  the WA8LMF corpus benchmark, its scoring rules and standing scores
+docs/dev/archive/            frozen records: closed plans, campaign evidence, the amendment log
 ```
 
 The architecture/design rationale lives in the founding research doc in packet.net
-(`docs/research/headless-soundmodem.md`) - this repo's plan.md §Decisions is the binding summary.
+(`docs/research/headless-soundmodem.md`) - this repo's docs/dev/plan.md §Decisions is the binding summary.
 
 ## Releases and release notes
 

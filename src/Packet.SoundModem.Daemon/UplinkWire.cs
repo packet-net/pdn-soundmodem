@@ -9,7 +9,8 @@ namespace Packet.SoundModem.Daemon;
 /// process.
 /// </summary>
 /// <remarks>
-/// <para>The normative wire format is section 4.2 of <c>docs/uplink-plan.md</c>; this is the
+/// <para>The normative wire format is <c>docs/dev/uplink-wire-format.md</c> (section 4.2 of the archived
+/// uplink plan); this is the
 /// monitor's half of it and the field names below are the pinned ones. <b>Nothing a station sends
 /// is forwarded.</b> Every message is parsed into typed fields here and the monitor re-serialises
 /// its own, so there is no code path in which a station's bytes reach a browser unexamined and no

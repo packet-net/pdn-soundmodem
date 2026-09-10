@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Tests.Ms110d;
 public class Trinomial159ScramblerTests
 {
     // D.5.1.4 printed golden vector (text-layer verbatim,
-    // docs/ms110d/tables/text-layer-extracts.md): "the first 32 symbols of the scramble
+    // docs/dev/ms110d/tables/text-layer-extracts.md): "the first 32 symbols of the scramble
     // sequence are" -
     private static readonly int[] PrintedFirst32 =
     [

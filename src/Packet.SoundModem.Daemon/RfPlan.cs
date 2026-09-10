@@ -41,7 +41,7 @@ internal readonly record struct Passband(double LowHz, double HighHz)
 
     /// <summary>
     /// The widest window a radio whose filters the daemon sets can be asked for. The transmit
-    /// filter clamps here (measured on a FLEX-6500, docs/flex-integration.md §10.2); the slice's
+    /// filter clamps here (measured on a FLEX-6500, docs/dev/archive/flex-integration.md §10.2); the slice's
     /// receive filter is asked for the same width and read back, since its own limit is unmeasured.
     /// </summary>
     internal const double WideCeilingHz = 10_000;

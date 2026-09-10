@@ -2,7 +2,7 @@ namespace Packet.SoundModem.Ms110d;
 
 /// <summary>
 /// Appendix D data scrambler (D.5.1.3, doc pp. 160-161, text-layer verbatim in
-/// <c>docs/ms110d/tables/text-layer-extracts.md</c>): generator x⁹+x⁴+1, 9-bit register
+/// <c>docs/dev/ms110d/tables/text-layer-extracts.md</c>): generator x⁹+x⁴+1, 9-bit register
 /// initialized to 1 at the start of each data frame. PSK symbols are scrambled by modulo-8
 /// addition of the numerical value of the rightmost three register bits; 2^N-QAM symbols XOR
 /// the rightmost N bits. The register iterates <b>after</b> use, so the first symbol of every

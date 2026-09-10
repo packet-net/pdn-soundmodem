@@ -194,7 +194,7 @@ public class SsbLadderPassTests
         // in AWGN, so a two-rung pass must catch the difference: the healthy rung decodes, the
         // sub-cliff rung is not acquired and counts every payload bit wrong. The sub-cliff rung was
         // 0 dB until the 2026-08-07 QPSK campaign's matched filter and DPLL timing moved the mode's
-        // AWGN knee ~2.5 dB down (69/100 decode at 0 dB now - docs/qpsk/plan.md Q2); the fixture
+        // AWGN knee ~2.5 dB down (69/100 decode at 0 dB now - docs/dev/archive/qpsk/plan.md Q2); the fixture
         // follows the receiver downhill.
         SsbCaptureScore score = RenderAndScore("qpsk600", [20, -6], firstSeed: 55);
 

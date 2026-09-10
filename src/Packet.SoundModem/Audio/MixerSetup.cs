@@ -473,7 +473,7 @@ public static class MixerSetup
     /// boost. No need for buttons for these."). Automatic gain fights the modem's own level
     /// tracking and turns the noise floor into a moving target, and a mic boost left on puts the
     /// receive path 20 dB into clipping and makes every strong signal decode worse than a weak
-    /// one (<c>docs/hardware/tm8100-cm108-interface-notes.md</c>). Neither has a case, so neither
+    /// one (<c>docs/dev/hardware/tm8100-cm108-interface-notes.md</c>). Neither has a case, so neither
     /// has a key, a button or a state file entry.</para>
     /// <para>One line for both, naming the control where there is one and saying so where there
     /// is not: "no mic boost control" is the ordinary answer on a CM108 and an operator reading

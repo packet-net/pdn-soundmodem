@@ -60,7 +60,7 @@ public interface IFrameSpanSource
     /// <summary>
     /// The two levels a frame decoded by this modem is judged against - see
     /// <see cref="Packet.SoundModem.Audio.FrameLevelLimits"/>, and
-    /// <c>docs/receive-levels.md</c> for where each number was measured.
+    /// <c>docs/dev/receive-levels.md</c> for where each number was measured.
     /// </summary>
     /// <remarks>
     /// <para><b>Here rather than in a table keyed by mode name</b> (Tom, 2026-09-07: "wonder if
@@ -79,7 +79,7 @@ public interface IFrameSpanSource
     /// change the answer, and asking a fixed branch avoids threading the winner out of the dedupe
     /// for a number that would be identical either way.</para>
     /// <para><b>Defaulted so the published surface stays additive.</b> This interface is part of
-    /// the plugin API (<c>docs/modem-binding.md</c>), so a required member would stop an
+    /// the plugin API (<c>docs/dev/modem-plugins.md</c>), so a required member would stop an
     /// out-of-tree modem compiling against a new release for the sake of a number nothing here
     /// has measured for it. The default is
     /// <see cref="Packet.SoundModem.Audio.FrameLevelLimits.Default"/>, which is what the mode-name

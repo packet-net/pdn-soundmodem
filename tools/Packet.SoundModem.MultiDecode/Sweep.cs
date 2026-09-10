@@ -169,7 +169,7 @@ internal static class Sweep
     /// modulators and deviation targets; the question this tool is asked is "what can arrive
     /// through an FM receiver", and the shaped-PSK modes answer yes to the second and no to the
     /// first. Nino's own switch map says so outright - switch 1000 is grouped "Shaped PSK - SSB
-    /// radios, or FM radios" (`docs/mode-modulation-reference.md`). It is not a hypothetical: the
+    /// radios, or FM radios" (`docs/dev/mode-modulation-reference.md`). It is not a hypothetical: the
     /// first real off-air corpus this tool was pointed at turned out to be <c>bpsk1200</c> through
     /// an FM radio, and an FM-native sweep read exactly none of it while the wider one recovered a
     /// whole BPQ chat session. That is the argument for sweeping wide, and it is why the tool now

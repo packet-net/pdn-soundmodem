@@ -35,15 +35,15 @@ public readonly record struct InputLevel(double PeakDbFs, double RmsDbFs, bool C
 /// from somewhere else; it is what this repository has already measured and written down, in four
 /// places that agree:</para>
 /// <list type="bullet">
-/// <item><description><c>docs/ninotnc-loop.md</c>: the bench NinoTNC loop's "GOOD band" is a
+/// <item><description><c>docs/dev/bench/ninotnc-loop.md</c>: the bench NinoTNC loop's "GOOD band" is a
 /// received peak of 0.17 to 0.28 full scale, which is -15.4 to -11.1 dBFS, with a fixed capture
 /// gain and the AGC off.</description></item>
-/// <item><description><c>docs/cfo/evidence/2026-07-31-cfo-1-qpsk-differential</c>: recordings
+/// <item><description><c>docs/dev/archive/cfo/evidence/2026-07-31-cfo-1-qpsk-differential</c>: recordings
 /// exonerated at "peak 0.18-0.25", the same band from a different campaign.</description></item>
-/// <item><description><c>docs/hardware/tm8100-cm108-interface-notes.md</c>: the interface is
+/// <item><description><c>docs/dev/hardware/tm8100-cm108-interface-notes.md</c>: the interface is
 /// designed for -12 dBFS at 60% of class deviation, which puts 100% of class at -7.6 dBFS and
 /// clips the codec only at 240% of it.</description></item>
-/// <item><description><c>docs/ms110d/evidence/2026-07-24-ota-c0</c>: a capture called
+/// <item><description><c>docs/dev/archive/ms110d/evidence/2026-07-24-ota-c0</c>: a capture called
 /// "comfortably adequate" at -11.7 dBFS peak, 12 dB of headroom, no clipped
 /// samples.</description></item>
 /// </list>
@@ -54,7 +54,7 @@ public readonly record struct InputLevel(double PeakDbFs, double RmsDbFs, bool C
 /// in this tree, <c>Packet.SoundModem.NinoBench</c>'s "TOO LOW" at 0.05 (-26 dBFS);
 /// <see cref="HotPeakDbFs"/> above it is now the strictest mode's own requirement, and says
 /// where it came from.</para>
-/// <para><b>The zone survived being audited</b> (2026-09-07, docs/receive-levels.md), which is
+/// <para><b>The zone survived being audited</b> (2026-09-07, docs/dev/receive-levels.md), which is
 /// worth saying because the four sources above are about capture levels people were happy with
 /// and not about what any demodulator here needs. Decoding real frames at every level from 24 dB
 /// past full scale down to the converter's floor puts the zone 21 dB above the earliest cliff any
@@ -99,7 +99,7 @@ public sealed class InputLevelMeter
     /// asks for: c4fsk19200 loses a decibel of link margin the moment the converter clips at all,
     /// 4 dB at 4 dB of overdrive and every frame at 9, and
     /// <see cref="FrameLevelLimits.StationSpreadDb"/> is how much louder than the last one the
-    /// next station may reasonably be (docs/receive-levels.md). The bar cannot know which mode
+    /// next station may reasonably be (docs/dev/receive-levels.md). The bar cannot know which mode
     /// the loudest thing on the input belonged to, so it warns at the strictest mode's line;
     /// <see cref="FrameLevelLimits.ClipSensitive"/> is that same line applied to a frame that is
     /// known to be one of those two modes.</para>

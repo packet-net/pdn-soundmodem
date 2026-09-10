@@ -42,7 +42,7 @@ internal static class FmLadderCommand
                 demodulator - per-burst frame decode, delivered SNR against each burst's noise lead-in,
                 and the achieved peak deviation.
 
-                FM modes and their target peak deviation (docs/mode-modulation-reference.md):
+                FM modes and their target peak deviation (docs/dev/mode-modulation-reference.md):
                   afsk1200 (+-fx25/-fx25rx/-il2p/-il2p-nocrc)  3.0 kHz
                   fsk9600 (+-il2p)                              2.4 kHz
                   fsk4800-il2p                                  1.2 kHz
@@ -448,7 +448,7 @@ internal static class FmLadderCommand
 
                 FM-discriminates a 2-channel IQ capture and prints the peak / RMS / mean instantaneous-
                 frequency deviation in kHz - the achieved deviation, for calibrating the drive to a
-                mode's target (docs/mode-modulation-reference.md).
+                mode's target (docs/dev/mode-modulation-reference.md).
 
                   --in <iq.wav>       the capture (interleaved I,Q 16-bit stereo)
                   --from <s>          window start in seconds (default 0)

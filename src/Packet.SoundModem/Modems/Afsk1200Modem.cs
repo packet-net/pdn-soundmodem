@@ -204,7 +204,7 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     /// <remarks>the 1200 baud AFSK discriminator divides by its own in-band power with a floor of 1e-5 under
-    /// it, and that floor starts costing this family link margin from about -45 dBFS (docs/receive-levels.md).</remarks>
+    /// it, and that floor starts costing this family link margin from about -45 dBFS (docs/dev/receive-levels.md).</remarks>
     public FrameLevelLimits FrameLevels => FrameLevelLimits.QuietSensitive;
 
     /// <inheritdoc />

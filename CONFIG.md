@@ -102,7 +102,7 @@ With **no** `@station` the daemon owns the radio and brings it up headless, crea
 slice from the [`flex`](#flex) section. A trailing `@station` attaches to a running SmartSDR's
 existing slice instead, and the `flex` slice params are ignored because SmartSDR configures
 it. Either way the radio keys itself, so **`ptt` must be omitted** - configuring both is
-rejected at start-up. See [docs/flex-integration.md](docs/flex-integration.md).
+rejected at start-up. See [docs/dev/archive/flex-integration.md](docs/dev/archive/flex-integration.md).
 
 ### Listening to a web receiver
 
@@ -568,7 +568,7 @@ Three limits worth knowing before you build one:
   design refuses.
 
 There is no version handshake yet. A plugin built against a different `pdn-soundmodem` may simply
-fail to load, and it will say so rather than pretend. See `docs/modem-binding.md` for the design.
+fail to load, and it will say so rather than pretend. See `docs/dev/modem-plugins.md` for the design.
 
 ## Band plans in RF terms
 
@@ -1065,10 +1065,10 @@ for either on a data modem:
   a moving target. It raises the gain in the gaps between frames and pulls it down as a frame
   arrives, which is exactly backwards for a demodulator that is measuring SNR and holding a
   threshold. On the bench NinoTNC loop it was silently applying about 12 dB
-  (`docs/ninotnc-loop.md`).
+  (`docs/dev/bench/ninotnc-loop.md`).
 - **Mic Boost** is +20 dB of gain ahead of everything. Left on into a radio that does not need it,
   it puts the receive path 20 dB into clipping and makes every strong signal decode worse than a
-  weak one (`docs/hardware/tm8100-cm108-interface-notes.md`). If the radio really is too quiet,
+  weak one (`docs/dev/hardware/tm8100-cm108-interface-notes.md`). If the radio really is too quiet,
   the capture gain is the control for it, and the [level meter](#the-level-meter) is how you tell.
 
 A card with no such control is not an error; the line says it was looked for and there was
@@ -1198,10 +1198,10 @@ repository has already measured on real hardware, and four sources agree:
 
 | Source | Received peak |
 |---|---|
-| The bench NinoTNC loop's "GOOD" band (`docs/ninotnc-loop.md`) | 0.17 to 0.28 full scale, i.e. -15.4 to -11.1 dBFS |
-| A CFO campaign's exonerated recordings (`docs/cfo/evidence/2026-07-31-cfo-1-qpsk-differential`) | 0.18 to 0.25, i.e. -14.9 to -12.0 dBFS |
-| The CM108 interface's design target (`docs/hardware/tm8100-cm108-interface-notes.md`) | -12 dBFS at 60% of class deviation |
-| An over-the-air capture called "comfortably adequate" (`docs/ms110d/evidence/2026-07-24-ota-c0`) | -11.7 dBFS peak, 12 dB of headroom, no clipped samples |
+| The bench NinoTNC loop's "GOOD" band (`docs/dev/bench/ninotnc-loop.md`) | 0.17 to 0.28 full scale, i.e. -15.4 to -11.1 dBFS |
+| A CFO campaign's exonerated recordings (`docs/dev/archive/cfo/evidence/2026-07-31-cfo-1-qpsk-differential`) | 0.18 to 0.25, i.e. -14.9 to -12.0 dBFS |
+| The CM108 interface's design target (`docs/dev/hardware/tm8100-cm108-interface-notes.md`) | -12 dBFS at 60% of class deviation |
+| An over-the-air capture called "comfortably adequate" (`docs/dev/archive/ms110d/evidence/2026-07-24-ota-c0`) | -11.7 dBFS peak, 12 dB of headroom, no clipped samples |
 
 The green band is widened a little either side of that, to -18 to -9 dBFS, because a real
 station's bursts vary and a zone the signal flickers out of is one an operator learns to ignore.
@@ -1211,7 +1211,7 @@ The red starts at **-6 dBFS**, which is the most headroom any mode in the catalo
 The bar cannot know which mode the loudest thing on the input belonged to, so it warns at the
 strictest mode's line. Under -30 dBFS the bar goes grey.
 
-**The zone survived being audited** ([docs/receive-levels.md](docs/receive-levels.md), 2026-09-07),
+**The zone survived being audited** ([docs/dev/receive-levels.md](docs/dev/receive-levels.md), 2026-09-07),
 which is worth saying because the four sources above are about capture levels people were happy
 with rather than about what any demodulator here needs. Decoding real frames at every level from
 24 dB past full scale down to the converter's own floor puts the zone 21 dB above the earliest
@@ -1245,7 +1245,7 @@ started to cost that frame's own mode something. Nothing in between, and most ro
 which is what a healthy capture gain looks like.
 
 **The two edges are the mode's own**, measured by decoding real frames at every level from 24 dB
-past full scale down to the converter's floor ([docs/receive-levels.md](docs/receive-levels.md)).
+past full scale down to the converter's floor ([docs/dev/receive-levels.md](docs/dev/receive-levels.md)).
 The catalogue splits into three, and the split is a property of the slicer:
 
 | group | modes | `TOO LOUD` at | `TOO QUIET` below |
@@ -1560,7 +1560,7 @@ modem 0: bpsk300 @ 1500 Hz
 modem 0: id beacons - listening in afsk300-multi11 @ 1700 Hz
 ```
 
-A ghost is whatever [`afsk300`](modes.md) currently means, which since 2026-08-02 is the
+A ghost is whatever [`afsk300`](docs/modes.md) currently means, which since 2026-08-02 is the
 narrow-branch frequency-diversity bank rather than one wide demodulator - and that matters more
 here than it does on a data slot. A ghost sits 200 Hz from a PSK carrier *by construction*, and a
 quadrature discriminator follows the strongest thing in its passband, so tight branches are what
@@ -2098,7 +2098,7 @@ The per-frame feed needs a collector that pulls line protocol. With Telegraf:
   data_format = "influx"
 ```
 
-A ready-made Grafana dashboard is in [`docs/grafana/pdn-soundmodem.json`](grafana/pdn-soundmodem.json),
+A ready-made Grafana dashboard is in [`docs/reference/grafana/pdn-soundmodem.json`](docs/reference/grafana/pdn-soundmodem.json),
 including the per-frame scatter. It picks its datasources through variables rather than hardcoding
 them, so it imports against whatever yours are called.
 
@@ -2302,7 +2302,7 @@ One ARDOP TNC per channel - it is a whole virtual TNC, not a demodulator you can
 > It has no `frequency` and no `subChannel`, so prefer the modem entry. Configuring both at
 > once is rejected.
 
-See [docs/ardop-design.md](docs/ardop-design.md).
+See [docs/dev/ardop-design.md](docs/dev/ardop-design.md).
 
 ## `flex`
 
@@ -2342,7 +2342,7 @@ someone. Ordinary queued frames also defer before rendering while another statio
 the same polite hold ARDOP sessions get.
 
 **Off by default** until the multi-client radio semantics are probed on real hardware
-(docs/flex-integration.md § Sharing the PA names the nine probes); the default path is
+(docs/dev/archive/flex-integration.md § Sharing the PA names the nine probes); the default path is
 bit-for-bit what it always was. Turning it on today is safe in the sense that it never
 disturbs a busy radio - the unprobed risks are around losing races, not corrupting anyone.
 
@@ -2456,7 +2456,7 @@ Set `daxChannel` explicitly if you have other DAX users to work around.
 > through a headless waveform, bypassing the radio's SSB modulator, ALC and TX DSP - exists
 > only in the OTA bench harness (`sm-ota ladder --route iq`), and exists precisely *because*
 > it bypasses that chain, which makes it a measurement instrument rather than a deployment
-> path. See [docs/flex-integration.md](docs/flex-integration.md) § 2.3.
+> path. See [docs/dev/archive/flex-integration.md](docs/dev/archive/flex-integration.md) § 2.3.
 
 ## `ubersdr`
 
@@ -3303,5 +3303,5 @@ Point Pat at 8101 (data 8102), and your packet host at 8100 and 8103.
 
 - [INSTALL.md](INSTALL.md) - installing the package and first-run setup
 - [docs/modes.md](docs/modes.md) - every mode, its capabilities and verification level
-- [docs/flex-integration.md](docs/flex-integration.md) - FlexRadio headless and attach modes
-- [docs/ardop-design.md](docs/ardop-design.md) - the ARDOP implementation
+- [docs/dev/archive/flex-integration.md](docs/dev/archive/flex-integration.md) - FlexRadio headless and attach modes
+- [docs/dev/ardop-design.md](docs/dev/ardop-design.md) - the ARDOP implementation

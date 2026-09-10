@@ -3,7 +3,7 @@ namespace Packet.SoundModem.Tests.Channel;
 /// <summary>
 /// Impulse-noise (QRN) injection for the sim rig - rx-roadmap workstream 6 item 2,
 /// calibrated from the 40 m capture campaign's measured atmospherics rather than a
-/// textbook Middleton model. The measured record (docs/bench/impulse-stats-2026-08-06,
+/// textbook Middleton model. The measured record (docs/dev/archive/bench/impulse-stats-2026-08-06,
 /// re-confirmed over the first full day): broadband static crashes arriving at 60-220 per
 /// minute (evening and sunrise peaks ~220), whose detection-band envelope sits a
 /// threshold-plus-exponential distance above the quiet-band floor (p50 18.1 dB over
@@ -61,7 +61,7 @@ public static class ImpulseNoise
     /// the event's PEAK smoothed envelope (~2 dB over the underlying sigma), so drawing
     /// from 15.56 made the instrument read every event ~6 dB hot. 7.4 here lands the
     /// closed loop's detected p50 on the measured 18.1 dB (see
-    /// docs/bench/impulse-model-validation-2026-08-07.txt).</summary>
+    /// docs/dev/archive/bench/impulse-model-validation-2026-08-07.txt).</summary>
     private const double ThresholdDb = 7.4;
 
     /// <summary>Mean of the exponential amplitude excess above the threshold, dB. Fitted:

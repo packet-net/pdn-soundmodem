@@ -304,7 +304,7 @@ internal sealed class UberSdrDirectory : IDisposable
     /// slug is a callsign somebody was issued and a receiver's is derived from a hostname. The
     /// mechanism is the one that was already here and already tested; the only new thing is who
     /// calls it, and when - at start-up, from the uplink table, before any station has connected.
-    /// See <c>docs/uplink-plan.md</c> 4.4.</para>
+    /// See <c>docs/dev/archive/uplink-plan.md</c> 4.4.</para>
     /// </remarks>
     internal void Bind(string slug, string host) => _bound[slug] = host;
 

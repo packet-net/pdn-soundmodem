@@ -53,7 +53,7 @@ public sealed class FlexRuntime : IAsyncDisposable
 /// frequency/antenna/mode configure the <b>headless</b> slice the daemon creates (ignored in
 /// attach mode - SmartSDR owns the slice there); <see cref="DaxChannel"/> applies to
 /// <b>both</b> paths (the DAX channel the client claims). Defaults match
-/// docs/flex-integration.md §8 (14.100000 MHz / ANT1 / DIGU / DAX 1).</summary>
+/// docs/dev/archive/flex-integration.md §8 (14.100000 MHz / ANT1 / DIGU / DAX 1).</summary>
 public sealed record FlexTuning
 {
     /// <summary>Slice frequency (MHz, six-decimal Flex form). Default "14.100000".
@@ -96,7 +96,7 @@ public sealed record FlexTuning
 
     /// <summary>The DAX channel the client claims (both headless and attach). Default "1". A
     /// headless client sharing a box with a running SmartSDR must pick a channel SmartSDR is not
-    /// using (SmartSDR grabs DAX 1) - see docs/flex-integration.md §8.</summary>
+    /// using (SmartSDR grabs DAX 1) - see docs/dev/archive/flex-integration.md §8.</summary>
     public string DaxChannel { get; init; } = "1";
 
     /// <summary>Transmit power in watts. Null leaves the radio's own setting alone.</summary>
@@ -113,7 +113,7 @@ public sealed record FlexTuning
     /// keyup waits for the radio to be quiet, re-asserts the transmit filter and the TX
     /// slice, and only believes a keyup the radio confirms - for a radio shared with another
     /// transmitting client (a test instance, the sm-ota harness). Default false until the
-    /// multi-client hardware probes pass (docs/flex-integration.md § Shared-PA probes);
+    /// multi-client hardware probes pass (docs/dev/archive/flex-integration.md § Shared-PA probes);
     /// the sole-owner path is bit-for-bit what it always was.
     /// </summary>
     public bool Arbitration { get; init; }
@@ -144,7 +144,7 @@ public sealed record FlexTuning
 /// radio and brings it up <b>headless</b> (register as a GUI client, create its own slice -
 /// the "pdn at the radio, no SmartSDR" deployment, the default). A trailing <c>@station</c>
 /// selects <b>attach</b> mode: coexist with a running SmartSDR by binding that station's
-/// existing slice. See docs/flex-integration.md §4/§8.
+/// existing slice. See docs/dev/archive/flex-integration.md §4/§8.
 /// </summary>
 public static class FlexDevice
 {

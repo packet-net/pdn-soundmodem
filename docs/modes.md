@@ -3,7 +3,7 @@
 Every mode `ModemCatalog` serves, with its capabilities and current verification level.
 This is the **reference view**; the authoritative per-mode validation provenance - which
 tests, which captures, which campaigns, with dates and PRs - lives in the
-[mode validation ledger](mode-validation.md), and that document's maintenance rule governs
+[mode validation ledger](dev/mode-validation.md), and that document's maintenance rule governs
 both: when a mode's status changes there, update its row here in the same PR.
 
 **Verification levels** (highest achieved; each level implies the ones below it):
@@ -24,7 +24,7 @@ native rate (`ModemCatalog.DspRateFor`); capture rates must be an integer multip
 `Tunable` = accepts a non-default audio centre frequency (`AcceptsCentreFrequency`:
 the `afsk*`/`bpsk*`/`qpsk*` families). All PSK modes default to the differential
 detector (coherent selectable per call). Radio-path assignments (FM deviation targets vs
-SSB) are pinned in [mode-modulation-reference.md](mode-modulation-reference.md).
+SSB) are pinned in [mode-modulation-reference.md](dev/mode-modulation-reference.md).
 
 ## NinoTNC-lineage modes
 
@@ -114,6 +114,6 @@ performance mask under the D.6.1 Poor channel.
 ## Measured extras
 
 - **Acquisition floors behind real NinoTNC preambles** (per-mode, trim-ladder measured,
-  incl. three sync-only modes): [bench corpus doc](bench/ninotnc-corpus-2026-07-31.md).
+  incl. three sync-only modes): [bench corpus doc](dev/archive/bench/ninotnc-corpus-2026-07-31.md).
 - **NinoTNC head-to-head**: on the 45-file corpus there is no cell the reference hardware
   decodes that we do not; details and caveats in the same bench doc.

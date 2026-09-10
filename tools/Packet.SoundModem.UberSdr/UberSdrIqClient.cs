@@ -51,7 +51,7 @@ public sealed record CaptureResult(
 
 /// <summary>
 /// Captures an IQ (or PCM) stream from a ka9q_ubersdr / UberSDR instance to a 16-bit stereo
-/// WAV plus a JSON sidecar. Protocol and framing per docs/ms110d/ota-capture-client-plan.md;
+/// WAV plus a JSON sidecar. Protocol and framing per docs/dev/archive/ms110d/ota-capture-client-plan.md;
 /// this is an independent C# implementation of the flow in
 /// <c>clients/iq-recorder/main.go</c> from https://github.com/madpsy/ka9q_ubersdr (GPL-3.0).
 /// One instance per session/file; the caller reconnects (a fresh instance) per ladder pass.

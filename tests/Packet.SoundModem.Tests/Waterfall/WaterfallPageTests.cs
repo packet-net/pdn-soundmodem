@@ -450,7 +450,7 @@ public class WaterfallPageTests
     /// said so.</para>
     /// <para>A frame relayed from somebody else's station arrives as strings over a socket and
     /// goes through no such parser, so the coincidence stops holding the moment there is an
-    /// uplink. Closed here, ahead of the phase that adds one (docs/uplink-plan.md 4.6).</para>
+    /// uplink. Closed here, ahead of the phase that adds one (docs/dev/archive/uplink-plan.md 4.6).</para>
     /// </remarks>
     [Fact]
     public async Task A_Frame_From_A_Callsign_With_Angle_Brackets_Is_Escaped_On_The_Page()
@@ -1339,7 +1339,7 @@ public class WaterfallPageTests
             // The band and the red, drawn from the daemon's own figures: -18 to -9 dBFS on a bar
             // that runs from -60 to 0, so the green starts at 70% and is 15% wide, and the red is
             // the top 10% - which is HotPeakDbFs at -6, the strictest mode's own headroom
-            // requirement (docs/receive-levels.md). If these move, InputLevelMeter's constants
+            // requirement (docs/dev/receive-levels.md). If these move, InputLevelMeter's constants
             // moved with them.
             meter.ZoneLeft.Should().Be("70%");
             meter.ZoneWidth.Should().Be("15%");
@@ -1641,7 +1641,7 @@ public class WaterfallPageTests
     /// <remarks>
     /// It used to keep two numbers to word the sentence under the list and the badges' tooltips,
     /// pinned to the daemon's. Since the thresholds became the mode's own
-    /// (<see cref="FrameLevelLimits"/>, measured in <c>docs/receive-levels.md</c>) the catalogue
+    /// (<see cref="FrameLevelLimits"/>, measured in <c>docs/dev/receive-levels.md</c>) the catalogue
     /// splits into three groups that differ by 6 dB at the loud end and 39 at the quiet one, so
     /// any single number on the page would be wrong for two thirds of the rows it explained. The
     /// daemon sends the word and the page words the tooltips in terms of what was measured.

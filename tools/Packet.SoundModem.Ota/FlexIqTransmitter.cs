@@ -127,7 +127,7 @@ public sealed record FlexTransmitterOptions
     /// SSB deployment path - the radio's SSB modulator places audio <c>f</c> at <c>dial + f</c>. Set
     /// <c>FM</c> (or <c>NFM</c>) for the FM-native modes, which are carried as frequency modulation:
     /// the DAX audio then <em>frequency-modulates</em> the carrier, and the drive is calibrated so the
-    /// achieved peak deviation is the mode's target (see <c>docs/mode-modulation-reference.md</c>).
+    /// achieved peak deviation is the mode's target (see <c>docs/dev/mode-modulation-reference.md</c>).
     /// Ignored by the waveform-IQ route, which synthesises its own baseband.
     /// </summary>
     public string SliceMode { get; init; } = "DIGU";
@@ -276,7 +276,7 @@ public sealed class FlexIqTransmitter : IOtaTransmitter
 
     /// <summary>
     /// Complex samples the radio pulls per waveform TX buffer - 128, from the measured
-    /// cadence of 187.5 packets/s at 24 kHz on M0LTE's 6500 (docs/flex-integration.md §9.2).
+    /// cadence of 187.5 packets/s at 24 kHz on M0LTE's 6500 (docs/dev/archive/flex-integration.md §9.2).
     /// </summary>
     /// <remarks>Bursts are padded up to a whole number of these. Otherwise the final buffer
     /// is a partial one, the ring zero-pads the shortfall, and <c>SamplesStarved</c> comes

@@ -13,7 +13,7 @@ namespace Packet.SoundModem.Daemon;
 /// <para>This is the whole of the monitor's side of the seam for audio: a relayed station is an
 /// ordinary station over a socket-fed input, with no modems, so the waterfall, the band overlays,
 /// the browser audio and the page all come out of code that is already in production. See
-/// <c>docs/uplink-plan.md</c> 3.2 and 4.1.</para>
+/// <c>docs/dev/archive/uplink-plan.md</c> 3.2 and 4.1.</para>
 /// <para><b>The buffer is bounded and drops the oldest.</b> Everything here arrives from another
 /// machine over a socket this process does not control the pace of, and an unbounded accumulator
 /// on such a path is the one thing the plan names as the pattern to avoid. When the buffer

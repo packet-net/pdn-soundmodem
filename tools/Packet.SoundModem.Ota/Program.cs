@@ -8,7 +8,7 @@ using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Iq;
 using M0LTE.Dsp;
 
-// sm-ota - the MS110D over-the-air harness. See docs/ms110d/ota-execution-plan.md.
+// sm-ota - the MS110D over-the-air harness. See docs/dev/archive/ms110d/ota-execution-plan.md.
 //
 // This increment is the tone-first bring-up (§E0.5): transmit a known tone through the Flex
 // waveform IQ path into the dummy load, capture it on the UberSDR, and measure what came
