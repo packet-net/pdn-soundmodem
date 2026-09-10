@@ -108,12 +108,31 @@ public class WaterfallPageTests
         });
         server.Start();
 
-        // Five seconds of the server's clock per fifty of the wall, so a probe run that lasts a
-        // few seconds is a page held open for several minutes and asked a dozen times or more.
-        // A hundredfold rather than any faster because the margin that matters is the real time
-        // the page has to answer in: at this rate a deadline is 600 ms of wall clock, which is a
-        // very long stall for a socket on loopback and a scripting engine with nothing else to
-        // do, and this box does stall under suite load (#400).
+        // The page is held open for a DEFINITE number of keep-alives, not for however
+        // long this process happens to take. The probe waits until the server has sent
+        // it `hold` of them before it finishes, so the winding loop below can be as
+        // fast or slow as the box allows without changing what is proved: it just
+        // keeps winding until the probe is done.
+        //
+        // It used to assert on how much clock the winding loop got through, which made
+        // the subject of the assertion (real elapsed time / the accuracy of a 50 ms
+        // sleep) something the test does not control. Under suite load Task.Delay
+        // overshoots, the iteration count drops, and a threshold with almost no margin
+        // is missed: the v0.63.0 release run wound 4m40s where it wanted 5m, having
+        // needed the probe to last 3.0 s of wall clock and got 2.8 s. It was measuring
+        // the box, not the page.
+        //
+        // Enough keep-alives to cover several silence deadlines, which is the thing
+        // being proved: a page that answers is never given up on, however long it is
+        // left open. KeepAlivePing apart, so this is comfortably past
+        // KeepAliveSilence * 5.
+        int hold = (int)Math.Ceiling(WaterfallWebServer.KeepAliveSilence * 6 / WaterfallWebServer.KeepAlivePing);
+
+        // Five seconds of the server's clock per fifty of the wall. A hundredfold rather
+        // than any faster because the margin that matters is the real time the page has
+        // to answer in: at this rate a deadline is 600 ms of wall clock, which is a very
+        // long stall for a socket on loopback and a scripting engine with nothing else
+        // to do, and this box does stall under suite load (#400).
         using var running = new CancellationTokenSource();
         var wound = TimeSpan.Zero;
         Task winding = Task.Run(async () =>
@@ -133,14 +152,15 @@ public class WaterfallPageTests
             }
         });
 
-        Probe probe = await RunProbeAsync(node, port);
+        Probe probe = await RunProbeAsync(node, port, holdKeepAlives: hold);
         await running.CancelAsync();
         await winding;
 
         probe.Thrown.Should().BeEmpty("the page must not throw while answering");
         probe.Connected.Should().BeTrue("the page must reach the server before anything else can work");
-        wound.Should().BeGreaterThan(WaterfallWebServer.KeepAliveSilence * 5,
-            "the page has to be held open across several deadlines for this to prove anything");
+        probe.KeepAlives.Should().BeGreaterThanOrEqualTo(hold,
+            "the page has to be held open across several silence deadlines for this to prove anything, "
+            + $"and it was wound {wound} of server clock to get there");
 
         lock (journal)
         {
@@ -1493,7 +1513,7 @@ public class WaterfallPageTests
         string? stored = null, string? pageText = null, string? txTest = null, string? apiKey = null,
         bool mixer = false, double? mixerGain = null, double? mixerPlayback = null,
         bool meter = false, bool meterTimers = false, bool txTestClose = false,
-        bool txTestResync = false)
+        bool txTestResync = false, int holdKeepAlives = 0)
     {
         string here = Path.GetDirectoryName(typeof(WaterfallPageTests).Assembly.Location)!;
         var start = new ProcessStartInfo(node)
@@ -1516,6 +1536,7 @@ public class WaterfallPageTests
         if (meterTimers) start.Environment["METERTIMERS"] = "1";
         if (txTestClose) start.Environment["TXTEST_CLOSE"] = "1";
         if (txTestResync) start.Environment["TXTEST_RESYNC"] = "1";
+        if (holdKeepAlives > 0) start.Environment["HOLDKEEPALIVES"] = holdKeepAlives.ToString();
         if (mixerGain is double gain)
         {
             start.Environment["MIXGAIN"] = gain.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -2381,6 +2402,7 @@ public class WaterfallPageTests
         LinkCard[] LinkCards,
         CardSlot[] CardsAfterSecondLink,
         CardSlot[] CardsAfterCall,
+        int KeepAlives,
         string TranscriptFailed,
         string TranscriptOurs,
         CardSlot[] CardsAfterTimeout,

@@ -207,8 +207,20 @@ const protocol = process.env.PROTOCOL || "http:";
 // site that offers several. The default is what a browser reports at the root.
 const pathname = process.env.PATHNAME || "/";
 let socketUrl = null;
+// Keep-alives the server has sent this socket. Counted here rather than inferred
+// from elapsed time so a test can hold the page open for a DEFINITE number of
+// them: the page answers from onmessage, so a ping arriving is the only thing
+// that proves the mechanism ran. Listening alongside the page's own onmessage
+// rather than replacing it, so the page still handles every message itself.
+let keepAlives = 0;
 class WebSocket_ extends WebSocket {
-  constructor(url, protocols) { socketUrl = String(url); super(socketUrl.replace(/^wss:/, "ws:"), protocols); }
+  constructor(url, protocols) {
+    socketUrl = String(url);
+    super(socketUrl.replace(/^wss:/, "ws:"), protocols);
+    this.addEventListener("message", e => {
+      try { if (JSON.parse(e.data)?.type === "ping") keepAlives++; } catch { /* not JSON, not a ping */ }
+    });
+  }
 }
 
 // This origin's one localStorage key, as the page finds it when it opens. Empty unless STORED
@@ -835,6 +847,16 @@ if (process.env.TXTEST_CLOSE) {
   txTestTitleWhileClosed = goEl().title;
 }
 
+// HOLDKEEPALIVES asks the probe to stay open until the server has sent it that
+// many keep-alives, instead of exiting as soon as its scripted checks are done.
+// That is what lets the keep-alive test assert on a DEFINITE number of answered
+// pings rather than on how much clock a winding loop happened to get through in
+// however long this process took to run.
+const holdKeepAlives = Number(process.env.HOLDKEEPALIVES || 0);
+if (holdKeepAlives > 0) {
+  await untilTrue(() => keepAlives >= holdKeepAlives, 120000);
+}
+
 process.stdout.write(JSON.stringify({
   mixerOnArrival,
   mixerAfterGain,
@@ -921,4 +943,5 @@ process.stdout.write(JSON.stringify({
   txTestDisabledWhileClosed,
   txTestTitleWhileClosed,
   thrown,
+  keepAlives,
 }) + "\n", () => process.exit(0));
