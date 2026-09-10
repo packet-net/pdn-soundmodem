@@ -11,8 +11,9 @@ public sealed class ModemConfig
     /// <summary>KISS sub-channel (port nibble), 0-15.</summary>
     public int SubChannel { get; set; }
 
-    /// <summary>Mode name as accepted by --modem (afsk1200, afsk1200-multi, bpsk300,
-    /// bpsk300-nocrc, qpsk2400, qpsk3600, fsk9600, fsk9600-il2p).</summary>
+    /// <summary>Mode name as accepted by --modem: one of
+    /// <see cref="Packet.SoundModem.Modems.ModemCatalog.KnownModes"/>, or a mode a loaded plugin
+    /// registers. Default afsk1200.</summary>
     public string Mode { get; set; } = "afsk1200";
 
     /// <summary>Audio centre/carrier frequency override in Hz, applied to both TX and RX

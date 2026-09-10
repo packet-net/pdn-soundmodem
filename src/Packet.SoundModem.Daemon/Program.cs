@@ -23,125 +23,9 @@ using Packet.SoundModem.Ms110d;
 
 // pdn-soundmodem: headless soundcard packet modem daemon.
 //
-//   pdn-soundmodem [--config soundmodem.json]
-//   pdn-soundmodem --uplink-token CALLSIGN
-//   pdn-soundmodem [--device default] [--capture-rate 48000] [--kiss 8105]
-//                  [--bind 127.0.0.1|*]
-//                  [--modem N:MODE[:FREQ]]... [--ptt serial:/dev/ttyUSB0[:rts|:dtr]]
-//                  [--ptt cm108:/dev/hidraw0[:gpio]]
-//                  [--txdelay MS] [--wav FILE] [--wav-loop FILE] [--quality-frames]
-//                  [--psk-detector coherent|differential]
-//                  [--paging PORT[:BAUD]]
-//                  [--ardop PORT]
-//                  [--waterfall PORT] [--dial HZ]
-//                  [--two-tone SECONDS] [--tone HZ SECONDS]
-//
-// Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, bpsk1200 - the BPSK modes are a
-// differential frequency-diversity bank by default (parallel branches at stepped centres;
-// bpsk300-multi/bpsk1200-multi are aliases; offsetPairs/offsetStepHz tune it, offsetPairs:0 =
-// single modem; --psk-detector coherent forces coherent), qpsk2400, qpsk3600 (both IL2P+CRC),
-// fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC), freedv-datac0/1/3/4/13/14 (FreeDV datac
-// OFDM waveform; payloads carry the family-standard IL2P+CRC bit stream - a pdn convention,
-// FreeDV defines no framing at the raw-data layer), ms110d-wn0/1/2/3/4/5/6/7/8/13
-// (MIL-STD-188-110D App D 3 kHz serial-tone, 75-3200 bps; same IL2P+CRC payload
-// convention; RX is autobaud - the wnN suffix selects the transmit waveform only).
-// Multiple --modem options share the
-// audio channel and are addressed by the KISS port nibble (QtSoundModem multiplex model).
-//
-// The optional N:MODE:FREQ third field sets the modem's audio centre in Hz (both TX and
-// RX), QtSoundModem-style - e.g. --modem 0:bpsk300:1459 places 300 BPSK at 1459 Hz to
-// meet a peer that sits off the usual centre. It applies to the AFSK tone-pair modes
-// (afsk*, centre = mark/space midpoint, default 1700), the BPSK/QPSK carrier modes
-// (bpsk*/qpsk*, default 1500, 1650 for qpsk3600), and the spec-fixed waveforms (freedv-*,
-// ms110d-*), which keep their standard centre as the default (1800 for ms110d, the OFDM
-// centre for datac) and are moved by frequency translation around their unchanged DSP -
-// interop is set by the RF centre, so a moved waveform is still standard on air. The
-// baseband FSK families (fsk*/c4fsk*) occupy DC-to-Nyquist and have no audio centre; a
-// :FREQ on those is an error, not silently ignored.
-// --wav decodes a file instead of live audio (testing/corpus runs) and exits.
-// --wav-loop replays a file forever at wall-clock pace as if it were the capture device -
-// the whole live daemon (KISS, waterfall) runs off the recording; no soundcard needed.
-//
-// --waterfall serves the browser waterfall on PORT (default 8107 via the config section):
-// 30 fps spectrum + waterfall over the shared passband, every modem's measured band drawn
-// with its audio and RF centre marked, and each decoded frame tagged on its energy burst
-// with source callsign, band SNR and frequency offset. --dial presets the rig dial
-// frequency in Hz the RF scale derives from (operators can retune per-browser); the
-// config section adds bind/sideband/rate knobs.
-// --psk-detector selects the BPSK/QPSK detection method: coherent (default, matches the
-// NinoTNC's Costas loop and noise margin) or differential (opt-in, acquires at zero preamble
-// at a ~1-2 dB noise cost - for short-preamble links). See issue #5.
-//
-// --paging starts the POCSAG paging endpoint (DAPNET/POCSAG-compatible waveform; local
-// paging API, pdn). Pages are not AX.25 frames, so they get a line-based TCP service of
-// their own instead of a KISS port - one UTF-8 command per line:
-//
-//   PAGE <ric> <function> ALPHA <text…>     → OK <id> | ERR <reason>
-//   PAGE <ric> <function> NUMERIC <text…>
-//   PAGE <ric> <function> TONE
-//
-// Transmissions share the channel-access path (CSMA, PTT, TXDELAY) with the packet
-// modems. Every page the POCSAG decoder hears on channel is broadcast to all paging
-// clients as "HEARD <ric> <function> ALPHA|NUMERIC|TONE [text]". BAUD defaults to 1200
-// (DAPNET); 512 and 2400 are also valid. See PagingTcpServer for the full grammar.
-// (Speaking the DAPNET-core transmitter protocol is a possible future follow-up.)
-//
-// --ardop starts the ARDOP virtual TNC: the ardopcf-compatible TCP host interface
-// (command port PORT, data port PORT+1 - Pat and other Winlink hosts connect
-// unmodified). Per the dedicated-channel policy (docs/ardop-design.md §2.2) the ARDOP
-// channel carries only ARDOP: --ardop is exclusive with --modem/--paging, the KISS
-// server is not started, and CSMA persistence is forced to 255 - ARDOP runs its own
-// channel discipline (ARQ timing budgets, negotiated leaders), which the daemon's
-// p-persistence roll must never delay. PTT keying and sample-domain TX-complete are
-// the channel's, exactly as for the packet modes.
-
-// --device flex:<radio>[:slice][@station] uses a FlexRadio 6000-series over the LAN as the
-// sound card + PTT: <radio> is `discover` (broadcast), an IP (host[:port]), a discovery spec
-// (serial=…/name=…), or `mock` (an in-process fake, for offline testing). <slice> is a
-// letter A-H (default A). The DAX transport is auto-picked from the DSP rate (24 kHz s16
-// for the 12 kHz modes, 48 kHz float32 for the 48 kHz modes). The radio keys itself, so
-// --ptt is rejected alongside flex:.
-//
-// Selection policy: with no @station the daemon OWNS the radio and brings it up HEADLESS
-// (registers as a GUI client, creates its own slice - the "pdn at the radio, no SmartSDR"
-// deployment; the default). --flex-freq/--flex-ant/--flex-mode set the created slice's
-// working frequency (default 14.100000 MHz), antenna (ANT1) and mode (DIGU); the headless path
-// also disables band persistence and explicitly tunes the slice, so it lands on the requested
-// QRG regardless of the radio's last-used band. A trailing @station selects ATTACH mode:
-// coexist with a running SmartSDR by binding that station's existing slice (the slice params
-// are then ignored - SmartSDR configures it). --flex-daxch sets the DAX channel to claim
-// (default 1) for BOTH paths; a headless client sharing a box with SmartSDR must pick a channel
-// SmartSDR is not using (it grabs DAX 1). See docs/flex-integration.md §4/§8.
-
-// --mixer-show DEVICE prints the sound card's mixer - every control it has, and the capture
-// gain, AGC, mic boost and playback level this station would drive, each with the card's own dB
-// range - and exits. DEVICE is the same string as --device (plughw:CARD=Device,DEV=0) or the
-// card alone (hw:3). It only reads, and reading a mixer does not touch the PCM, so it answers
-// "what is my card called, what can it be set to, and where is it now" on a station that is
-// running. A control the card publishes no dB scale for says "no dB scale" rather than a
-// figure. The "alsa" config section sets the same controls at start-up; see CONFIG.md.
-
-// --device ubersdr:<instance> makes a RECEIVE-ONLY station out of a public UberSDR web
-// receiver: <instance> is a host (m9psy-1.instance.ubersdr.org), a host:port, or the https://
-// URL you would open in a browser. The daemon takes the receiver's IQ stream (iq48 - 48 kHz of
-// complex baseband, ±24 kHz around the tune frequency), demodulates SSB from it in-process and
-// hands the modems real audio, so every mode, the waterfall and the frame log work exactly as
-// they do on a sound card. IQ rather than the instance's own audio because holding the complex
-// baseband means the receive filter is the one the band plan asked for and there is no AGC in
-// the path - which is what makes SNR figures off this path comparable with a soundcard's.
-//
-// There is no transmitter at the far end of a WebSocket. --ptt is rejected, transmissions are
-// refused the moment they are queued (with that as the reason), and the band plan's dial is
-// used to tune the receiver rather than printed for the operator to dial in. The "ubersdr"
-// config section carries the stream's parameters (mode, password, SSB filter edges, gain).
-
-// --uplink-token CALLSIGN mints one uplink token for that station and prints it with the hash
-// that goes in this site's "monitor"."uplinks" entry, then exits. Run it on the monitor: the
-// hash stays here, the token is given to that station's operator once, and nothing is written
-// to any file. See CONFIG.md § monitor.uplinks.
-
-// 9600-family and freedv-* modems need 48 kHz DSP (the FreeDV engine is native 8 kHz, and
-// 48000 = 6·8000 while 12000 has no integer ratio); everything else runs at 12 kHz.
+// The command line is described once, in Usage.cs, which is what --help prints. The flags are
+// parsed in the switch below and a --config file is then loaded over them; UsageTests reads that
+// switch and fails if a flag it parses is missing from the usage text, so the two cannot drift.
 
 string device = "default";
 int captureRate = 48000;
@@ -193,6 +77,17 @@ string? flexDaxCh = null;
 // answers "what are my card's control names and what is it set to" without stopping the station.
 string? mixerShow = null;
 
+// Nothing on the command line used to start a station on the default sound card with one
+// afsk1200 modem and KISS on 8105. That station is still one flag away (--config with an empty
+// file gives the same thing, and the installed service always passes --config), but a bare
+// command is far more often somebody finding out what the program is, so it gets the usage and
+// an exit code that says nothing ran.
+if (args.Length == 0)
+{
+    Console.Error.WriteLine(Usage.Text);
+    return Usage.NoArgumentsExitCode;
+}
+
 for (int i = 0; i < args.Length; i++)
 {
     string Next() => ++i < args.Length
@@ -230,7 +125,7 @@ for (int i = 0; i < args.Length; i++)
         // missing: this is often the first thing a new site owner runs.
         case "--uplink-token": return UplinkToken.Print(i + 1 < args.Length ? args[++i] : null);
         case "--help":
-            Console.WriteLine("see source header for usage");
+            Console.WriteLine(Usage.Text);
             return 0;
         default:
             Console.Error.WriteLine($"unknown option {args[i]}");
