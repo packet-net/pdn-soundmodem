@@ -106,7 +106,7 @@ yield a frame at all is the diversity bank earning its keep.
 which is a question about modulators, and it **read exactly none of this corpus**. The question
 the tool is actually asked is what can arrive through an FM receiver, and Nino's own switch map
 groups the shaped-PSK modes "Shaped PSK - SSB radios, **or FM radios**"
-([mode-modulation-reference.md](../../../docs/mode-modulation-reference.md)). The default is now
+([mode-modulation-reference.md](../../../docs/dev/mode-modulation-reference.md)). The default is now
 the whole catalogue, and `SweepTests` pins the lesson.
 
 ## Reproducing
@@ -163,7 +163,7 @@ in wrong bytes against the 8-byte floor instead of in pass/fail, and the same bu
 different slot of the comb (the bank's +15 and +22.5 Hz branches) already shows 9 wrong bytes,
 one short. The same work took the simulated qpsk600 knee and the whole family's carrier-offset
 tolerance a long way, which is the part of #326 that reaches the air; see
-docs/mode-validation.md, 2026-08-21 (later3).
+docs/dev/mode-validation.md, 2026-08-21 (later3).
 
 ## 2026-08-21 (later2): it copies
 
@@ -180,5 +180,5 @@ pdn-decode samples/offair/2026-08-21/packet-24738.wav
 reads the frame above: `N2IRZ-2 > ID`, IL2P+CRC verified, **6 bytes corrected** of a limit of 8
 (8 with three phases; the hold alone is what crosses the line). `OffAirQpskTests` pins it as the
 regression test this folder was committed to be. On the simulated channel the same two changes
-are worth about 1 dB at the knee of every PSK mode, in both families; see docs/mode-validation.md,
+are worth about 1 dB at the knee of every PSK mode, in both families; see docs/dev/mode-validation.md,
 2026-08-21 (later4).

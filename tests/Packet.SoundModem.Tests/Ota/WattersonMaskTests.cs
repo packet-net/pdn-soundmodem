@@ -24,7 +24,7 @@ namespace Packet.SoundModem.Tests.Ota;
 /// direction.</para>
 /// <para><b>What a green mask means.</b> No regression against the <em>model</em>. The
 /// Watterson sim carries no static crashes, no SSB filter tilt, no AGC, and our own transmit
-/// shaping rather than a NinoTNC's; the 40 m capture campaign (docs/rx-roadmap.md) stays the
+/// shaping rather than a NinoTNC's; the 40 m capture campaign (docs/dev/rx-roadmap.md) stays the
 /// truth about the band. Two instruments, two jobs.</para>
 /// <para><b>Coverage rule.</b> Every non-FM mode the sim rig can drive gets a mask: the
 /// NinoTNC SSB lineage (afsk300-il2pc, bpsk300/1200, qpsk600/2400), the FreeDV datac OFDM

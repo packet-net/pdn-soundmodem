@@ -47,13 +47,13 @@ internal readonly record struct UberSdrLine(string Sentence, bool BeforeAWait);
 /// receive filter is the one the band plan asked for and the AGC is nobody's - which is what
 /// makes SNR figures off this path mean the same thing as SNR figures off a sound card. The
 /// instrument audit behind that (linear channel, no AGC on the IQ path, 12 dB of headroom, GPSDO
-/// locked) is in <c>docs/ms110d/evidence/2026-07-24-ota-c0/</c>.</para>
+/// locked) is in <c>docs/dev/archive/ms110d/evidence/2026-07-24-ota-c0/</c>.</para>
 /// <para><b>Sessions end.</b> Public instances cap a session at <c>max_session_time</c> (3 hours
 /// on the ones measured), and a modem is expected to run for months. The receive loop therefore
 /// treats a closed socket as ordinary and reconnects, discarding the
 /// <see cref="UberSdrTuning.StartupGuardMs"/> level ramp each time; only a receiver that stays
 /// unreachable for <see cref="ReconnectGiveUpAfter"/> raises <see cref="Lost"/>.</para>
-/// <para>Protocol per <c>docs/ms110d/ota-capture-client-plan.md</c>; the framing is decoded by
+/// <para>Protocol per <c>docs/dev/archive/ms110d/ota-capture-client-plan.md</c>; the framing is decoded by
 /// <see cref="PcmBinaryDecoder"/>, which is a port from the upstream Go client.</para>
 /// </remarks>
 public sealed class UberSdrAudioInput : IUberSdrSession

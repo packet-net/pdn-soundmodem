@@ -26,7 +26,7 @@ namespace Packet.SoundModem.Tests.Dsp;
 /// </list>
 /// <para>
 /// The reference numbers in <see cref="NinoTncMeasured"/> are from a real NinoTNC
-/// (firmware 3.44) recorded on the CM108 bench loop - see docs/ninotnc-loop.md. They are
+/// (firmware 3.44) recorded on the CM108 bench loop - see docs/dev/bench/ninotnc-loop.md. They are
 /// measured through a 48 kHz codec, which does nothing to a 300-2500 Hz signal, and at
 /// ~40 dB SNR, where noise sits far below the 0.5 % tails, so they compare fairly with our
 /// synthesised waveform.

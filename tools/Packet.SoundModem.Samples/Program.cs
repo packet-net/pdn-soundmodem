@@ -13,7 +13,7 @@ using Packet.SoundModem.Modems;
 //
 // --only <mode> renders just one mode; --native-rate writes at the modem's DSP rate (no
 // upsample) - e.g. 12 kHz for the audio-band PSK/AFSK modes, for the QtSM snd-aloop rig
-// (docs/qtsm-loop.md), whose PSK modems run at 12 kHz. The default set (48 kHz, all modes)
+// (docs/dev/bench/qtsm-loop.md), whose PSK modems run at 12 kHz. The default set (48 kHz, all modes)
 // is unchanged so samples/pdn regenerates byte-for-byte.
 
 string outDir = args.Length > 0 && !args[0].StartsWith("--", StringComparison.Ordinal)

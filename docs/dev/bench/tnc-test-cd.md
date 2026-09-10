@@ -38,7 +38,7 @@ Two things follow, and they are the design of the tool:
 ## The corpus
 
 The tracks are **not in this repository** - they are WA8LMF's work, and redistribution terms are
-still TBC (see `docs/plan.md` Phase 0). Keep them wherever you keep them and pass a path.
+still TBC (see `docs/dev/plan.md` Phase 0). Keep them wherever you keep them and pass a path.
 
 **The tags on this rip do not all describe the audio, so go by the length and by what decodes.**
 Measured with this tool:
@@ -115,7 +115,7 @@ The same bank over 01 at the file's own 44100 Hz, no resampler in the path, as t
 | 01 flat, at 44100 Hz | `afsk1200-multi` | 1006 | 845 | 119 | 1236 s, 1.3x |
 
 The reference figures are Dire Wolf `atest` at **999** on 01 and **970** on 02, recorded in this
-repository on 2026-07-15 against our 959 and 972 at the time (`docs/plan.md` Phase 1). The
+repository on 2026-07-15 against our 959 and 972 at the time (`docs/dev/plan.md` Phase 1). The
 receive-path work since - the per-mode discriminator clamp, sub-sample DPLL crossing
 interpolation, the seven timing phases and the clock hold - has taken 01 from 959 to 1007 and 02
 from 972 to 1011, which puts the AFSK bank ahead of the reference on both. **That comparison

@@ -97,7 +97,7 @@ wrong. That table answers **"which modes reach the air as frequency modulation"*
 about modulators and deviation targets. The question this tool is asked is **"what can arrive
 through an FM receiver"**, and the shaped-PSK modes answer yes to the second and no to the first.
 Nino's own switch map says so outright: switch 1000 is grouped "Shaped PSK - SSB radios, **or FM
-radios**" ([mode-modulation-reference.md](mode-modulation-reference.md)), and switch 0101
+radios**" ([mode-modulation-reference.md](dev/mode-modulation-reference.md)), and switch 0101
 (`qpsk3600`) is a speaker-and-mic mode grouped with the FM AFSK ones.
 
 This is not hypothetical. The first real off-air corpus this tool was pointed at - five noisy

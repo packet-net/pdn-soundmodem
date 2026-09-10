@@ -76,7 +76,7 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   margin" was the thing that kept it hidden.
 - ✅ **The corpus benchmark is a tool in the tree, and Track 1 is now ahead of the
   reference too** (2026-09-07). `tools/Packet.SoundModem.TncTest` (sm-tnctest,
-  [docs/tnc-test-cd.md](tnc-test-cd.md)) plays a track through any catalogue mode and scores
+  [docs/dev/bench/tnc-test-cd.md](bench/tnc-test-cd.md)) plays a track through any catalogue mode and scores
   it; it reads the corpus FLAC directly, so there is no conversion step to get wrong, and it
   shares pdn-decode's resampler so a benchmark score and a forensic decode of the same file
   cannot disagree about the audio. Re-measured at 12 kHz, multi+emphasis bank vs single
@@ -142,7 +142,7 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   the winning bank branch). Daemon `--waterfall PORT` / `--dial HZ` / `"waterfall"` config;
   `--wav-loop FILE` replays a recording as the live capture device for hardware-free demos.
   The decoded-frames panel lists this station's own transmissions too, marked **TX**, and
-  opens on the last 50 rows of the [`frameLog`](../CONFIG.md#framelog) where the station keeps
+  opens on the last 50 rows of the [`frameLog`](../../CONFIG.md#framelog) where the station keeps
   one (2026-08-04).
 - ✅ AX.25 links pane (2026-09-02): the waterfall page reads every AX.25 frame it lists into
   packet.net's `Ax25LinkObserver` and shows the result as one card per pair of stations per
@@ -188,7 +188,7 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 - ✅ CM108 hidraw PTT (`--ptt cm108:/dev/hidraw0[:gpio]`, direwolf/QtSM-compatible
   5-byte report; 2026-07-15).
 - ✅ **Wired NinoTNC interop - 13 of 15 DIP modes, both directions** (2026-07-15,
-  firmware **3.44**, CM108 loop; full tables in docs/ninotnc-loop.md § Results +
+  firmware **3.44**, CM108 loop; full tables in docs/dev/bench/ninotnc-loop.md § Results +
   § Coverage). Every NinoTNC mode except the two C4FSK ones now has a counterpart here
   and passes bidirectionally: fsk9600 (0), fsk9600-il2p (2), fsk4800-il2p (4), qpsk3600
   (5), afsk1200 (6), afsk1200-il2p (7), bpsk300 (8), qpsk600 (9), bpsk1200 (10), qpsk2400
@@ -247,8 +247,8 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   linger after the last leaves), and `"waterfall": { "public": true }` dresses the page for a
   visitor: a title, an about paragraph, a credit and link for the receiver, no KISS host
   badges. Built for https://m9psy-1-monitor.ukpacketradio.network; see
-  [docs/40m-monitor-plan.md](40m-monitor-plan.md).
-- ✅ Public monitor over many UberSDR receivers (2026-09-03): a `"monitor"` config section fronts the receivers the UberSDR directory lists, with a picker at `/`, each receiver's page at `/r/<slug>/`, and at most one session per receiver however many visitors are watching it. Same binary and same package as the single-station flavour, which is unchanged. Live at https://monitor.ukpacketradio.network from CT 146, which replaces the single-receiver site; an overnight soak and a word with the receivers' operators are still to come. See [docs/monitor-plan.md](monitor-plan.md) and the amendment log entry below.
+  [docs/dev/archive/40m-monitor-plan.md](archive/40m-monitor-plan.md).
+- ✅ Public monitor over many UberSDR receivers (2026-09-03): a `"monitor"` config section fronts the receivers the UberSDR directory lists, with a picker at `/`, each receiver's page at `/r/<slug>/`, and at most one session per receiver however many visitors are watching it. Same binary and same package as the single-station flavour, which is unchanged. Live at https://monitor.ukpacketradio.network from CT 146, which replaces the single-receiver site; an overnight soak and a word with the receivers' operators are still to come. See [docs/dev/archive/monitor-plan.md](archive/monitor-plan.md) and the amendment log entry below.
 - ⬜ DCD-over-KISS extension (awaiting an agreed NinoTNC-ecosystem format); Windows
   audio backend (deferred 2026-07-15); extra decode-only listeners; multi-decoder banks
   for the PSK modes.
@@ -260,7 +260,7 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 - ~~audio group~~ **RESOLVED**: `usermod -aG audio tf` run; both ALSA hardware smoke
   tests now pass on this box's real sound card (via `sg audio` until re-login).
 - ~~soundcard on the NinoTNC bench rig~~ **RESOLVED** (2026-07-15): CM108 widget wired
-  to the NinoTNC per docs/ninotnc-loop.md; every supported mode validated bidirectionally
+  to the NinoTNC per docs/dev/bench/ninotnc-loop.md; every supported mode validated bidirectionally
   (see § Results there). The open wire questions are answered: NinoTNC's 9600 GFSK
   matches the direwolf-validated baseband both ways, the spec QPSK phase map is
   NinoTNC-compatible (no pairwise-negotiation divergence), and the legacy-max-FEC bit

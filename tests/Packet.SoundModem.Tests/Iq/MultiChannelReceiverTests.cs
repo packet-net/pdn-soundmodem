@@ -8,7 +8,7 @@ namespace Packet.SoundModem.Tests.Iq;
 
 /// <summary>
 /// The multi-channel RX front end: one wideband complex-IQ stream (as a Flex DAX-IQ slice would
-/// deliver - docs/flex-integration.md §9.1) fanned into several narrowband channels by
+/// deliver - docs/dev/archive/flex-integration.md §9.1) fanned into several narrowband channels by
 /// per-channel <see cref="DigitalDownconverter"/>s, each surfaced as an <c>IAudioInput</c> so the
 /// existing demodulators attach unchanged. Everything here runs on synthetic in-memory IQ - no
 /// hardware, no network.

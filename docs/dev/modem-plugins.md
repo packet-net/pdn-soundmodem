@@ -3,7 +3,7 @@
 How `pdn-soundmodem` loads a modem it does not contain, and why it is built this way.
 
 Opened 2026-08-08. Status: **built 2026-08-09** - contract, registry, loader, in-repo sample plugin
-and daemon config are all in place; see [CONFIG.md § modemPlugins](../CONFIG.md#modemplugins) for
+and daemon config are all in place; see [CONFIG.md § modemPlugins](../../CONFIG.md#modemplugins) for
 the operator's half.
 
 The trigger was an audio-band OFDM modem that has to live outside this repository while the station

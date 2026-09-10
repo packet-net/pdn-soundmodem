@@ -11,7 +11,7 @@ public class WattersonChannelTests
     {
         // A pure 1800 Hz tone through the AWGN-only channel at 10 dB (3 kHz noise
         // bandwidth): recover the tone by projection, measure the residual, convert back
-        // to the 3 kHz-bandwidth SNR definition (house pattern, docs/ofdm-design.md §8.6).
+        // to the 3 kHz-bandwidth SNR definition (house pattern, docs/dev/archive/ofdm-design.md §8.6).
         var input = new float[Rate * 4];
         for (int i = 0; i < input.Length; i++)
         {

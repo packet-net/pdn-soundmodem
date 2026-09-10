@@ -7,7 +7,7 @@ using Packet.SoundModem.Modems;
 namespace Packet.SoundModem.Ota;
 
 /// <summary>
-/// Off-air ARDOP monitor - the ARDOP campaign's A0 instrument (docs/ardop/plan.md). Runs the
+/// Off-air ARDOP monitor - the ARDOP campaign's A0 instrument (docs/dev/archive/ardop/plan.md). Runs the
 /// receive chain in RXO (receive-only monitor) mode over recorded audio and emits one verdict
 /// row per acquired frame: type, RS/CRC outcome, quality, the third-party session ID the RXO
 /// decoder attributes it to, and the station fields where the frame carries them. Wild
@@ -24,7 +24,7 @@ namespace Packet.SoundModem.Ota;
 /// same order): bandpass to the on-air band FIRST, then unshift - unshifting a centre above
 /// 1500 is a downshift by delta, which folds all channel noise below delta onto delta - f
 /// unless the bandpass has already made that region stopband (the noise-folding lesson,
-/// measured at +2.9 dB in the ARDOP bridge audit, docs/mode-validation.md 2026-08-06).</para>
+/// measured at +2.9 dB in the ARDOP bridge audit, docs/dev/mode-validation.md 2026-08-06).</para>
 /// <para><b>Tuning range.</b> Defaults to ±200 Hz rather than ardopcf's ±100: a monitor does
 /// not choose its stations, and the harvest measured wild session centres spread across
 /// 1500-1800 Hz; ±200 about the configured centre is the spec's own capture requirement
@@ -60,7 +60,7 @@ internal static class ArdopMonitorCommand
                   --centre <Hz>        audio centre of the ARDOP activity (default 1500,
                                        native, no shift - the A1 sweep measured wild session
                                        centres clustering at 1500-1560, not the ~1650 the
-                                       survey estimator suggested; docs/ardop/plan.md)
+                                       survey estimator suggested; docs/dev/archive/ardop/plan.md)
                   --squelch <n>        leader-detect squelch 0-10 (default 5, the ardopcf
                                        default)
                   --tuning <Hz>        leader capture range (default 200; see source remarks)
@@ -83,7 +83,7 @@ internal static class ArdopMonitorCommand
 
         // Default was 1650 (the survey estimator's number) until the A1 centre sweep
         // measured true session centres at 1500-1560: the corrected default acquired
-        // 749 frames against 636 over the same corpus (docs/ardop/plan.md, A1 addendum).
+        // 749 frames against 636 over the same corpus (docs/dev/archive/ardop/plan.md, A1 addendum).
         double centre = a.Dbl("centre", 1500);
         int squelch = a.Int("squelch", 5);
         int tuning = a.Int("tuning", 200);

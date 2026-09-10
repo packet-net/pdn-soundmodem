@@ -20,7 +20,7 @@ implementation: a single misread cell breaks interop silently.
 
 ## Vendored copy (2026-07-19)
 
-The PDF itself is now checked in at `docs/ms110d/spec/MIL-STD-188-110D.pdf`, re-downloaded
+The PDF itself is now checked in at `docs/dev/ms110d/spec/MIL-STD-188-110D.pdf`, re-downloaded
 from the same everyspec URL used for the original transcription. It's public-release
 (Distribution Statement A, confirmed present on the document's page 1) so there's no
 licensing barrier to vendoring it; this makes the transcription reproducible/re-checkable
@@ -65,13 +65,13 @@ doubling pattern) cross-validates against D-XLIX's 2/7 rate.
 
 These tables feed the App D design doc (task #7). Both build phases are now closed:
 Phase A (3 kHz framing + Walsh-75/BPSK/QPSK + DFE) closed 2026-07-23
-([phase-a-closeout.md](phase-a-closeout.md)); Phase B (8PSK/16QAM + binding Poor-channel
-mask gating) closed 2026-07-27 ([phase-b-closeout.md](phase-b-closeout.md)) - WN0-6+13
+([phase-a-closeout.md](../archive/ms110d/phase-a-closeout.md)); Phase B (8PSK/16QAM + binding Poor-channel
+mask gating) closed 2026-07-27 ([phase-b-closeout.md](../archive/ms110d/phase-b-closeout.md)) - WN0-6+13
 hard-gated at mask on Poor, WN7/WN8 closed with measured-only verdicts (closeout §4).
-The [WN8 redesign program](wn8-program-plan.md) (2026-07-31) then took WN8 Poor from
+The [WN8 redesign program](../archive/ms110d/wn8-program-plan.md) (2026-07-31) then took WN8 Poor from
 coin-flip to 2.90E-4 canonical / 1.75E-2 disjoint through the MFB-form receiver, still
 measured-only against the 1E-5 mask. The live program is the
-[Poor-gate successor program](poor-gate-successor-plan.md) (registered 2026-08-20, issue
+[Poor-gate successor program](../archive/ms110d/poor-gate-successor-plan.md) (registered 2026-08-20, issue
 #312). Its G1d leg (same day) hard-gated **WN7 Poor at 0 / 3,243,776 on both families**
 through the 8PSK per-block ensemble (the DFE-chain path beside the MFB-form decoder, each
 receiver's evidence weighed in log-likelihood units), so nine of the ten Poor points are
@@ -81,8 +81,8 @@ schedule - **all ten Poor points are hard-gated**; G3 (same day) proved every wa
 at the tenant centre and corrected the Watterson rig for moved centres. What remains is with
 Tom: the hardware legs H1/H2 that would let the +19/+23 dB points run through a real
 transmitter. On-air state per waveform is in [../mode-validation.md](../mode-validation.md);
-the OTA campaign's record is [ota-handover.md](ota-handover.md) and
-[ota-air-backlog.md](ota-air-backlog.md).
+the OTA campaign's record is [ota-handover.md](../archive/ms110d/ota-handover.md) and
+[ota-air-backlog.md](../archive/ms110d/ota-air-backlog.md).
 
 ## Ledger clearance (2026-07-17)
 

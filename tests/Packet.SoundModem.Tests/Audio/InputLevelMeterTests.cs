@@ -85,8 +85,8 @@ public class InputLevelMeterTests
     /// <remarks>
     /// 0.25 full scale is -12.04 dBFS, which is the middle of what this repository has measured
     /// as good on real hardware: the bench NinoTNC loop's GOOD band is 0.17 to 0.28 full-scale
-    /// peak (docs/ninotnc-loop.md), and the CM108 interface is designed for -12 dBFS at 60% of
-    /// class deviation (docs/hardware/tm8100-cm108-interface-notes.md).
+    /// peak (docs/dev/bench/ninotnc-loop.md), and the CM108 interface is designed for -12 dBFS at 60% of
+    /// class deviation (docs/dev/hardware/tm8100-cm108-interface-notes.md).
     /// </remarks>
     [Fact]
     public void A_Signal_In_The_Target_Band_Reads_Inside_The_Target_Band()
@@ -338,7 +338,7 @@ public class InputLevelMeterTests
     /// <remarks>
     /// They are not a convention borrowed from elsewhere; they are what this repository has
     /// measured. See <see cref="InputLevelMeter"/> for the four sources, and
-    /// <c>docs/receive-levels.md</c> for the audit that kept the zone and moved the red edge from
+    /// <c>docs/dev/receive-levels.md</c> for the audit that kept the zone and moved the red edge from
     /// -3 to -6, which is the strictest mode's own headroom requirement. The page carries the
     /// same numbers as JavaScript constants, and <c>WaterfallPageTests</c> checks the two agree.
     /// </remarks>

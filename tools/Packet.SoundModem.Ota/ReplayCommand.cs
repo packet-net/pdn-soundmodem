@@ -10,7 +10,7 @@ namespace Packet.SoundModem.Ota;
 /// Replays a raw-capture chunk sequence (the daemon's <c>rawCapture</c> record - continuous
 /// 16-bit mono WAVs named <c>raw-&lt;UTC&gt;.wav</c>) through catalogue receivers, and
 /// optionally diffs what decoded against the live station's frame log. This is the 40 m
-/// capture campaign's harvest instrument (docs/rx-roadmap.md): the raw chunks are the
+/// capture campaign's harvest instrument (docs/dev/rx-roadmap.md): the raw chunks are the
 /// re-scorable ground truth, so every future receiver change can be measured against every
 /// hour of the band, and a detector A/B on real traffic is two runs of this command with
 /// different <c>--detector</c> values diffed.

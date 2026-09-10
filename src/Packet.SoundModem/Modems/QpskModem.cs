@@ -283,7 +283,7 @@ public sealed class QpskModem : IModem, IConstellationSource, IFrameSpanSource
     public int FrameSpanMarginSamples => _spanMargin;
 
     /// <inheritdoc />
-    /// <remarks>a QPSK symbol is a quadrant, which is an angle test: scale-invariant by construction (docs/receive-levels.md).</remarks>
+    /// <remarks>a QPSK symbol is a quadrant, which is an angle test: scale-invariant by construction (docs/dev/receive-levels.md).</remarks>
     public FrameLevelLimits FrameLevels => FrameLevelLimits.Default;
 
     /// <inheritdoc />

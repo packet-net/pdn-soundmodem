@@ -36,7 +36,7 @@ public enum OnDemandPhase
 /// one of that receiver's listener slots around the clock for a page nobody has open. The plain
 /// <c>ubersdr:</c> device is a station and is right to stream for months; this is a display, and
 /// a display with no viewer has no business on the air. See
-/// <c>docs/40m-monitor-plan.md</c>.</para>
+/// <c>docs/dev/archive/40m-monitor-plan.md</c>.</para>
 /// <para><b>The linger.</b> A page refresh, a tab switch or a flaky connection drops the viewer
 /// count to zero for a moment; tearing the session down on each and rebuilding it a second
 /// later would cost the receiver a session per hiccup and the viewer the start-up guard each

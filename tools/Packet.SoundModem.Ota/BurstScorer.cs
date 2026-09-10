@@ -304,7 +304,7 @@ public sealed class BurstScorer
                 // is counted, so a quiet LLR path shows in campaign output instead of
                 // silently shrinking the denominator. The exact match is load-bearing:
                 // structural zeros are identically 0f, and any tolerance would start
-                // eating genuine low-confidence errors (docs/ms110d/ota-handover.md §2).
+                // eating genuine low-confidence errors (docs/dev/archive/ms110d/ota-handover.md §2).
                 if (llrs[i] == 0)
                 {
                     uncodedErasures++;

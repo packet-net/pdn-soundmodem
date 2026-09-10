@@ -7,11 +7,11 @@ channels, where 100% of class deviation is 2.5 kHz.
 
 This note is only what to build. The reasoning, the arithmetic, the bench procedures and the
 measured evidence behind every figure are in the
-[extended notes](tm8100-cm108-interface-notes.md). The radio side comes from the 3DK Hardware
+[extended notes](../dev/hardware/tm8100-cm108-interface-notes.md). The radio side comes from the 3DK Hardware
 Developer's Kit Application Manual (`MMA-00011-01` in
 [M0LTE/tait-tm8100-tm8200-docs](https://github.com/M0LTE/tait-tm8100-tm8200-docs)), whose section
 5.1.1 is Tait's own worked example of exactly this job; the widget side from its
-[netlist](cm108-widget-netlist.md).
+[netlist](../dev/hardware/cm108-widget-netlist.md).
 
 The component values below were measured for this widget and this radio on 2026-08-14. **They are
 not generic.** A different widget, or this one on a different radio, needs measurement 1 redoing:
@@ -72,7 +72,7 @@ All seven components fit on the DE-9's solder cups, free-standing with heatshrin
 and the lot, or on a fingernail of stripboard. Keep the tail short.
 
 **Mind the direction.** This is the opposite way round from the bench loop in
-[ninotnc-loop.md](../ninotnc-loop.md), where the widget played the radio. Here the widget is the
+[ninotnc-loop.md](../dev/bench/ninotnc-loop.md), where the widget played the radio. Here the widget is the
 TNC: OUT drives TXA on pin 1, IN listens on RXA on pin 5. Copying the loop table into this build
 swaps transmit and receive.
 
@@ -112,7 +112,7 @@ Two things in that table are not free choices:
 - **C1 and C4: film or bipolar electrolytic, or an X7R rated 25 V or more.** Both have corners far
   below the band (1.6 Hz for C4, 12 Hz for C1), so at 300 Hz they drop under a percent of the
   signal (C4) and about 3% (C1), and a ceramic would be harmless on that score; the PCB designs, the
-  [internal board](tm8100-internal-usb-board.md) and the
+  [internal board](../dev/hardware/tm8100-internal-usb-board.md) and the
   [packethacking/tait-cm108](https://github.com/packethacking/tait-cm108) reference board it
   follows, fit 25 V and 50 V X7R in the same positions. What rules out the leaded ceramics a
   hand-wired build would reach for is bias: C1 carries the tap's full 2.3 V and C4 1.5 V, a class 2

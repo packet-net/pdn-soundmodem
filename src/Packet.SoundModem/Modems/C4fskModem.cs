@@ -34,7 +34,7 @@ namespace Packet.SoundModem.Modems;
 /// decision stage and six extra deframers. That is <see cref="TimingDiversity"/>'s technique
 /// from the PSK modes at this mode's coarser resolution; the step is twice theirs because at
 /// 10 decision points per symbol a 2.5 % phase is a quarter of a point away from the instant
-/// and decides the same symbol. See the 2026-08-21 (later5) entry in docs/mode-validation.md.
+/// and decides the same symbol. See the 2026-08-21 (later5) entry in docs/dev/mode-validation.md.
 /// </para>
 /// </remarks>
 public sealed class C4fskModem : IModem, IFrameSpanSource
@@ -363,7 +363,7 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
     /// <remarks>the only slicer in the tree that reads an amplitude: four levels against fixed thresholds at
     /// zero and plus or minus two thirds of a tracked envelope. Clipping compresses the outer
     /// levels into the inner ones and no envelope tracker can undo it, so this mode wants the
-    /// whole station-to-station spread as headroom (docs/receive-levels.md).</remarks>
+    /// whole station-to-station spread as headroom (docs/dev/receive-levels.md).</remarks>
     public FrameLevelLimits FrameLevels => FrameLevelLimits.ClipSensitive;
 
     /// <inheritdoc />

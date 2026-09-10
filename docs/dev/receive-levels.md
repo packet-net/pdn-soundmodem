@@ -117,7 +117,7 @@ run of one cell is:
    sound card does when the capture gain is too high.
 3. AWGN is added at a fixed signal-to-noise ratio, calibrated against the scaled burst's own power
    in a **3 kHz reference bandwidth** - the convention every other AWGN ladder in this tree is
-   quoted in, so the knees below can be read against `docs/mode-validation.md`. Half a second of
+   quoted in, so the knees below can be read against `docs/dev/mode-validation.md`. Half a second of
    noise-only lead-in and lead-out either side.
 4. The whole thing goes through a **16-bit converter model**: multiply by 32767, clamp, round,
    divide by 32768. That is `Pcm16`, which is what an ALSA capture actually delivers, and it both
@@ -205,7 +205,7 @@ at +6, and decode nothing at all at +9 whatever the SNR. They are the only modes
 reads an amplitude: four PAM levels against fixed thresholds at 0 and +-2/3 of a tracked envelope
 (`C4fskModem.cs:523-529`). Clipping compresses the outer levels toward the inner ones while the
 thresholds stay where they are, and no envelope tracker can undo that - the outer symbols are
-simply not out there any more. `docs/mode-validation.md` records the same class of failure from the
+simply not out there any more. `docs/dev/mode-validation.md` records the same class of failure from the
 other direction in the issue #336 entry, where noise *inflating* the envelope demoted outer symbols
 under the same fixed 2/3 slice.
 
@@ -289,7 +289,7 @@ the next one may reasonably be**. A frame that decoded is by definition fine; a 
 statement about headroom, and headroom is only meaningful against a spread.
 
 **The spread is 6 dB**, and this repository already has the numbers.
-`docs/hardware/tm8100-cm108-interface-notes.md` sets the interface at -12 dBFS for 60% of class
+`docs/dev/hardware/tm8100-cm108-interface-notes.md` sets the interface at -12 dBFS for 60% of class
 deviation and works out that 100% of class then lands at -7.6 dBFS: stations running anywhere
 between 60% and 100% of class deviation therefore span **4.4 dB**. The same radio's published
 receive-tap level is a +-10% band (0.62 / 0.69 / 0.76 Vp-p), another **1.8 dB** across it. That is
@@ -473,7 +473,7 @@ set from.
 
 **The radio1 bench, 2026-09-07.** Real GB7RDG `qpsk3600` traffic through a CM108 and an FM radio,
 at four capture gains. The run's notes and the four transcripts are in
-`docs/bench/evidence/2026-09-07-radio1-frame-levels/`. `qpsk3600` is in the sign-and-angle group,
+`docs/dev/archive/bench/evidence/2026-09-07-radio1-frame-levels/`. `qpsk3600` is in the sign-and-angle group,
 so its thresholds are 0 and -72:
 
 | capture gain | frames read | v0.60.0 badge | this document's badge | did they decode? |
@@ -529,7 +529,7 @@ but it is in the same files and somebody should know.
 ## 9. What this could not measure
 
 - **No hardware.** Every number here is simulation. The only real-hardware data quoted is the
-  radio1 bench of 2026-09-07 (`docs/bench/evidence/2026-09-07-radio1-frame-levels/`), which is four
+  radio1 bench of 2026-09-07 (`docs/dev/archive/bench/evidence/2026-09-07-radio1-frame-levels/`), which is four
   capture gains of one station on one mode and cannot be extended without the Pi.
 - **The card's own analogue noise floor.** The converter model is quantisation and saturation and
   nothing else, so the quiet cliffs at -84 dBFS are the best case. A real CM108 has a noise floor

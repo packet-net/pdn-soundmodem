@@ -3,7 +3,7 @@
 The reasoning, provenance and arithmetic behind the audio interface between a TM8100/TM8200 mobile
 and a CM108-class USB sound card, for headless packet operation with `pdn-soundmodem`. The build
 instructions for the specific hardware pair actually deployed are in
-[tm8100-cm108-interface.md](tm8100-cm108-interface.md); this note is the generic CM108-class
+[tm8100-cm108-interface.md](../../hardware/tait-tm8100-cm108.md); this note is the generic CM108-class
 treatment behind them, and where the bench procedures live.
 
 **No presets.** The two resistors are computed from published Tait figures and confirmed once on the
@@ -22,7 +22,7 @@ The dividers below are computed rather than measured, the bench work has become 
 than discovery, and everything Tait now says about PTT, carrier detect and turnaround timing has
 been folded in. The note has since split: the wiring instructions for the board actually deployed,
 with values recomputed against that board's KiCad schematic, are in
-[tm8100-cm108-interface.md](tm8100-cm108-interface.md), and this document keeps the reasoning.
+[tm8100-cm108-interface.md](../../hardware/tait-tm8100-cm108.md), and this document keeps the reasoning.
 
 ## Provenance
 
@@ -344,7 +344,7 @@ line input avoids that, has more headroom and is quieter.
 The deployment uses the single-sided CM108AH board at
 [tomwardill/cm108radiowidget](https://github.com/tomwardill/cm108radiowidget), and its KiCad
 netlist changes four of this note's stock-dongle assumptions. The build values in
-[tm8100-cm108-interface.md](tm8100-cm108-interface.md) already account for all of this.
+[tm8100-cm108-interface.md](../../hardware/tait-tm8100-cm108.md) already account for all of this.
 
 - **No microphone bias network.** MICIN is reached through 1 uF with the CM108AH's VBIAS pin
   unconnected, so there is no 2k2 bias resistor: the receive shunt is Rp alone rather than
@@ -726,7 +726,7 @@ netlist in [cm108-widget-netlist.md](cm108-widget-netlist.md)), host `radio2`, w
 DSO2D15 driven over USBTMC. Both ends measure the 1 kHz component only, by least-squares sine fit
 on the scope and Goertzel on the capture; broadband RMS is the wrong statistic and a first attempt
 using it returned a 38 dB crest factor off a single transient. The values it produced are what
-[tm8100-cm108-interface.md](tm8100-cm108-interface.md) tells you to build.
+[tm8100-cm108-interface.md](../../hardware/tait-tm8100-cm108.md) tells you to build.
 
 **Transmit.** Full scale at the OUT pad, open circuit, is **1.00 Vrms to about +/-3%**, and the
 path is linear to **+/- 0.06 dB from 0 to -26 dBFS** with no compression at full scale. That

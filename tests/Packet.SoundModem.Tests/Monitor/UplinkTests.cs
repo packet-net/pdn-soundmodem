@@ -34,7 +34,7 @@ public sealed class UplinkTestsCollection;
 /// <para>Driven against a real <see cref="MonitorHost"/> on a real port, with a real
 /// <see cref="ClientWebSocket"/> standing in for the station and real browsers watching the page,
 /// because every promise here is about a socket. The station is <see cref="StubStation"/>, which
-/// speaks the wire format of <c>docs/uplink-plan.md</c> 4.2 and can also send things a
+/// speaks the wire format of <c>docs/dev/uplink-wire-format.md</c> and can also send things a
 /// well-behaved station never would.</para>
 /// <para>The clock is fake, so a linger is sixty seconds of nothing rather than sixty seconds of
 /// waiting, and the one test that is genuinely about elapsed time says so.</para>

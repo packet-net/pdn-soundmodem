@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Tests.UberSdr;
 
 /// <summary>
 /// The connect-on-demand state machine behind the public 40 m monitor
-/// (<c>docs/40m-monitor-plan.md</c>): a session on somebody else's receiver exists only while
+/// (<c>docs/dev/archive/40m-monitor-plan.md</c>): a session on somebody else's receiver exists only while
 /// a browser has the page open, survives a viewer's brief absence, and is retried rather than
 /// restarted into. Driven here with a fake session and a fake clock; the socket side is
 /// <see cref="UberSdrAudioInput"/>'s and is covered elsewhere.

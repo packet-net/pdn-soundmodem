@@ -1,6 +1,6 @@
 # Uplink wire format
 
-Status: copied verbatim on 2026-09-10 from section 4.2 of docs/uplink-plan.md, now docs/dev/archive/uplink-plan.md; this is the normative description of the station-to-monitor wire format that src/Packet.SoundModem.Daemon/UplinkWire.cs cites.
+Status: copied verbatim on 2026-09-10 from section 4.2 of docs/uplink-plan.md, which is now docs/dev/archive/uplink-plan.md; this is the normative description of the station-to-monitor wire format that src/Packet.SoundModem.Daemon/UplinkWire.cs cites.
 
 ### 4.2 The wire
 

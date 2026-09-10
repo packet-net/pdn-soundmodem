@@ -15,7 +15,7 @@ namespace Packet.SoundModem.Tests.Modems;
 /// <remarks>
 /// Provenance and methodology - including why only 37 of the day's 74 misses live here and where
 /// the other 37 (frames that decode fine standalone but were dropped mid-stream) are tracked - are
-/// in <c>samples/offair/misses-24h/README.md</c> and <c>docs/ninotnc-24h-continuous-losses.md</c>.
+/// in <c>samples/offair/misses-24h/README.md</c> and <c>docs/dev/archive/ninotnc-24h-continuous-losses.md</c>.
 /// Category <c>Aspiration</c>: excluded from the blocking run, executed as a non-blocking scoreboard
 /// (see <see cref="NinoTncAspirationTests"/>). When one starts copying, graduate it into
 /// <see cref="NinoTncParityTests"/> and delete its manifest row - do not loosen the assertion to

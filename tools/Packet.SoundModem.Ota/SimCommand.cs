@@ -46,7 +46,7 @@ internal static class SimCommand
                                        not be compared with it. fm-mic is a microphone/speaker
                                        path (emphasis, 300-3000 Hz); fm-data is a data port
                                        (flat, wide). Deviation comes from the mode, per
-                                       docs/mode-modulation-reference.md
+                                       docs/dev/mode-modulation-reference.md
                   --cfo <list>         carrier-offset Hz, comma-separated sweep axis (default 0)
                   --impulse <rate>     measured-calibrated QRN, broadband crashes per minute
                                        (0 off; the 40 m campaign's anchors: 120 = ordinary

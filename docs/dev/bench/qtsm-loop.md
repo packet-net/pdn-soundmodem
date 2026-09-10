@@ -1,7 +1,7 @@
 # QtSoundModem ↔ pdn-soundmodem interop loop (the snd-aloop edition)
 
 QtSoundModem (UZ7HO SoundModem, ported to Qt/Linux by John Wiseman G8BPQ) is the
-**ancestor** of this modem's AFSK/BPSK/QPSK demodulator chain (see [PROVENANCE.md](../PROVENANCE.md)).
+**ancestor** of this modem's AFSK/BPSK/QPSK demodulator chain (see [PROVENANCE.md](../../../PROVENANCE.md)).
 This rig cross-validates the two over a virtual audio cable - no sound card, no radios -
 so a frame produced by one modem is demodulated by the other and vice versa. It complements
 the Dire Wolf WAV cross-validation and the wired NinoTNC bench ([ninotnc-loop.md](ninotnc-loop.md))

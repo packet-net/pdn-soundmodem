@@ -16,7 +16,7 @@ namespace Packet.SoundModem.Tests.Waterfall;
 /// it, what comes back, and what happens when the site is down or says no.
 /// </summary>
 /// <remarks>
-/// <para>Phase 2 of <c>docs/uplink-plan.md</c>. Every test here drives a real in-process WebSocket
+/// <para>Phase 2 of <c>docs/dev/archive/uplink-plan.md</c>. Every test here drives a real in-process WebSocket
 /// server standing in for the monitor rather than a mock, because the things worth being sure of
 /// are the framing, the handshake ordering and the keepalive, and a mock would agree with whatever
 /// this client did.</para>

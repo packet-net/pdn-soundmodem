@@ -58,7 +58,7 @@ public class FrameLevelTests
     /// </summary>
     /// <remarks>
     /// afsk1200 is in the group whose quiet badge sits at -39 dBFS, because its discriminator's
-    /// normalisation floor starts costing it link margin from about -45 (docs/receive-levels.md
+    /// normalisation floor starts costing it link margin from about -45 (docs/dev/receive-levels.md
     /// section 5). Every other family badges 39 dB lower still, so this number is this mode's and
     /// not a general one.
     /// </remarks>

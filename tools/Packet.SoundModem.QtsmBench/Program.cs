@@ -3,7 +3,7 @@ using System.Net.Sockets;
 using Packet.SoundModem.Kiss;
 
 // qtsm-bench: the QtSoundModem <-> pdn-soundmodem KISS-TCP interop driver
-// (docs/qtsm-loop.md). Pure KISS-over-TCP - no audio, no modems: it assumes the two
+// (docs/dev/bench/qtsm-loop.md). Pure KISS-over-TCP - no audio, no modems: it assumes the two
 // modems are already talking over an snd-aloop cable and each is serving KISS TCP, and it
 // only pushes frames in and counts what comes out the other side.
 //

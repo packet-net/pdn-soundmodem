@@ -1361,7 +1361,7 @@ async function mixSend(patch) {
 // interface is designed for -12 dBFS at 60% of class deviation, and the MS110D over-the-air
 // capture called "comfortably adequate" peaked at -11.7 dBFS. Widened either side so a real
 // station's bursts do not flicker in and out of the zone, and audited against the demodulators
-// themselves in docs/receive-levels.md: the zone sits 21 dB above the earliest cliff any mode
+// themselves in docs/dev/receive-levels.md: the zone sits 21 dB above the earliest cliff any mode
 // has and 3 dB below the strictest mode's headroom line, which is what a bar on a card that may
 // be carrying any of them has to be.
 const MIX_METER_MIN = -60;   // the left-hand end of the bar, in dBFS
@@ -1371,7 +1371,7 @@ const MIX_QUIET = -30;       // under this the bar goes grey: quieter than it ne
 const MIX_HOT = -6;          // over this the bar goes red: less headroom than a receive path keeps
 // A single decoded frame is judged against its own mode's two edges instead, which the page
 // deliberately does not keep a copy of: the catalogue splits into three groups that differ by
-// 6 dB at the loud end and 39 at the quiet one (docs/receive-levels.md), so there is no one pair
+// 6 dB at the loud end and 39 at the quiet one (docs/dev/receive-levels.md), so there is no one pair
 // to name. The daemon decides which badge a frame gets and sends the word
 // (WaterfallWebServer.LevelTag); the page draws the word and words the tooltips in terms of what
 // was measured rather than in numbers it would have to keep in step.

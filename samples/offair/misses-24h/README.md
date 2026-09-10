@@ -29,7 +29,7 @@ Only the 37 in the first two buckets are honest per-frame aspirations: their **o
 copy, independent of stream context, so a snippet test reproduces the failure deterministically. The
 other 37 decode cleanly in isolation and were dropped only mid-stream (a continuous-decode
 robustness gap, **not** the offset step) - they are tracked in
-`docs/ninotnc-24h-continuous-losses.md`, not as unit tests, because faithfully reproducing them
+`docs/dev/archive/ninotnc-24h-continuous-losses.md`, not as unit tests, because faithfully reproducing them
 needs committed multi-frame continuous audio (which we deliberately don't commit).
 
 ## Discipline

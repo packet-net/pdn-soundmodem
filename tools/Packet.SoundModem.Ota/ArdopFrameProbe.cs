@@ -12,7 +12,7 @@ internal readonly record struct ArdopProbeResult(bool Matched, int Quality);
 
 /// <summary>
 /// One ARDOP data frame through the Watterson rig - the ARDOP campaign's A3 sim seam
-/// (docs/ardop/plan.md), closing rx-roadmap workstream 0's recorded gap. ARDOP is a session
+/// (docs/dev/archive/ardop/plan.md), closing rx-roadmap workstream 0's recorded gap. ARDOP is a session
 /// TNC rather than a catalogue <c>IModem</c>, so the mode-generic <see cref="SimModem"/> rig
 /// structurally cannot drive it; this probe is the <see cref="DatacPacketProbe"/> pattern
 /// applied to the ARDOP engine instead: render a known frame with the library's own

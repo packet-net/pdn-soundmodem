@@ -9,7 +9,7 @@ namespace Packet.SoundModem.Modems;
 /// <para>Registration is process-global and one-way per plugin: a station loads its plugins at
 /// start-up and runs. It is not a service locator to be reached for from library code - only the
 /// catalogue reads it - and it is not ambient discovery: something has to have been told a path
-/// and loaded it. See <c>docs/modem-binding.md</c>.</para>
+/// and loaded it. See <c>docs/dev/modem-plugins.md</c>.</para>
 /// <para>Modes are keyed <c>id:mode</c>, which no built-in name can collide with because no
 /// built-in contains a colon. That also makes an unloaded plugin diagnosable: a config asking for
 /// <c>ofdm-fm:nb</c> gets told no plugin <c>ofdm-fm</c> is registered, rather than that the mode

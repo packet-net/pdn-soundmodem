@@ -15,7 +15,7 @@ namespace Packet.SoundModem.Tests.FlexRadio;
 /// <c>--device flex:</c> deployment: GUI-register + create-slice, no SmartSDR). Exercises the
 /// whole path end to end: the headless setup, the <c>IAudioInput</c> refactor, the VITA
 /// packetize/depacketize, and the sample-rate bridge (12 kHz ↔ reduced-bw 24 kHz s16; 48 kHz ↔
-/// full-bw 48 kHz float32). See docs/flex-integration.md §5/§8.
+/// full-bw 48 kHz float32). See docs/dev/archive/flex-integration.md §5/§8.
 /// </summary>
 public sealed class FlexModemLoopTests
 {

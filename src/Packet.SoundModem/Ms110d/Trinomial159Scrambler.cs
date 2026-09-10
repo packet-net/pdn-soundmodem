@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Ms110d;
 /// bit shift register with the printed 159-bit initialization, iterated 16 times per
 /// generated 8PSK scramble symbol, output <c>(b2&lt;&lt;2)|(b1&lt;&lt;1)|b0</c>. The C code,
 /// the init state, the printed first-32 sequence and the worked combine row are all
-/// text-layer verbatim in <c>docs/ms110d/tables/text-layer-extracts.md</c> and mutually
+/// text-layer verbatim in <c>docs/dev/ms110d/tables/text-layer-extracts.md</c> and mutually
 /// consistent (machine-checked at transcription) - the implementation follows the printed
 /// <c>tri()</c> exactly. The sequence wraps at the 2048-symbol boundary and resets to the
 /// initialization value at each interleaver boundary.

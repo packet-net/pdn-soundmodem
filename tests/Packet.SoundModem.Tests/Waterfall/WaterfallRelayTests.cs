@@ -16,7 +16,7 @@ namespace Packet.SoundModem.Tests.Waterfall;
 /// the two things a monitor needs in order to draw somebody else's station out of it.
 /// </summary>
 /// <remarks>
-/// <para>Phase 1 of <c>docs/uplink-plan.md</c>. The whole design rests on one claim - that a
+/// <para>Phase 1 of <c>docs/dev/archive/uplink-plan.md</c>. The whole design rests on one claim - that a
 /// station with no <c>publish</c> block is exactly the station it was - so the first test here
 /// runs two servers side by side off one channel, one with a relay and one without, and holds
 /// their browsers to the same bytes in the same order.</para>
@@ -729,7 +729,7 @@ public class WaterfallRelayTests : IDisposable
     /// release.</para>
     /// <para>So the three rows below are the same mode at the same level and differ only in what
     /// the station said about them. -4 dBFS is two dB inside the four-level slicer's loud edge
-    /// (docs/receive-levels.md section 4), so a monitor still applying a rule would badge all
+    /// (docs/dev/receive-levels.md section 4), so a monitor still applying a rule would badge all
     /// three the same way; one that carries the verdict badges what it was told.</para>
     /// </remarks>
     [Fact]

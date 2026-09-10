@@ -10,7 +10,7 @@ Two sets, kept for different reasons.
 | `pocsag/` | our POCSAG paging transmission, one WAV per rate (see [pocsag/README.md](pocsag/README.md)) | **yes** - `sm-pocsag encode` regenerates them byte-for-byte |
 
 `ninotnc/` is the valuable half. Those are recordings of a NinoTNC (firmware 3.44) off pin 1
-over the CM108 bench loop (docs/ninotnc-loop.md), and they are the source of the per-mode
+over the CM108 bench loop (docs/dev/bench/ninotnc-loop.md), and they are the source of the per-mode
 occupied-bandwidth references that `OccupiedBandwidthTests` holds us to - the rule being
 that we are never wider than the TNC we share a channel with. They cannot be regenerated
 without that rig, that TNC and that firmware, so they are checked in. Level is as captured
@@ -94,7 +94,7 @@ dotnet run --project tools/Packet.SoundModem.Samples -- <outdir> \
 
 # qtsm/ - QtSoundModem transmissions (interop cross-validation corpus)
 
-Recorded off the snd-aloop rig (docs/qtsm-loop.md) from **QtSoundModem 0.0.0.76**, mono
+Recorded off the snd-aloop rig (docs/dev/bench/qtsm-loop.md) from **QtSoundModem 0.0.0.76**, mono
 (12 kHz audio-band modes, 48 kHz RUH). These are the **qtsm→ours** half of the interop
 matrix - QtSM's transmission decoded by our modems - and the checked-in `Category=Interop`
 corpus (`tests/.../QtsmInteropTests`). Each `qtsm-<mode>.wav` carries 10 UI frames with
@@ -124,5 +124,5 @@ sm-decode samples/qtsm/qtsm-qpsk2400-v26a.wav   qpsk2400 --crc   # → 8 frames
 sm-decode samples/qtsm/qtsm-qpsk600.wav         qpsk600  --crc   # → 10 frames
 ```
 
-Not reproducible without the rig + that QtSM build, so checked in. See docs/qtsm-loop.md
+Not reproducible without the rig + that QtSM build, so checked in. See docs/dev/bench/qtsm-loop.md
 § Results and § Samples.

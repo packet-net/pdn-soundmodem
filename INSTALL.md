@@ -72,7 +72,7 @@ At minimum, set:
 
 - **`device`** - the ALSA capture/playback device. `arecord -l` lists what is available;
   `"default"` works for a single USB sound card. A FlexRadio over the LAN is also a device
-  here (`"flex:<radio>"`) - see [docs/flex-integration.md](docs/flex-integration.md) - as is a
+  here (`"flex:<radio>"`) - see [docs/dev/archive/flex-integration.md](docs/dev/archive/flex-integration.md) - as is a
   public UberSDR web receiver (`"ubersdr:<instance>"`), which needs no radio and no sound card
   at all but can only listen; see
   [CONFIG.md § Listening to a web receiver](CONFIG.md#listening-to-a-web-receiver).

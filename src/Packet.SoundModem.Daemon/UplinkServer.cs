@@ -19,7 +19,7 @@ namespace Packet.SoundModem.Daemon;
 /// later, a URL has to be an absolute http or https one, and anything that reaches the journal
 /// goes through <see cref="UberSdrDirectory.Ascii"/>. What gets past here is a semi-trusted
 /// publisher, and the site vouches for nothing except that the token belongs to that operator.
-/// See <c>docs/uplink-plan.md</c> 4.6.</para>
+/// See <c>docs/dev/archive/uplink-plan.md</c> 4.6.</para>
 /// <para><b>Nothing is allocated for an unauthenticated connection.</b> The token is checked on
 /// the HTTP upgrade, before the WebSocket is accepted and before any station exists; the size of
 /// the token table is therefore the cap on how many stations this site can ever hold. A token
@@ -32,7 +32,7 @@ namespace Packet.SoundModem.Daemon;
 /// </remarks>
 internal sealed class UplinkServer : IAsyncDisposable
 {
-    /// <summary>The wire version this monitor speaks. See <c>docs/uplink-plan.md</c> 4.2.</summary>
+    /// <summary>The wire version this monitor speaks. See <c>docs/dev/uplink-wire-format.md</c>.</summary>
     /// <remarks>
     /// The protocol spans two machines running whatever versions their operators have installed,
     /// so it is versioned and additive: a station announcing a version this does not know is

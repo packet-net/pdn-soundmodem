@@ -85,7 +85,7 @@ internal static class FmModes
         double deviation = PeakDeviationHz(mode)
             ?? throw new ArgumentException(
                 $"'{mode}' is not an FM mode - it has no deviation target in "
-                + "docs/mode-modulation-reference.md, so an FM channel cannot carry it",
+                + "docs/dev/mode-modulation-reference.md, so an FM channel cannot carry it",
                 nameof(mode));
         double ifBandwidth = FmLinkProfile.IfBandwidthForSpacing(ChannelSpacingHz(mode));
         return kind == SimChannelKind.FmMic

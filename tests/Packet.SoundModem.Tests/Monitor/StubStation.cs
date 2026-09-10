@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Tests.Monitor;
 
 /// <summary>
 /// A private station, over a real socket, speaking the uplink wire format of
-/// <c>docs/uplink-plan.md</c> 4.2 and nothing else.
+/// <c>docs/dev/uplink-wire-format.md</c> and nothing else.
 /// </summary>
 /// <remarks>
 /// <para>Not a mock and not a fake of the monitor's own parser: it opens a real

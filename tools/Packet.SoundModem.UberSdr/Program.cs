@@ -5,7 +5,7 @@ using M0LTE.Dsp;
 
 // sm-iqcapture - capture one IQ48 (or PCM) session from a ka9q_ubersdr / UberSDR instance to a
 // 16-bit stereo WAV + JSON sidecar. One session per invocation; drive per-pass reconnect from a
-// script (a fresh process per ladder pass). See docs/ms110d/ota-capture-client-plan.md.
+// script (a fresh process per ladder pass). See docs/dev/archive/ms110d/ota-capture-client-plan.md.
 //
 // Subcommand `convert` runs the offline IQ→audio converter (C2): an IQ48 capture WAV → the
 // 9600 Hz real audio the MS110D demodulator consumes.

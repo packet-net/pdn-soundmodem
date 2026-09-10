@@ -38,7 +38,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         public double Ber => Bits == 0 ? double.NaN : (double)Errors / Bits;
     }
 
-    // Table D-LXIV 3 kHz rows (docs/ms110d/tables/d6x-ber-masks.csv): WN → (AWGN, Poor) SNR dB.
+    // Table D-LXIV 3 kHz rows (docs/dev/ms110d/tables/d6x-ber-masks.csv): WN → (AWGN, Poor) SNR dB.
     public static TheoryData<int, double> AwgnMasks() => new()
     {
         { 0, -6 }, { 1, -3 }, { 2, 0 }, { 3, 3 }, { 4, 5 }, { 5, 6 }, { 6, 9 },
@@ -51,7 +51,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         { 7, 19 }, { 8, 23 }, { 13, 11 },
     };
 
-    // The measured-only ceiling bank (docs/ms110d/poor-gate-successor-plan.md, leg G0).
+    // The measured-only ceiling bank (docs/dev/archive/ms110d/poor-gate-successor-plan.md, leg G0).
     // A point that does not clear the 1E-5 Poor mask has what it DOES measure banked here
     // as the exact closing counts of the battery that closed it. (WN7 sat here at 83/48
     // from the W0 re-baseline until G1d's ensemble took it to 0/0 and into the gated set;
@@ -113,7 +113,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         // column was not transcribed; D.6.3 is "Not yet standardized"). 5 dB is unjustifiably
         // optimistic for this HARDER static channel (3 equal paths spread over 9 ms → deeper
         // spectral nulls than the 2-path Poor rig). Measured waterfall after the K=48 MMSE-ridge
-        // fix (docs/ms110d/design.md §5.1; MS110D_MASK_BITS=500000): 5 dB → 8.3E-5, 7 dB → 7.8E-6
+        // fix (docs/dev/ms110d/design.md §5.1; MS110D_MASK_BITS=500000): 5 dB → 8.3E-5, 7 dB → 7.8E-6
         // (knee), 9 dB → clean. The equalizer demonstrably spans the echo and reaches the 1E-5
         // mask by ~9 dB; the full FF span is load-bearing (shrinking FF 32→12 wrecks this
         // channel to 3.2E-3). Gate restated to 9 dB - the lowest robustly-passing SNR - proving

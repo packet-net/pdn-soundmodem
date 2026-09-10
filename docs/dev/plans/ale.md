@@ -4,7 +4,7 @@
 
 **Charter.** Implement MIL-STD-188-141A Appendix A second-generation Automatic Link Establishment in software, so an MS110D station can find a working channel and a listening correspondent without an operator and without a vendor option board.
 
-**Why now, and why software.** The obvious hardware route - a Kenwood TK-90 with its KPE-2 ALE unit - is closed: the board is [hard or impossible to obtain](../ms110d/radio-tk-90-evaluation.md). Doing it ourselves is not merely a workaround. It removes the dependency on any particular radio, it makes the link-quality metric *our* measured SNR rather than a vendor's opaque score, and it is a smaller piece of work than the modem this repo has already built.
+**Why now, and why software.** The obvious hardware route - a Kenwood TK-90 with its KPE-2 ALE unit - is closed: the board is [hard or impossible to obtain](../archive/ms110d/radio-tk-90-evaluation.md). Doing it ourselves is not merely a workaround. It removes the dependency on any particular radio, it makes the link-quality metric *our* measured SNR rather than a vendor's opaque score, and it is a smaller piece of work than the modem this repo has already built.
 
 **Non-goals.** 3G ALE (MIL-STD-188-141B Appendix C / STANAG 4538) - it is synchronous, needs time-of-day at both ends, and drags the ARQ data-link protocols in with it. Wideband ALE (141D). Any traffic-carrying protocol: ALE hands over a channel and stops.
 
@@ -12,11 +12,11 @@
 
 ## 0. Provenance discipline - read this before writing any code
 
-**Every constant in §2 below is unverified against the primary source.** They are cross-checked across three independent secondary references and they agree, which is worth something and is not worth building on. This repo's MS110D work sets the standard: `docs/ms110d/design.md` records a permanent PDF ID *and* a stamp-invariant SHA-256, because everyspec rewrites part of the trailer on every download and a naive hash is therefore not reproducible. 2G ALE gets the same treatment or it does not get built.
+**Every constant in §2 below is unverified against the primary source.** They are cross-checked across three independent secondary references and they agree, which is worth something and is not worth building on. This repo's MS110D work sets the standard: `docs/dev/ms110d/design.md` records a permanent PDF ID *and* a stamp-invariant SHA-256, because everyspec rewrites part of the trailer on every download and a naive hash is therefore not reproducible. 2G ALE gets the same treatment or it does not get built.
 
 **Primary source.** MIL-STD-188-141A Appendix A. The same 2G waveform is carried forward in 141B and 141C Appendix A, so a later revision is an acceptable primary as long as the revision is recorded. A public copy of **141C** is hosted at `hflink.com/standards/MIL_STD_188-141C.pdf`; everyspec carries the family. FED-STD-1045 is the federal equivalent and a useful cross-check on anything ambiguous.
 
-**Phase A0 is the transcription**, and nothing else starts until it is done. Tables go in `docs/ale/tables/` as CSV with a `README` recording page numbers, exactly as `docs/ms110d/tables/` does.
+**Phase A0 is the transcription**, and nothing else starts until it is done. Tables go in `docs/ale/tables/` as CSV with a `README` recording page numbers, exactly as `docs/dev/ms110d/tables/` does.
 
 **Licence care.** Consulting a reference implementation is allowed and encouraged, but this repo is GPL-3.0-or-later: anything consulted must be GPL-compatible, and anything derived from it gets a comment naming the source file and function - the same rule that governs the QtSoundModem and Dire Wolf lineage in this codebase.
 

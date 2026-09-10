@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Tests.Ms110d;
 public class Ms110dScramblerTests
 {
     // Independently hand-derived wire vector (checklist L3): scramble values from init
-    // 000000001 with the register convention of docs/ms110d/design.md §2.2 (b0' = b8 ^ b4,
+    // 000000001 with the register convention of docs/dev/ms110d/design.md §2.2 (b0' = b8 ^ b4,
     // rightmost three bits (b2 b1 b0) used, 3 iterations per PSK symbol). Derived by walking
     // the register on paper / a throwaway script, not by running the implementation.
     private static readonly int[] First16 = [1, 0, 2, 1, 4, 1, 1, 6, 2, 5, 3, 0, 3, 3, 6, 4];

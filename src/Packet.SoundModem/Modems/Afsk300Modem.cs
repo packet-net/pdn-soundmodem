@@ -261,7 +261,7 @@ public sealed class Afsk300Modem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     /// <remarks>the 300 baud AFSK chain slices a power-normalised discriminator with a sign test, and the
-    /// sweep finds it flat from -84 dBFS up to full scale (docs/receive-levels.md).</remarks>
+    /// sweep finds it flat from -84 dBFS up to full scale (docs/dev/receive-levels.md).</remarks>
     public FrameLevelLimits FrameLevels => FrameLevelLimits.Default;
 
     /// <inheritdoc />

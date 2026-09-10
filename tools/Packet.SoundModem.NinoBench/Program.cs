@@ -7,7 +7,7 @@ using M0LTE.Dsp;
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.Modems;
 
-// nino-bench: the wired CM108 <-> NinoTNC interop rig driver (docs/ninotnc-loop.md).
+// nino-bench: the wired CM108 <-> NinoTNC interop rig driver (docs/dev/bench/ninotnc-loop.md).
 //
 //   nino-bench --serial <dev> [--audio plughw:3,0] --pair <ourmode>:<ninomode>
 //              [--frames 10] [--txdelay-ms 300] [--payload 40] [--level-check]

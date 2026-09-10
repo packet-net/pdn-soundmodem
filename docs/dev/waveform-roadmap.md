@@ -1,7 +1,7 @@
 # Waveform / modem roadmap
 
 What pdn-soundmodem might implement next, and in what order. This is the strategic map;
-the deep design for the lead item (the OFDM family) lives in [ofdm-design.md](ofdm-design.md).
+the deep design for the lead item (the OFDM family) lives in [ofdm-design.md](archive/ofdm-design.md).
 
 Approved 2026-07-16 after two research sweeps (FreeDV/Codec2 OFDM data-mode internals + a
 full landscape survey) and a verified scoping of MIL-STD-188-110D Appendix D. The numbered
@@ -15,12 +15,12 @@ with - and **we never trade NinoTNC compatibility for another peer's**. New mode
 *additive*, never a re-shaping of an existing NinoTNC-compatible mode to suit a different
 implementation. Preference order for candidates: **open spec we can implement from scratch**,
 **guaranteed real-world interop**, **packet-DATA transport** over keyboard-chat/beacon/voice.
-See [PROVENANCE.md](../PROVENANCE.md) and the `pdn-soundmodem-ninotnc-compat-sacrosanct` memory.
+See [PROVENANCE.md](../../PROVENANCE.md) and the `pdn-soundmodem-ninotnc-compat-sacrosanct` memory.
 
 ## Where we are today
 
 The NinoTNC family, all IL2P/AX.25/FX.25-framed, KISS-interfaced, each labelled by interop
-target (see [qtsm-loop.md](qtsm-loop.md) § Results):
+target (see [qtsm-loop.md](bench/qtsm-loop.md) § Results):
 
 | family | modes | compatibility |
 |---|---|---|
@@ -54,7 +54,7 @@ is exactly what our own FM/HF modes need, so porting makes FreeDV the training g
 the library pure-managed (no native dependency ships). Six QPSK modes @ 8 kHz / 1500 Hz:
 datac1 (workhorse, 510 payload bytes/frame), datac3/4 (low SNR), datac0/13/14 (ACK/signalling).
 Interop is exact-or-nothing (no spec doc - the source *is* the spec). Full design in
-[ofdm-design.md](ofdm-design.md). *Licence note:* `libcodec2` is LGPL-2.1; the port carries
+[ofdm-design.md](archive/ofdm-design.md). *Licence note:* `libcodec2` is LGPL-2.1; the port carries
 LGPL-2.1 lineage/attribution, workable via the relicensing clause - flag for a real FOSS-licence
 review.
 

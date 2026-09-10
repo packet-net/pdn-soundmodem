@@ -230,7 +230,7 @@ public sealed class IdentifyConfig
 /// the executable and no environment variable, because a file appearing on disk must never change
 /// what a station transmits. What this file says is what gets loaded, and the start-up log repeats
 /// it.</para>
-/// <para>See <c>docs/modem-binding.md</c>. The modes a plugin provides are named
+/// <para>See <c>docs/dev/modem-plugins.md</c>. The modes a plugin provides are named
 /// <c>pluginId:mode</c> - <c>ofdm-fm:nb</c> - so a mode string always says plainly whether it came
 /// from this package.</para>
 /// </remarks>
@@ -517,7 +517,7 @@ public sealed class ArdopConfig
 /// <summary>Headless FlexRadio slice-creation params (used when Device is
 /// <c>flex:&lt;radio&gt;</c> with no <c>@station</c> - the daemon owns the radio and creates
 /// its own slice). Ignored in attach mode (a <c>@station</c> device string). Defaults match
-/// docs/flex-integration.md §8.</summary>
+/// docs/dev/archive/flex-integration.md §8.</summary>
 public sealed class FlexConfig
 {
     /// <summary>
@@ -540,7 +540,7 @@ public sealed class FlexConfig
     /// </summary>
     /// <remarks>
     /// A running SmartSDR grabs DAX channel 1 and the two contend (live finding, 2026-07-17 -
-    /// docs/flex-integration.md §8). Defaulting elsewhere means the order the two are started in
+    /// docs/dev/archive/flex-integration.md §8). Defaulting elsewhere means the order the two are started in
     /// stops mattering, which is the whole problem with picking 1 and hoping.
     /// </remarks>
     public string? DaxChannel { get; set; }
@@ -616,7 +616,7 @@ public sealed class FlexConfig
     /// the transmit filter and the TX slice, and only believes a keyup the radio confirms -
     /// so a second transmitting client cannot be transmitted over, and cannot silently steal
     /// this daemon's TX slice between bursts. Default false until the shared-PA hardware
-    /// probes pass (docs/flex-integration.md names them); the default path is exactly what it
+    /// probes pass (docs/dev/archive/flex-integration.md names them); the default path is exactly what it
     /// always was.
     /// </summary>
     public bool Arbitration { get; set; }
@@ -696,7 +696,7 @@ public sealed class UberSdrConfig
 /// <para>Receive only, and no host interfaces: a monitor configures no KISS, no PTT, no config
 /// API, no survey and no paging, and none of them are reachable on its port. What it serves is
 /// the picker, one page per receiver, and the JSON the picker polls.</para>
-/// <para>See <c>docs/monitor-plan.md</c> and CONFIG.md's <c>monitor</c> section.</para>
+/// <para>See <c>docs/dev/archive/monitor-plan.md</c> and CONFIG.md's <c>monitor</c> section.</para>
 /// </remarks>
 public sealed class MonitorConfig
 {
@@ -758,7 +758,7 @@ public sealed class MonitorConfig
     /// </summary>
     /// <remarks>
     /// The other half of <c>publish</c>, which is what a station puts in its own config. See
-    /// <c>docs/uplink-plan.md</c> and CONFIG.md's <c>monitor.uplinks</c>.
+    /// <c>docs/dev/archive/uplink-plan.md</c> and CONFIG.md's <c>monitor.uplinks</c>.
     /// </remarks>
     public List<UplinkConfig> Uplinks { get; set; } = [];
 
@@ -775,7 +775,7 @@ public sealed class MonitorConfig
 /// <para>The site issues the token; a station cannot mint one and cannot ask for a slug. Both of
 /// those are decisions somebody took, written down here, and the wire carries neither: a
 /// connection presents a token and says which callsign it is, and everything else about how it
-/// appears comes from this entry. See <c>docs/uplink-plan.md</c> 4.4.</para>
+/// appears comes from this entry. See <c>docs/dev/archive/uplink-plan.md</c> 4.4.</para>
 /// <para>Removing an entry needs a restart, which is accepted (uplink-plan section 8).</para>
 /// </remarks>
 public sealed class UplinkConfig
@@ -1101,7 +1101,7 @@ public sealed class WaterfallConfig
 /// (the default) publishes nothing, and is what every station is until somebody adds this block.
 /// </summary>
 /// <remarks>
-/// <para>Section 4.3 of <c>docs/uplink-plan.md</c>. Strictly one way: audio, frames and a status
+/// <para>Section 4.3 of <c>docs/dev/archive/uplink-plan.md</c>. Strictly one way: audio, frames and a status
 /// sentence go up, a viewer count comes down, and there is nothing in the protocol that could
 /// transmit, retune or reconfigure anything here. Leaving is deleting this block and restarting.
 /// </para>
@@ -1270,7 +1270,7 @@ public sealed class DaemonConfig
     public PagingConfig? Paging { get; set; }
 
     /// <summary>ARDOP virtual TNC; null = disabled. Exclusive with Modems/Paging
-    /// (the ARDOP channel is dedicated; docs/ardop-design.md §2.2).</summary>
+    /// (the ARDOP channel is dedicated; docs/dev/ardop-design.md §2.2).</summary>
     public ArdopConfig? Ardop { get; set; }
 
     /// <summary>Headless FlexRadio slice params (Device <c>flex:</c> with no <c>@station</c>);
@@ -1833,7 +1833,7 @@ public sealed class DaemonConfig
     /// website, every failure a sentence naming the setting and what to do about it.
     /// </summary>
     /// <remarks>
-    /// <para>Section 4.3 of <c>docs/uplink-plan.md</c>. Refused here rather than at start-up for
+    /// <para>Section 4.3 of <c>docs/dev/archive/uplink-plan.md</c>. Refused here rather than at start-up for
     /// the reason every other check in this file is: one exit 2 with a reason, and systemd's
     /// <c>RestartPreventExitStatus=2</c> stops retrying instead of crash-looping on a typo.</para>
     /// <para>The one check that is not here is <c>audioRate</c> dividing the channel's DSP rate,
@@ -2028,7 +2028,7 @@ public sealed class DaemonConfig
     /// All three fields are the site owner's decisions rather than the station's, so all three
     /// are required and none is derived: a station cannot ask for a slug, cannot claim a callsign
     /// it was not issued a token for, and cannot mint a token at all. See
-    /// <c>docs/uplink-plan.md</c> 4.4.
+    /// <c>docs/dev/archive/uplink-plan.md</c> 4.4.
     /// </remarks>
     private static void ValidateUplinks(MonitorConfig monitor)
     {

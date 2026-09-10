@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Waterfall;
 /// in its status chip.
 /// </summary>
 /// <remarks>
-/// <para>The station side of the uplink of <c>docs/uplink-plan.md</c>. A station with no
+/// <para>The station side of the uplink of <c>docs/dev/archive/uplink-plan.md</c>. A station with no
 /// <c>publish</c> block has no relay, and <see cref="WaterfallWebServer.Relay"/> is null: every
 /// offer below is then a null check on a field that is already in cache, and nothing else about
 /// the server changes at all.</para>
@@ -83,7 +83,7 @@ public interface IWaterfallRelay
 /// about it, when it happened, and the bytes it was read from.
 /// </summary>
 /// <remarks>
-/// <para>The wire format is section 4.2 of <c>docs/uplink-plan.md</c> and that document is
+/// <para>The wire format is <c>docs/dev/uplink-wire-format.md</c> and that document is
 /// normative for it. This record is the same set of fields either side of that wire: a station
 /// fills one in and sends it, and a monitor parses one out and hands it to
 /// <see cref="WaterfallWebServer.PushFrame"/>.</para>

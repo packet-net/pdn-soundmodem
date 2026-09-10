@@ -2,7 +2,7 @@ namespace Packet.SoundModem.Modems;
 
 /// <summary>
 /// A modem this repository does not contain: one family of modes, named and constructed through a
-/// contract that crosses an assembly boundary. See <c>docs/modem-binding.md</c> for why the
+/// contract that crosses an assembly boundary. See <c>docs/dev/modem-plugins.md</c> for why the
 /// mechanism exists and what it deliberately does not do.
 /// </summary>
 /// <remarks>

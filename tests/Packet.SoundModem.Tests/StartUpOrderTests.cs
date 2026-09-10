@@ -34,7 +34,7 @@ public class StartUpOrderTests
     /// <c>PcmTransfer</c>; this rule is what keeps the gap short to begin with.</para>
     /// <para>This is one tidy-up away from coming back - somebody grouping "all the audio device
     /// setup" together would reintroduce it - so it is pinned here rather than left to the
-    /// comment at the block and the roadmap entry. See CLAUDE.md and docs/roadmap.md #17.</para>
+    /// comment at the block and the roadmap entry. See CLAUDE.md and docs/dev/roadmap.md #17.</para>
     /// </remarks>
     [Fact]
     public void The_Mixer_Is_Read_And_Set_Before_The_Capture_Stream_Is_Opened()

@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Tests.Channel;
 /// The impulse-noise injector (rx-roadmap workstream 6 item 2). The statistical
 /// calibration is validated through the closed loop - the env-gated synthesis fact below
 /// writes injector audio that the capture campaign's own impulse-stats instrument
-/// re-analyses (docs/bench/impulse-model-validation-2026-08-07.txt records the loop's
+/// re-analyses (docs/dev/archive/bench/impulse-model-validation-2026-08-07.txt records the loop's
 /// result); the blocking tests here pin determinism and the mechanical contracts.
 /// </summary>
 public class ImpulseNoiseTests

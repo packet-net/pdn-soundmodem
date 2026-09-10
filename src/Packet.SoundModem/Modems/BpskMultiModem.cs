@@ -136,7 +136,7 @@ public sealed class BpskMultiModem : IModem, IConstellationSource, IFrameSpanSou
                 // The ensemble twin: the same position under the second detector. The
                 // detectors' error sets are quasi-independent (measured on the opening
                 // evening of the 40 m capture: a roughly symmetric ~1.5 % exchange of
-                // exclusive frames, +1.1 % union - docs/rx-roadmap.md workstream 2), and
+                // exclusive frames, +1.1 % union - docs/dev/rx-roadmap.md workstream 2), and
                 // the bank's content dedupe already reduces N copies of a transmission to
                 // one delivery, so the union comes for exactly one more branch's CPU per
                 // position and no new machinery.

@@ -13,7 +13,7 @@ using Packet.SoundModem.TncTest;
 // Everything here follows from that: the same track has to reach the modem the same way every
 // time, and the run has to be comparable against another run rather than only readable.
 //
-// See docs/tnc-test-cd.md for the corpus, the scoring convention, and the standing scores.
+// See docs/dev/bench/tnc-test-cd.md for the corpus, the scoring convention, and the standing scores.
 
 if (args.Length == 0 || args.Contains("--help") || args.Contains("-h"))
 {

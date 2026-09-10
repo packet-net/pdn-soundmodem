@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Tests.Modems;
 /// <summary>
 /// Deterministic QtSoundModem cross-validation: decode QtSM-generated reference WAVs
 /// (<c>samples/qtsm/</c>, captured off the snd-aloop rig from QtSoundModem 0.0.0.76 -
-/// docs/qtsm-loop.md) with our modems and assert the frames. This is the reproducible,
+/// docs/dev/bench/qtsm-loop.md) with our modems and assert the frames. This is the reproducible,
 /// checked-in half of the QtSM interop matrix - the <b>qtsm→ours</b> direction - mirroring
 /// <see cref="DirewolfCrossValidationTests"/> and <see cref="Dsp.OccupiedBandwidthTests"/>
 /// (which decode Dire Wolf / NinoTNC reference recordings at test time). The live headless

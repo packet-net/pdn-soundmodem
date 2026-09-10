@@ -83,7 +83,7 @@ public static class ModemCatalog
     /// identifications as 300 baud AFSK AX.25 alongside the data (see
     /// <see cref="IdBeaconGhost"/>, which asks this). <c>qpsk3600</c> is excluded
     /// deliberately and is not an oversight: it is an FM mode
-    /// (<c>docs/mode-modulation-reference.md</c>), and Nino identifies the FM modes in
+    /// (<c>docs/dev/mode-modulation-reference.md</c>), and Nino identifies the FM modes in
     /// 1200 AFSK rather than 300 - a different ghost.</param>
     /// <param name="Factory">Builds the modem from the resolved knobs.</param>
     private sealed record ModeDescriptor(
@@ -362,7 +362,7 @@ public static class ModemCatalog
     /// audio loop (knife-edge timing over multi-second bursts, ±5-8 Hz CFO walls - issues #11/#116/
     /// #144), while differential - V.26A is differentially encoded by construction - copies 9/9
     /// QPSK corpus files and widens the CFO half-widths ×4-7, for 0.4-3.5 dB at the AWGN knee
-    /// (`docs/bench/ninotnc-corpus-2026-07-31.md`, `docs/cfo/evidence/`). Coherent remains
+    /// (`docs/dev/archive/bench/ninotnc-corpus-2026-07-31.md`, `docs/dev/archive/cfo/evidence/`). Coherent remains
     /// selectable via <see cref="ModemOptions.Detector"/>.
     /// </summary>
     public static PskDetector DefaultDetectorFor(string mode) => PskDetector.Differential;

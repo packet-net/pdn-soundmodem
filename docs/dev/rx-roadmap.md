@@ -154,7 +154,7 @@ gaps nothing and records silence. Instruments, for reproduction: `sm-ota replay 
 --framelog /home/tf/capture-40m/framelog/frames.sqlite --from 20260806T135000Z --to
 20260807T141900Z --workers 10 --csv ...` (second run `--mode bpsk300@2150 --detector mlse`),
 the CSVs diffed with the scratch `ab-compare.py` (payload-hex match within +-45 s), impulses
-via `docs/bench/impulse-stats-2026-08-06.py` over the 81 audio-bearing chunks.
+via `docs/dev/archive/bench/impulse-stats-2026-08-06.py` over the 81 audio-bearing chunks.
 
 - **Replay vs the live log.** Differential: bpsk300 **1122 decoded / 1062 deliverable /
   1036 CRC-verified**, afsk300-il2pc **174 / 158 / 149**. Frame-log diff over the window:
@@ -225,7 +225,7 @@ excluded per the opening-evening autopsy, manifest.json carrying burst metadata 
 **77 cuts, expected bytes attached by unique retry-sibling** (a decoded frame within ten
 minutes whose wire duration matches the burst's DCD hold - context evidence, weaker than
 the GB7RDG NinoTNC referee, stated per case; 252 more had multiple candidate payloads and
-carry none). Instruments committed under `docs/bench/`: the corpus builder
+carry none). Instruments committed under `docs/dev/archive/bench/`: the corpus builder
 (generation-tagged log diff included; its matching reproduces `sm-ota replay`'s 4305
 matched exactly) and the isolated re-score harness (one fresh deployed-configuration bank
 per cut - the aspiration-test pipeline pointed at the new corpus). Baseline isolated-decode
@@ -287,7 +287,7 @@ the FM modes wait for an FM-appropriate channel model (the impulse-noise
 workstream is the natural place both arrive together).
 
 **Status 2026-08-08: the ARDOP gap is closed** - the ARDOP campaign's phase A3
-(docs/ardop/plan.md) landed `ArdopFrameProbe` (the `DatacPacketProbe` pattern applied to the
+(docs/dev/archive/ardop/plan.md) landed `ArdopFrameProbe` (the `DatacPacketProbe` pattern applied to the
 session TNC's engine: library modulator -> shared Watterson rig -> fresh demodulator, scored
 payload byte-exact), driven as `sm-ota sim --mode ardop:<FrameName>` through the same
 `SimBench.RunPoint` the mask rows use. The wild-relevant frame ladder (4FSK.200.50S,
@@ -442,7 +442,7 @@ perfectly-smoothed non-causal estimate could ever be), and a **control** whose s
 slipped half a symbol. The control decoded 0 of 200 at every rung of 5600 bursts, which is what
 licenses reading a null off the rest.
 
-Measured, single-branch bpsk300, N=200/rung, seed 1 (`docs/bench/timing-oracle-2026-08-08.txt`):
+Measured, single-branch bpsk300, N=200/rung, seed 1 (`docs/dev/archive/bench/timing-oracle-2026-08-08.txt`):
 pooled over 5600 bursts **causal 2774, grid 2763 (-0.2 points), oracle 2591 (-3.3 points)**. At
 the AWGN knees the perfect clock buys 73 -> 76 at -5 dB and 147 -> 153 at -4 dB against a local
 slope of ~70 frames/dB: **under 0.1 dB, against the ~0.5 dB the workstream claimed**. Good is
@@ -570,7 +570,7 @@ effort:
    (`ImpulseNoiseProfile`, an axis on the Watterson rig like CFO; `sm-ota sim --impulse
    <rate/min>`; anchors Evening=120, SunrisePeak=220) is calibrated through a closed loop:
    its own output re-analysed by the campaign's measuring instrument reproduces the
-   measured percentile table (docs/bench/impulse-model-validation-2026-08-07.txt - rate
+   measured percentile table (docs/dev/archive/bench/impulse-model-validation-2026-08-07.txt - rate
    +13 %, amplitudes within 1.9 dB, durations within 28 %, with the instrument couplings
    that cost three loop iterations recorded so nobody re-fights them). The cost table the
    workstream never had: an ordinary evening's 120/min collapses bpsk300 AWGN -4 dB from

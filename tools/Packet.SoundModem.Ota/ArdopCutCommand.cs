@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Ota;
 
 /// <summary>
 /// Cuts per-session audio windows out of the raw capture around frames named in an
-/// ardop-monitor CSV - the ARDOP campaign's A1 autopsy extractor (docs/ardop/plan.md).
+/// ardop-monitor CSV - the ARDOP campaign's A1 autopsy extractor (docs/dev/archive/ardop/plan.md).
 /// Frames are grouped into sessions by time alone (a gap over 120 s starts a new group)
 /// and the whole group is cut as one WAV, so a decoder replaying the cut sees the same
 /// Memory-ARQ context (retries of the same frame) the A0 baseline run saw. The manifest

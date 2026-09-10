@@ -63,7 +63,7 @@ public sealed class QpskDemodulator
 
     /// <summary>DPLL inertia for the differential path. Dire Wolf's 0.74 (which the
     /// coherent path keeps) costs ~1 dB of timing jitter at the Reed-Solomon threshold
-    /// (docs/qpsk/plan.md Q1-3, PR #236's measurement reproduced); 0.92 recovered it, and
+    /// (docs/dev/archive/qpsk/plan.md Q1-3, PR #236's measurement reproduced); 0.92 recovered it, and
     /// 0.94 measured better still once the crossing interpolation below was in place (N=200,
     /// -1/0 dB, zero and 150 ms TXDELAY: qpsk600 100/156 and 115/179 against 97/157 and
     /// 95/178), while 0.96 loses the zero-TXDELAY acquisition the 16-symbol minimum
@@ -293,7 +293,7 @@ public sealed class QpskDemodulator
         //
         // qpsk3600 is the only catalogue mode whose ratio is fractional - 12000/1800 = 6.667, and
         // 26.667 at the 48 kHz capture rate - and it was measured to decode WORSE as the signal
-        // got stronger, uniquely among the modes (docs/mode-modulation-reference.md). Every part
+        // got stronger, uniquely among the modes (docs/dev/mode-modulation-reference.md). Every part
         // of the chain that resolves time is quantised to the input grid: the clock's wrap, the
         // transition crossings that steer it, the matched filter's own sampling. At 6.667 samples
         // per symbol that quantisation is six times coarser than any other mode's, and noise was
@@ -351,7 +351,7 @@ public sealed class QpskDemodulator
             // Root-raised-cosine matched to the transmitter's per-mode shaping: the cascade
             // is a raised cosine - ISI-free at the symbol instants, minimal noise bandwidth.
             // Replacing the 0.75-baud low-pass measured ~1-1.5 dB at the Reed-Solomon
-            // threshold on both SSB QPSK modes (docs/qpsk/plan.md Q1-2), the same lesson
+            // threshold on both SSB QPSK modes (docs/dev/archive/qpsk/plan.md Q1-2), the same lesson
             // the bpsk300 campaign measured in PR #236.
             float[] taps = BpskDemodulator.MatchedFilterTaps(chainRate, baud, rollOff);
             _lowPassI = new FirFilter(taps);
@@ -440,7 +440,7 @@ public sealed class QpskDemodulator
                 _pendingOvershoot = _interpolateSymbolInstant ? (float)_dpll!.WrapOvershootSamples : 0f;
             },
             // Dire Wolf's 0.74 costs ~1 dB of timing jitter at the Reed-Solomon threshold
-            // on the differential path here exactly as it did on bpsk300 (docs/qpsk/plan.md
+            // on the differential path here exactly as it did on bpsk300 (docs/dev/archive/qpsk/plan.md
             // Q1-3, PR #236's measurement); 0.92 recovers it, and the all-reversal IL2P
             // preamble - a transition every symbol - still pulls a cold clock in within a
             // normal TXDELAY. Coherent keeps its issue-#5 measured configuration.
@@ -571,7 +571,7 @@ public sealed class QpskDemodulator
                 // The band-pass gates EnergyBusy only on this path: fronting the decode
                 // chain with it costs where the matched filter above is doing the
                 // selectivity - measured on qpsk600's deepest AWGN rung (40 % raw vs 33 %
-                // band-passed at 0 dB, docs/qpsk/plan.md Q1-2), its +-300 Hz passband
+                // band-passed at 0 dB, docs/dev/archive/qpsk/plan.md Q1-2), its +-300 Hz passband
                 // rippling across the 300 Bd signal; qpsk2400's wider band-pass measured
                 // benign, and one arrangement serves both. The same split PR #236 measured
                 // for bpsk300.

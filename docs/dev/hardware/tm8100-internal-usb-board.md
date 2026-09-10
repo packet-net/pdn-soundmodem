@@ -25,7 +25,7 @@ on the deployed widget. Marking: **DATASHEET** stated and cited, **DERIVED** com
 arithmetic shown, **ABSENT** not in the documents.
 
 The same figures, applied to a stock CM108 widget on the auxiliary connector, are the deployed
-build in [tm8100-cm108-interface.md](tm8100-cm108-interface.md) with the reasoning in
+build in [tm8100-cm108-interface.md](../../hardware/tait-tm8100-cm108.md) with the reasoning in
 [tm8100-cm108-interface-notes.md](tm8100-cm108-interface-notes.md). The three notes agree on
 every level; they differ only in where the board lives and which connector it reaches.
 

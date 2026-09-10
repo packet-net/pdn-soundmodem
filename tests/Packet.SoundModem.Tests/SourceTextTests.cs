@@ -21,12 +21,13 @@ public class SourceTextTests
          ".mjs", ".json", ".html", ".svg", ".service"];
 
     /// <summary>
-    /// Records, not prose: run evidence is what the run actually emitted, and `docs/refs` holds
-    /// verbatim transcriptions of other people's specifications. Rewriting either would be
-    /// falsifying it, so both keep whatever characters they were written with.
+    /// Records, not prose: `docs/dev/archive` holds closed plans and run evidence as they were
+    /// written, and `docs/dev/refs` holds verbatim transcriptions of other people's specifications.
+    /// Rewriting either would be falsifying it, so both keep whatever characters they were written
+    /// with.
     /// </summary>
     private static readonly string[] Frozen =
-        [Path.Combine("docs", "ms110d", "evidence"), Path.Combine("docs", "refs")];
+        [Path.Combine("docs", "dev", "archive"), Path.Combine("docs", "dev", "refs")];
 
     [Fact]
     public void No_String_The_Daemon_Can_Print_Carries_A_Byte_Above_Ascii()

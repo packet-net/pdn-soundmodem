@@ -159,7 +159,7 @@ public sealed class BpskModem : IModem, IConstellationSource, IFrameSpanSource
     /// receive filter copies that real recording measurably better than 0.20 (248 vs 210
     /// of 400 bursts at -5 dB, 36 vs 14 at -6 dB) while 0.20 and 0.35 loopback pairs are
     /// indistinguishable at the knee. The real-TNC bench interop (6/6 both ways,
-    /// docs/ninotnc-loop.md) was also only ever measured at 0.35, because nino-bench
+    /// docs/dev/bench/ninotnc-loop.md) was also only ever measured at 0.35, because nino-bench
     /// builds this modem through the constructor default. Issue #340 has the full
     /// investigation. <paramref name="carrierFrequency"/> (1500 Hz convention) moves the
     /// modem within the audio passband, QtSoundModem-style.</remarks>
@@ -241,7 +241,7 @@ public sealed class BpskModem : IModem, IConstellationSource, IFrameSpanSource
 
     /// <inheritdoc />
     /// <remarks>a BPSK bit is the sign of a projection, which clipping does not move and a quiet signal does
-    /// not blur until the converter runs out of codes (docs/receive-levels.md).</remarks>
+    /// not blur until the converter runs out of codes (docs/dev/receive-levels.md).</remarks>
     public FrameLevelLimits FrameLevels => FrameLevelLimits.Default;
 
     /// <inheritdoc />

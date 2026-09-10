@@ -1,6 +1,6 @@
 # ARDOP in pdn-soundmodem - design & scoping (task #6 groundwork)
 
-Status: design, pre-implementation. Target: `.NET 10`, pure-managed, **GPL-3.0-or-later**, matching pdn-soundmodem idioms. This is the ARDOP counterpart of [ofdm-design.md](ofdm-design.md): source-grounded, honest about risks, written to be implementable without re-deriving anything.
+Status: design, pre-implementation. Target: `.NET 10`, pure-managed, **GPL-3.0-or-later**, matching pdn-soundmodem idioms. This is the ARDOP counterpart of [ofdm-design.md](archive/ofdm-design.md): source-grounded, honest about risks, written to be implementable without re-deriving anything.
 
 **Source provenance.** Every ardopcf citation below is to the shallow reference clone used during design - **ardopcf v1.0.4.1.3+, git `a7c92289b569afbe4259dc556d749405ebc008f5` (2025-05-27)**, `github.com/pflarue/ardop` - cited as `file:line` relative to the repo root (`src/common/` for the C, `docs/` for its documentation). The protocol spec is the in-repo **ARDOP Specification Rev 2.0, 2017-11-27** (`docs/refs/ARDOP_Specification_20171127.pdf`), cited as *spec §n* / *spec App. X*. pdn-soundmodem citations are relative to `src/Packet.SoundModem/`. Facts marked **[measured]** were verified on this box during scoping (2026-07-16); facts I could not ground are explicitly marked **[unverified]**.
 
@@ -10,7 +10,7 @@ Status: design, pre-implementation. Target: `.NET 10`, pure-managed, **GPL-3.0-o
 
 ### 1.1 What ARDOP is
 
-Amateur Radio Digital Open Protocol (Rick Muething KN6KB): an HF/VHF sound-card ARQ + FEC data protocol in four bandwidth classes (200/500/1000/2000 Hz at the −26 dB points, spec §2.2), designed as a virtual TNC that host programs drive over TCP (spec §8). It is the open substitute for the closed VARA HF / PACTOR modes on the live Winlink network (`docs/waveform-roadmap.md` §3, ardopcf `docs/Motivation.md:9`).
+Amateur Radio Digital Open Protocol (Rick Muething KN6KB): an HF/VHF sound-card ARQ + FEC data protocol in four bandwidth classes (200/500/1000/2000 Hz at the −26 dB points, spec §2.2), designed as a virtual TNC that host programs drive over TCP (spec §8). It is the open substitute for the closed VARA HF / PACTOR modes on the live Winlink network (`docs/dev/waveform-roadmap.md` §3, ardopcf `docs/Motivation.md:9`).
 
 ### 1.2 Protocol version: there is exactly one interoperable ARDOP
 
@@ -62,7 +62,7 @@ Namespaces, mirroring the `Ofdm/` pattern:
 
 ### 2.2 Channel policy (v1): ARDOP gets a dedicated channel
 
-ardopcf assumes it owns the sound card and the PTT. Sharing a channel between ARDOP and the packet modems raises TX-arbitration and DCD questions that buy nothing for the Winlink use-case (an HF SSB rig dedicated to Winlink sessions). **v1: an ARDOP-enabled channel runs only ARDOP; co-channel KISS+ARDOP multiplexing is deferred.** The daemon config grows an `Ardop` section per channel (`{ "Port": 8515 }`) exclusive with `Modems`; the existing `SoundModemChannel`, ALSA/WAV audio, PTT (`Cm108Ptt` etc.) and 12 kHz rate support are reused as-is (ARDOP's native rate is 12000 Hz - `ALSASound.c` opens capture/playback at 12000 **[measured]**; same rate our audio-band modes already use, `docs/qtsm-loop.md` table).
+ardopcf assumes it owns the sound card and the PTT. Sharing a channel between ARDOP and the packet modems raises TX-arbitration and DCD questions that buy nothing for the Winlink use-case (an HF SSB rig dedicated to Winlink sessions). **v1: an ARDOP-enabled channel runs only ARDOP; co-channel KISS+ARDOP multiplexing is deferred.** The daemon config grows an `Ardop` section per channel (`{ "Port": 8515 }`) exclusive with `Modems`; the existing `SoundModemChannel`, ALSA/WAV audio, PTT (`Cm108Ptt` etc.) and 12 kHz rate support are reused as-is (ARDOP's native rate is 12000 Hz - `ALSASound.c` opens capture/playback at 12000 **[measured]**; same rate our audio-band modes already use, `docs/dev/bench/qtsm-loop.md` table).
 
 ### 2.3 Sizing - "how big is it really?"
 
@@ -287,9 +287,9 @@ Caveat vs codec2: ardopcf's decoder is *not* bit-deterministic in the codec2 sen
 Mirrors the FreeDV three-leg pattern (`ofdm-design.md` §7.6, `freedv-hf-loop.md`):
 
 - **Rung 0 - component vectors**: CRC-16/CRC-8/Packed6/RS byte vectors extracted from ardopcf (small C harnesses or TXFRAME dissection); frame-type parity; SessionID cases incl. the 0xFF remap.
-- **Rung 1 - frame-level WAV cross-decode (CI, offline)**: for every frame type in scope: (a) ardopcf `TXFRAME`+`-T` WAV → our demod decodes payload byte-exact; (b) our TX WAV → `ardopcf --decodewav` reports the frame decoded OK (parse the debug log, `STATUS … frame received OK` format `Host_Interface_Commands.md:786`). Clean + `INPUTNOISE`-degraded + frequency-offset (±200 Hz) variants. Checked-in fixtures with `PROVENANCE.md` rows, exactly like `samples/freedv/`.
+- **Rung 1 - frame-level WAV cross-decode (CI, offline)**: for every frame type in scope: (a) ardopcf `TXFRAME`+`-T` WAV → our demod decodes payload byte-exact; (b) our TX WAV → `ardopcf --decodewav` reports the frame decoded OK (parse the debug log, `STATUS … frame received OK` format `Host_Interface_Commands.md:786`). Clean + `INPUTNOISE`-degraded + frequency-offset (±200 Hz) variants. Checked-in fixtures with `PROVENANCE.md` rows, as `samples/ardop/` has.
 - **Rung 2 - FEC-mode exchange (offline)**: multi-frame FEC transmissions incl. repeats → Memory-ARQ recovery paths; both directions via WAV.
-- **Rung 3 - full ARQ sessions ours↔ardopcf, both roles (loopback rig)**: needs live full-duplex audio between two processes - the `snd-aloop` rig from [qtsm-loop.md](qtsm-loop.md) is the proven pattern (ardopcf on one side of the loop pair, our daemon on the other; drive both host interfaces from the test). Assert: connect at each bandwidth class, data both directions, BREAK role reversal, gearshift up/down under `INPUTNOISE`, DISC/END teardown, session log comparison. Also run **ardopcf↔ardopcf first** on the same rig to capture baseline timing/quality ground truth before ours enters (removes "is it the rig or us?" ambiguity). Sequential, one heavy job at a time (box constraint).
+- **Rung 3 - full ARQ sessions ours↔ardopcf, both roles (loopback rig)**: needs live full-duplex audio between two processes - the `snd-aloop` rig from [qtsm-loop.md](bench/qtsm-loop.md) is the proven pattern (ardopcf on one side of the loop pair, our daemon on the other; drive both host interfaces from the test). Assert: connect at each bandwidth class, data both directions, BREAK role reversal, gearshift up/down under `INPUTNOISE`, DISC/END teardown, session log comparison. Also run **ardopcf↔ardopcf first** on the same rig to capture baseline timing/quality ground truth before ours enters (removes "is it the rig or us?" ambiguity). Sequential, one heavy job at a time (box constraint).
 - **Rung 4 - Pat end-to-end (loopback rig)**: Pat → our host interface ↔ ardopcf peer; then Pat ↔ ours on both sides. A real B2F mail exchange is the pass criterion.
 - **Rung 5 - Tom's bench: real HF + live Winlink gateway**: real radio, real path, connect to a published ARDOP gateway, send/receive a test message via Pat. Also P2P ours↔ardopcf over RF. (Logistics = open question §10.)
 

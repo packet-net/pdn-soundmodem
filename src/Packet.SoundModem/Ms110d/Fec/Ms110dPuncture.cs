@@ -3,7 +3,7 @@ namespace Packet.SoundModem.Ms110d.Fec;
 
 /// <summary>
 /// One Table D-L puncture/repetition rule (MIL-STD-188-110D doc p. 222, transcribed in
-/// <c>docs/ms110d/tables/transcription-notes.md</c> § Table D-L). <see cref="KeepT1"/> /
+/// <c>docs/dev/ms110d/tables/transcription-notes.md</c> § Table D-L). <see cref="KeepT1"/> /
 /// <see cref="KeepT2"/> are the two mask rows applied column-wise to the (repeated) pair
 /// stream; <see cref="RepeatFactor"/> repeats the rate-1/2 pair adjacently
 /// (T1,T2,T1,T2 per input bit for 2×) <b>before</b> the mask is applied (the worked 1/3

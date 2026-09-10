@@ -2,7 +2,7 @@
 
 Checked-in ardopcf reference material for the ARDOP tests
 (`tests/.../Ardop/`). They let the suite validate against the interop oracle
-without an ardopcf build present. See `docs/ardop-design.md` §6 for the
+without an ardopcf build present. See `docs/dev/ardop-design.md` §6 for the
 validation ladder these serve.
 
 ## Provenance

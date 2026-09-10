@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Tests.Channel;
 
 /// <summary>
 /// One decode of one real frame at a chosen receive level: what the sweeps behind
-/// <c>docs/receive-levels.md</c> are made of, and what the committed cliff tests re-run a few
+/// <c>docs/dev/receive-levels.md</c> are made of, and what the committed cliff tests re-run a few
 /// points of.
 /// </summary>
 /// <remarks>
@@ -113,7 +113,7 @@ internal static class ReceiveLevelRig
         }
 
         // Noise in a 3 kHz reference bandwidth, which is the convention every other AWGN ladder
-        // in this tree is quoted in (docs/mode-validation.md), so a knee measured here can be
+        // in this tree is quoted in (docs/dev/mode-validation.md), so a knee measured here can be
         // read against the ones already written down. Calibrated against the scaled burst, so
         // the ratio holds as the level sweeps and only the converter's own floor changes
         // underneath it - which is the thing the quiet end is measuring.

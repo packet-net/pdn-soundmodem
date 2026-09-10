@@ -882,7 +882,7 @@ public class DaemonConfigTests : IDisposable
 
     // ---- publish: a station offering itself to a public monitor site -----------------------
     //
-    // Section 4.3 of docs/uplink-plan.md. All of these are exit 2 at start-up rather than a
+    // Section 4.3 of docs/dev/archive/uplink-plan.md. All of these are exit 2 at start-up rather than a
     // station that comes up and quietly does not publish, because an operator who has written the
     // block wants to know now, and because the alternative is a permanently silent uplink nobody
     // notices for a month.
