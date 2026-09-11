@@ -130,7 +130,7 @@ internal static class StationFactory
 
         journal.WriteError(
             $"  the {ModemCatalog.KnownModes.Count} built-in mode names are listed at "
-            + "https://github.com/packet-net/pdn-soundmodem/blob/main/docs/modes.md");
+            + "https://github.com/packet-net/pdn-soundmodem/blob/main/docs/05-modes.md");
     }
 
     /// <summary>

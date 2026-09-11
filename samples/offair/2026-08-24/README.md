@@ -64,7 +64,7 @@ Two separate reasons nothing read it at the time, and the second is the one wort
 - **`pdn-decode` swept all 46 modes over it and reported silence**, because every mode listens at
   its catalogue centre and `afsk300`'s is 1700 Hz. That is what `--centre`, the sidecar reading
   and `--sweep` exist for (#355) - see
-  [docs/pdn-decode.md](../../../docs/pdn-decode.md#where-it-listens). This file is the
+  [docs/13-decode-a-recording.md](../../../docs/13-decode-a-recording.md#where-it-listens). This file is the
   regression: `CentreSweepTests` asserts the default sweep finds nothing in it and the sidecar's
   measured centre finds the beacon.
 - **The station's own `afsk300-il2pc` bank would have copied it.** Fed this audio at its

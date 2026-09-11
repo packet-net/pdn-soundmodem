@@ -18,7 +18,7 @@ Status legend used in the matrix:
 
 ## Mode matrix
 
-> The reader-facing capability view of this matrix is [docs/modes.md](../modes.md) - when a
+> The reader-facing capability view of this matrix is [docs/05-modes.md](../05-modes.md) - when a
 > row's Status changes here, update that table's row in the same PR.
 
 | Mode | Family | What it is | Sim validation (test/mask) | On-air validation | Status |
