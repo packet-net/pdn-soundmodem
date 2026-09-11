@@ -26,7 +26,7 @@ public partial class ReferenceDocsTests
 {
     private static readonly string ConfigPage = Path.Combine("docs", "reference", "config.md");
     private static readonly string CommandLinePage = Path.Combine("docs", "reference", "command-line.md");
-    private static readonly string ModesPage = Path.Combine("docs", "modes.md");
+    private static readonly string ModesPage = Path.Combine("docs", "05-modes.md");
 
     [Fact]
     public void Every_Config_Key_Is_Documented_In_The_Configuration_Reference()

@@ -367,7 +367,7 @@ internal sealed class ConfigApi
                     // Named plainly, because this is the one that took the node down: a mode
                     // string with a stray character parses as perfectly good JSON.
                     return $"modem {modem.SubChannel}: unknown mode '{modem.Mode}'. "
-                        + "Check the spelling against docs/modes.md.";
+                        + "Check the spelling against docs/05-modes.md.";
                 }
             }
 

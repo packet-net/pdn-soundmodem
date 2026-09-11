@@ -46,7 +46,7 @@ Then, `systemctl restart pdn-soundmodem`, open your browser: `http://my-host:809
 
 All planned modem families are implemented and bench-proven. **The complete mode table -
 every mode with its capabilities and verification level - is at
-[docs/modes.md](docs/modes.md)**; per-mode validation provenance lives in the
+[docs/05-modes.md](docs/05-modes.md)**; per-mode validation provenance lives in the
 [mode validation ledger](docs/dev/mode-validation.md). What exists today:
 
 - **IL2P codec** (spec draft v0.6, including IL2P+CRC): full frame encode/decode - Type 0/1

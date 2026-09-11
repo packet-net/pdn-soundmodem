@@ -287,7 +287,7 @@ This is the QtSoundModem multiplex model - your host software picks a modem by K
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `subChannel` | int | `0` | KISS port nibble, 0-15. Must be unique - duplicates are rejected at start-up |
-| `mode` | string | `"afsk1200"` | See [docs/modes.md](docs/modes.md) for all 38 modes, plus `ardop` - [below](#ardop) |
+| `mode` | string | `"afsk1200"` | See [docs/05-modes.md](docs/05-modes.md) for all 38 modes, plus `ardop` - [below](#ardop) |
 | `frequency` | number | mode default | Audio centre in Hz, TX **and** RX |
 | `rfFrequency` | number | *(none)* | Where on the band it sits, in absolute Hz - [below](#band-plans-in-rf-terms) |
 | `bandwidth` | number | measured | How much room to plan for; mainly for `ardop` - [below](#band-plans-in-rf-terms) |
@@ -1560,7 +1560,7 @@ modem 0: bpsk300 @ 1500 Hz
 modem 0: id beacons - listening in afsk300-multi11 @ 1700 Hz
 ```
 
-A ghost is whatever [`afsk300`](docs/modes.md) currently means, which since 2026-08-02 is the
+A ghost is whatever [`afsk300`](docs/05-modes.md) currently means, which since 2026-08-02 is the
 narrow-branch frequency-diversity bank rather than one wide demodulator - and that matters more
 here than it does on a data slot. A ghost sits 200 Hz from a PSK carrier *by construction*, and a
 quadrature discriminator follows the strongest thing in its passband, so tight branches are what
@@ -1642,7 +1642,7 @@ with the message the journal would have carried - while the running station carr
 
 ```
 $ curl -sX POST -H "X-API-Key: $KEY" --data @new.json http://radio:8099/api/config
-modem 3: unknown mode 'freedv-datac3 '. Check the spelling against docs/modes.md.
+modem 3: unknown mode 'freedv-datac3 '. Check the spelling against docs/05-modes.md.
 ```
 
 That is a real example. Editing the file by hand, the same stray space produced a correct refusal
@@ -3159,7 +3159,7 @@ The mode suggestion is worth knowing about, because a hyphen is easy to lose amo
 ```
 modem 0: unknown mode 'fsk9600il2p'
   did you mean: fsk9600-il2p, fsk4800-il2p
-  the 38 valid mode names are listed at …/docs/modes.md
+  the 38 valid mode names are listed at …/docs/05-modes.md
 ```
 
 ### Hardware the config names but the machine does not have
@@ -3302,6 +3302,6 @@ Point Pat at 8101 (data 8102), and your packet host at 8100 and 8103.
 ## See also
 
 - [INSTALL.md](INSTALL.md) - installing the package and first-run setup
-- [docs/modes.md](docs/modes.md) - every mode, its capabilities and verification level
+- [docs/05-modes.md](docs/05-modes.md) - every mode, its capabilities and verification level
 - [docs/dev/archive/flex-integration.md](docs/dev/archive/flex-integration.md) - FlexRadio headless and attach modes
 - [docs/dev/ardop-design.md](docs/dev/ardop-design.md) - the ARDOP implementation

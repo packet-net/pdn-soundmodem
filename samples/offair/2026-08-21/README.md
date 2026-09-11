@@ -1,7 +1,7 @@
 # 2026-08-21 - noisy FM off-air capture, mode not recorded
 
 Five captures Tom made off an FM radio, handed over with the mode unknown ("two modes I think,
-quite noisy") as the first real corpus for [`pdn-decode`](../../../docs/pdn-decode.md). They are
+quite noisy") as the first real corpus for [`pdn-decode`](../../../docs/13-decode-a-recording.md). They are
 here because they are the material that corrected the tool's default sweep set, because a
 weak-signal FM recording of a shaped-PSK mode is not otherwise represented in `samples/`, and
 because one of them is a real-signal fixture for a receive-path defect we had only ever seen in

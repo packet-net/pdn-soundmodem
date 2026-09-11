@@ -9,7 +9,7 @@
 #   pdn-decode *.wav
 #
 # Builds Release on first use and whenever a source file is newer than the binary, then execs it.
-# Pass --rebuild to force one. See docs/pdn-decode.md.
+# Pass --rebuild to force one. See docs/13-decode-a-recording.md.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
