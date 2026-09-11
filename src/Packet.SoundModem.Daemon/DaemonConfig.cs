@@ -1344,7 +1344,11 @@ public sealed class DaemonConfig
     [JsonIgnore]
     public IReadOnlyList<string> Warnings { get; private set; } = [];
 
-    private static readonly JsonSerializerOptions Options = new()
+    /// <summary>
+    /// How the file is read. Internal so that the documentation test reflects the property
+    /// names with the same options the daemon deserialises with.
+    /// </summary>
+    internal static readonly JsonSerializerOptions Options = new()
     {
         PropertyNameCaseInsensitive = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
