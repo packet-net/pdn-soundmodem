@@ -6,17 +6,17 @@ Every key the modem reads from its configuration file, with type, default and on
 
 | | |
 |---|---|
-| Path | `/etc/pdn-soundmodem/soundmodem.json`; the systemd unit passes it as `--config`. There is no search path and no environment variable; without `--config` the modem runs from flags and defaults alone. |
+| Path | `/etc/pdn-soundmodem/soundmodem.json`; the systemd unit passes it as `--config`. There is no search path and no environment variable; without `--config` the modem runs from flags and defaults alone (see the [command-line reference](command-line.md)). |
 | Format | JSON. `//` and `/* */` comments and trailing commas are accepted. Keys match case-insensitively, so `kissPort`, `KissPort` and `kissport` are the same key. |
 | Applying a change | Restart the service. The file is read once at start-up. |
 | Written by the modem | Never, with one exception: `POST /api/config?persist=true` replaces it on an operator's explicit instruction. |
 | Seeded from | `/usr/share/pdn-soundmodem/soundmodem.example.json`, copied in by the package on first install. |
 
-An empty object `{}` is a valid file. It gives a station on ALSA device `default` at 48000 Hz capture, one `afsk1200` modem on sub-channel 0 at 1700 Hz, KISS on `127.0.0.1:8105`, no PTT line (the radio's VOX or nothing), the transmitter test enabled, id-beacon listening and frequency matching on, and no browser page, frame log or other service.
+An empty object `{}` is a valid file. It gives a station on ALSA device `default` at 48000 Hz capture, one `afsk1200` modem on sub-channel 0 at 1700 Hz, KISS on `127.0.0.1:8105`, no PTT line (the radio's VOX or nothing), the transmitter test enabled but unusable without a `ptt`, id-beacon listening and frequency matching on, and no browser page, frame log or other service.
 
 An unknown key anywhere in the file is reported at start-up and ignored. The journal line is `config: WARNING - <section>: "<key>" is not a setting this version knows, and is being IGNORED. Check the spelling against <url>`, where `<section>` is the object it was found in (`waterfall`, `modem 1`, `alsa mixer`, `monitor uplink GB7RDG-2` and so on) and is omitted for a top-level key. Unknown keys inside `metrics` and `frequencyMatching` are the two exceptions: those objects keep them but nothing reports them.
 
-An invalid file makes the modem exit with status 2 after printing what is wrong and what to do. The unit sets `RestartPreventExitStatus=2`, so systemd leaves the service stopped and the journal holds one explanation:
+An invalid file makes the modem exit with status 2 after printing what is wrong and what to do (the exit codes are listed in the [command-line reference](command-line.md#exit-codes)). The unit sets `RestartPreventExitStatus=2`, so systemd leaves the service stopped and the journal holds one explanation:
 
 ```
 configuration error in /etc/pdn-soundmodem/soundmodem.json
@@ -30,13 +30,13 @@ configuration error in /etc/pdn-soundmodem/soundmodem.json
   Every setting is documented at https://github.com/packet-net/pdn-soundmodem/blob/main/CONFIG.md
 ```
 
-The same frame carries `no such file: <path>`, `no such directory: <dir>`, `permission denied reading the file`, `the file is empty`, `the file contains only 'null'` and `not valid JSON - line L, position P: <detail>` (counted from 1, as an editor does). Every refusal listed under a section below arrives the same way, except where a section says the line is a warning.
+The same frame carries `no such file: <path>`, `no such directory: <dir>`, `permission denied reading the file`, `the file is empty`, ``the file contains only `null` - there is nothing to configure from`` and `not valid JSON - line L, position P: <detail>` (counted from 1, as an editor does). The frame is used for every refusal raised while the file is read, which is everything `DaemonConfig` checks: the file-level errors above, `bind`, the port claims, sub-channels and the `rfFrequency` rules, `txTest`, `modemPlugins`, `alsa`, `flex.transmitFilterHighHz`, `deadFeed`, the sideband kinds, `monitor` and `publish`, plus the `publish.audioRate` divisor check, which waits for the modems. Refusals raised later in start-up are one or two bare lines on stderr with exit 2 and no recovery text: an unknown mode and the mode rules under `modems`, every `identify` refusal, `ptt`, `captureRate`, `ubersdr`, `flex.txPowerWatts` and the sideband contradiction, ARDOP given twice via `--ardop`, the band plan, the page's port and settings, `api`, `frameLog`, `survey`, `rawCapture`, and a monitor's own start-up checks. Where a section below says a line is a warning, start-up continues.
 
 Exit status 1 is different: hardware the file names but the machine does not have (a sound card that has not enumerated, a `/dev/hidraw0` that is not there, a radio still booting) exits 1 with a message naming the key and the file, and the service keeps retrying every five seconds.
 
 ## Top-level keys
 
-In the order `DaemonConfig` declares them.
+In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each modem's `rfFrequency` are covered together under [Band placement](#band-placement-sideband-dialfrequency-and-rffrequency) at the end of the page.
 
 | Key | Type | Default | What it is |
 |---|---|---|---|
@@ -44,13 +44,13 @@ In the order `DaemonConfig` declares them.
 | `captureRate` | int | `48000` | ALSA capture and playback rate in Hz; the modem decimates to its DSP rate. |
 | `kissPort` | int | `8105` | The shared KISS TCP port carrying every packet modem by sub-channel nibble. |
 | `bind` | string | `"127.0.0.1"` | The address every listener binds to: KISS, per-modem ports, the station page, paging and ARDOP. `"*"` or `"0.0.0.0"` for all interfaces. |
-| `sideband` | string | `"usb"` | What kind of radio this is, `"usb"`, `"lsb"` or `"fm"`, for turning `rfFrequency` into audio. See Band placement. |
-| `dialFrequency` | number | chosen by the modem | Pins the dial in Hz instead of letting the band plan choose one. See Band placement. |
-| `modems` | array | one `afsk1200` on sub-channel 0 | The modems sharing the audio channel. |
+| `sideband` | string | `"usb"` | What kind of radio this is, `"usb"`, `"lsb"` or `"fm"`, for turning `rfFrequency` into audio. See [Band placement](#band-placement-sideband-dialfrequency-and-rffrequency). |
+| `dialFrequency` | number | chosen by the modem | Pins the dial in Hz instead of letting the band plan choose one. See [Band placement](#band-placement-sideband-dialfrequency-and-rffrequency). |
+| `modems` | array | one `afsk1200` on sub-channel 0; none when a top-level `ardop` section is present | The modems sharing the audio channel. |
 | `modemPlugins` | array | `[]` | Assemblies outside the package that provide extra modes. |
 | `ptt` | object | absent: no keying line | How the radio is keyed: `serial` or `cm108`. |
 | `txTest` | object | enabled, 5 s, cap 30 s | Bounds on the operator's two-tone and single-tone transmitter test. |
-| `alsa` | object | absent: card untouched | The sound card's mixer levels. |
+| `alsa` | object | absent: levels left alone | The sound card's mixer levels. |
 | `paging` | object | absent: off | The POCSAG paging endpoint. |
 | `ardop` | object | absent: off | Legacy way to start the ARDOP virtual TNC; a modem entry with `"mode": "ardop"` is the current form. |
 | `flex` | object | absent: defaults | Slice parameters for a headless FlexRadio. |
@@ -92,8 +92,8 @@ In the order `DaemonConfig` declares them.
 ```
 
 - `bind` must parse as an IP address, or be `"*"`; anything else is refused with `"bind": "<value>" is not an IP address. Use "127.0.0.1" for loopback only, "*" for every interface, or the address of one interface.` A blank value stays on loopback.
-- KISS has no authentication. Binding beyond loopback prints `kiss: WARNING - listening beyond loopback. KISS has no authentication: anything that can reach these ports can transmit on your licence.` at start-up.
-- Two services asking for one TCP port are refused before anything opens: `<this> and <that> both want TCP port N. Give them different ports.` The claims are `"kissPort"`, `the "port" of modem N`, `the ARDOP data port of modem N` (its `port` plus one), `the waterfall`, `the paging endpoint`, `the ARDOP command port` and `the ARDOP data port`.
+- KISS has no authentication. Binding beyond loopback prints a `kiss: WARNING - listening beyond loopback` line at start-up; the text is under [Every listener](ports-and-endpoints.md#every-listener).
+- Two services asking for one TCP port are refused before anything opens: `<this> and <that> both want TCP port N. Give them different ports.` The claims are `"kissPort"`, `the "port" of modem N`, `the ARDOP data port of modem N` (its `port` plus one), `the waterfall`, `the paging endpoint`, `the ARDOP command port` and `the ARDOP data port`. With a top-level `ardop` section `"kissPort"` is not claimed, so a clash between it and the ARDOP ports fails when the listener binds rather than at validation; see [`ardop`](#ardop).
 - Channel access (TXDELAY, persistence, slot time, TXTAIL) has no key here; the host sets it over KISS at runtime.
 
 ## `modems`
@@ -112,13 +112,13 @@ In the order `DaemonConfig` declares them.
 | `subChannel` | int | `0` | The KISS sub-channel (port nibble) this modem answers to, 0 to 15. |
 | `mode` | string | `"afsk1200"` | A catalogue mode name (see [modes](../modes.md)), `"ardop"` for the ARDOP virtual TNC, or a plugin mode written `pluginId:mode`. |
 | `frequency` | number | the mode's own centre | Audio centre in Hz, transmit and receive. 1700 for `afsk*`, 1500 for `bpsk*` and `qpsk*` (1650 for `qpsk3600`), the spec centre for `freedv-*` and `ms110d-*`. |
-| `rfFrequency` | number | none | Where this modem sits on the band in absolute Hz; the modem then works out the dial and this modem's audio centre. See Band placement. |
+| `rfFrequency` | number | none | Where this modem sits on the band in absolute Hz; the modem then works out the dial and this modem's audio centre. See [Band placement](#band-placement-sideband-dialfrequency-and-rffrequency). |
 | `bandwidth` | number | measured from the modem; 2000 for `ardop` | How much room the band plan and the survey allow this modem, in Hz. |
 | `port` | int | none | A TCP port for this modem alone. A packet mode gets KISS there with this modem presented as nibble 0; `ardop` gets the ardopcf host interface, command on this port and data on the next one up (default 8515 and 8516). |
 | `offsetPairs` | int | 4, 5 or 0 by mode | Diversity-bank modes only: decoder branches either side of centre. 0 is a single modem. |
 | `offsetStepHz` | number | by mode | Diversity-bank modes only: Hz between adjacent branches. |
 | `acceptPlainIl2p` | bool | `false` | IL2P+CRC modes only: also pass frames that arrive as plain IL2P with no CRC to the host. |
-| `identify` | object | none | Morse identification for this modem; see below. |
+| `identify` | object | none | Morse identification for this modem; see [`modems[].identify`](#modemsidentify). |
 
 Diversity-bank defaults by mode:
 
@@ -141,7 +141,7 @@ Rules and refusals:
 - `rfFrequency` on some entries and not others: `some modems have "rfFrequency" and some do not (...). Give every modem an "rfFrequency" or none of them`.
 - Two entries with `"mode": "ardop"`: `two modems have "mode": "ardop". One ARDOP TNC per channel`.
 - An `ardop` entry beside a top-level `ardop` section: `ARDOP is configured twice - once as a modem entry and once in the top-level "ardop" section. Keep the modem entry ... and delete the "ardop" section.`
-- A plugin mode whose declared rate is neither 12000 nor 48000, or that differs from the rate the other modems settle the channel at, is refused with a sentence naming both modes. Built-in modes share a channel at either rate.
+- A plugin mode whose declared rate is neither 12000 nor 48000 is refused with a sentence naming that mode and the two rates a channel runs at; one that differs from the rate the other modems settle the channel at is refused with a sentence naming it and the built-in mode that fixed the rate. Built-in modes share a channel at either rate.
 - An `ardop` entry whose `frequency` leaves less than 2000 Hz inside a nominal 300-2700 Hz passband prints `ardop: WARNING - centre F Hz leaves room for an ARDOP bandwidth of W Hz ...`; a centre at or beyond the engine's 6000 Hz Nyquist prints the same prefix with `is outside the 0-6000 Hz band`.
 - ARDOP shares the channel with the packet modems. An ARQ session holds packet transmissions until it ends.
 - The ARDOP entry without a `port` listens on 8515, data on 8516.
@@ -149,8 +149,7 @@ Rules and refusals:
 ### `modems[].identify`
 
 ```json
-{ "subChannel": 1, "mode": "bpsk300", "rfFrequency": 7051600,
-  "identify": { "callsign": "M0LTE", "intervalMinutes": 10 } }
+{ "identify": { "callsign": "M0LTE", "intervalMinutes": 10 } }
 ```
 
 | Key | Type | Default | What it is |
@@ -158,12 +157,12 @@ Rules and refusals:
 | `callsign` | string | none; required | The callsign sent. |
 | `intervalMinutes` | number | `10` | Minutes between idents. The clock runs only while this modem transmits; an idle modem never keys to identify. |
 | `wpm` | number | `20` | Sending speed, PARIS words per minute. |
-| `toneHz` | number | this modem's audio centre | The audio tone keyed. |
+| `toneHz` | number | the modem's `frequency` when written, else the band plan's centre for it | The audio tone keyed. |
 | `rfFrequency` | number | none | Where to identify in absolute Hz, as an alternative to `toneHz`; needs a band plan. |
 | `includeMode` | bool | `false` | Send the mode name after the callsign, as in `M0LTE FREEDV-DATAC1`. |
 | `amplitude` | number | `0.8` | Key-down peak, 0 to 1. |
 
-- Refused: `identify` on a receive-only station (`"identify" needs a transmitter, and this station receives only`); on an `ardop` entry (`"identify" is not supported on ardop`); without a `callsign` (`"identify" needs a "callsign" - there is no default for a licence condition`); with both `toneHz` and `rfFrequency` (`they say the same thing two ways. Keep one.`); `rfFrequency` on FM (`has no meaning on FM`); `rfFrequency` with no band plan (`needs a band plan`); on a baseband mode with no `toneHz` (`mode 'X' has no audio centre, so there is nothing to default the ident tone to`). An amplitude, speed or interval the identifier will not take is `"identify" is not usable` with the reason under it. Each line is prefixed `modem N:`.
+- Refused: `identify` on a receive-only station (`"identify" needs a transmitter, and this station receives only`); on an `ardop` entry (`"identify" is not supported on ardop`); without a `callsign` (`"identify" needs a "callsign" - there is no default for a licence condition`); with both `toneHz` and `rfFrequency` (`they say the same thing two ways. Keep one.`); `rfFrequency` on FM (`has no meaning on FM`); `rfFrequency` with no band plan (`needs a band plan`); no `toneHz` on a modem that has neither a written `frequency` nor a band plan (`mode 'X' has no audio centre, so there is nothing to default the ident tone to`), which is every baseband mode and also any mode left on its default centre with no `rfFrequency` anywhere, so a single-modem file that identifies needs `toneHz` or `frequency` written down. An amplitude, speed or interval the identifier will not take is `"identify" is not usable` with the reason under it. Each line is prefixed `modem N:`.
 - The RF form of a tone is the same arithmetic as Band placement: on USB the tone is `rfFrequency - dial`, on LSB `dial - rfFrequency`.
 - A tone outside the band plan's passband is a warning, not a refusal: `modem N: WARNING - the ident tone F Hz is outside the L-H Hz passband this plan plays into, so it may be filtered away on transmit.`
 - A transmitter test transmission counts as a transmission for the ident clock.
@@ -197,7 +196,7 @@ Rules and refusals:
 
 - Omit the whole section for a radio keyed by VOX, or one that has no keying line. A FlexRadio keys itself and a web receiver has no transmitter.
 - Refused: a `type` other than `serial` or `cm108` (`unknown ptt type 'X'`); any `ptt` with a `flex:` device (`--device flex: keys the radio itself; remove the conflicting --ptt (serial:/cm108:)`); any `ptt` with a `ubersdr:` device (`--device ubersdr: is a receive-only station ... Remove "ptt".`).
-- A device that cannot be opened exits 1, with the file, the key, an `ls` to run and the udev note for `/dev/hidraw*`, and the service retries. The `--ptt` flag replaces this section.
+- A device that cannot be opened exits 1, with the file, the key, an `ls` to run and the udev note for `/dev/hidraw*`, and the service retries. The [`--ptt` flag](command-line.md#station-flags) replaces this section.
 - Without a `ptt` the transmitter test is refused: `tx test: unavailable - no "ptt" is configured, so this daemon does not key the radio`.
 
 ## `txTest`
@@ -214,7 +213,7 @@ Rules and refusals:
 | `amplitude` | number | `0.8` | Peak level of the burst, above 0 and at most 1. |
 
 - The section is present by default; there is nothing to switch on. The tones are not settings: two-tone is 700 and 1900 Hz, and a single tone takes its frequency per request.
-- Refused at load: an `amplitude` outside 0 to 1 (`"txTest"."amplitude": A is not a level`) and a `seconds` of zero or below (`"txTest"."seconds": S is not a length`).
+- Refused at load: an `amplitude` that is not above 0 and at most 1 (`"txTest"."amplitude": A is not a level`) and a `seconds` of zero or below (`"txTest"."seconds": S is not a length`).
 - The test is unavailable, with the reason in the journal, when `enabled` is false, when the station receives only, or when there is no `ptt`. The control is never on a public page. On a monitor `--two-tone` and `--tone` are refused with exit 2.
 
 ## `alsa`
@@ -223,7 +222,7 @@ Rules and refusals:
 { "alsa": { "mixer": { "captureGainDb": -12, "playbackDb": 0 } } }
 ```
 
-`alsa` holds one object, `mixer`. Absent, every mixer control is left as the card has it.
+`alsa` holds one object, `mixer`. The mixer is opened and read at every start-up whatever the file says. Absent, no level is set from the file; a capture or playback level remembered in the state file from an earlier page or `/api/mixer` change is still applied, and AGC and mic boost are still switched off.
 
 | Key | Type | Default | What it is |
 |---|---|---|---|
@@ -231,12 +230,13 @@ Rules and refusals:
 | `playbackDb` | number | absent: left alone | Transmit-side playback level in dB, inside the card's range. |
 | `card` | string | derived from `device` | The mixer card when it is not the one the device string implies. |
 | `stateFile` | string | `mixer-state.json` in the state directory | Where a change made on the station page or over `/api/mixer` is remembered between runs. |
-| `captureControls` | string array | built-in list | Control names to look for the capture gain under, in order. |
-| `agcControls` | string array | built-in list | Control names to look for the AGC switch under; it is only ever switched off. |
-| `micBoostControls` | string array | built-in list | Control names to look for the mic boost under; it is only ever switched off. |
-| `playbackControls` | string array | built-in list | Control names to look for the playback level under, in order. |
+| `captureControls` | string array | `Mic`, `Mic Capture`, `Capture` | Control names to look for the capture gain under, in order. |
+| `agcControls` | string array | `Auto Gain Control`, `AGC`, `Mic AGC` | Control names to look for the AGC switch under; it is only ever switched off. |
+| `micBoostControls` | string array | `Mic Boost`, `Mic Boost (+20dB)`, `Internal Mic Boost`, `Mic Capture Boost` | Control names to look for the mic boost under; it is only ever switched off. |
+| `playbackControls` | string array | `Speaker`, `PCM`, `Master`, `Headphone` | Control names to look for the playback level under, in order. |
 
-- The card's range is printed by `--mixer-show DEVICE` and in the start-up journal. A level outside it is one journal line naming the range, and that control is left alone; start-up continues.
+- Names are matched case-insensitively; a list of only blank strings falls back to the built-in one.
+- The card's range is printed by [`--mixer-show DEVICE`](command-line.md#one-shot-flags) and in the start-up journal. A level outside it is one journal line naming the range, and that control is left alone; start-up continues.
 - A level pinned here is applied at every start-up and wins over the state file; the state file fills in only for a control this section says nothing about. AGC and mic boost are switched off at every start-up on any card that has them.
 - The default state file is `$STATE_DIRECTORY/mixer-state.json`, which is `/var/lib/pdn-soundmodem/mixer-state.json` under the shipped unit, else a file beside the config file.
 - Removed keys are warned about by name. `captureGainPercent` and `playbackPercent`: `alsa mixer: <key> is no longer read; use <captureGainDb or playbackDb>, the card's range is shown by --mixer-show`. `agc` and `micBoost`: `alsa mixer: <key> is no longer a setting: AGC and mic boost are switched off at every start-up on any card that has them ...`, with a second sentence saying to remove the key.
@@ -252,11 +252,11 @@ Rules and refusals:
 | Key | Type | Default | What it is |
 |---|---|---|---|
 | `port` | int | `8106` | The line-based paging TCP port. |
-| `baud` | int | `1200` | POCSAG bit rate: 512, 1200 or 2400. |
+| `baud` | int | `1200` | POCSAG bit rate. The encoder supports 512, 1200 and 2400; the modem does not check the number, and what the POCSAG library does with another value is not documented. |
 | `invertPolarity` | bool | `false` | Invert the transmit baseband, for a radio whose data path inverts. |
 
 - Present means on. Paging shares the channel, its carrier sense and the PTT line with the packet modems.
-- The `--paging PORT[:BAUD]` flag replaces this section. A port already claimed by another service is refused as under `kissPort` and `bind`.
+- The `--paging PORT[:BAUD]` flag replaces this section. A port already claimed by another service is refused as under [`kissPort` and `bind`](#kissport-and-bind).
 
 ## `ardop`
 
@@ -268,8 +268,9 @@ Rules and refusals:
 |---|---|---|---|
 | `port` | int | `8515` | Host-interface command port; data always listens on the next port up. |
 
-- Legacy. A modem entry with `"mode": "ardop"` does the same and can also carry `frequency`, `rfFrequency`, `port` and `bandwidth`. Given only this section, the modem folds it into an `ardop` entry on the lowest free sub-channel at start-up.
-- Refused beside an `ardop` modem entry, see `modems`. The `--ardop PORT` flag wins over this section when both are given, and is refused beside an `ardop` modem entry: `ARDOP is configured twice - as a modem and with --ardop/"ardop". Keep the modem entry.`
+- Legacy. A modem entry with `"mode": "ardop"` does the same and can also carry `frequency`, `rfFrequency`, `port` and `bandwidth`. Given only this section, the modem folds it into an `ardop` entry on the lowest free sub-channel at start-up. With no `modems` beside it the file gets no default `afsk1200` and no KISS port, so `{ "ardop": {} }` is an ARDOP-only station.
+- Refused beside an `ardop` modem entry, see [`modems`](#modems). The `--ardop PORT` flag wins over this section when both are given, and is refused beside an `ardop` modem entry: `ARDOP is configured twice - as a modem and with --ardop/"ardop". Keep the modem entry.`
+- With this section present the port check does not compare `kissPort` against the ARDOP ports, a hold-over from when ARDOP excluded the packet modems, so a `port` equal to `kissPort` beside packet modems passes validation and fails when the KISS listener binds.
 
 ## `flex`
 
@@ -277,7 +278,7 @@ Rules and refusals:
 { "device": "flex:10.45.0.76", "flex": { "antenna": "ANT1", "daxChannel": "3", "receiveOnly": true } }
 ```
 
-Read for a headless `flex:` device (no `@station`), except `daxChannel`, which applies to attach mode too. Ignored for every other device.
+`frequency`, `antenna`, `mode` and `stationName` are read for a headless `flex:` device (no `@station`); the M0LTE.Flex package documents the first three as ignored in attach mode. `daxChannel` and `arbitration` apply in attach mode too. `txPowerWatts`, `receiveOnly` and `transmitFilterHighHz` are handed to that package on both paths, and whether attach mode honours them is decided inside it. The two range refusals below fire whatever `device` names; otherwise the section is ignored for any other device.
 
 | Key | Type | Default | What it is |
 |---|---|---|---|
@@ -319,7 +320,7 @@ Read for a `ubersdr:` device and for the receivers a `monitor` fronts. Ignored o
 - The receiver is tuned by the band plan: every modem needs an `rfFrequency`, or `dialFrequency` must be set. Otherwise: `the UberSDR instance at X has to be told where to listen. Give every modem an "rfFrequency" ... or set "dialFrequency" to pin it`.
 - Refused: `"sideband": "fm"` (`cannot be served by X: a web receiver is an SSB receiver`); `onDemand` without a `waterfall` section (`"ubersdr"."onDemand" needs a "waterfall" section`); a negative `lingerSeconds` with `onDemand` (`"ubersdr"."lingerSeconds" cannot be negative`); any `ptt`, `alsa.mixer`, `publish` or `identify`, each named under its own section.
 - The station receives only. Frames arriving over KISS are refused with `tx[N] DROPPED ... this station receives only`, and the transmitter test is unavailable.
-- A receiver that cannot be reached exits 1 and the service retries; with `onDemand` the page stays up and the input keeps trying instead.
+- A receiver that cannot be reached at start-up exits 1 either way, and the service retries. With `onDemand`, a receiver that goes away later, or refuses a session, is retried while the page stays up and says so.
 
 ## `waterfall`
 
@@ -342,9 +343,9 @@ There is no `bind` key here. The page listens on the top-level `bind`.
 | `about` | string | none | One paragraph for a visitor on a public page. |
 
 - The `--waterfall PORT` flag stands in for or overrides `port`; `--dial HZ` sets `dialFrequencyHz` and is refused without a page.
-- Refused: a `sideband` that is not `usb`, `lsb` or `fm` (`"waterfall"."sideband": "X" is not a kind of radio this knows`); a port already claimed (see `kissPort` and `bind`); a port that cannot be opened (`cannot serve the waterfall on ADDR:PORT ... Set by "waterfall"."port" and the top-level "bind"`); an `fftSize` or `linesPerSecond` the spectrum source will not take (`invalid waterfall settings ... Set by "waterfall"."fftSize" and "waterfall"."linesPerSecond"`).
+- Refused: a `sideband` that is not `usb`, `lsb` or `fm` (`"waterfall"."sideband": "X" is not a kind of radio this knows`); a port already claimed (see [`kissPort` and `bind`](#kissport-and-bind)); a port that cannot be opened (`cannot serve the waterfall on ADDR:PORT ... Set by "waterfall"."port" and the top-level "bind"`); an `fftSize` or `linesPerSecond` the spectrum source will not take (`invalid waterfall settings ... Set by "waterfall"."fftSize" and "waterfall"."linesPerSecond"`).
 - `enableAudioControls` with `public` is ignored and said so: `waterfall: "enableAudioControls" is IGNORED on a "public" page`.
-- A `bind` beyond loopback prints `waterfall: WARNING - listening beyond loopback. The page has no authentication, and ...`, naming the transmitter test and, when open, the mixer.
+- A `bind` beyond loopback prints a `waterfall: WARNING - listening beyond loopback` line naming the transmitter test on an operator's page and, when open, the mixer; the text is under [Every listener](ports-and-endpoints.md#every-listener).
 - The mixer group and its level meter appear only on an operator's page of a sound-card station where `/api/mixer` answers, which needs `api.key` or `enableAudioControls`.
 
 ## `monitor`
@@ -361,7 +362,7 @@ There is no `bind` key here. The page listens on the top-level `bind`.
 }
 ```
 
-A file with `monitor` describes a site, not a station. It reads `bind`, `sideband`, `dialFrequency`, `modemPlugins`, `waterfall`, `ubersdr`, `frameLog`, `idBeacons`, `deadFeed` and this section; it serves no KISS, PTT, API, survey, paging, ARDOP, metrics or transmitter test.
+A file with `monitor` describes a site, not a station. It reads `bind`, `sideband`, `dialFrequency`, `modemPlugins`, `waterfall`, `ubersdr`, `frameLog`, `idBeacons`, `deadFeed` and this section; it serves no KISS, PTT, API, survey, paging, ARDOP, metrics or transmitter test. The other station sections (`kissPort`, `captureRate`, `ptt`, `api`, `survey`, `metrics`, `rawCapture`, `frequencyMatching`, `paging`, `ardop`, `txTest`) are known keys, so a monitor file accepts them without a word and never reads them; only `device`, `publish` and `alsa.mixer` are refused.
 
 | Key | Type | Default | What it is |
 |---|---|---|---|
@@ -380,12 +381,12 @@ Each `uplinks` entry:
 |---|---|---|---|
 | `callsign` | string | required | The callsign the station must say it is; one to six letters and digits with an optional `-SSID`. |
 | `slug` | string | required | The path segment its page is served under, `/r/<slug>/`: lower-case letters, digits and hyphens, no hyphen at either end. |
-| `tokenSha256` | string | required | The SHA-256 of the token issued to the station, 64 hex characters. `pdn-soundmodem --uplink-token CALLSIGN` prints a token and its hash. |
+| `tokenSha256` | string | required | The SHA-256 of the token issued to the station, 64 hex characters, as printed by [`--uplink-token`](command-line.md#one-shot-flags). |
 
 Rules and refusals:
 
 - `waterfall.public` is forced true on a monitor.
-- Refused: `device` written in the file (`this file sets both "device" ("X") and "monitor"`); `monitor.modems` empty (`"monitor"."modems" is empty`); no `waterfall` section (`"monitor" needs a "waterfall" section`); a `waterfall` with no `port` written down (`"waterfall" has no "port". A monitor serves its whole site on that one port`); a `monitor.modems` entry without `rfFrequency` (`"monitor"."modems" has no "rfFrequency"`); `"sideband": "fm"` (`cannot be served by a monitor`); a negative `refreshMinutes` or `lingerSeconds`; a `directory` that is not an absolute http or https URL; a `publicUrl` with credentials in it (the message does not repeat the value) or with anything after the host and port; an `allow` or `deny` entry that is not a bare hostname; `alsa.mixer` or `publish` beside `monitor`; a modem the station could not build, with the same message a station gets.
+- Refused: `device` written in the file (`this file sets both "device" ("X") and "monitor"`); `monitor.modems` empty (`"monitor"."modems" is empty`); no `waterfall` section (`"monitor" needs a "waterfall" section`); a `waterfall` with no `port` written down (`"waterfall" has no "port". A monitor serves its whole site on that one port`); no `monitor.modems` entry with an `rfFrequency` (`"monitor"."modems" has no "rfFrequency"`; a list where only some entries have one is not caught and fails with an unhandled exception); `"sideband": "fm"` (`cannot be served by a monitor`); a negative `refreshMinutes` or `lingerSeconds`; a `directory` that is not an absolute http or https URL; a `publicUrl` with credentials in it (the message does not repeat the value) or with anything after the host and port; an `allow` or `deny` entry that is not a bare hostname; `alsa.mixer` or `publish` beside `monitor`; a modem the station could not build, with the same message a station gets.
 - `uplinks` refusals: a `callsign` that is not one, a `slug` that cannot be a path segment, a `tokenSha256` that is not 64 hex characters, and two entries sharing a slug, a callsign or a hash. Each names the entry and what to write instead.
 - `frameLog.path` is a directory on a monitor, one `frames-<slug>.db` per receiver; a path that is a file or ends `.db` is refused with a sentence saying so.
 
@@ -399,7 +400,7 @@ Rules and refusals:
 |---|---|---|---|
 | `url` | string | required | The site's uplink endpoint, an absolute `ws` or `wss` URL. |
 | `token` | string | required | The token the site issued this station, at least 32 characters, pasted in as given. |
-| `callsign` | string | required | This station's callsign with an optional SSID, up to 16 characters; the site checks it against the token. |
+| `callsign` | string | required | This station's callsign, one to six letters and digits with an optional `-SSID` as under `monitor.uplinks`; the site checks it against the token. |
 | `operator` | string | absent | Who runs it, up to 40 characters. |
 | `location` | string | absent | Roughly where it is, up to 60 characters. |
 | `radio` | string | absent | The radio and antenna, up to 60 characters. |
@@ -408,7 +409,7 @@ Rules and refusals:
 | `frames` | string | `"always"` | `"always"` publishes decoded frames whether or not anybody is watching; `"watched"` holds them until somebody is. |
 
 - One way only: audio, frames and a status sentence go up, a viewer count comes down. Nothing on the wire can transmit, retune or reconfigure the station.
-- Refused: `publish` beside `monitor` (`one process is not both`); on a `ubersdr:` device (`A receiver like that is already on the monitor site in its own right`); without a `waterfall` section (`"publish" needs a "waterfall" section`); a `url` that is not an absolute ws or wss URL; a `token` missing or under 32 characters; a `callsign` that is not one; a `site` that is not an absolute http or https URL; a `callsign`, `operator`, `location` or `radio` over its limit (`is N characters and the limit is L`); a `frames` other than `always` or `watched`; an `audioRate` outside 6000 to 48000, or one that does not divide the DSP rate once the modems are known (`which N does not divide. The audio is decimated rather than resampled, so it has to be an integer divisor: <list>`).
+- Refused: `publish` beside `monitor` (`one process is not both`); on a `ubersdr:` device (`A receiver like that is already on the monitor site in its own right`); without a `waterfall` section (`"publish" needs a "waterfall" section`); a `url` that is not an absolute ws or wss URL; a `token` missing or under 32 characters; a `callsign` that is not one; a `site` that is not an absolute http or https URL; an `operator`, `location` or `radio` over its limit (`is N characters and the limit is L`); a `frames` other than `always` or `watched`; an `audioRate` outside 6000 to 48000, or one that does not divide the DSP rate once the modems are known (`which N does not divide. The audio is decimated rather than resampled, so it has to be an integer divisor: <list>`).
 - Warnings: a plain `ws` URL off the machine (`publish: "url" is "...", which is unencrypted ws to <host> ... Use wss unless this is a test on your own wire.`); a modem above half the published rate (`publish: WARNING - the published audio spans 0 to N Hz, so modem ... will not appear on the site`); a 48000 Hz rate (`about 770 kbit/s upstream while somebody is watching`).
 - Roughly 194 kbit/s upstream at 12000 Hz while somebody is watching, 98 at 6000, 770 at 48000. There is no codec.
 
@@ -422,9 +423,9 @@ Rules and refusals:
 |---|---|---|---|
 | `key` | string | absent: no API | The shared secret every request must present, as `Authorization: Bearer KEY` or `X-API-Key: KEY`. |
 
-- Served under `/api/` on the `waterfall` port. There is no unauthenticated mode: no key, no API, except `/api/mixer` alone when `waterfall.enableAudioControls` is true.
+- Served under `/api/` on the page port. There is no unauthenticated mode: no key, no API, except `/api/mixer` alone when `waterfall.enableAudioControls` is true.
 - Refused: `api` without a `waterfall` section (`"api" is served on the waterfall's HTTP listener, and this station has no "waterfall" section - add one, or remove "api"`); `api` on a station run without `--config` (`"api" needs a --config file to read back and to write changes to`).
-- `POST /api/config` takes a whole document, validates it with the same checks as start-up, and restarts the process onto it for one run; `?persist=true` writes it to the config file. This is the only time the modem writes that file. Run outside systemd the change stops the process instead of restarting it, and start-up warns so.
+- `POST /api/config` takes a whole document, validates it with the same checks as start-up, and restarts the process onto it for one run; `?persist=true` writes it to the config file, the only time the modem writes that file. The mechanics are under [the API](ports-and-endpoints.md#the-api-under-api).
 - The start-up journal names the endpoints: `api: configuration over http://.../api/config (key required)`, and `api: modem proposals over .../api/proposals` when `survey.propose` is on.
 
 ## `frameLog`
@@ -450,7 +451,7 @@ Rules and refusals:
 | Key | Type | Default | What it is |
 |---|---|---|---|
 | `path` | string | `/var/lib/pdn-soundmodem/survey` | Where captures go, a WAV and a JSON sidecar per burst. |
-| `maxBytes` | int | `536870912` (512 MiB) | Byte budget for the directory; the oldest captures are deleted to make room. |
+| `maxBytes` | int64 | `536870912` (512 MiB) | Byte budget for the directory; the oldest captures are deleted to make room. |
 | `maxPerHour` | int | `30` | Most captures in any rolling hour. |
 | `cooldownSeconds` | number | `120` | How long the same part of the spectrum is left alone after a capture. |
 | `marginSeconds` | number | `1.0` | Audio kept either side of the burst. |
@@ -478,7 +479,7 @@ Rules and refusals:
 | `frameWindowSeconds` | number | `300` | How long a frame stays in the per-frame feed; values below 1 are treated as 1. |
 | `stationIdleHours` | number | `6` | How long a station keeps its series after its last frame; values below 0.1 are treated as 0.1. |
 
-- Served on the `waterfall` port with no authentication. Without a `waterfall` section the metrics are collected and a warning says there is nothing to serve them on: `metrics: WARNING - nothing to serve them on. They ride the waterfall's listener; add a "waterfall" section with a port, or remove "metrics".`
+- Served on the page port with no authentication. Without a `waterfall` section the metrics are collected and a warning says there is nothing to serve them on: `metrics: WARNING - nothing to serve them on. They ride the waterfall's listener; add a "waterfall" section with a port, or remove "metrics".`
 - Unknown keys in this section are not reported.
 - A Grafana dashboard for these series is at [grafana/pdn-soundmodem.json](grafana/pdn-soundmodem.json).
 
@@ -514,7 +515,7 @@ Rules and refusals:
 | Key | Type | Default | What it is |
 |---|---|---|---|
 | `path` | string | `/var/lib/pdn-soundmodem/raw` | Where the chunks are written. |
-| `maxBytes` | int | `4294967296` (4 GiB) | Byte budget for the directory; the oldest chunks are pruned to fit. |
+| `maxBytes` | int64 | `4294967296` (4 GiB) | Byte budget for the directory; the oldest chunks are pruned to fit. |
 | `chunkMinutes` | int | `15` | Audio minutes per WAV chunk. |
 
 - Present means on: the unedited receive audio at the DSP rate, continuously. The default budget holds about two days at 12 kHz.
@@ -586,13 +587,15 @@ The arithmetic, per sideband:
 
 Rules and refusals:
 
-- On USB and LSB the plan writes each modem's audio centre back into `frequency`, so a `frequency` written beside an `rfFrequency` is refused (see `modems`). On FM the page and the plan do no arithmetic and `frequency` stays what it was.
+- On USB and LSB the plan writes each modem's audio centre back into `frequency`, so a `frequency` written beside an `rfFrequency` is refused (see [`modems`](#modems)). On FM the page and the plan do no arithmetic and `frequency` stays what it was.
 - The passband is the nominal 300 to 2700 Hz of an ordinary SSB rig. A headless Flex, whose filters the modem sets itself, is widened as far as 10000 Hz when the modems need it, and the transmit filter high cut and the slice receive filter follow.
 - A chosen dial that leaves a modem outside the passband is refused: `band plan: no dial frequency places every modem inside the 300-2700 Hz passband:` followed by one line per offending modem; when the modems span more than the passband the line reads `these modems span N Hz of RF (... to ...), which is more than the 2400 Hz a single SSB passband can carry`.
 - A pinned `dialFrequency` that leaves a modem outside is a warning, not a refusal: `band plan: WARNING - with the dial pinned to D USB, these fall outside the nominal 300-2700 Hz passband. That is only a nominal figure - if your rig passes them, ignore this`.
 - A baseband mode (`fsk*`, `c4fsk*`) cannot take an `rfFrequency` on USB or LSB: `band plan: modem N (X) is a baseband mode ... cannot be placed with "rfFrequency"`. On FM it can; `c4fsk9600` on a channel is the ordinary case.
 - On FM, modems asking for different channels are refused: `on FM every modem is on the one channel the radio is set to, and these ask for A, B`. A `dialFrequency` that differs from the modems' `rfFrequency` is refused: `On FM those are the same thing said twice - the channel`.
 - A `sideband` that is not `usb`, `lsb` or `fm`, at the top level or under `waterfall`, is refused: `"sideband": "X" is not a kind of radio this knows. Use "usb", "lsb" or "fm"`.
-- On a headless Flex the slice `mode` states the sideband (`DIGU` and `USB` mean `usb`, `DIGL` and `LSB` mean `lsb`, `FM` and `NFM` mean `fm`); see `flex`.
+- On a headless Flex the slice `mode` states the sideband (`DIGU` and `USB` mean `usb`, `DIGL` and `LSB` mean `lsb`, `FM` and `NFM` mean `fm`); see [`flex`](#flex).
 - With no `rfFrequency` anywhere there is no plan: modems sit at their `frequency`, the page's dial comes from `waterfall.dialFrequencyHz` or `dialFrequency`, and a web receiver needs `dialFrequency` to tune at all.
 - The plan is printed at start-up as `dial: <MHz> USB` (or `channel: <MHz> FM`) followed by one `modem N <mode> at <MHz> = <Hz> Hz audio` line per modem. Refusals and warnings from the plan are prefixed `band plan:`.
+
+Related: [command-line reference](command-line.md), [ports and endpoints](ports-and-endpoints.md), [files and directories](files.md).

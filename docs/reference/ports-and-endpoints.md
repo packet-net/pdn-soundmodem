@@ -1,6 +1,6 @@
 # Ports and endpoints
 
-Every TCP listener pdn-soundmodem opens, what each one speaks, and what the journal says about it. The listeners are started in `src/Packet.SoundModem.Daemon/Program.cs`; the config keys they read are in the configuration reference, and the flags in the command-line reference, both in this directory.
+Every TCP listener pdn-soundmodem opens, what each one speaks, and what the journal says about it. The listeners are started in `src/Packet.SoundModem.Daemon/Program.cs`; the config keys they read are in the [configuration reference](config.md), and the flags in the [command-line reference](command-line.md).
 
 ## Every listener
 
@@ -14,9 +14,9 @@ Every TCP listener pdn-soundmodem opens, what each one speaks, and what the jour
 | Page port | the station page, its WebSocket, survey captures, `/metrics`, `/api` | `8107` | `waterfall.port`, `--waterfall` | HTTP and WebSocket |
 | Monitor site | the picker, one page per receiver, `/uplink` | none; must be stated | `waterfall.port` with a `monitor` section | HTTP and WebSocket |
 
-Every listener binds to the top-level `bind` (`--bind`), which is `127.0.0.1` by default. `"*"` or `"0.0.0.0"` binds every interface. A `bind` that is not an IP address stops the daemon with exit 2. There is no per-listener bind; the `waterfall` section has no `bind` key.
+Every listener binds to the top-level `bind` (`--bind`), which is `127.0.0.1` by default. `"*"` or `"0.0.0.0"` binds every interface. A `bind` that is not an IP address stops the modem with exit 2. There is no per-listener bind; the `waterfall` section has no `bind` key.
 
-Two services asking for the same TCP port is refused at start-up with both settings named, and the ARDOP data port counts as a claim on command port + 1.
+Two services asking for the same TCP port is refused at start-up with both settings named, and the ARDOP data port counts as a claim on command port + 1. The one gap is a top-level `ardop` section, which takes `kissPort` out of the check (see [`ardop`](config.md#ardop)); a clash there fails when the KISS listener binds.
 
 A `--two-tone` or `--tone` run opens no listener at all. A station with only an `ardop` modem opens no KISS port. A monitor opens only the page port.
 
@@ -26,6 +26,8 @@ Beyond loopback the journal warns at start-up, because none of these listeners h
 kiss: WARNING - listening beyond loopback. KISS has no authentication: anything that can reach these ports can transmit on your licence.
 waterfall: WARNING - listening beyond loopback. The page has no authentication, and on an operator's page it carries a transmit test: anything that can reach this port can key your transmitter on your licence.
 ```
+
+The page line shown is the operator page's. A `public` page ends `anything that can reach this port can watch this station.` instead, and with `enableAudioControls` a sentence saying the mixer is open with no key is appended.
 
 Each listener says where it is when it starts:
 
@@ -50,7 +52,7 @@ The framing is standard KISS: `FEND` (`0xC0`) delimited frames with `FESC` trans
 | Shared (`kissPort`) | every modem's frames, each under its own sub-channel | transmitted on the modem the sub-channel names |
 | Per-modem (`modems[].port`) | that modem's frames only, relabelled sub-channel 0 | transmitted on that modem whatever sub-channel the host wrote |
 
-Both kinds run at once on one channel, and any number of hosts may attach to any port; every host on a port receives every frame that port publishes. A frame for a sub-channel with no modem is refused and journalled as `tx[N] DROPPED ...: no modem on sub-channel N`. On a station that receives only, every frame from a host is refused the same way, with the reason, and the journal says so once at start-up. An `ardop` modem entry's `port` is never a KISS port.
+Both kinds run at once on one channel, and any number of hosts may attach to any port; every host on a port receives every frame that port publishes. A frame for a sub-channel with no modem is refused and journalled as `tx[N] DROPPED ...: no modem on sub-channel N`, at most once a minute per reason, with the number held back appended to the next line as `(and N more like it in the last minute)`. On a station that receives only, every frame from a host is refused the same way, with the reason, and the journal says so once at start-up. An `ardop` modem entry's `port` is never a KISS port.
 
 A host that stops reading is dropped once more than 1 MiB of frames is queued for it unread, with that reason on its disconnect line.
 
@@ -64,10 +66,12 @@ A host that stops reading is dropped once more than 1 MiB of frames is queued fo
 | `3` | SLOTTIME | host to modem | one byte, times 10 ms; applied at once |
 | `4` | TXTAIL | host to modem | one byte, times 10 ms; applied at once |
 | `5` | full duplex | host to modem | accepted, changes nothing; the channel is half duplex |
-| `6` | SETHW | both | modem-specific; acts on `ms110d-*` modems, see below |
+| `6` | SETHW | both | modem-specific; acts on `ms110d-*` modems, see [SETHW on ms110d](#sethw-on-ms110d) |
 | `7` | RX quality | modem to host | one JSON frame after each data frame, only with `--quality-frames` |
-| `12` | ACKMODE data | both | data with a two-byte id that comes back once the frame has been transmitted, see below |
+| `12` | ACKMODE data | both | data with a two-byte id that comes back once the frame has been transmitted, see [ACKMODE](#ackmode) |
 | any other | | | ignored |
+
+A known command with too short a payload is ignored the same way: TXDELAY, P, SLOTTIME, TXTAIL or SETHW with no byte, ACKMODE with fewer than two.
 
 TXDELAY, P, SLOTTIME and TXTAIL set the channel's CSMA parameters, which every modem in the process shares, so a value sent by any host on any port applies to all of them. The values live in memory: a restart returns to the configured `txDelay` and the channel's defaults.
 
@@ -125,7 +129,7 @@ kiss[8105] accept failed: Too many open files - listening continues
 
 ## ARDOP host interface
 
-An `ardop` modem entry, the top-level `ardop` section or `--ardop PORT` starts an ARDOP 1 virtual TNC from the M0LTE.Ardop package with ardopcf's TCP host interface on two ports: commands on `port` and data on `port + 1`, `8515` and `8516` by default. Configuring an `ardop` modem entry and the top-level section or flag together stops the daemon with exit 2; `--ardop` wins over `ardop.port`.
+An `ardop` modem entry, the top-level `ardop` section or `--ardop PORT` starts an ARDOP 1 virtual TNC from the M0LTE.Ardop package with ardopcf's TCP host interface on two ports: commands on `port` and data on `port + 1`, `8515` and `8516` by default. Configuring an `ardop` modem entry and the top-level section or flag together stops the modem with exit 2; `--ardop` wins over `ardop.port`.
 
 | Socket | Carries |
 |---|---|
@@ -138,13 +142,13 @@ One host per socket, as in ardopcf: a new connection replaces the previous one. 
 |---|---|
 | No busy detector | `BUSY TRUE` and `BUSY FALSE` are never sent. `BUSYDET` and `BUSYBLOCK` are accepted and answered as ardopcf answers them, and change nothing |
 | `CWID` | accepted and answered as ardopcf answers it; no CW identification is transmitted |
-| `LOGLEVEL`, `CONSOLELOG`, `DEBUGLOG`, `CMDTRACE` | accepted and answered as ardopcf answers them; nothing changes, the daemon's journal is its only log |
-| `TXFRAME` | not implemented; answered with the fault ardopcf gives an unknown command |
-| `VERSION` | reports `pdn-soundmodem_<version>` |
+| `LOGLEVEL`, `CONSOLELOG`, `DEBUGLOG`, `CMDTRACE` | accepted and answered as ardopcf answers them; nothing changes, the modem's journal is its only log |
+| `TXFRAME` | not implemented; answered `FAULT CMD TXFRAME not recoginized`, ardopcf's own spelling for an unknown command |
+| `VERSION` | reports `pdn-soundmodem_` followed by the M0LTE.Ardop package version (`pdn-soundmodem_0.4.0` at this release), not the modem's own version |
 | The channel | shared with the packet modems. The TNC's audio is moved from its native 1500 Hz to the entry's `frequency`, and to the channel rate when a 48 kHz mode has set it there. While an ARQ session is connected or connecting, packet frames are held in the queue and refused after 30 s |
 | Receive-only station | the host ports are still served and every frame the demodulator recovers is listed, but no session can complete; the journal warns at start-up |
 
-The transcript conformance test in `tests/Packet.SoundModem.Tests/Ardop/ArdopHostLiveTests.cs` compares this TNC's replies with a live ardopcf command by command, excluding `VERSION`.
+The host TNC lives in the M0LTE.Ardop package, at the version `Directory.Packages.props` pins (0.4.0 at this release); the divergences above are read from that package's source, not from this repository. The transcript conformance test in `tests/Packet.SoundModem.Tests/Ardop/ArdopHostLiveTests.cs` compares this TNC's replies with a live ardopcf command by command, excluding `VERSION`.
 
 ## POCSAG paging
 
@@ -155,7 +159,8 @@ The `paging` section or `--paging PORT[:BAUD]` opens a line-based service: UTF-8
 | `PAGE <ric> <function> ALPHA <text>` | `OK <id>` or `ERR <reason>` |
 | `PAGE <ric> <function> NUMERIC <text>` | `OK <id>` or `ERR <reason>` |
 | `PAGE <ric> <function> TONE` | `OK <id>` or `ERR <reason>` |
-| anything else | `ERR unknown command (expected PAGE)` |
+| `PAGE <ric> <function> <other word> ...` | `ERR type must be ALPHA, NUMERIC or TONE` |
+| a first word other than `PAGE` | `ERR unknown command (expected PAGE)` |
 
 | Field | Rule |
 |---|---|
@@ -175,7 +180,7 @@ The `paging` section or `--paging PORT[:BAUD]` opens a line-based service: UTF-8
 
 Control characters in decoded text are replaced with spaces so a page cannot fake a line break.
 
-`paging.baud` is `512`, `1200` (the default, DAPNET's) or `2400`, and names the mode label `pocsag<baud>` in the start-up line. `paging.invertPolarity` inverts the transmitted baseband; the decoder detects polarity on its own.
+The encoder supports `512`, `1200` (the default, DAPNET's) and `2400` for `paging.baud`; nothing checks the number. It names the mode label `pocsag<baud>` in the start-up line. `paging.invertPolarity` inverts the transmitted baseband; the decoder detects polarity on its own.
 
 ## HTTP on the page port
 
@@ -189,20 +194,20 @@ The `waterfall` section (or `--waterfall PORT`) serves these routes on `waterfal
 | `/links` | the same page, opening on the links pane alone |
 | any path with a WebSocket upgrade | the live stream; the page itself opens `ws` |
 | `/survey/<file>` | one survey capture from `survey.path`, `audio/wav` or `application/json`; only with a `survey` section |
-| `/metrics`, `/metrics/frames` | see Metrics below; only with a `metrics` section |
-| `/api/config`, `/api/proposals`, `/api/txtest`, `/api/mixer` | see The API below; 404 without an `api.key`, except the mixer exception |
+| `/metrics`, `/metrics/frames` | see [Metrics](#metrics); only with a `metrics` section |
+| `/api/config`, `/api/proposals`, `/api/txtest`, `/api/mixer` | see [The API](#the-api-under-api); 404 without an `api.key`, except the mixer exception |
 
 A capture name is served only when it is 1 to 128 characters of lower-case letters, digits, hyphens and dots, contains no `..`, ends in `.wav` or `.json`, and names a file inside the survey directory. Anything else is a 404.
 
 ### The WebSocket
 
-The socket carries what the page draws: the station's configuration on connect, decoded frames and their history, link cards, host-port attachment, input level, the radio's status sentence, survey counts and captures, transmissions, and binary spectrum and audio blocks. The page sends two things back: `ping`, answered with `pong`, and on an operator's page `txtest`, which starts or stops the transmitter test.
+The socket carries what the page draws: the station's configuration on connect, decoded frames and their history, link cards, host-port attachment, input level, the radio's status sentence, survey counts and captures, transmissions, and binary spectrum and audio blocks. The station sends `{"type":"ping"}` and drops a page that has said nothing for 60 s; the page answers `{"type":"pong"}`. The page also sends `{"type":"audio","on":true}` to start its audio and `{"type":"spectrum","on":false}` to stop its waterfall lines, each with `on` true or false, and on an operator's page `txtest`, which starts or stops the transmitter test.
 
-A `txtest` from a browser is acted on only when the request's `Origin` header names the host and port the request arrived on; a request with no `Origin` header (a script) is allowed. A refused one is journalled at most once a minute. A public page and a page relayed through a monitor carry no transmit control at all.
+A `txtest` from a browser is acted on only when the request's `Origin` header names the host, or the host and port, the request arrived on; a request with no `Origin` header (a script) is allowed. A refused one is journalled at most once a minute. A public page and a page relayed through a monitor carry no transmit control at all.
 
 ### The API under /api
 
-An `api` section with a `key` installs the API on the page port. It needs a `waterfall` section and a `--config` file; without either the daemon stops with exit 2. Without a key every `/api/` path is a 404, with one exception: `waterfall.enableAudioControls` true on a page that is not `public` serves `/api/mixer` with no key, and nothing else.
+An `api` section with a `key` installs the API on the page port. It needs a `waterfall` section and a `--config` file; without either the modem stops with exit 2. Without a key every `/api/` path is a 404, with one exception: `waterfall.enableAudioControls` true on a page that is not `public` serves `/api/mixer` with no key, and nothing else.
 
 The key is presented as `Authorization: Bearer KEY` or `X-API-Key: KEY`; `X-API-Key` is read first. The comparison is fixed-time. A wrong or missing key is a 401 with a plain-text reason and no `WWW-Authenticate` challenge.
 
@@ -213,7 +218,7 @@ The key is presented as `Authorization: Bearer KEY` or `X-API-Key: KEY`; `X-API-
 | `/api/config?persist=true` | `POST` | required | as above | as above with `"persisted": true`, written to the config file; 500 if the file cannot be written |
 | `/api/proposals` | `GET` | required | none | `{"proposing": false, "why": "...", "proposals": []}` without `survey.propose`; otherwise `{"proposing": true, "examined": N, "readable": N, "skippedForBacklog": N, "proposals": [...]}`, each proposal carrying a `config` to POST to `/api/config` |
 | `/api/txtest` | `POST` | required | `{"twoTone": true, "seconds": 5}`, `{"twoTone": false, "toneHz": 999, "seconds": 5}` or `{"stop": true}` | `{"transmitted": bool, "sent": ..., "refused": ..., "failed": ...}` with the unused keys null, answered once the test is over: 200 when it went out, 409 when the station would not run it, 500 when it broke; `{"stopped": true, "note": "..."}` for a stop; 404 with no transmitter or `txTest.enabled` false |
-| `/api/mixer` | `GET` | required, or none with `enableAudioControls` | none | the card's controls and levels as they read now; `{"available": false, "why": "..."}` on a station with no sound card |
+| `/api/mixer` | `GET` | required, or none with `enableAudioControls` | none | `available` true, `card`, `controls` (every control name), `capture` and `playback` (each null when the card has no such control, else `control`, `decibels`, `dbRange` as `min`, `max` and `mutesBelowMin` or null on a card with no dB scale, `percent`, and `source` as `config`, `state` or `none`), `agc` and `micBoost` (each null or `control`, `on` and `forcedOff`, always true), `summary` and `journal` (the start-up lines); `{"available": false, "why": "..."}` on a station with no sound card |
 | `/api/mixer` | `POST` | required, or none with `enableAudioControls` | `{"captureGainDb": 6, "playbackDb": -8}`, either or both | 200 with the read-back plus `applied`, `persisted`, `warn`, `stateFile` and `note`; 400 for a level outside the card's range or a removed key; 409 on a station with no mixer |
 | `/api/mixer?persist=false` | `POST` | as above | as above | the card is set for this run and nothing is written |
 | any other method | | | | 405 with a one-line hint |
@@ -226,10 +231,10 @@ What a change does to the running station:
 |---|---|
 | `POST /api/config` | validated first through the same code as start-up; then written to `pending-config.json` in the state directory (`$STATE_DIRECTORY`, else beside the config file), and the process exits 1. The next start-up reads that file once, deletes it, and runs on it; any later restart returns to the config file. The journal says `api: this station is running a ONE-RUN configuration applied over the API` on every start-up it applies to |
 | `POST /api/config?persist=true` | written over the config file instead, then the same restart |
-| `POST /api/mixer` | applied to the card at once with no restart, and written to the mixer state file so the next start-up sets it again. The config file is never written; a control it pins is applied first at start-up and wins, and the answer says so with `"warn": true` |
+| `POST /api/mixer` | applied to the card at once with no restart, and written to the mixer state file so the next start-up sets it again. The config file is never written; a level it pins wins at the next start-up (see [`alsa`](config.md#alsa)), and the answer says so with `"warn": true` |
 | `POST /api/txtest` | keys the transmitter for the test and answers when it is over |
 
-Run outside systemd, an applied configuration stops the daemon rather than restarting it; the journal warns at start-up when no `INVOCATION_ID` is present.
+Run outside systemd, an applied configuration stops the modem rather than restarting it; the journal warns at start-up when no `INVOCATION_ID` is present.
 
 ## Metrics
 
@@ -276,7 +281,7 @@ A station with a `publish` section dials out to `publish.url`, a `ws` or `wss` U
 
 | Item | Rule |
 |---|---|
-| Authentication | `Authorization: Bearer <token>` on the upgrade. `pdn-soundmodem --uplink-token CALLSIGN` prints a token and its SHA-256; the site stores the hash as `monitor.uplinks[].tokenSha256` and the station keeps the token as `publish.token` |
+| Authentication | `Authorization: Bearer <token>` on the upgrade. [`--uplink-token`](command-line.md#one-shot-flags) mints one; the site stores the hash as `monitor.uplinks[].tokenSha256` and the station keeps the token as `publish.token` |
 | 404 | the site has no `monitor.uplinks`; the path does not exist |
 | 400 | not a WebSocket upgrade |
 | 401 | no bearer token; or a token not in the table, after a fixed delay and a counted journal line |
@@ -284,7 +289,7 @@ A station with a `publish` section dials out to `publish.url`, a `ws` or `wss` U
 | Up, station to site | `hello` once and first (protocol version, daemon version, callsign, operator, location, radio, site, audio rate, block length, dial, sideband, frames policy, modems); binary audio blocks while somebody is watching; `frame` for every decoded frame, or only while watched with `publish.frames` `"watched"`; `radio` when the status sentence changes; `bye` before a planned close |
 | Down, site to station | `welcome` once (slug, path, page URL); `demand` with the viewer count, on every change and at least every 20 s; `refused` in place of a `welcome`, with the reason, followed by a close |
 | Refused after the hello | a protocol version other than 1; a callsign that is not the one the token was issued to; an audio rate outside 6000 to 48000 Hz or one the site cannot draw a whole number of lines from; a block length outside its cap; an over-long string; a band the site cannot place |
-| Keepalive | the station pings every 20 s and drops a socket with no application message for 45 s; the site's `demand` is the heartbeat |
+| Keepalive | the station pings every 20 s and drops a socket with no application message for 45 s; the site's `demand` is the heartbeat, and the site closes a socket that has not said hello within 10 s |
 
 Nothing sent down this socket can transmit, retune or reconfigure the station; a message of any other type is counted and dropped. The wire format is in [docs/dev/uplink-wire-format.md](../dev/uplink-wire-format.md). A second connection on the same token supersedes the first once its hello is accepted, and the first is told why.
 
@@ -292,7 +297,7 @@ The station journals `publish: live at https://<site>/r/<slug>/` when the `welco
 
 ### The monitor site's routes
 
-A `monitor` section turns the process into a site on `waterfall.port`, which must be stated. It opens no KISS, ARDOP or paging port and serves no `/api/`, `/metrics` or `/survey/` route; `waterfall.public` is forced true.
+A `monitor` section turns the process into a site on `waterfall.port`, which must be stated. It opens no KISS, ARDOP or paging port and serves none of the station's `/api/` endpoints, and no `/metrics` or `/survey/` route; `waterfall.public` is forced true.
 
 | Route | Method | Serves |
 |---|---|---|
@@ -305,3 +310,5 @@ A `monitor` section turns the process into a site on `waterfall.port`, which mus
 | anything else | | 404 |
 
 A slug is the `monitor.uplinks[].slug` of a relayed station, or the directory's slug for a listed web receiver. A slug the site does not offer is a 404.
+
+Related: [configuration reference](config.md), [command-line reference](command-line.md), [files and directories](files.md).
