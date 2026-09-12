@@ -200,11 +200,11 @@ public sealed class SoundModemChannel
             // property of the decode rather than a rule each consumer reapplies. It used to be
             // reapplied at the edge, by mode name, which is how every C4FSK frame came to take
             // the wrong pair of thresholds for a whole release.
-            (double? peakDbFs, bool? clipped, Audio.FrameLevel? level) =
+            (double? peakDbFs, bool? clipped, Audio.FrameLevel? level, bool? worthShowing) =
                 modem is IFrameSpanSource source
                 && source.TryTakeFrameSpan(out long spanFrom, out long spanTo)
                     ? Judge(source, _frameLevel.Measure(spanFrom, spanTo, source.FrameSpanMarginSamples))
-                    : (null, null, null);
+                    : (null, null, null, null);
             FrameReceivedWithQuality?.Invoke(
                 subChannel,
                 frame,
@@ -214,6 +214,7 @@ public sealed class SoundModemChannel
                     PeakDbFs = peakDbFs,
                     Clipped = clipped,
                     Level = level,
+                    PeakWorthShowing = worthShowing,
                 });
         };
         if (_constellationSink is { } sink && modem is IConstellationSource psk)
@@ -226,11 +227,20 @@ public sealed class SoundModemChannel
         _modems.Add(subChannel, modem);
     }
 
-    /// <summary>One reading plus the verdict the deciding modem's own limits put on it.</summary>
-    private static (double? PeakDbFs, bool? Clipped, Audio.FrameLevel? Level) Judge(
-        IFrameSpanSource source, (double? PeakDbFs, bool? Clipped) reading) =>
+    /// <summary>
+    /// One reading, the verdict the deciding modem's own limits put on it, and whether those
+    /// limits make the figure itself worth an operator's attention.
+    /// </summary>
+    /// <remarks>
+    /// Both answers come from the same object at the same moment, because both are properties of
+    /// the slicer that decoded the frame and nothing downstream can ask it: a page, a frame log
+    /// and a monitor at the other end of an uplink see a row and not a demodulator.
+    /// </remarks>
+    private static (double? PeakDbFs, bool? Clipped, Audio.FrameLevel? Level, bool? WorthShowing)
+        Judge(IFrameSpanSource source, (double? PeakDbFs, bool? Clipped) reading) =>
         (reading.PeakDbFs, reading.Clipped,
-            source.FrameLevels.Classify(reading.PeakDbFs, reading.Clipped));
+            source.FrameLevels.Classify(reading.PeakDbFs, reading.Clipped),
+            source.FrameLevels.PeakWorthShowing);
 
     /// <summary>Adds a non-KISS receive listener - a service decoder (e.g. POCSAG
     /// paging) that shares the channel's audio without occupying a KISS sub-channel.

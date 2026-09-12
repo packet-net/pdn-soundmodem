@@ -64,8 +64,9 @@ public static class FrameLevelText
 
 /// <summary>
 /// The two levels at which one decoded frame's own peak is worth a badge on its row: at or above
-/// <see cref="LoudPeakDbFs"/> it is called too loud, below <see cref="QuietPeakDbFs"/> too quiet,
-/// and anywhere between the two it says nothing at all.
+/// <see cref="LoudPeakDbFs"/> it is called too loud, below <see cref="QuietPeakDbFs"/> too quiet
+/// on the modes whose slicer reads the level (<see cref="PeakWorthShowing"/>), and anywhere
+/// between the two it says nothing at all.
 /// </summary>
 /// <remarks>
 /// <para><b>Owned by the modem that decoded the frame.</b> Published through
@@ -102,6 +103,12 @@ public static class FrameLevelText
 /// the level the sweep set, which on a working link sits 1 to 7 dB under it; on a link close to
 /// its own decode knee the gap is at the top of that range, so the quiet badge is late by a few
 /// dB there. <c>docs/dev/receive-levels.md</c> section 6 does the arithmetic and says how much.</para>
+/// <para><b>What the operator is shown differs with the group, and is settled here.</b> The
+/// figure itself goes on a row only where these limits say it is worth reading
+/// (<see cref="PeakWorthShowing"/>), and the quiet verdict only fires there too. The
+/// sign-and-angle group is left with the loud badge alone, which is the one claim its numbers
+/// can support: the rail is the converter's, not the slicer's, and it costs every mode
+/// something. The measurements go to the frame log and the uplink whatever the group.</para>
 /// <para><b>The clip flag is a separate, unconditional trigger</b> and always has been: a
 /// converter that ran out of codes is a fact about the station rather than a prediction, and it
 /// costs at least a decibel on every mode measured. It is only available where the station has a
@@ -110,7 +117,10 @@ public static class FrameLevelText
 /// <see cref="LoudPeakDbFs"/> alone.</para>
 /// </remarks>
 /// <param name="LoudPeakDbFs">At or above this, the frame is badged too loud.</param>
-/// <param name="QuietPeakDbFs">Below this, the frame is badged too quiet.</param>
+/// <param name="QuietPeakDbFs">Below this, the frame is badged too quiet - on a mode whose
+/// slicer reads the level. On the rest this is the converter's own quantisation floor rather
+/// than anything a demodulator objects to, and it badges nothing: see
+/// <see cref="PeakWorthShowing"/>.</param>
 public readonly record struct FrameLevelLimits(double LoudPeakDbFs, double QuietPeakDbFs)
 {
     /// <summary>
@@ -214,6 +224,50 @@ public readonly record struct FrameLevelLimits(double LoudPeakDbFs, double Quiet
             return FrameLevel.Loud;
         }
 
-        return peak < QuietPeakDbFs ? FrameLevel.Quiet : FrameLevel.Ok;
+        // The quiet edge only speaks where something actually reads the level. On the
+        // sign-and-angle group it is the converter's quantisation floor and nothing else: a frame
+        // under it is a weak signal, which is a fact about the band rather than a fault of the
+        // station, and no demodulator here has lost a decibel to it. See PeakWorthShowing.
+        return peak < QuietPeakDbFs && PeakWorthShowing ? FrameLevel.Quiet : FrameLevel.Ok;
     }
+
+    /// <summary>
+    /// Whether a frame's own peak figure, judged against these limits, says anything to the
+    /// operator beyond whether it reached the converter's rail.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>False on <see cref="Default"/> alone</b>, and that is the whole of it: both of
+    /// that pair's edges are the ends of the scale rather than anything its slicer reads. The
+    /// loud one is 0 dBFS, which is where the converter runs out of codes, and the quiet one is
+    /// the level at which a 16-bit converter has too few codes left to describe the signal with -
+    /// below any real card's own idle noise, so on real hardware it cannot fire at all. Between
+    /// them the sign and the angle are what they were: a bit decided by which side of zero a
+    /// sample fell on does not care how far from zero it fell, and the measurements say so -
+    /// none of the fourteen modes outside the 1200 baud AFSK family loses anything measurable at
+    /// any level from -72 dBFS up to full scale. So the number on the row would be a figure with
+    /// no action behind it at every value it can take.</para>
+    /// <para><b>True on the other two, because their slicers do read the level.</b>
+    /// <see cref="ClipSensitive"/> reads four amplitudes against fixed thresholds and loses
+    /// margin as soon as clipping compresses the outer pair; <see cref="QuietSensitive"/>
+    /// divides by its own in-band power with an absolute floor under it, and that floor takes
+    /// half the discriminator's gain at about -44 dBFS. On those the figure is the operator's
+    /// warning of a cliff that is actually in front of them.</para>
+    /// <para><b>Read off the numbers rather than stored beside them</b>, so it cannot disagree
+    /// with the pair it describes: a mode whose measurements moved an edge inward from the pair
+    /// that means nothing has, by that act, said its slicer cares. That holds for an out-of-tree
+    /// modem publishing its own measured pair as much as for the three here, and it leaves one
+    /// source of truth, which is <c>docs/dev/receive-levels.md</c>.</para>
+    /// <para>Decided here and consumed at the decode
+    /// (<see cref="Modems.FrameQuality.PeakWorthShowing"/>), not at the edge that draws a row.
+    /// Tom, 2026-09-12: "On the SSB modes I'd be happy with just 'TOO LOUD' if it's actually too
+    /// loud. And not showing the dBFS in SSB modes." The axis is the slicer and not the
+    /// modulation: <c>FmModeProfiles.IsFmMode</c> says which modes <em>are</em> frequency
+    /// modulation, which is a different question and has been keyed off wrongly before.</para>
+    /// <para><b>This hides the figure and not the measurement.</b> The frame log's
+    /// <c>peak_dbfs</c> column and the uplink's <c>peakDbFs</c> field carry it either way: it is
+    /// evidence, it is read by tools that are not this page, and a question about a capture level
+    /// from last Tuesday is answered from the log.</para>
+    /// </remarks>
+    public bool PeakWorthShowing =>
+        LoudPeakDbFs < Default.LoudPeakDbFs || QuietPeakDbFs > Default.QuietPeakDbFs;
 }

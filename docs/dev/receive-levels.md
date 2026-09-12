@@ -16,11 +16,11 @@ modes at most a decibel of link margin, and 24 dB of it costs them between 1 and
 twenty lose nothing measurable at any level from -72 dBFS up to full scale. Two modes do care at
 the loud end and one family at the quiet end, for reasons that are visible in the source:
 
-| group | modes | what makes it different | loud | quiet |
-|---|---|---|---|---|
-| sign or angle slicer | AFSK 300, BPSK 300/1200, QPSK 600/2400/3600, FSK 4800/9600, every framing of each | a bit is a sign or a quadrant; clipping does not move either | **0 dBFS** | **-72 dBFS** |
-| four-level slicer | `c4fsk9600`, `c4fsk19200` | four amplitudes against fixed thresholds at 0 and +-2/3 of a tracked envelope | **-6 dBFS** | **-72 dBFS** |
-| power-normalised discriminator | the 1200 baud AFSK family, all six | divides by its own in-band power with an absolute floor of 1e-5 under it | **0 dBFS** | **-34 dBFS** |
+| group | modes | what makes it different | loud | quiet | shown on the row |
+|---|---|---|---|---|---|
+| sign or angle slicer | AFSK 300, BPSK 300/1200, QPSK 600/2400/3600, FSK 4800/9600, every framing of each | a bit is a sign or a quadrant; clipping does not move either | **0 dBFS** | **-72 dBFS**, which no longer badges (6b) | the badge only |
+| four-level slicer | `c4fsk9600`, `c4fsk19200` | four amplitudes against fixed thresholds at 0 and +-2/3 of a tracked envelope | **-6 dBFS** | **-72 dBFS** | figure and badges |
+| power-normalised discriminator | the 1200 baud AFSK family, all six | divides by its own in-band power with an absolute floor of 1e-5 under it | **0 dBFS** | **-34 dBFS** | figure and badges |
 
 Both quiet numbers are stated in the units the badge reads, which is not the unit the sweep sets;
 section 6 does that conversion and it is worth 1 to 8 dB depending on the mode.
@@ -454,6 +454,49 @@ figure and no badge, which is the honest reading of "the station that heard it d
 alternative would be this site guessing with a copy of a rule that belongs to a demodulator it is
 not running. In the other direction the field is inert: a v0.60.x monitor ignores it and reads
 everything else exactly as before.
+
+---
+
+## 6b. What the operator is shown, and what is merely recorded
+
+Tom, 2026-09-12: *"On the SSB modes I'd be happy with just 'TOO LOUD' if it's actually too loud.
+And not showing the dBFS in SSB modes."*
+
+**The axis is the slicer, not the modulation.** The right reading of that request is the split this
+document already measured. `FrameLevelLimits.Default` is exactly the group whose bits are a sign or
+an angle, and its two edges are the ends of the converter's scale rather than anything its
+demodulator reads: 0 dBFS is where the card runs out of codes, and -72 is where a 16-bit converter
+has too few codes left to describe the signal with. Between them these modes lose nothing
+measurable, which is section 5's finding. So the number on such a row has no action behind it at
+any value it can take. (Keying this off `IsFmMode` instead would be a different question and a
+known trap: that property says which modes *are* frequency modulation, which is not what an FM
+receiver can carry and is not what a slicer reads.)
+
+So, on the `Default` group:
+
+- **No figure on the row.** The panel draws the badge and nothing else.
+- **No `TOO QUIET` verdict.** It is a quantisation floor rather than a demodulator objecting, it
+  sits below any real card's own idle noise (section 6), and a frame under it is a weak signal and
+  not a fault of the station. `Classify` no longer returns it there, so the log and the uplink stop
+  carrying a claim nothing stood behind. The number itself stays: the four-level group takes it,
+  and `c4fsk19200` is the mode it was derived from.
+- **The `TOO LOUD` badge stands.** The rail is the converter's fact, not the slicer's, and it costs
+  every mode measured at least a decibel. It is also the only level such a mode can report: from
+  0 dBFS up the reading is exactly 0.0 whatever the overdrive (section 1), so the figure beside the
+  badge would say nothing the badge does not.
+
+**The measurement is kept.** This is a presentation rule and it stops at the row. `peak_dbfs` is
+written to the frame log on every mode, and the uplink carries `peakDbFs` on every mode, because
+they are evidence: the bench runs in this document read them, a monitor keeps its own copy of a
+station's log, and a question about a capture level last Tuesday is answered from there.
+
+**Carried, not re-derived.** Whether the figure is worth drawing is a property of the limits
+(`FrameLevelLimits.PeakWorthShowing`, read off the two numbers so it cannot disagree with them),
+taken at the decode beside the verdict and carried the same way: `FrameQuality.PeakWorthShowing`,
+the frame log's `peak_shown` column, the uplink's optional `peakWorthShowing` field, and then the
+presence or absence of the number in the page's `frame` message. The page itself is unchanged: it
+draws the figure it is sent, and is sent none. Null anywhere along that chain is "nothing said" and
+shows the figure, which is what a row from an older station or an older log gets.
 
 ---
 

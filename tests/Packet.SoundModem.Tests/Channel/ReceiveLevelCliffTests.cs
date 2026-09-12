@@ -93,13 +93,16 @@ public class ReceiveLevelCliffTests
     }
 
     /// <summary>
-    /// A frame at the sign-sliced modes' quiet badge, -78 dBFS, has not lost anything yet.
+    /// A frame at the sign-sliced modes' own quiet edge, -72 dBFS, has not lost anything yet.
     /// </summary>
     /// <remarks>
-    /// The badge has to sit above the cliff rather than on it, or it says nothing until the frame
-    /// has already gone. The cliff for these modes is the 16-bit converter's own floor at about
-    /// -84 dBFS and not any demodulator objecting, so this asserts the threshold is still on the
-    /// flat part with <see cref="FrameLevelLimits.StationSpreadDb"/> to spare.
+    /// <para>The cliff for these modes is the 16-bit converter's own floor at about -84 dBFS and
+    /// not any demodulator objecting, so this asserts the edge is still on the flat part with
+    /// <see cref="FrameLevelLimits.StationSpreadDb"/> to spare.</para>
+    /// <para>These modes no longer badge a frame under it - there is nothing to warn an operator
+    /// about, which is what this measures - but the number is still theirs and is still load
+    /// bearing: <see cref="FrameLevelLimits.ClipSensitive"/> takes it, and c4fsk19200 is the mode
+    /// it was derived from.</para>
     /// </remarks>
     [Theory]
     [InlineData("qpsk3600")]
@@ -109,8 +112,8 @@ public class ReceiveLevelCliffTests
         Copies(mode, FrameLevelLimits.Default.QuietPeakDbFs, WorkingSnrFor(mode))
             .Should().BeGreaterThanOrEqualTo(
                 Trials * 3 / 4,
-                $"{mode} is flat to -84 dBFS (docs/dev/receive-levels.md #5), so its badge at "
-                    + "-72 still has the station spread in hand");
+                $"{mode} is flat to -84 dBFS (docs/dev/receive-levels.md #5), so its quiet "
+                    + "edge at -72 still has the station spread in hand");
     }
 
     /// <summary>
@@ -217,12 +220,20 @@ public class ReceiveLevelCliffTests
 
     /// <summary>
     /// The verdict itself: loud at or above the mode's loud edge or with the card clipped, quiet
-    /// below its quiet edge, ok in between, and nothing at all where there was no reading.
+    /// below its quiet edge where anything reads the level, ok in between, and nothing at all
+    /// where there was no reading.
     /// </summary>
     /// <remarks>
-    /// Three outcomes and not two. A page draws a badge for two of them, but the log and the
-    /// uplink have to be able to tell a frame that was measured and found fine from one nothing
-    /// could measure, which is the distinction <see cref="FrameLevel.Ok"/> against null carries.
+    /// <para>Three outcomes and not two. A page draws a badge for two of them, but the log and
+    /// the uplink have to be able to tell a frame that was measured and found fine from one
+    /// nothing could measure, which is the distinction <see cref="FrameLevel.Ok"/> against null
+    /// carries.</para>
+    /// <para>The quiet edge speaks only on the modes whose slicer reads the level
+    /// (<see cref="FrameLevelLimits.PeakWorthShowing"/>). On the sign-and-angle pair it is the
+    /// 16-bit converter's quantisation floor and nothing a demodulator objects to, so a frame
+    /// under it is a weak signal rather than a fault, and it sits below any real card's own idle
+    /// noise anyway. Both halves of that are asserted here, on the same number: -73 dBFS is quiet
+    /// on the four-level pair, which takes the same quiet edge, and nothing on the sign one.</para>
     /// </remarks>
     [Fact]
     public void A_Frames_Verdict_Is_Its_Own_Modes_Two_Edges()
@@ -240,11 +251,49 @@ public class ReceiveLevelCliffTests
             FrameLevel.Loud,
             "the card running out of codes is a fact and badges whatever the peak was");
         sign.Classify(0, clipped: false).Should().Be(FrameLevel.Loud);
-        sign.Classify(-73, clipped: false).Should().Be(FrameLevel.Quiet);
+        sign.Classify(-73, clipped: false).Should().Be(
+            FrameLevel.Ok,
+            "under a sign slicer's own quiet edge is a weak signal and not a fault: nothing "
+                + "there reads the level, and the edge is the converter's quantisation floor");
+        four.Classify(-73, clipped: false).Should().Be(
+            FrameLevel.Quiet, "where the same number on a slicer that does read amplitudes is");
         sign.Classify(-71, clipped: false).Should().Be(FrameLevel.Ok);
         FrameLevelLimits.QuietSensitive.Classify(-35, clipped: false).Should().Be(
             FrameLevel.Quiet, "which the same level on any other mode would not be");
         sign.Classify(-35, clipped: false).Should().Be(FrameLevel.Ok);
+    }
+
+    /// <summary>
+    /// The figure itself is worth putting on a row only where the slicer reads the level.
+    /// </summary>
+    /// <remarks>
+    /// <para>Tom, 2026-09-12: "On the SSB modes I'd be happy with just 'TOO LOUD' if it's
+    /// actually too loud. And not showing the dBFS in SSB modes." The axis is the slicer and not
+    /// the modulation: <see cref="FrameLevelLimits.Default"/> is every mode whose bits are a sign
+    /// or an angle, and its two edges are the ends of the converter's scale rather than anything
+    /// its demodulator reads - so the number has no action behind it at any value it can take,
+    /// and the rail it can reach is what the badge says. Keying this off an FM flag instead would
+    /// be the <c>IsFmMode</c> mistake, which answers a different question.
+    /// </para>
+    /// <para>Read off the two numbers rather than stored beside them, so an out-of-tree modem
+    /// that has measured its own pair gets the right answer by having moved an edge inward.</para>
+    /// </remarks>
+    [Fact]
+    public void A_Frames_Figure_Is_Worth_Showing_Only_Where_Its_Slicer_Reads_The_Level()
+    {
+        FrameLevelLimits.Default.PeakWorthShowing.Should().BeFalse(
+            "a bit decided by which side of zero a sample fell on does not care how far from "
+                + "zero it fell, and none of these modes loses anything measurable between the "
+                + "converter's floor and full scale");
+        FrameLevelLimits.ClipSensitive.PeakWorthShowing.Should().BeTrue(
+            "the four-level slicer reads amplitudes against fixed thresholds");
+        FrameLevelLimits.QuietSensitive.PeakWorthShowing.Should().BeTrue(
+            "and the 1200 baud discriminator has an absolute floor under its normalisation");
+
+        new FrameLevelLimits(-3, -50).PeakWorthShowing.Should().BeTrue(
+            "a modem that has measured its own pair moved an edge inward to say its slicer cares");
+        new FrameLevelLimits(0, -90).PeakWorthShowing.Should().BeFalse(
+            "and one whose edges are looser still than the pair that means nothing means less");
     }
 
     /// <summary>

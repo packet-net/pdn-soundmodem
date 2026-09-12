@@ -421,6 +421,10 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                 peakDbFs = frame.PeakDbFs,
                 clipped = frame.Clipped,
                 level = Packet.SoundModem.Audio.FrameLevelText.From(frame.Level),
+                // And whether that modem thinks the figure is worth drawing. Sent beside the
+                // measurement rather than instead of it: the monitor logs what this station
+                // measured and shows what this station's own page shows.
+                peakWorthShowing = frame.PeakWorthShowing,
                 at = frame.At.ToUniversalTime()
                     .ToString("O", System.Globalization.CultureInfo.InvariantCulture),
                 raw = frame.Raw is null ? null : Convert.ToBase64String(frame.Raw),

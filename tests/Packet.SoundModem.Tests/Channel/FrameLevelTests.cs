@@ -69,6 +69,27 @@ public class FrameLevelTests
     private const float TonePeak = 0.9f;
 
     /// <summary>
+    /// Twice full scale, which is 6 dB of overdrive: the converter clips, the clipped samples sit
+    /// on the rail and the frame reads 0 dBFS - the loud edge of every mode whose slicer is a
+    /// sign or an angle test, and the only level such a mode can say anything about.
+    /// </summary>
+    /// <remarks>
+    /// Scaled past the rail rather than up to it. A burst normalised to exactly full scale peaks
+    /// there in its transmit delay, which is in front of the sync mark and so outside the frame's
+    /// own span: the frame itself then reads a decibel-tenth under and is not loud at all, which
+    /// is the honest answer and not the case under test here.
+    /// </remarks>
+    private const float Overdriven = 2f;
+
+    /// <summary>A frame 3 dB under it, which is inside the four-level slicer's 6 dB of
+    /// headroom and badged loud on those two modes alone.</summary>
+    private const float NearlyFullScale = 0.7079f;
+
+    /// <summary>And one at about -74 dBFS, under the converter floor every mode's quiet edge
+    /// sits at or below.</summary>
+    private const float FaintFramePeak = 0.0002f;
+
+    /// <summary>
     /// A frame between two stretches of noise louder than itself reports its own level.
     /// </summary>
     [Fact]
@@ -224,6 +245,138 @@ public class FrameLevelTests
         row.TryGetProperty("clipped", out JsonElement clipped).Should().BeTrue();
         clipped.ValueKind.Should().Be(JsonValueKind.Null,
             "nothing handed this channel the card's own samples, so nothing can say");
+    }
+
+    /// <summary>
+    /// On a mode whose slicer is a sign, the row carries no figure at all - and still says TOO
+    /// LOUD when the frame reaches the top of the scale.
+    /// </summary>
+    /// <remarks>
+    /// <para>Tom, 2026-09-12: "On the SSB modes I'd be happy with just 'TOO LOUD' if it's
+    /// actually too loud. And not showing the dBFS in SSB modes." bpsk300 takes
+    /// <see cref="FrameLevelLimits.Default"/>, whose two edges are the ends of the converter's
+    /// scale rather than anything its demodulator reads, so the number would be a figure with no
+    /// action behind it at every value it can take. The rail is the exception and it keeps its
+    /// badge: a card out of codes costs every mode measured at least a decibel.</para>
+    /// <para><b>And the measurement is still taken</b>, which is the half a page test cannot see:
+    /// the frame log's column and a monitor's uplink carry it, because it is evidence and other
+    /// tools read it. Only the row loses the number.</para>
+    /// </remarks>
+    [Fact]
+    public async Task A_Sign_Sliced_Modes_Row_Carries_No_Figure_And_Still_Says_Too_Loud()
+    {
+        Row comfortable = await RowAsync("bpsk300", FramePeak);
+
+        comfortable.Quality.PeakDbFs.Should().NotBeNull(
+            "the level is measured on every mode that can place its own frames");
+        comfortable.Quality.PeakDbFs!.Value.Should().BeApproximately(
+            20 * Math.Log10(FramePeak), 1, "and measured correctly, not merely present");
+        comfortable.Quality.PeakWorthShowing.Should().BeFalse(
+            "bpsk300's slicer is a sign test, so its own limits say the figure means nothing");
+        comfortable.PeakDbFs.Should().BeNull("so the row a browser is sent carries no figure");
+        comfortable.Level.Should().BeNull("and a frame inside the scale earns no badge either");
+
+        Row railed = await RowAsync("bpsk300", Overdriven);
+
+        railed.Quality.PeakDbFs.Should().Be(
+            0, "the reading is clamped at the top of the scale, where the codes run out");
+        railed.Level.Should().Be(
+            "loud",
+            "clipping is real on any mode and is the one thing this mode's level can say");
+        railed.PeakDbFs.Should().BeNull(
+            "and the badge says it: a figure that reads 0 dBFS beside TOO LOUD adds nothing");
+    }
+
+    /// <summary>
+    /// On a mode whose slicer reads amplitudes, the row keeps its figure and both verdicts.
+    /// </summary>
+    /// <remarks>
+    /// c4fsk19200 takes <see cref="FrameLevelLimits.ClipSensitive"/>: four levels against fixed
+    /// thresholds at the top end, where clipping compresses the outer pair into the inner one and
+    /// costs 1 to 4 dB of link margin at 4 dB of overdrive, and the converter's own floor at the
+    /// bottom. Both are cliffs an operator can do something about, so the number that says how
+    /// far away they are belongs on the row.
+    /// </remarks>
+    [Fact]
+    public async Task A_Four_Level_Modes_Row_Keeps_Its_Figure_And_Both_Verdicts()
+    {
+        Row loud = await RowAsync("c4fsk19200", NearlyFullScale);
+
+        loud.Quality.PeakWorthShowing.Should().BeTrue(
+            "this slicer reads the level, so its own limits say the figure is worth reading");
+        loud.PeakDbFs.Should().NotBeNull().And.BeApproximately(
+            20 * Math.Log10(NearlyFullScale), 1);
+        loud.Level.Should().Be("loud", "-3 dBFS is inside this family's 6 dB of headroom");
+
+        Row quiet = await RowAsync("c4fsk19200", FaintFramePeak);
+
+        quiet.PeakDbFs.Should().NotBeNull().And.BeApproximately(
+            20 * Math.Log10(FaintFramePeak), 1);
+        quiet.Level.Should().Be(
+            "quiet", "and -73 dBFS is under the converter floor this family's quiet edge sits at");
+    }
+
+    /// <summary>What one decoded frame was measured to be, and what the page was told of it.</summary>
+    /// <param name="Quality">The channel's own reading, verdict and all.</param>
+    /// <param name="PeakDbFs">The figure on the row, or null where the row carries none.</param>
+    /// <param name="Level">The badge word on the row, or null where it carries none.</param>
+    private sealed record Row(FrameQuality Quality, double? PeakDbFs, string? Level);
+
+    /// <summary>
+    /// Decodes one frame of <paramref name="mode"/> at a known peak through a real channel with a
+    /// real server on it, and returns both what the channel measured and the row a browser was
+    /// sent for it.
+    /// </summary>
+    /// <remarks>
+    /// Both ends in one run, deliberately: the claim is that a figure which is measured is then
+    /// not drawn, and a test that only reads the socket cannot tell that from a level nothing
+    /// measured. The station's own rate for the mode, so no resampler moves the peak.
+    /// </remarks>
+    private static async Task<Row> RowAsync(string mode, float framePeak)
+    {
+        int rate = ModemCatalog.DspRateFor(mode);
+        var channel = new SoundModemChannel(rate, randomSeed: 7);
+        channel.AddModem(0, sink => ModemCatalog.Create(mode, rate, sink));
+        FrameQuality? heard = null;
+        channel.FrameReceivedWithQuality += (_, _, quality) => heard ??= quality;
+
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var page = new ClientWebSocket();
+        await page.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws"), giveUp.Token);
+
+        // As in the test above: the config message is how this one knows the connection is
+        // registered, and a frame broadcast before that is a frame nobody is sent.
+        using (JsonDocument config = await NextAsync(page, "config", giveUp.Token))
+        {
+            config.RootElement.GetProperty("type").GetString().Should().Be("config");
+        }
+
+        float[] burst = Scaled(
+            ModemCatalog.Create(mode, rate, static _ => { })
+                .Modulate(Supervisory(), txDelayMilliseconds: 300),
+            framePeak);
+        var audio = new float[(rate / 2) + burst.Length + (rate / 2)];
+        burst.CopyTo(audio, rate / 2);
+        foreach (float[] block in Blocks(audio, rate / 10))
+        {
+            channel.ProcessReceive(block);
+        }
+
+        using JsonDocument message = await NextAsync(page, "frame", giveUp.Token);
+        JsonElement row = message.RootElement;
+        heard.Should().NotBeNull($"{mode} has to decode its own loopback at {framePeak}");
+        return new Row(
+            heard!.Value,
+            row.GetProperty("peakDbFs") is { ValueKind: JsonValueKind.Number } peak
+                ? peak.GetDouble()
+                : null,
+            row.GetProperty("level") is { ValueKind: JsonValueKind.String } level
+                ? level.GetString()
+                : null);
     }
 
     /// <summary>The next text message of <paramref name="type"/>, ignoring spectrum lines.</summary>

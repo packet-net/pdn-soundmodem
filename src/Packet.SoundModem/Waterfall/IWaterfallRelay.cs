@@ -172,6 +172,22 @@ public sealed record RelayedFrame
     /// </remarks>
     public Audio.FrameLevel? Level { get; init; }
 
+    /// <summary>
+    /// Whether the far station's own modem said the figure beside that verdict is worth putting
+    /// on a row.
+    /// </summary>
+    /// <remarks>
+    /// The same reasoning as <see cref="Level"/>, one step further: on the modes whose slicer is
+    /// a sign or an angle test the peak means nothing anywhere below the converter's rail, and
+    /// which modes those are is a property of the demodulator at the station's end
+    /// (<see cref="Audio.FrameLevelLimits.PeakWorthShowing"/>). <see cref="PeakDbFs"/> crosses
+    /// the wire either way, because a monitor keeps its own copy of the station's frame log and
+    /// the measurement is evidence there whether or not a page draws it. Null from a station
+    /// running a version that does not send one, and such a row is listed with its figure exactly
+    /// as it always was.
+    /// </remarks>
+    public bool? PeakWorthShowing { get; init; }
+
     /// <summary>When the station decoded it, or sent it (UTC).</summary>
     public DateTimeOffset At { get; init; }
 

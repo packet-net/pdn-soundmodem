@@ -252,7 +252,8 @@ public class FrameLogTests : IDisposable
         List<Dictionary<string, object?>> rows = await ReadBackAsync(
             log => log.Record(0, Frame(), new FrameQuality(
                 "qpsk3600-il2pc", FrameBytes: 32, CorrectedBytes: 0, CrcValid: true,
-                PeakDbFs: -14.2, Clipped: true, Level: FrameLevel.Loud), null, null));
+                PeakDbFs: -14.2, Clipped: true, Level: FrameLevel.Loud,
+                PeakWorthShowing: false), null, null));
 
         rows.Should().HaveCount(2, "a station's existing history must survive the upgrade");
         rows[0]["source"].Should().Be("GB7RDG", "the old row is untouched");
@@ -268,6 +269,12 @@ public class FrameLogTests : IDisposable
             "loud",
             "the verdict its own modem reached at the moment of the decode, stored rather than "
                 + "left for a reader to derive");
+        rows[0]["peak_shown"].Should().BeNull(
+            "nor did anything say whether that old row's figure was worth drawing");
+        rows[1]["peak_shown"].Should().Be(
+            0L,
+            "and qpsk3600's slicer is a sign test, so its modem says the figure is not worth a "
+                + "row - while peak_dbfs above keeps it, because the log is evidence");
     }
 
     /// <summary>
@@ -282,7 +289,7 @@ public class FrameLogTests : IDisposable
         await using FrameLog log = FrameLog.Open(DbPath, _time);
         log.Record(0, Frame(from: "G0AAA"), new FrameQuality(
             "qpsk3600-il2pc", FrameBytes: 32, CorrectedBytes: 0, CrcValid: true,
-            PeakDbFs: -14.2, Clipped: false, Level: FrameLevel.Ok),
+            PeakDbFs: -14.2, Clipped: false, Level: FrameLevel.Ok, PeakWorthShowing: false),
             audioHz: 1500, rfHz: 7_051_600);
         log.RecordTransmitted(0, Frame(from: "M0LTE"), "qpsk3600-il2pc", 1500, 7_051_600);
 
@@ -300,14 +307,19 @@ public class FrameLogTests : IDisposable
             FrameLevel.Ok,
             "measured and found fine, which the backlog has to be able to tell from not measured "
                 + "at all even though neither draws a badge");
+        recent[0].PeakWorthShowing.Should().BeFalse(
+            "this mode's modem said the figure was not worth a row, and the backlog replays that "
+                + "rather than working it out again from the mode name");
         recent[1].PeakDbFs.Should().BeNull("a transmission is not a measurement of what we heard");
         recent[1].Clipped.Should().BeNull();
         recent[1].Level.Should().BeNull();
+        recent[1].PeakWorthShowing.Should().BeNull("and there is no figure to have an answer about");
 
         // The other backlog query, which the links replay reads: same columns, same answers.
         log.RecentWithPayload(10)[0].Frame.PeakDbFs.Should().Be(-14.2);
         log.RecentWithPayload(10)[0].Frame.Clipped.Should().BeFalse();
         log.RecentWithPayload(10)[0].Frame.Level.Should().Be(FrameLevel.Ok);
+        log.RecentWithPayload(10)[0].Frame.PeakWorthShowing.Should().BeFalse();
     }
 
     private static FrameQuality Quality(string mode = "bpsk300-il2pc") =>

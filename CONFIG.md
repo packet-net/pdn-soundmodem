@@ -1241,29 +1241,46 @@ five times a second, which is the right instrument for a slider and the wrong on
 qpsk3600 frame is over inside one of its intervals, and on an FM radio with the squelch open the
 noise between frames is louder than the frames, so the bar is a reading of the hiss. So every
 decoded frame carries its own peak as well - measured over the stretch of audio **the
-demodulator says the frame occupied**, in half-millisecond cells - shown on its row in the
-[decoded frames panel](#waterfall) and written into the [frame log](#framelog) as `peak_dbfs` and
-`clipped`. Same scale, and a row is badged **`TOO LOUD`** or **`TOO QUIET`** where the level has
+demodulator says the frame occupied**, in half-millisecond cells - and written into the
+[frame log](#framelog) as `peak_dbfs` and `clipped`. Same scale, and a row in the
+[decoded frames panel](#waterfall) is badged **`TOO LOUD`** or **`TOO QUIET`** where the level has
 started to cost that frame's own mode something. Nothing in between, and most rows earn neither,
 which is what a healthy capture gain looks like.
+
+**The figure goes on the row only where it means something**, which is the modes whose slicer
+reads the level: the two C4FSK modes and the 1200 baud AFSK family. On everything else a bit is
+decided by which side of zero a sample fell on, or by an angle, so the number has nothing behind
+it at any value it can take, and those rows carry the `TOO LOUD` badge alone - the converter's
+rail is real on every mode and is the one thing such a frame's level can say. The measurement is
+taken and recorded either way: `peak_dbfs` is written to the frame log and sent over the uplink
+whatever the mode, because it is evidence and other tools read it.
 
 **The two edges are the mode's own**, measured by decoding real frames at every level from 24 dB
 past full scale down to the converter's floor ([docs/dev/receive-levels.md](docs/dev/receive-levels.md)).
 The catalogue splits into three, and the split is a property of the slicer:
 
-| group | modes | `TOO LOUD` at | `TOO QUIET` below |
-|---|---|---|---|
-| sign or angle slicer | AFSK 300, BPSK 300/1200, QPSK 600/2400/3600, FSK 4800/9600, every framing of each | 0 dBFS | -72 dBFS |
-| four-level slicer | `c4fsk9600`, `c4fsk19200` | -6 dBFS | -72 dBFS |
-| power-normalised discriminator | the 1200 baud AFSK family, all six | 0 dBFS | -34 dBFS |
+| group | modes | `TOO LOUD` at | `TOO QUIET` below | figure on the row |
+|---|---|---|---|---|
+| sign or angle slicer | AFSK 300, BPSK 300/1200, QPSK 600/2400/3600, FSK 4800/9600, every framing of each | 0 dBFS | never: see below | no |
+| four-level slicer | `c4fsk9600`, `c4fsk19200` | -6 dBFS | -72 dBFS | yes |
+| power-normalised discriminator | the 1200 baud AFSK family, all six | 0 dBFS | -34 dBFS | yes |
+
+The sign-and-angle group's own quiet edge is still -72 dBFS and is still published - it is where
+the four-level group's comes from, and `c4fsk19200` is the mode it was measured on - but it no
+longer badges anything. It is the level at which a 16-bit converter has too few codes left to
+describe the signal with, not a level any demodulator objects to, so a frame under it on those
+modes is a weak signal rather than a fault of the station.
 
 **The verdict is made when the frame is decoded, not when a page draws it.** The limits belong to
 the modem that decoded it, which publishes them itself, and the channel classifies the frame's own
 reading against them at the moment of the decode. The result travels with the frame: into the
 [frame log](#framelog) as `level`, over the [uplink](#monitor) as an optional field, and to the
-page as the badge. Nothing downstream holds a copy of a threshold, so nothing downstream can drift
-out of step with the demodulators - which is what happened when the rule was applied at the edge by
-mode name, and left the two C4FSK modes taking the wrong pair.
+page as the badge. Whether the figure itself is worth drawing is decided in the same place and
+travels the same way: `peak_shown` in the frame log, an optional field on the uplink, and the
+presence or absence of the number on the row. Nothing downstream holds a copy of a threshold or a
+list of modes, so nothing downstream can drift out of step with the demodulators - which is what
+happened when the rule was applied at the edge by mode name, and left the two C4FSK modes taking
+the wrong pair.
 
 A clipped card badges `TOO LOUD` on any mode whatever the peak was: a converter that ran out of
 codes is a fact rather than a prediction, and it costs at least a decibel on every mode measured.
@@ -1278,8 +1295,8 @@ at -26 dBFS which decoded perfectly and had another fifty dB in hand.
 **Two things follow from those numbers, and they are why the meter above is the instrument for
 setting a capture gain rather than these badges.** -72 dBFS is below what any real card delivers -
 the reading is a peak that includes the input noise, and a CM108-class capture with the gain up
-idles nearer -60 to -70 - so on the fourteen modes that take it the `TOO QUIET` badge cannot fire
-at all. And a station with no sound card of its own, a Flex or an ubersdr feed, has no clip flag:
+idles nearer -60 to -70 - so on the fourteen modes that take it the `TOO QUIET` badge could never
+have fired anyway, and is now not applied to them at all. And a station with no sound card of its own, a Flex or an ubersdr feed, has no clip flag:
 `FrameQuality.Clipped` is null there by design, because there is no converter of ours to have run
 out of codes, so those stations get no `TOO LOUD` badge either until a frame's own reading reaches
 the top of the scale. Put the input's peak in the meter's green band and watch the `CLIP` pill; a
@@ -1818,9 +1835,10 @@ Omit the section and frames come and go without being written down. One row per 
 | `erased_bytes` | bytes the decode erased on the receiver's own confidence flags before Reed-Solomon repaired the frame - how a frame beyond the errors-only budget was still read. Null when no erasures were needed, or before the column existed |
 | `chased_bits` | wire bits chase decoding flipped outright - the receiver's least-confident bits, tried in combination after errors-only decoding and the erasure ladder both failed, each accepted attempt still leaving Reed-Solomon parity in reserve. The only rescue the 2-parity IL2P header has. Null when no chase was needed, or before the column existed |
 | `snr_db` | strength of the burst the frame arrived on: mean in-band power over the burst against a rolling minimum noise floor, in dB. **The band-tracker convention, not the 3 kHz-referenced SNR the simulation ladders quote** - the two differ by a bandwidth ratio and must not be compared without converting. Null when the band was quiet at decode time, and on rows from before the column existed |
-| `peak_dbfs` | how loud the audio the frame arrived on was: the loudest half millisecond of the span its own demodulator says it occupied, in dBFS, on the same scale as [the level meter](#the-level-meter). A measurement of the frame and not of the channel around it, which is the whole reason it is not the meter's reading. Null on transmitted rows, on rows from before the column existed, and on the modes that cannot place their own frames (`freedv-*`, `ms110d-*` - see [the level meter](#the-level-meter)) |
+| `peak_dbfs` | how loud the audio the frame arrived on was: the loudest half millisecond of the span its own demodulator says it occupied, in dBFS, on the same scale as [the level meter](#the-level-meter). A measurement of the frame and not of the channel around it, which is the whole reason it is not the meter's reading. **Recorded on every mode**, including the ones whose panel row does not show it (`peak_shown` below): this is evidence, and a question about a capture level from last Tuesday is answered from here. Null on transmitted rows, on rows from before the column existed, and on the modes that cannot place their own frames (`freedv-*`, `ms110d-*` - see [the level meter](#the-level-meter)) |
 | `clipped` | 1 where the sound card ran out of codes during that same stretch, 0 where it had headroom, null where nothing was in a position to judge - only a station handing its card's own samples over can, since past the decimator full scale is not full scale any more. Null on transmitted rows and on rows from before the column existed |
 | `level` | what the decoding modem's own limits made of those two at the moment of the decode: `loud`, `quiet`, or `ok` for a frame that was measured and found to be between its mode's edges. Null where nothing could judge - a transmitted row, a row from before the column existed, a mode that cannot place its own frames, or a relayed row from a station too old to send a verdict. Stored rather than re-derived, so a replayed row badges exactly as the live row did and a reader needs no thresholds of its own. See [the level meter](#the-level-meter) |
+| `peak_shown` | 1 where the decoding modem said `peak_dbfs` is a figure worth putting in front of an operator, 0 where it is not - which is every mode whose slicer is a sign or an angle test, where the only level that means anything is the rail and the `level` column says that already. Stored rather than derived from `mode`, for the same reason `level` is. Null on transmitted rows, on rows from before the column existed, and on a relayed row from a station too old to say, all of which are listed with their figure exactly as they always were |
 | `offset_hz` | how far off centre the sender actually was - measured, not the diversity branch that copied it; null where the decoder could not measure it |
 | `audio_hz`, `rf_hz` | where that modem sits - `rf_hz` filled in when you have given it an `rfFrequency` |
 | `payload` | the frame itself, as a blob |
@@ -1828,8 +1846,8 @@ Omit the section and frames come and go without being written down. One row per 
 **On a transmitted row, `heard_at` is when it went out.** The column keeps its name because
 renaming it would silently break every query, dashboard and example already written against this
 log - an ugly name is the smaller cost, and this is the note that stops it being a surprise. A
-transmitted row also leaves `corrected`, `crc_valid`, `offset_hz`, `peak_dbfs`, `clipped` and `level`
-**null**: those are receive measurements, and filling them in for our own transmission would be
+transmitted row also leaves `corrected`, `crc_valid`, `offset_hz`, `peak_dbfs`, `clipped`, `level`
+and `peak_shown` **null**: those are receive measurements, and filling them in for our own transmission would be
 inventing a measurement of ourselves. Everything else - who to who, mode, length, where the modem sits, the payload - is
 recorded exactly as for a frame heard. A row is written once the audio has gone to the device, so
 a logged transmission is one that actually went on air.

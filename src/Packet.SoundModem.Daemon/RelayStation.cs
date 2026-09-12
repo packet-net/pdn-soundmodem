@@ -671,7 +671,8 @@ internal sealed class RelayStation : IMonitorStation
                 // rather than recomputed: the thresholds belong to the modem that decoded the
                 // frame, and that modem is at the other end of the uplink. Null from a station
                 // too old to send one, and a row with no verdict earns no badge.
-                PeakDbFs: frame.PeakDbFs, Clipped: frame.Clipped, Level: frame.Level),
+                PeakDbFs: frame.PeakDbFs, Clipped: frame.Clipped, Level: frame.Level,
+                PeakWorthShowing: frame.PeakWorthShowing),
             audioHz: null, rfHz: null, modeName: null, at: frame.At);
     }
 
