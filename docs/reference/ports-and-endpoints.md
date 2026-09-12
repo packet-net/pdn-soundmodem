@@ -140,6 +140,7 @@ One host per socket, as in ardopcf: a new connection replaces the previous one. 
 
 | Divergence from ardopcf | What happens here |
 |---|---|
+| busy detection | off unless the modem entry sets `"busyDetect": true`; unset, `BUSY TRUE`/`BUSY FALSE` is never sent and `BUSYBLOCK` has nothing to act on, exactly as before it existed |
 | `BUSYDET` 1-10 | accepted and answered as ardopcf answers them, but not honoured: they parameterise the thresholds of ardopcf's rank-order spectral detector, and this station's detector is a band-limited energy meter over the ARDOP slot. `BUSYDET 0` disables detection exactly as ardopcf does, and `BUSY TRUE`/`BUSY FALSE` and `BUSYBLOCK` behave as ardopcf's |
 | `CWID` | accepted and answered as ardopcf answers it; no CW identification is transmitted |
 | `LOGLEVEL`, `CONSOLELOG`, `DEBUGLOG`, `CMDTRACE` | accepted and answered as ardopcf answers them; nothing changes, the modem's journal is its only log |

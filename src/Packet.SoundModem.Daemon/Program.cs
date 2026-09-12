@@ -1977,12 +1977,21 @@ if (benchTxTest is null && ardopModem is not null)
     // a session and can never stall an in-flight burst. That distinction is load-bearing: an IRS
     // that misses its ACK window loses the link, and ARDOP bursts bypass channel access (#171)
     // precisely so they never wait.
-    var ardopBusy = new ArdopBusyDetector(
-        ardopModem.Frequency ?? ArdopChannelBridge.NativeCentreHz,
-        M0LTE.Ardop.Arq.ArdopBandwidthExtensions.Hertz(ardopTnc.Config.ArqBandwidth),
-        DspRate);
-    channel.AddReceiveTap(ardopBusy.Process);
-    ardopTnc.Config.ChannelBusy = () => ardopBusy.Busy;
+    // Off unless the modem entry asks for it. It reads busy almost continuously on a real
+    // band: out-of-band FT4 lifts the noise floor across the whole passband in step with its
+    // transmit cycle, and an energy meter cannot tell a lifted floor from in-band signal.
+    // See DaemonConfig.ModemConfig.BusyDetect for the measurement and for what would fix it.
+    ArdopBusyDetector? ardopBusy = null;
+    if (ardopModem.BusyDetect)
+    {
+        ardopBusy = new ArdopBusyDetector(
+            ardopModem.Frequency ?? ArdopChannelBridge.NativeCentreHz,
+            M0LTE.Ardop.Arq.ArdopBandwidthExtensions.Hertz(ardopTnc.Config.ArqBandwidth),
+            DspRate);
+        ArdopBusyDetector detector = ardopBusy;
+        channel.AddReceiveTap(detector.Process);
+        ardopTnc.Config.ChannelBusy = () => detector.Busy;
+    }
 
     int ardopCommandPort = ardopModem.Port ?? 8515;
     ardopServer = new M0LTE.Ardop.Host.ArdopHostServer(
@@ -1992,7 +2001,9 @@ if (benchTxTest is null && ardopModem is not null)
         $"ardop host tcp: {(Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString())}:{ardopServer.LocalCommandPort} (data {ardopServer.LocalDataPort}, "
         + $"ardopcf-compatible virtual TNC, modem {ardopModem.SubChannel}, ARQBW "
         + $"{M0LTE.Ardop.Arq.ArdopBandwidthExtensions.Hertz(ardopTnc.Config.ArqBandwidth)}MAX"
-        + $"{ardopShift.Describe()}, busy watch {ardopBusy.LowHz:F0}-{ardopBusy.HighHz:F0} Hz)");
+        + $"{ardopShift.Describe()}"
+        + (ardopBusy is null ? "" : $", busy watch {ardopBusy.LowHz:F0}-{ardopBusy.HighHz:F0} Hz")
+        + ")");
 }
 await using var ardopLifetime = ardopServer;
 

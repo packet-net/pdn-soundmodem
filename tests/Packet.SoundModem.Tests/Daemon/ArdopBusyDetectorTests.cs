@@ -148,6 +148,17 @@ public class ArdopBusyDetectorTests
     }
 
     [Fact]
+    public void Busy_detection_is_off_unless_the_modem_entry_asks_for_it()
+    {
+        // Deliberately off. On a real band this reads busy almost continuously, because
+        // out-of-band FT4 lifts the noise floor across the whole passband in step with its
+        // transmit cycle and an energy meter cannot tell a lifted floor from in-band signal.
+        // Measured at GB7RDG 2026-09-12. Do not flip this default without a detector that is
+        // immune to a floor lift; see DaemonConfig.ModemConfig.BusyDetect.
+        new ModemConfig().BusyDetect.Should().BeFalse();
+    }
+
+    [Fact]
     public void The_ardop_slot_itself_passes_the_band()
     {
         var detector = new ArdopBusyDetector(ArdopCentre, 500, Rate);
