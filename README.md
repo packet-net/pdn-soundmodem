@@ -91,10 +91,15 @@ interoperates with, and NinoTNC compatibility is never given up to suit another 
   RXO (receive-only monitor) leg decoding a third-party ardopcf↔ardopcf session.
   PROTOCOLMODE ARQ, FEC and RXO are all supported. The ARDOP channel is dedicated
   (`--ardop` is exclusive with `--modem`/`--paging`): ARDOP runs its own channel
-  discipline, and the daemon's CSMA is bypassed (persistence forced to 255) while
-  PTT keying and sample-domain TX-complete still come from the shared channel path.
-  Documented divergences from ardopcf: no busy detector (BUSY TRUE/FALSE never sent;
-  BUSYDET/BUSYBLOCK accepted but inert), log-level and CWID commands accepted but
+  discipline: its bursts bypass the channel's p-persistence roll rather than waiting on
+  it, since an ARQ turnaround cannot absorb one, while PTT keying and sample-domain
+  TX-complete still come from the shared channel path. What keeps it off a slot somebody
+  else is using is its own busy detector, which band-limits the receive audio to the ARDOP
+  modem's own slot and reports `BUSY TRUE`/`BUSY FALSE` to the host; it gates starting a
+  session and never an in-flight burst.
+  Documented divergences from ardopcf: `BUSYDET` 1-10 accepted but not honoured (they
+  parameterise the thresholds of a spectral detector we do not implement; `BUSYDET 0`
+  disables detection exactly as ardopcf does), log-level and CWID commands accepted but
   inert, TXFRAME (dev command) unimplemented, VERSION reports `pdn-soundmodem`.
 - **DAPNET / POCSAG pagers** - `pocsag1200` (plus 512/2400): the paging waveform (CCIR
   Radiopaging Code No. 1, 2-FSK NRZ + BCH(31,21)), implemented spec-first and
