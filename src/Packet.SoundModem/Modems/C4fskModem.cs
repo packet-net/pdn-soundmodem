@@ -228,7 +228,23 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
         // Gaussian-shaped signal collapses the inner levels - measured on real NinoTNC
         // recordings as 0/8 at 0.55×, 7-8/8 from 1.0× up. 1.5× keeps some noise rejection.
         _rxFilter = new FirFilter(FilterDesign.LowPass(1.5 * symbolRate, sampleRate, 48 * sampleRate / 48000));
-        _energyBusy = new EnergyBusyDetector(sampleRate);
+        // The one modem that keeps the old 20 ms energy block, and the only one where Busy is
+        // a hard gate on the bit path rather than just a vote in carrier sense (see Process).
+        // Two measured reasons, pulling the same way:
+        //   - It does not need the longer block. The default went to 40 ms because a 500 Hz
+        //     receive filter leaves a 20 ms block's power estimate scattered enough for plain
+        //     noise to clear the 6 dB assert; the lever is the time-bandwidth product. This
+        //     filter passes 1.5x the symbol rate, 7.2 kHz at c4fsk9600, so a 20 ms block here
+        //     carries about seven times what a 500 Hz branch filter gets at 40 ms.
+        //     Measured through this filter at 20 ms, pure noise reads busy 0.000 % of the time.
+        //   - It cannot afford the latency. The gate must open before the sync word, and a
+        //     NinoTNC peer may send no preamble at all. At 40 ms these regressed together:
+        //     NinoTncParityTests.Acquires_At_Txdelay_Zero_Like_A_NinoTNC (both c4fsk rates),
+        //     C4fskEqualizerTests, C4fskTimingDiversityTests and the c4fsk9600 FM ladder, all
+        //     green again at 20 ms. Carrier sense loses nothing by it: a station runs several
+        //     modems and ChannelBusy is their OR, so the narrow-filter modes are what a quiet
+        //     channel is judged by.
+        _energyBusy = new EnergyBusyDetector(sampleRate, blockMilliseconds: 20);
 
         // One deframer per timing phase: the phases decide the same symbols at slightly
         // different instants and run their deframers in lockstep, so a frame that any of them
