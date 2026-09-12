@@ -211,6 +211,13 @@ public sealed class WaterfallOptions
 /// badges exactly as the live row did. Null on a transmission and on a row written before the
 /// column existed - a badge is a claim, and no claim was recorded for those.
 /// </param>
+/// <param name="PeakWorthShowing">
+/// Whether the modem that decoded it said <paramref name="PeakDbFs"/> was a figure worth putting
+/// on a row (<see cref="Modems.FrameQuality.PeakWorthShowing"/>), stored so a backlog row shows
+/// exactly what the live row showed rather than the panel working it out again from a mode name.
+/// Null on a transmission and on a row written before the column existed, and a figure with no
+/// answer beside it is drawn as it always was.
+/// </param>
 /// <param name="PlainIl2p">
 /// True for a row read as plain IL2P, with no trailing CRC behind it - Reed-Solomon alone
 /// (see <see cref="Modems.FrameQuality.PlainIl2p"/>). What the panel badges <b>RS ONLY</b>, and
@@ -235,7 +242,8 @@ public sealed record LoggedFrame(
     bool PlainIl2p = false,
     double? PeakDbFs = null,
     bool? Clipped = null,
-    Audio.FrameLevel? Level = null);
+    Audio.FrameLevel? Level = null,
+    bool? PeakWorthShowing = null);
 
 /// <summary>A band the host declares rather than the waterfall measuring it.</summary>
 /// <param name="SubChannel">Which modem, for ordering and labels.</param>
@@ -1452,6 +1460,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             peakDbFs: quality.PeakDbFs,
             clipped: quality.Clipped,
             level: quality.Level,
+            peakWorthShowing: quality.PeakWorthShowing,
             // For a relay, and for nobody else: a monitor folds its own links out of these bytes
             // rather than being sent a summary of them.
             raw: frame);
@@ -1771,6 +1780,33 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _ => null,
     };
 
+    /// <summary>
+    /// The figure a page is sent for a frame's level, or nothing where the mode it was heard on
+    /// makes the number meaningless.
+    /// </summary>
+    /// <remarks>
+    /// <para>A mapping, like <see cref="LevelTag"/> beside it, and for the same reason: the
+    /// answer was reached by the modem that decoded the frame
+    /// (<see cref="Audio.FrameLevelLimits.PeakWorthShowing"/>) and arrives here on
+    /// <see cref="Modems.FrameQuality.PeakWorthShowing"/>, on a logged row or on a relayed one.
+    /// This class does not know which modes those are and must not learn: the last thing here
+    /// that knew was a lookup by mode name, and the name did not match.</para>
+    /// <para>Tom, 2026-09-12: "On the SSB modes I'd be happy with just 'TOO LOUD' if it's
+    /// actually too loud. And not showing the dBFS in SSB modes." On the sign-and-angle group a
+    /// bit is decided by which side of zero a sample fell, so the figure has no action behind it
+    /// at any value it can take; at the rail it has one, and that is the badge. <b>Only the row
+    /// loses the number.</b> The frame log's <c>peak_dbfs</c> and the uplink's <c>peakDbFs</c>
+    /// carry the measurement whatever the mode, because it is evidence and other tools read
+    /// it.</para>
+    /// <para>Null in <paramref name="peakWorthShowing"/> is "nothing said" and shows the figure:
+    /// that is a relayed row from a station too old to answer, and a backlog row from before the
+    /// column, both of which listed their figure before this existed.</para>
+    /// </remarks>
+    /// <param name="peakDbFs">The measured peak, or null where nothing measured one.</param>
+    /// <param name="peakWorthShowing">What the deciding modem's limits said about showing it.</param>
+    private static double? ShownPeak(double? peakDbFs, bool? peakWorthShowing) =>
+        peakWorthShowing is false || peakDbFs is not { } peak ? null : Math.Round(peak, 1);
+
     // `raw` is the frame's own bytes, where the caller has them, and exists for the relay: a
     // monitor reads them into its own link observer rather than being sent a summary of them.
     // Nothing is sent to a browser that was not sent before - the panel already has everything it
@@ -1783,7 +1819,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         string? note = null, string? headerType = null, string? frameHex = null,
         bool plainIl2p = false, bool monitorOnly = false, double? txTrimHz = null,
         double? peakDbFs = null, bool? clipped = null, Audio.FrameLevel? level = null,
-        byte[]? raw = null)
+        bool? peakWorthShowing = null, byte[]? raw = null)
     {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -1826,10 +1862,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // How loud this frame's own audio was, in dBFS, and whether the card railed during
             // it. One decimal, like the meter's, because the card's own steps are whole dB and a
             // figure that twitches in the second decimal is one nobody can read a trend off.
-            // Absent on a transmission, on a relayed row from a station too old to send it, and
-            // on any frame whose audio could not be placed - a row without them draws as it
-            // always did.
-            peakDbFs = peakDbFs is { } peak ? Math.Round(peak, 1) : (double?)null,
+            // Absent on a transmission, on a relayed row from a station too old to send it, on
+            // any frame whose audio could not be placed, and on the modes whose deciding modem
+            // says the number means nothing (ShownPeak) - a row without them draws as it always
+            // did. The relayed copy below keeps the figure either way: it is a measurement, and
+            // the far end's own page is not the only thing that reads one.
+            peakDbFs = ShownPeak(peakDbFs, peakWorthShowing),
             clipped = clipped is true ? true : (bool?)null,
             // The verdict, made when the frame was decoded rather than here: the deciding
             // modem's own limits said so (IFrameSpanSource.FrameLevels, and
@@ -1873,6 +1911,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 MonitorOnly = monitorOnly,
                 PeakDbFs = peakDbFs,
                 Clipped = clipped,
+                // And what this station's own modem made of them, which a monitor cannot work out
+                // for itself: it is not running the modem that decoded the frame. Without this a
+                // relayed row arrives measured and unjudged, which is what a v0.60.x station
+                // sends and is not what this one heard.
+                Level = level,
+                PeakWorthShowing = peakWorthShowing,
                 At = _options.TimeProvider.GetUtcNow(),
                 Raw = raw,
             });
@@ -1931,6 +1975,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // Both null from a station running a version that does not send them, which is what
             // the wire's tolerance of their absence buys: the row lists as it always did.
             peakDbFs: frame.PeakDbFs, clipped: frame.Clipped, level: frame.Level,
+            peakWorthShowing: frame.PeakWorthShowing,
             raw: frame.Raw);
 
         // The same rule OnFrame applies, for the same reason: a frame Reed-Solomon alone stood
@@ -2996,11 +3041,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 // them lost the badge outright, which read as a frame something had checked.
                 plain = f.PlainIl2p ? true : (bool?)null,
                 monitorOnly = f.MonitorOnly ? true : (bool?)null,
-                // Under the same names, and with the verdict recomputed from the same two
-                // thresholds, so a replayed row carries the figure and the badge it carried when
-                // it was heard. Null on a row logged before the columns existed, and on every
-                // transmission, and the page then shows nothing new on it.
-                peakDbFs = f.PeakDbFs is { } peak ? Math.Round(peak, 1) : (double?)null,
+                // Under the same names, and with the verdict and the show-the-figure answer
+                // read back out of the log rather than worked out again, so a replayed row
+                // carries what it carried when it was heard. Null on a row logged before the
+                // columns existed, and on every transmission, and the page then shows nothing
+                // new on it.
+                peakDbFs = ShownPeak(f.PeakDbFs, f.PeakWorthShowing),
                 clipped = f.Clipped is true ? true : (bool?)null,
                 level = LevelTag(f.Level),
                 hist = true,

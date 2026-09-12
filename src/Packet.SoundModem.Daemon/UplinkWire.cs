@@ -282,6 +282,11 @@ internal static class UplinkWire
             // the frame and that modem is over there. An unrecognised word reads as null too,
             // which is what lets a later station add a verdict this build has never heard of.
             Level = Audio.FrameLevelText.Parse(Capped(root, "level", LevelCap)),
+            // And whether that station's modem thinks its figure is worth a row at all. Absent
+            // from a station that does not say, and null then, which lists the figure: that is
+            // what every monitor did before this field existed, and it is the honest reading of
+            // a station that has not answered.
+            PeakWorthShowing = Bool(root, "peakWorthShowing"),
             // Clamped to a day either side of this site's own clock. A station is a semi-trusted
             // publisher and this is the one field of its own it could use against itself: a frame
             // dated in the year 9999 is written into the site's copy of its log and sorts above

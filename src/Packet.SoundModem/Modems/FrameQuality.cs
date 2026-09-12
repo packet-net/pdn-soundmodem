@@ -119,6 +119,19 @@ namespace Packet.SoundModem.Modems;
 /// the same verdict without any of them knowing the rule. Null where there was nothing to judge:
 /// a decoder that cannot place its frames in the audio, or one of our own transmissions.
 /// </param>
+/// <param name="PeakWorthShowing">
+/// Whether the deciding modem's limits say <paramref name="PeakDbFs"/> is a figure worth putting
+/// in front of an operator (<see cref="Packet.SoundModem.Audio.FrameLevelLimits.PeakWorthShowing"/>).
+/// False on every mode whose slicer is a sign or an angle test, where the only level that means
+/// anything is the converter's own rail and <paramref name="Level"/> says that already; true
+/// where the slicer reads the level, which is the C4FSK pair and the 1200 baud AFSK family. Taken
+/// at the decode alongside <paramref name="Level"/>, and for the same reason: the modem is the
+/// only thing that knows, and a page matching a mode name to find out is how the C4FSK badge came
+/// to be dead for a release. Null is "nothing said", which is a row from an older station or an
+/// older log, and a figure that arrives without an answer is shown as it always was.
+/// <b>The measurement is kept either way</b>: this hides a figure on a row and never a value in
+/// the frame log or on the uplink.
+/// </param>
 public readonly record struct FrameQuality(
     string Mode,
     int FrameBytes,
@@ -135,7 +148,8 @@ public readonly record struct FrameQuality(
     double? SnrDb = null,
     double? PeakDbFs = null,
     bool? Clipped = null,
-    Packet.SoundModem.Audio.FrameLevel? Level = null);
+    Packet.SoundModem.Audio.FrameLevel? Level = null,
+    bool? PeakWorthShowing = null);
 
 /// <summary>
 /// How much a reading of a transmission actually established, for choosing between two decoder

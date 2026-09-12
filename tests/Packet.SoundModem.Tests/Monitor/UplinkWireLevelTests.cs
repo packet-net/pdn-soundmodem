@@ -25,17 +25,19 @@ public class UplinkWireLevelTests
         new(2026, 9, 7, 10, 0, 0, TimeSpan.Zero);
 
     /// <summary>What a station on this release sends, minus whichever fields a case leaves out.</summary>
-    private static string Message(string? level) =>
+    /// <param name="level">The verdict word, or null to leave the field out entirely.</param>
+    /// <param name="extra">Any further field, written as JSON with its trailing comma.</param>
+    private static string Message(string? level, string extra = "") =>
         $$"""
         {"type":"frame","sub":0,"mode":"c4fsk19200-il2pc","from":"M0LTE","to":"GB7RDG-2",
          "lenBytes":15,"snrDb":12.5,"crc":true,"peakDbFs":-4.0,"clipped":false,
-         {{(level is null ? "" : $"\"level\":\"{level}\",")}}
+         {{(level is null ? "" : $"\"level\":\"{level}\",")}}{{extra}}
          "at":"2026-09-07T10:00:00.0000000+00:00"}
         """;
 
-    private static RelayedFrame Read(string? level)
+    private static RelayedFrame Read(string? level, string extra = "")
     {
-        using JsonDocument message = JsonDocument.Parse(Message(level));
+        using JsonDocument message = JsonDocument.Parse(Message(level, extra));
         RelayedFrame? frame = UplinkWire.ReadFrame(message.RootElement, Now);
         frame.Should().NotBeNull("the message is well formed whatever the verdict is");
         return frame!;
@@ -83,6 +85,31 @@ public class UplinkWireLevelTests
 
         frame.Level.Should().BeNull();
         frame.PeakDbFs.Should().Be(-4, "the rest of the row is untouched by a word it cannot use");
+    }
+
+    /// <summary>
+    /// Whether the station's modem thinks the figure worth drawing crosses too, and a station
+    /// that says nothing is not read as saying no.
+    /// </summary>
+    /// <remarks>
+    /// The same version skew as the verdict, one field along. A monitor cannot work this out: it
+    /// is a property of the slicer that decoded the frame, and that slicer is at the station's
+    /// end. What matters at the parser is the default - a station that does not send the field
+    /// has not said, and its rows keep the figure every monitor has always listed them with,
+    /// rather than being quietly stripped of it by a build that arrived later.
+    /// </remarks>
+    [Fact]
+    public void Whether_To_Show_The_Figure_Crosses_Too_And_Silence_Is_Not_A_Refusal()
+    {
+        Read(level: "loud").PeakWorthShowing.Should().BeNull(
+            "no field, no answer - and a row with no answer is listed with its figure");
+
+        RelayedFrame hidden = Read("loud", "\"peakWorthShowing\":false,");
+        hidden.PeakWorthShowing.Should().BeFalse("a sign-sliced mode at the other end");
+        hidden.PeakDbFs.Should().Be(
+            -4, "and the measurement crosses either way, because a monitor logs it");
+
+        Read("quiet", "\"peakWorthShowing\":true,").PeakWorthShowing.Should().BeTrue();
     }
 
     /// <summary>

@@ -577,6 +577,58 @@ public class WaterfallRelayTests : IDisposable
     }
 
     /// <summary>
+    /// A relayed row carries what the station measured <b>and</b> what its own modem made of it:
+    /// the verdict, and whether the figure is worth a place on a row at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>A monitor runs no modem for the station it is watching, so neither answer is one it
+    /// could reach for itself (<c>IFrameSpanSource.FrameLevels</c>). Both are properties of the
+    /// slicer that decoded the frame, and that slicer is at the far end of the uplink. The
+    /// measurements go up whatever the mode: the monitor keeps its own copy of the station's
+    /// frame log, and a figure is evidence there whether or not a page draws it.</para>
+    /// <para>Two real decodes, because the interesting half is the difference between them.
+    /// afsk1200's discriminator has an absolute floor under its normalisation, so its level is
+    /// worth reading; bpsk300's bits are the side of zero a sample fell on, so it is not. The
+    /// relay is told which, once, by the station that heard the frame.</para>
+    /// </remarks>
+    [Fact]
+    public async Task A_Relayed_Row_Carries_Its_Stations_Own_Verdict_And_Whether_To_Show_It()
+    {
+        RelayedFrame afsk = await HeardAsync("afsk1200");
+        afsk.PeakDbFs.Should().NotBeNull("the measurement crosses the wire on every mode");
+        afsk.Level.Should().Be(
+            FrameLevel.Ok,
+            "measured and found fine, which a monitor cannot tell from unmeasured unless it is "
+                + "sent");
+        afsk.PeakWorthShowing.Should().BeTrue(
+            "the 1200 baud discriminator reads the level, so the figure means something");
+
+        RelayedFrame bpsk = await HeardAsync("bpsk300");
+        bpsk.PeakDbFs.Should().NotBeNull(
+            "which the station still measured, and a monitor still logs");
+        bpsk.Level.Should().Be(FrameLevel.Ok);
+        bpsk.PeakWorthShowing.Should().BeFalse(
+            "and a sign slicer's figure is not worth a row, which only its own modem knows");
+    }
+
+    /// <summary>One real decode of <paramref name="mode"/>, as the station's relay saw it.</summary>
+    private static async Task<RelayedFrame> HeardAsync(string mode)
+    {
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => ModemCatalog.Create(mode, SampleRate, sink));
+        await using WaterfallWebServer server = WaterfallWebServer.Routed(channel);
+        var relay = new RecordingRelay();
+        server.Relay = relay;
+        server.Start();
+
+        channel.ProcessReceive(ModemCatalog.Create(mode, SampleRate, static _ => { })
+            .Modulate(TestFrame(), txDelayMilliseconds: 100));
+        channel.ProcessReceive(new float[SampleRate / 4]);
+
+        return relay.Frames.Should().ContainSingle($"{mode} decodes its own loopback").Subject;
+    }
+
+    /// <summary>
     /// An ident heard by a beacon ghost reaches the relay, and has no bytes to carry.
     /// </summary>
     /// <remarks>

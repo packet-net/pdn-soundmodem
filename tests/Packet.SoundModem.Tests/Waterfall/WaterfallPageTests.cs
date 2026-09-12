@@ -1604,7 +1604,10 @@ public class WaterfallPageTests
     /// <para>The fourth row is the one that matters most for the monitor: a station running a
     /// version that does not measure this, a transmission, and anything whose audio could not be
     /// placed all arrive without the fields, and must draw exactly as they did before there were
-    /// any.</para>
+    /// any. It is also what every sign-sliced mode's row looks like now, badge aside: the daemon
+    /// leaves the figure out where the deciding modem says it means nothing
+    /// (<see cref="FrameLevelLimits.PeakWorthShowing"/>), so the page has no rule of its own to
+    /// apply and simply draws what it is sent.</para>
     /// </remarks>
     [Fact]
     public async Task Each_Frame_Row_Carries_Its_Own_Level_And_Is_Badged_Only_When_It_Matters()
