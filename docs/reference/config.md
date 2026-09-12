@@ -113,7 +113,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | `mode` | string | `"afsk1200"` | A catalogue mode name (see [modes](../modes.md)), `"ardop"` for the ARDOP virtual TNC, or a plugin mode written `pluginId:mode`. |
 | `frequency` | number | the mode's own centre | Audio centre in Hz, transmit and receive. 1700 for `afsk*`, 1500 for `bpsk*` and `qpsk*` (1650 for `qpsk3600`), the spec centre for `freedv-*` and `ms110d-*`. |
 | `rfFrequency` | number | none | Where this modem sits on the band in absolute Hz; the modem then works out the dial and this modem's audio centre. See [Band placement](#band-placement-sideband-dialfrequency-and-rffrequency). |
-| `bandwidth` | number | measured from the modem; 2000 for `ardop` | How much room the band plan and the survey allow this modem, in Hz. |
+| `bandwidth` | number | measured from the modem; 2000 for `ardop` | How much room the band plan and the survey allow this modem, in Hz. On `ardop` it is also the TNC's ARQBW, so no session is accepted or asked for wider; only 200, 500, 1000 and 2000 are accepted there. |
 | `port` | int | none | A TCP port for this modem alone. A packet mode gets KISS there with this modem presented as nibble 0; `ardop` gets the ardopcf host interface, command on this port and data on the next one up (default 8515 and 8516). |
 | `offsetPairs` | int | 4, 5 or 0 by mode | Diversity-bank modes only: decoder branches either side of centre. 0 is a single modem. |
 | `offsetStepHz` | number | by mode | Diversity-bank modes only: Hz between adjacent branches. |
@@ -142,7 +142,8 @@ Rules and refusals:
 - Two entries with `"mode": "ardop"`: `two modems have "mode": "ardop". One ARDOP TNC per channel`.
 - An `ardop` entry beside a top-level `ardop` section: `ARDOP is configured twice - once as a modem entry and once in the top-level "ardop" section. Keep the modem entry ... and delete the "ardop" section.`
 - A plugin mode whose declared rate is neither 12000 nor 48000 is refused with a sentence naming that mode and the two rates a channel runs at; one that differs from the rate the other modems settle the channel at is refused with a sentence naming it and the built-in mode that fixed the rate. Built-in modes share a channel at either rate.
-- An `ardop` entry whose `frequency` leaves less than 2000 Hz inside a nominal 300-2700 Hz passband prints `ardop: WARNING - centre F Hz leaves room for an ARDOP bandwidth of W Hz ...`; a centre at or beyond the engine's 6000 Hz Nyquist prints the same prefix with `is outside the 0-6000 Hz band`.
+- An `ardop` entry whose `bandwidth` is not one of the four widths ARDOP negotiates: `modem N is "mode": "ardop" with "bandwidth": B. ARDOP negotiates 200, 500, 1000 or 2000 Hz and nothing else - use one of those, or remove "bandwidth" to plan for the widest (2000) as before.` The value that is accepted becomes the TNC's ARQBW at start-up, reported on the `ardop host tcp:` line; an entry with no `bandwidth` keeps ARDOP's own default of `2000MAX`.
+- An `ardop` entry whose `frequency` leaves less room inside a nominal 300-2700 Hz passband than its `bandwidth` asks for (2000 Hz when it states none) prints `ardop: WARNING - centre F Hz leaves room for an ARDOP bandwidth of W Hz ...`; a centre at or beyond the engine's 6000 Hz Nyquist prints the same prefix with `is outside the 0-6000 Hz band`.
 - ARDOP shares the channel with the packet modems. An ARQ session holds packet transmissions until it ends.
 - The ARDOP entry without a `port` listens on 8515, data on 8516.
 

@@ -82,8 +82,15 @@ public sealed class ModemConfig
     /// How much room to plan for this modem, in Hz; measured from the modem itself when unset.
     /// Meaningful mainly for <c>ardop</c>, which has no fixed width - its bandwidth is
     /// negotiated per session, so the planner assumes the widest (2000 Hz) unless told
-    /// otherwise. Setting it also caps what ARDOP will negotiate (200/500/1000/2000).
+    /// otherwise.
     /// </summary>
+    /// <remarks>
+    /// On an <c>ardop</c> entry it is also the cap, not just the reservation: it becomes the
+    /// TNC's ARQBW at start-up, which governs both what the station accepts as IRS and what it
+    /// asks for as ISS, so nothing wider is negotiated in either direction. Only the widths
+    /// ARDOP has are accepted there (200, 500, 1000, 2000); any other number is refused when
+    /// the file is read, rather than planning for a width no session could occupy.
+    /// </remarks>
     public double? Bandwidth { get; set; }
 
     /// <summary>
@@ -1424,6 +1431,25 @@ public sealed class DaemonConfig
                 "ARDOP is configured twice - once as a modem entry and once in the top-level "
                 + "\"ardop\" section. Keep the modem entry (it can also carry \"frequency\" and "
                 + "\"port\") and delete the \"ardop\" section.");
+        }
+
+        // "bandwidth" on an ardop entry is the TNC's ARQBW as well as the planner's reservation,
+        // and ARDOP has exactly four widths to negotiate. Any other number used to be taken
+        // quietly: the plan reserved a width no session could ever occupy, and there was nothing
+        // legal to cap the TNC at.
+        foreach (ModemConfig ardop in config.Modems
+                     .Where(m => IsArdop(m.Mode) && m.Bandwidth is not null))
+        {
+            if (!ArdopChannelBridge.TryArqBandwidth(ardop.Bandwidth!.Value, out _))
+            {
+                throw new InvalidDataException(
+                    $"modem {ardop.SubChannel} is \"mode\": \"ardop\" with \"bandwidth\": "
+                    + ardop.Bandwidth.Value.ToString(
+                        "0.###", System.Globalization.CultureInfo.InvariantCulture)
+                    + ". ARDOP negotiates "
+                    + $"{ArdopChannelBridge.NegotiableBandwidths} Hz and nothing else - use one "
+                    + "of those, or remove \"bandwidth\" to plan for the widest (2000) as before.");
+            }
         }
 
         if (config.Modems.Count == 0 && config.Ardop is null)

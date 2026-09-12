@@ -290,7 +290,7 @@ This is the QtSoundModem multiplex model - your host software picks a modem by K
 | `mode` | string | `"afsk1200"` | See [docs/modes.md](docs/modes.md) for all 38 modes, plus `ardop` - [below](#ardop) |
 | `frequency` | number | mode default | Audio centre in Hz, TX **and** RX |
 | `rfFrequency` | number | *(none)* | Where on the band it sits, in absolute Hz - [below](#band-plans-in-rf-terms) |
-| `bandwidth` | number | measured | How much room to plan for; mainly for `ardop` - [below](#band-plans-in-rf-terms) |
+| `bandwidth` | number | measured | How much room to plan for, and on `ardop` the ARQBW cap too (200/500/1000/2000) - [below](#band-plans-in-rf-terms) |
 | `offsetPairs` | int | `4` | Diversity-bank modes only |
 | `offsetStepHz` | number | baud/40 | Diversity-bank modes only |
 | `acceptPlainIl2p` | bool | `false` | IL2P+CRC modes only: pass IL2P **without** the trailing CRC to the host as well. Such frames are read and displayed either way - [below](#acceptplainil2p) |
@@ -606,8 +606,11 @@ instead, which is how 7.049450 falls out.
 occupied width is metered off it - the same measurement the waterfall draws its overlays from, so
 the two can never disagree. `ardop` is the exception: its bandwidth is negotiated per session, so
 the planner assumes the widest (2000 Hz) unless `bandwidth` says otherwise. Setting it also caps
-what ARDOP negotiates (200/500/1000/2000), which is worth doing - it reclaims the room the
-planner would otherwise reserve.
+what ARDOP negotiates: it becomes the TNC's ARQBW at start-up, which governs both what the station
+accepts as IRS and what it asks for as ISS. That is worth doing twice over - it reclaims the room
+the planner would otherwise reserve, and it keeps the station inside the slot it was coordinated
+for. Only the four widths ARDOP has are accepted there (200, 500, 1000, 2000); any other number is
+refused when the file is read.
 
 ### Rules
 
