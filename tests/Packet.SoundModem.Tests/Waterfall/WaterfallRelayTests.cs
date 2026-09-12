@@ -215,10 +215,22 @@ public class WaterfallRelayTests : IDisposable
         plain.Start();
         relayed.Start();
 
-        // Raw, without taking the config message first: the handshake is part of what has to be
-        // identical, and it is the message that carries the band overlays and the page version.
         using ClientWebSocket plainSocket = await OpenAsync(plainPort);
         using ClientWebSocket relayedSocket = await OpenAsync(relayedPort);
+
+        // The handshake is part of what has to be identical - it carries the band overlays and
+        // the page version - so it is compared, but it is taken here rather than drained with
+        // everything else. A config message is composed when the server registers the
+        // connection, which is after the client's own connect returns, and it carries the radio
+        // sentence; the marker below is the radio sentence. Leaving it in the drain let a
+        // connection registered a moment late have the marker in its own config, and the drain
+        // then stopped on the handshake with nothing else read (seen under a full parallel test
+        // run). Taking both configs first also means both browsers are registered before the
+        // audio below, so neither can miss a line.
+        (_, byte[] plainConfig) = await ReceiveAsync(plainSocket);
+        (_, byte[] relayedConfig) = await ReceiveAsync(relayedSocket);
+        relayedConfig.Should().Equal(
+            plainConfig, "a relay must not change the handshake a browser is sent");
 
         // A real decode, so the frame message and the link message are the real ones, and enough
         // audio behind it to paint a few lines.
@@ -235,11 +247,10 @@ public class WaterfallRelayTests : IDisposable
         List<(WebSocketMessageType Kind, byte[] Payload)> withRelay =
             await DrainAsync(relayedSocket, marker);
 
-        // Non-trivial, or the comparison below proves nothing: the handshake, the waterfall, the
-        // frame, its link and the status sentence.
+        // Non-trivial, or the comparison below proves nothing: the waterfall, the frame, its
+        // link and the status sentence, on top of the handshake compared above.
         withoutRelay.Select(m => Describe(m)).Should()
-            .Contain("config").And.Contain("line").And.Contain("frame")
-            .And.Contain("link").And.Contain("radio");
+            .Contain("line").And.Contain("frame").And.Contain("link").And.Contain("radio");
 
         withRelay.Should().HaveCount(withoutRelay.Count, "a relay must not add or drop a message");
         for (int i = 0; i < withoutRelay.Count; i++)
