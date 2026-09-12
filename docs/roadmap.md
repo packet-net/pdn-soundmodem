@@ -39,13 +39,31 @@ radio-only unknowns, rig recipe, drive commands, pass criteria. Needs an HF radi
 supply; a **Flex variant** of the procedure is now viable - see #11). Feeds results back into the
 doc + `plan.md` §17 to close.
 
-### #6 - ARDOP: on-air acceptance *(in progress)*
+### #6 - ARDOP: on-air acceptance *(done, 2026-09-12)*
 Phases A-D complete at ardopcf parity - 4FSK/PSK/16QAM (0 dB noise-knee delta), the ARQ engine
 live both roles, byte-identical host interface with a **real Pat B2F message** proven, RXO
-monitor. **Remaining: the on-air acceptance** - peer-to-peer ARDOP on the 40m UK packet channel
-from **GB7RDG's HF port** (operate as M0LTE), where ARDOP stations already run. Winlink gateway
-session is optional gravy (Pat works via the host interface for free). Write the on-air bench doc
-before the session; add the busy-detector port if channel-sharing needs it on air.
+monitor. **The on-air acceptance is done.** From GB7RDG's HF port as M0LTE on 2026-09-12: an ID
+frame at quality 99, a ping to GB7BPQ answered `PINGACK S/N 2 dB quality 90`, a FEC transmission,
+and **an ARQ connection to GB7BPQ (LinBPQ 6.0.25.40) that negotiated to 200 Hz, took a BREAK
+turnaround, carried 90 bytes of BBS banner and tore down in order**. That is the Rung 5 exit
+criterion in [ardop-design.md](ardop-design.md) §6.2, "one real ARQ connection with a deployed
+peer, logged". An independent receiver 150 km away scored the session 30 frames acquired, 30
+decoded ok, and measured the signal on frequency to 2 Hz at the right width. Procedure in
+[ardop-on-air-bench.md](ardop-on-air-bench.md), evidence in
+`/home/tf/ardop-campaign-evidence/on-air-2026-09-12/`, driven by
+[packet-net/ardopcall](https://github.com/packet-net/ardopcall).
+
+The session also closed four Rung 3 gaps that had no live coverage at all: bandwidth negotiation
+to a class other than the configured one, the BREAK turnaround against a foreign implementation,
+the 200 Hz class, and gearshift downward under real channel conditions (a `DataNAK` on the first
+full-rate frame, a drop to the robust short variant, everything acked thereafter).
+
+**Still outstanding, and now more urgent rather than less:** the busy-detector port. Nothing in
+software stops this station transmitting over a session already in progress, and a monitor run
+during the pre-flight caught a third-party QSO on the slot that we would have keyed straight over.
+A hand tool keeps a human in the loop; a LinBPQ port or any unattended use does not. Also
+outstanding: an `ardop` modem's `bandwidth` config key does not reach the TNC, so `ARQBW` stays
+`2000MAX` while the docs claim it is capped.
 
 ### #7 - MIL-STD-188-110D App D *(Phases A+B complete; WN8 program closed; Poor-gate successor program live)*
 Phase A (Walsh-75/BPSK/QPSK + DFE) closed 2026-07-23 - all mask points 0 errors at full
