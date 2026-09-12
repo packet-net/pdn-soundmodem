@@ -94,9 +94,13 @@ interoperates with, and NinoTNC compatibility is never given up to suit another 
   discipline: its bursts bypass the channel's p-persistence roll rather than waiting on
   it, since an ARQ turnaround cannot absorb one, while PTT keying and sample-domain
   TX-complete still come from the shared channel path. What keeps it off a slot somebody
-  else is using is its own busy detector, which band-limits the receive audio to the ARDOP
-  modem's own slot and reports `BUSY TRUE`/`BUSY FALSE` to the host; it gates starting a
-  session and never an in-flight burst.
+  else is using is a per-slot busy detector (`"busyDetect": true` on the modem entry,
+  **off by default**), which band-limits the receive audio to the ARDOP modem's own slot and
+  reports `BUSY TRUE`/`BUSY FALSE` to the host; it gates starting a session and never an
+  in-flight burst. Off by default because it is an energy meter and reads busy almost
+  continuously on a real band: out-of-band FT4 lifts the noise floor across the whole
+  passband faster than the floor estimator can follow, and to an energy meter a lifted floor
+  is indistinguishable from in-band signal.
   Documented divergences from ardopcf: `BUSYDET` 1-10 accepted but not honoured (they
   parameterise the thresholds of a spectral detector we do not implement; `BUSYDET 0`
   disables detection exactly as ardopcf does), log-level and CWID commands accepted but

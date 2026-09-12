@@ -94,6 +94,29 @@ public sealed class ModemConfig
     public double? Bandwidth { get; set; }
 
     /// <summary>
+    /// Watch this ARDOP modem's own slot and tell the TNC when somebody else is using it
+    /// (<c>BUSY TRUE</c>/<c>BUSY FALSE</c>, and <c>ConRejBusy</c> under <c>BUSYBLOCK</c>).
+    /// <b>Off by default</b>, and meaningful only on an <c>ardop</c> entry.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Off by default because it is measurably wrong on a real band.</b> It is a
+    /// band-limited energy meter: short-term power in the ARDOP slot against a slowly-adapting
+    /// noise floor. On the bench that separates cleanly, with a neighbouring packet slot 50 to
+    /// 84 dB down in the watched band. On air at GB7RDG on 2026-09-12 it read busy almost
+    /// continuously, and the reason is not in the band at all: FT4 on 7.0475 MHz, below the
+    /// sub-band, lifts the noise floor across the whole passband in step with its transmit
+    /// cycle, and a floor estimator that adapts upward at 0.002 per block cannot follow a lift
+    /// that arrives in four seconds. The lift therefore reads as signal. No threshold fixes
+    /// that; it only changes how often.</para>
+    /// <para>ardopcf's own detector is immune to this by construction and ours is not, which is
+    /// the real lesson: it rank-orders the bins inside its window and compares the top few
+    /// against the rest (<c>BusyDetect.c</c>), so a uniform floor lift raises signal and
+    /// baseline together and the ratio does not move. Replacing this with that test is the fix.
+    /// Until then, leave it off unless you are working on it.</para>
+    /// </remarks>
+    public bool BusyDetect { get; set; }
+
+    /// <summary>
     /// Identify this modem in Morse. Omit (the default) and it never transmits an identification.
     /// </summary>
     /// <remarks>
