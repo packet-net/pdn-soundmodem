@@ -169,7 +169,11 @@ internal static class SimChannel
     /// inside that window, so the 8th seed block already contained burst audio, the floor seeded at
     /// ~signal level, and the burst never rose the 6 dB needed to assert - the energy-gated modes
     /// (C4FSK) discarded every sample and scored 0/N at any SNR while ungated modes were untouched
-    /// (the 2026-08-01 diagnosis; the FM ladder never hit it because its lead-in is 6 s).</param>
+    /// (the 2026-08-01 diagnosis; the FM ladder never hit it because its lead-in is 6 s). The
+    /// 20 ms block is still what C4FSK runs, which is the gated mode this matters for, but the
+    /// detector's default block is 40 ms as of the 2026-09-12 false-busy fix, so every other
+    /// modem's window is 8 x 40 ms = 320 ms. The 0.5 s default clears both; a caller shortening
+    /// the lead-in has 180 ms of margin, not 340.</param>
     /// <param name="leadOutSeconds">Noise-only padding after the burst (end-of-burst window).</param>
     public static float[] Apply(
         ReadOnlySpan<float> activeBurst, int rate, SimChannelKind kind, double snrDb, int seed,
