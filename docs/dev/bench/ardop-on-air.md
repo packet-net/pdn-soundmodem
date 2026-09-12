@@ -1,6 +1,6 @@
 # ARDOP on-air acceptance bench (GB7RDG, 40 m slot 2)
 
-The procedure for the one rung of the ARDOP acceptance ladder that has never been climbed: a real ARDOP transmission from a real transmitter on a shared band segment. Written 2026-09-12, before the session, because [docs/roadmap.md](roadmap.md) #6 and its "Needs Tom + a radio" item 3 both say to write it first.
+The procedure for the one rung of the ARDOP acceptance ladder that has never been climbed: a real ARDOP transmission from a real transmitter on a shared band segment. Written 2026-09-12, before the session, because [docs/roadmap.md](../roadmap.md) #6 and its "Needs Tom + a radio" item 3 both say to write it first.
 
 Everything below is grounded in this repository, or in a read-only probe of the live station taken on 2026-09-12 and quoted as such. Where a number or a behaviour is not grounded it says **unverified**, and is not to be quoted as measured.
 
@@ -10,7 +10,7 @@ This is an operator's document. It assumes a human at the radio for every transm
 
 **Validated:** our ARDOP transmit chain and our ARQ engine, over a real HF path, against a peer we do not control and did not configure.
 
-**Exit criterion**, stated identically in two places and not to be widened here: **one real ARQ connection with a deployed peer, logged** ([docs/ardop/plan.md](ardop/plan.md), "Open legs" leg 2; [docs/roadmap.md](roadmap.md) #6). A ping answered, an ID heard by somebody, or an FEC frame decoded elsewhere are all useful and none of them is the exit. The exit is `CONNECTED <call> <bw>` followed by data moving and an orderly `DISCONNECTED`, with a transcript.
+**Exit criterion**, stated identically in two places and not to be widened here: **one real ARQ connection with a deployed peer, logged** ([docs/ardop/plan.md](../archive/ardop/plan.md), "Open legs" leg 2; [docs/roadmap.md](../roadmap.md) #6). A ping answered, an ID heard by somebody, or an FEC frame decoded elsewhere are all useful and none of them is the exit. The exit is `CONNECTED <call> <bw>` followed by data moving and an orderly `DISCONNECTED`, with a transcript.
 
 A Winlink gateway session is explicitly optional gravy (roadmap #6). Pat already works through the host interface and has the Rung 4 evidence to prove it; a gateway adds no information this rung is short of.
 
@@ -24,7 +24,7 @@ The point of this section is so that a failure on air can be attributed. If a ru
 | Host protocol byte-identical to ardopcf | 107-command transcript diff against a live ardopcf 1.0.4.1.3, identical bar VERSION | see below | 2026-07-17 |
 | Full ARQ sessions ours to ardopcf, both roles, over `snd-aloop` (Rung 3) | `tests/Packet.SoundModem.Tests/Ardop/ArdopHostLiveTests.cs` | **skipped unless `ARDOPCF` and `ARDOP_ALOOP_CARD` are set** (`:442`, `:513`, `:569`, `:803`) | 2026-07-17 |
 | Real Pat, real B2F message, end to end through our modem and ardopcf (Rung 4) | `ArdopHostLiveTests.cs:619` `Pat_Exchanges_A_Message_Through_Our_Modem_And_Ardopcf` | **additionally skipped unless `PAT` is set** (`:624`) | 2026-07-17 |
-| Receive chain against wild, uncontrolled 40 m ARDOP traffic | [docs/ardop/plan.md](ardop/plan.md) A0-A2; raw evidence at `/home/tf/ardop-campaign-evidence/` | reproducible from the commands in that README | 2026-08-08 |
+| Receive chain against wild, uncontrolled 40 m ARDOP traffic | [docs/ardop/plan.md](../archive/ardop/plan.md) A0-A2; raw evidence at `/home/tf/ardop-campaign-evidence/` | reproducible from the commands in that README | 2026-08-08 |
 | Per-mode decode floors against the Watterson rig | `WattersonMaskTests`, 8 smoke rows + 23 full-tier rows | smoke rows **in CI**; full tier under `SM_MASK_GATE=1` | 2026-08-08 |
 | A pdn-to-pdn ARQ session at ARDOP's native 1500 Hz centre, sharing a channel with a packet modem | `ArdopSharedChannelSessionTests`, the `InlineData(null, SampleRate)` case, which the test itself labels the control | **skipped unless `ARDOP_SESSION_BENCH=1`** | 2026-08-02 |
 
@@ -32,12 +32,12 @@ The point of this section is so that a failure on air can be attributed. If a ru
 
 It also cannot currently be re-run on the dev box: **`snd-aloop` is not available inside this LXC**, so the `ARDOP_ALOOP_CARD` legs have no rig to run on here. That is a limitation to record, not a task to schedule before the session.
 
-What the wild-corpus campaign adds is receive only, and says so: 749 frames acquired and 605 bodies ok over ~45 h of capture at the corrected 1500 Hz centre, and genuine per-frame disputes against ardopcf running 9-4 in our favour ([docs/ardop/plan.md](ardop/plan.md), A1 finding 5 and the A1 addendum). **Nothing in that campaign is on-air evidence and nothing in it transmitted a single sample.**
+What the wild-corpus campaign adds is receive only, and says so: 749 frames acquired and 605 bodies ok over ~45 h of capture at the corrected 1500 Hz centre, and genuine per-frame disputes against ardopcf running 9-4 in our favour ([docs/ardop/plan.md](../archive/ardop/plan.md), A1 finding 5 and the A1 addendum). **Nothing in that campaign is on-air evidence and nothing in it transmitted a single sample.**
 
 ### 2.1 What has never happened at all
 
-- **pdn-soundmodem has never keyed any transmitter with an ARDOP waveform**, not on air and not into a load. The dummy-load procedure exists and is unexecuted: [docs/flex-integration.md](flex-integration.md) §8 item 2, and roadmap #11's remaining item is exactly "a FreeDV-datac / ARDOP frame into the dummy load".
-- **No live ARQ session has ever exercised the ConAck acceptance shipped in M0LTE.Ardop 0.4.0.** It has bench and wild-replay evidence only ([docs/ardop/plan.md](ardop/plan.md), leg 2). That change is on the connection path, so rung 4 of this document is the first thing that will ever exercise it for real.
+- **pdn-soundmodem has never keyed any transmitter with an ARDOP waveform**, not on air and not into a load. The dummy-load procedure exists and is unexecuted: [docs/flex-integration.md](../archive/flex-integration.md) §8 item 2, and roadmap #11's remaining item is exactly "a FreeDV-datac / ARDOP frame into the dummy load".
+- **No live ARQ session has ever exercised the ConAck acceptance shipped in M0LTE.Ardop 0.4.0.** It has bench and wild-replay evidence only ([docs/ardop/plan.md](../archive/ardop/plan.md), leg 2). That change is on the connection path, so rung 4 of this document is the first thing that will ever exercise it for real.
 - **No ARDOP session of any kind over RF, at any centre.**
 
 ## 3. The station, as measured
@@ -64,7 +64,7 @@ audio: flex:discover DAX 24000 Hz -> 12000 Hz (slice A, dax 2, headless 7.049450
 
 | | |
 |---|---|
-| Node | `root@pdn-soundmodem`, 10.45.0.37 on the LAN; config `/etc/pdn-soundmodem/soundmodem.json` ([docs/uplink-plan.md](uplink-plan.md):401) |
+| Node | `root@pdn-soundmodem`, 10.45.0.37 on the LAN; config `/etc/pdn-soundmodem/soundmodem.json` ([docs/uplink-plan.md](../archive/uplink-plan.md):401) |
 | Radio | FlexRadio 6500, slice A, DAX channel 2, headless, ANT1, DIGU, 50 W (the power setting and what ANT1 terminates into on the day are the operator's to confirm) |
 | ARDOP host interface | `pdn-soundmodem:8200` command, **8201 data** (data port is always command + 1, `ArdopHostServer.cs:57`) |
 
@@ -72,7 +72,7 @@ audio: flex:discover DAX 24000 Hz -> 12000 Hz (slice A, dax 2, headless 7.049450
 
 Beware two slot numberings. The [UK 40 m band plan](https://ukpacketradio.network/info:40m) counts from 1, so **ARDOP is band-plan slot 2**, quoted verbatim: "Slot 2 is reserved for ARDOP (not AX.25) in coordination with existing users." The daemon's `subChannel` counts from 0, so the same slot is **sub-channel 1** (it appears as `modem 1` in the journal above). The band plan also states the guard: "With 500Hz occupied bandwidth, there is 150Hz guard between slots."
 
-"In coordination with existing users" is the operative phrase for this whole document. The existing users on this slot are known by name from the off-air campaign: **GB7BPQ, GB7BWR-2 and DC7DE** ([docs/ardop/plan.md](ardop/plan.md), A0 scoreboard). They were there before us.
+"In coordination with existing users" is the operative phrase for this whole document. The existing users on this slot are known by name from the off-air campaign: **GB7BPQ, GB7BWR-2 and DC7DE** ([docs/ardop/plan.md](../archive/ardop/plan.md), A0 scoreboard). They were there before us.
 
 ### 3.3 What state the TNC is in right now
 
@@ -113,7 +113,7 @@ So a negotiated 2000 Hz session fits inside the transmit filter and would go out
 
 ### 3.5 The free calibration signal
 
-GB7BPQ runs a half-hourly beacon and ID pair, measured over the corpus: a 4FSK.500.100 FEC beacon at about **:00:37 and :30:37** past the hour, and a two-frame ID sequence about twenty seconds later at **:00:57 and :30:57** ([docs/ardop/plan.md](ardop/plan.md), A0 scoreboard and A1 finding 2). Two things follow.
+GB7BPQ runs a half-hourly beacon and ID pair, measured over the corpus: a 4FSK.500.100 FEC beacon at about **:00:37 and :30:37** past the hour, and a two-frame ID sequence about twenty seconds later at **:00:57 and :30:57** ([docs/ardop/plan.md](../archive/ardop/plan.md), A0 scoreboard and A1 finding 2). Two things follow.
 
 1. It is a recurring, free, known-good receive check: if the station does not read that ID pair, the receive chain or the radio is wrong and nothing further down this ladder means anything.
 2. It sits **at the decode threshold for both implementations**: ardopcf fails the beacon 31 times out of 34 over the corpus (A1 finding 2), so failing to decode the beacon is not evidence of a fault. The **ID pair** is the check, not the beacon.
@@ -133,13 +133,13 @@ Two consequences, both of which shape the timing of the session.
 
 ### 4.1 There is no busy detector
 
-Our TNC never sends `BUSY TRUE` or `BUSY FALSE`, and `BUSYDET` and `BUSYBLOCK` are accepted and inert (`M0LTE.Ardop` `Host/ArdopHostTnc.cs:44-56`, `:481-489`; README.md:96). A real ardopcf does send them. The ARDOP spec assumes them: §2.7 lists "listen before transmit and busy detectors" as how the protocol minimises interference, and rule 1.5 makes `ConRejBusy` the mechanism by which a busy channel refuses a connection ([docs/refs/ardop-spec-rev2.md](refs/ardop-spec-rev2.md):44, :449).
+Our TNC never sends `BUSY TRUE` or `BUSY FALSE`, and `BUSYDET` and `BUSYBLOCK` are accepted and inert (`M0LTE.Ardop` `Host/ArdopHostTnc.cs:44-56`, `:481-489`; README.md:96). A real ardopcf does send them. The ARDOP spec assumes them: §2.7 lists "listen before transmit and busy detectors" as how the protocol minimises interference, and rule 1.5 makes `ConRejBusy` the mechanism by which a busy channel refuses a connection ([docs/refs/ardop-spec-rev2.md](../refs/ardop-spec-rev2.md):44, :449).
 
 So: **no software in this path will decline to transmit because somebody else is using the channel.** Not the TNC, not the daemon, not the tool.
 
 ### 4.2 ARDOP transmissions deliberately bypass channel access
 
-An ARDOP burst is queued with `ownsChannelTiming: true` (`src/Packet.SoundModem.Daemon/Program.cs:1994`), and that flag **skips both the transmit inhibit and the p-persistence roll** (`src/Packet.SoundModem/Channel/SoundModemChannel.cs:446-452`, `:507-509`, `:993-999`). It was the right fix for a real problem, and the problem is stated in the code: at a shifted centre ARDOP's own signal sits inside a packet modem's passband and asserts that modem's busy detector, so deferring would mean partly deferring to itself, and an ARQ turnaround has a budget a p-persistence roll does not respect. It was measured costing about 20 % of session time at the shipped p=63 before the fix ([docs/mode-validation.md](mode-validation.md), 2026-08-02). Shipped in `3c7fdd5` (#171), 2026-08-02.
+An ARDOP burst is queued with `ownsChannelTiming: true` (`src/Packet.SoundModem.Daemon/Program.cs:1994`), and that flag **skips both the transmit inhibit and the p-persistence roll** (`src/Packet.SoundModem/Channel/SoundModemChannel.cs:446-452`, `:507-509`, `:993-999`). It was the right fix for a real problem, and the problem is stated in the code: at a shifted centre ARDOP's own signal sits inside a packet modem's passband and asserts that modem's busy detector, so deferring would mean partly deferring to itself, and an ARQ turnaround has a budget a p-persistence roll does not respect. It was measured costing about 20 % of session time at the shipped p=63 before the fix ([docs/mode-validation.md](../mode-validation.md), 2026-08-02). Shipped in `3c7fdd5` (#171), 2026-08-02.
 
 The consequence is not a defect and is not up for debate on the day: **the operator is the only channel-access mechanism this station has for ARDOP.** Every rung below is written on that basis.
 
@@ -150,7 +150,7 @@ Two corollaries worth knowing before you key.
 
 ### 4.3 What an ARQ session of ours does to the node
 
-GB7RDG is a live node carrying traffic ([docs/uplink-plan.md](uplink-plan.md):401, :575), and 3.6 has it forwarding mail right now. While our ARQ engine is connected or pending, `channel.TransmitInhibit` holds every packet transmission on the other three sub-channels off the air (`Program.cs:2053-2057`). Frames are queued rather than discarded, but only until `TransmitInhibitTimeout`, whose default is **30 seconds** (`SoundModemChannel.cs:633`), after which they are dropped.
+GB7RDG is a live node carrying traffic ([docs/uplink-plan.md](../archive/uplink-plan.md):401, :575), and 3.6 has it forwarding mail right now. While our ARQ engine is connected or pending, `channel.TransmitInhibit` holds every packet transmission on the other three sub-channels off the air (`Program.cs:2053-2057`). Frames are queued rather than discarded, but only until `TransmitInhibitTimeout`, whose default is **30 seconds** (`SoundModemChannel.cs:633`), after which they are dropped.
 
 So an ARQ session longer than half a minute silently costs the node its packet transmissions, including the GB7BPQ mail forwarding. Keep rung 5's payload short, and put the session in a window when the node is quiet.
 
@@ -225,7 +225,7 @@ Two notes. Attaching displaces whatever host was on those sockets: the TNC accep
 
 Owed by roadmap #11 regardless of this campaign, and the only rung on this ladder with no channel risk at all. Terminate the transmit path in a load, then run rung 1's two commands unchanged. This is the first time any ARDOP audio from this codebase reaches a PA.
 
-- **Success:** `PTT TRUE` then `PTT FALSE` in the transcript, the Flex reporting `interlock=TRANSMITTING`, RF into the load, no setup errors. The existing procedure and its success criteria are at [docs/flex-integration.md](flex-integration.md) §8 item 2.
+- **Success:** `PTT TRUE` then `PTT FALSE` in the transcript, the Flex reporting `interlock=TRANSMITTING`, RF into the load, no setup errors. The existing procedure and its success criteria are at [docs/flex-integration.md](../archive/flex-integration.md) §8 item 2.
 - **Failure:** no keying, keying with no RF, a `FAULT`, or audio that is obviously wrong on the panadapter.
 - **Decision:** a failure here is a transmit-path fault and **stops the ladder**. A pass closes roadmap #11's last item and should be recorded as such.
 
@@ -243,7 +243,7 @@ ardopcall -t pdn-soundmodem:8200 -s M0LTE --bw 500 --grid IO91lk id --log "$EV/r
 - **Failure:** no keying; `FAULT MYCALL not set` (the callsign did not take); a burst on the wrong frequency or visibly wider than the slot; or nothing decodable at the second receiver.
 - **Decision:** wrong frequency or excessive width **stops the ladder** and is a bug report, not a retry. Keying with nothing decoded anywhere is ambiguous on one receiver and worth one repeat with a second witness before stopping.
 
-This is also the rung to judge the transmit level on. Do it by looking at ALC and at the second receiver's picture, not by guessing: the house receive-level guidance and its derivation are in [docs/receive-levels.md](receive-levels.md), and **there is no measured transmit-level figure for ARDOP anywhere in this repository**, so any drive level arrived at on the day is a new measurement and belongs in the evidence.
+This is also the rung to judge the transmit level on. Do it by looking at ALC and at the second receiver's picture, not by guessing: the house receive-level guidance and its derivation are in [docs/receive-levels.md](../receive-levels.md), and **there is no measured transmit-level figure for ARDOP anywhere in this repository**, so any drive level arrived at on the day is a new measurement and belongs in the evidence.
 
 ### Rung 2: a ping to a known station
 
@@ -265,7 +265,7 @@ printf 'M0LTE ARDOP TEST %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   | ardopcall -t pdn-soundmodem:8200 -s M0LTE --fecmode 4FSK.500.100 fec - --log "$EV/r3-fec.log"
 ```
 
-FEC is connectionless: it transmits and nothing answers. It is the last rung that occupies the channel only for as long as you told it to. `4FSK.500.100` is the slot's workhorse rung and the type the corpus knows best; it is also the type whose wild body-decode rate is 60 %, with failures that are a known threshold emitter rather than a defect ([docs/ardop/plan.md](ardop/plan.md), A1 finding 2). **`--fecmode` is implied by the design's `fec` row ("at a chosen frame type") but is not named in its global-options list, so check the real flag against `--help`.**
+FEC is connectionless: it transmits and nothing answers. It is the last rung that occupies the channel only for as long as you told it to. `4FSK.500.100` is the slot's workhorse rung and the type the corpus knows best; it is also the type whose wild body-decode rate is 60 %, with failures that are a known threshold emitter rather than a defect ([docs/ardop/plan.md](../archive/ardop/plan.md), A1 finding 2). **`--fecmode` is implied by the design's `fec` row ("at a chosen frame type") but is not named in its global-options list, so check the real flag against `--help`.**
 
 - **Success:** one bounded keyup of a few seconds, the burst in the right place, and a second receiver decoding the text byte-exact. An `FEC`-tagged block coming back on our own data socket would only mean we decoded our own audio, which a half-duplex station cannot do; the witness is the second receiver.
 - **Failure:** a keyup that does not end when it should (`FECSEND TRUE` with nothing stopping it is the one command on this ladder that can hold the PA), or an undecodable burst at a receiver that hears the level fine.
@@ -342,7 +342,7 @@ Know which of these you will use, and have the node's shell already open, **befo
 
 The station arrived at this bench inert only because `MYCALL` was empty, with `LISTEN TRUE` and `PROTOCOLMODE ARQ` already set (3.3). Rung 1 removed that protection deliberately. **It has to be put back, or the station is left able to answer ARDOP calls unattended**, which section 10 says it is not authorised to do.
 
-Restart the daemon (`systemctl restart pdn-soundmodem`), which returns the TNC to its configured state, then **verify** by probing it exactly as pre-flight item 5 did: `MYCALL` must come back empty and `STATE` must read `DISC`. Read the restart's journal against 3.2 line for line and confirm nothing else moved: this is a live node, and the discipline for touching it is the one [docs/uplink-plan.md](uplink-plan.md):575 sets, that every line that was there before is still there and in the same order.
+Restart the daemon (`systemctl restart pdn-soundmodem`), which returns the TNC to its configured state, then **verify** by probing it exactly as pre-flight item 5 did: `MYCALL` must come back empty and `STATE` must read `DISC`. Read the restart's journal against 3.2 line for line and confirm nothing else moved: this is a live node, and the discipline for touching it is the one [docs/uplink-plan.md](../archive/uplink-plan.md):575 sets, that every line that was there before is still there and in the same order.
 
 ## 9. Known risks, stated honestly
 
@@ -370,15 +370,15 @@ Sections 4.1 and 4.2 together. Mitigations are all procedural: rung 0 first, the
 
 ### 9.4 The interop evidence is old and narrow
 
-One peer implementation (ardopcf 1.0.4.1.3), one rig (`snd-aloop`), one date (2026-07-17), skip-by-default, never in CI, and not currently re-runnable on the dev box (2). The wild corpus shows the slot carries traffic from implementations we cannot name, and the design doc records ARDOP_Win behavioural differences as an explicit Rung 5 finding to record ([docs/ardop-design.md](ardop-design.md) §9.2). **If a live peer behaves differently from ardopcf, that is a finding to write down, not a bug to fix on the day.**
+One peer implementation (ardopcf 1.0.4.1.3), one rig (`snd-aloop`), one date (2026-07-17), skip-by-default, never in CI, and not currently re-runnable on the dev box (2). The wild corpus shows the slot carries traffic from implementations we cannot name, and the design doc records ARDOP_Win behavioural differences as an explicit Rung 5 finding to record ([docs/ardop-design.md](../ardop-design.md) §9.2). **If a live peer behaves differently from ardopcf, that is a finding to write down, not a bug to fix on the day.**
 
 ### 9.5 The top rungs will not fly, and that is expected
 
-8PSK.500.100 and 16QAM.500.100 decode essentially nothing under CCIR Moderate or Poor at any plausible NVIS SNR, measured on the sim ladder, and all 17 wild 16QAM bodies in the corpus fail for ardopcf too ([docs/ardop/plan.md](ardop/plan.md), A1 finding 1 and A3). If a session gearshifts up and stalls, that is the waveform meeting the channel, not our decoder. Do not chase it.
+8PSK.500.100 and 16QAM.500.100 decode essentially nothing under CCIR Moderate or Poor at any plausible NVIS SNR, measured on the sim ladder, and all 17 wild 16QAM bodies in the corpus fail for ardopcf too ([docs/ardop/plan.md](../archive/ardop/plan.md), A1 finding 1 and A3). If a session gearshifts up and stalls, that is the waveform meeting the channel, not our decoder. Do not chase it.
 
 ### 9.6 The ~2 % single-shot acquisition ceiling
 
-A small fraction of noise realisations false-trigger the leader detector during the lead-in and the capture swallows the real frame; measured as a ~98 % single-shot ceiling on the sim ladder, absorbed in deployment by ARQ retries ([docs/ardop/plan.md](ardop/plan.md), A3). Expect occasional retried frames in a healthy session. It is a named future receiver leg ("leader re-arm", leg 1), not a session fault.
+A small fraction of noise realisations false-trigger the leader detector during the lead-in and the capture swallows the real frame; measured as a ~98 % single-shot ceiling on the sim ladder, absorbed in deployment by ARQ retries ([docs/ardop/plan.md](../archive/ardop/plan.md), A3). Expect occasional retried frames in a healthy session. It is a named future receiver leg ("leader re-arm", leg 1), not a session fault.
 
 ### 9.7 The node is live and currently busy
 
@@ -414,8 +414,8 @@ That rule applies here without exception. A transcript with the boring parts tid
 
 **The second receiver is not optional.** The station is deaf while it transmits (4.2), so nothing in the first four rows above can tell you what you actually radiated. Two independent witnesses exist and cost nothing:
 
-- **A public UberSDR instance**, which this project already uses as a receive chain: `m9psy-1.instance.ubersdr.org` decoded this exact slot plan off air on 2026-08-02 ([docs/mode-validation.md](mode-validation.md)). A second `pdn-soundmodem` pointed at it with `--device ubersdr:...` and an `ardop` modem entry gives a full RXO transcript of our own transmissions from somebody else's antenna.
-- **The station's own public page**, https://monitor.ukpacketradio.network/r/gb7rdg/ , which relays the station's own transmitted audio to viewers at -35 dB ([docs/uplink-plan.md](uplink-plan.md):92, :190, :608). That shows the keyup and its shape from the station's side of the path.
+- **A public UberSDR instance**, which this project already uses as a receive chain: `m9psy-1.instance.ubersdr.org` decoded this exact slot plan off air on 2026-08-02 ([docs/mode-validation.md](../mode-validation.md)). A second `pdn-soundmodem` pointed at it with `--device ubersdr:...` and an `ardop` modem entry gives a full RXO transcript of our own transmissions from somebody else's antenna.
+- **The station's own public page**, https://monitor.ukpacketradio.network/r/gb7rdg/ , which relays the station's own transmitted audio to viewers at -35 dB ([docs/uplink-plan.md](../archive/uplink-plan.md):92, :190, :608). That shows the keyup and its shape from the station's side of the path.
 
 **After the session**, run `sm-ota ardop-monitor` over whatever raw capture covers the window, exactly as the off-air campaign does, so the session is scored by the same instrument as the wild corpus:
 
@@ -425,10 +425,10 @@ sm-ota ardop-monitor --raw <capture dir> --centre 1500 --quiet --csv "$EV/sessio
 
 **The durable record** goes in the repository, not in the evidence directory, and cites the evidence directory:
 
-1. **This file**: results written into a new "Results" section, the way [docs/freedv-hf-loop.md](freedv-hf-loop.md) says to ("Record results in this file (replace the blank matrix)").
-2. **[docs/mode-validation.md](mode-validation.md)**: a dated ledger entry. The standing rule in CLAUDE.md is explicit that a proven mode gets one, naming the transition and the PR or issue that did it. `ardop` has no matrix row (it is a daemon modem entry, not a `ModemCatalog` mode) and the 2026-08-02 entry sets the precedent for recording it anyway.
-3. **[docs/ardop/plan.md](ardop/plan.md)**: leg 2 of "Open legs" closed, with the exit criterion quoted and answered.
-4. **[docs/roadmap.md](roadmap.md)**: #6 closed, and #11's dummy-load item closed if rung 0b ran.
-5. **[docs/plan.md](plan.md) §17**: the amendment-log entry, which is authoritative where the three roadmap documents disagree.
+1. **This file**: results written into a new "Results" section, the way [docs/freedv-hf-loop.md](../archive/freedv-hf-loop.md) says to ("Record results in this file (replace the blank matrix)").
+2. **[docs/mode-validation.md](../mode-validation.md)**: a dated ledger entry. The standing rule in CLAUDE.md is explicit that a proven mode gets one, naming the transition and the PR or issue that did it. `ardop` has no matrix row (it is a daemon modem entry, not a `ModemCatalog` mode) and the 2026-08-02 entry sets the precedent for recording it anyway.
+3. **[docs/ardop/plan.md](../archive/ardop/plan.md)**: leg 2 of "Open legs" closed, with the exit criterion quoted and answered.
+4. **[docs/roadmap.md](../roadmap.md)**: #6 closed, and #11's dummy-load item closed if rung 0b ran.
+5. **[docs/plan.md](../plan.md) §17**: the amendment-log entry, which is authoritative where the three roadmap documents disagree.
 
 **Honest negatives are recorded with their mechanism**, which is the campaign's own standing discipline. A session that did not connect, a ping that was never answered, a peer that behaved unlike ardopcf: all of those are results, and the one thing that must not happen is a ladder run whose failures go unwritten because the exit criterion was not reached.

@@ -49,7 +49,7 @@ turnaround, carried 90 bytes of BBS banner and tore down in order**. That is the
 criterion in [ardop-design.md](ardop-design.md) §6.2, "one real ARQ connection with a deployed
 peer, logged". An independent receiver 150 km away scored the session 30 frames acquired, 30
 decoded ok, and measured the signal on frequency to 2 Hz at the right width. Procedure in
-[ardop-on-air-bench.md](ardop-on-air-bench.md), evidence in
+[bench/ardop-on-air.md](bench/ardop-on-air.md), evidence in
 `/home/tf/ardop-campaign-evidence/on-air-2026-09-12/`, driven by
 [packet-net/ardopcall](https://github.com/packet-net/ardopcall).
 
