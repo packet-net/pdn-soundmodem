@@ -34,7 +34,7 @@ Each listener says where it is when it starts:
 ```
 kiss tcp: 127.0.0.1:8105 (all modems, by sub-channel nibble)
 kiss tcp: 127.0.0.1:8110 (modem 1 bpsk300 only, as nibble 0)
-ardop host tcp: 127.0.0.1:8515 (data 8516, ardopcf-compatible virtual TNC, modem 2, centre 950 Hz)
+ardop host tcp: 127.0.0.1:8515 (data 8516, ardopcf-compatible virtual TNC, modem 2, ARQBW 500MAX, centre 950 Hz, busy watch 661-1239 Hz)
 paging tcp: 127.0.0.1:8106 (pocsag1200, DAPNET/POCSAG-compatible)
 waterfall: http://127.0.0.1:8107/
 metrics: http://127.0.0.1:8107/metrics (prometheus) and http://127.0.0.1:8107/metrics/frames (one point per frame, influx line protocol). No authentication.
@@ -140,7 +140,7 @@ One host per socket, as in ardopcf: a new connection replaces the previous one. 
 
 | Divergence from ardopcf | What happens here |
 |---|---|
-| No busy detector | `BUSY TRUE` and `BUSY FALSE` are never sent. `BUSYDET` and `BUSYBLOCK` are accepted and answered as ardopcf answers them, and change nothing |
+| `BUSYDET` 1-10 | accepted and answered as ardopcf answers them, but not honoured: they parameterise the thresholds of ardopcf's rank-order spectral detector, and this station's detector is a band-limited energy meter over the ARDOP slot. `BUSYDET 0` disables detection exactly as ardopcf does, and `BUSY TRUE`/`BUSY FALSE` and `BUSYBLOCK` behave as ardopcf's |
 | `CWID` | accepted and answered as ardopcf answers it; no CW identification is transmitted |
 | `LOGLEVEL`, `CONSOLELOG`, `DEBUGLOG`, `CMDTRACE` | accepted and answered as ardopcf answers them; nothing changes, the modem's journal is its only log |
 | `TXFRAME` | not implemented; answered `FAULT CMD TXFRAME not recoginized`, ardopcf's own spelling for an unknown command |

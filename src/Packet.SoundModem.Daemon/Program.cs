@@ -1963,6 +1963,27 @@ if (benchTxTest is null && ardopModem is not null)
     M0LTE.Ardop.Arq.ArdopArqEngine ardopEngine = ardopTnc.Engine;
     channel.TransmitInhibit = () => ardopEngine.IsConnected || ardopEngine.IsPending;
 
+    // Tell the TNC when somebody else is using the slot. The package implements no detector by
+    // design (no audio device, no spectrum): it exposes ChannelBusy and leaves the decision to
+    // whoever owns the audio, which is us. Unwired, the seam is dormant and the station
+    // transmits regardless of what is on the channel, which is what it did until now.
+    //
+    // The band is the ARDOP modem's own slot, not the channel's aggregate ChannelBusy: the
+    // question the band plan coordinates is whether THIS slot is in use, and deferring to packet
+    // traffic in slots ARDOP does not occupy would be a different and more timid answer. See
+    // ArdopBusyDetector for the measured separation.
+    //
+    // The engine samples this only in protocol state DISC, as ardopcf does, so it gates starting
+    // a session and can never stall an in-flight burst. That distinction is load-bearing: an IRS
+    // that misses its ACK window loses the link, and ARDOP bursts bypass channel access (#171)
+    // precisely so they never wait.
+    var ardopBusy = new ArdopBusyDetector(
+        ardopModem.Frequency ?? ArdopChannelBridge.NativeCentreHz,
+        M0LTE.Ardop.Arq.ArdopBandwidthExtensions.Hertz(ardopTnc.Config.ArqBandwidth),
+        DspRate);
+    channel.AddReceiveTap(ardopBusy.Process);
+    ardopTnc.Config.ChannelBusy = () => ardopBusy.Busy;
+
     int ardopCommandPort = ardopModem.Port ?? 8515;
     ardopServer = new M0LTE.Ardop.Host.ArdopHostServer(
         ardopTnc, ardopCommandPort, listenAddress, ownsTnc: true);
@@ -1971,7 +1992,7 @@ if (benchTxTest is null && ardopModem is not null)
         $"ardop host tcp: {(Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString())}:{ardopServer.LocalCommandPort} (data {ardopServer.LocalDataPort}, "
         + $"ardopcf-compatible virtual TNC, modem {ardopModem.SubChannel}, ARQBW "
         + $"{M0LTE.Ardop.Arq.ArdopBandwidthExtensions.Hertz(ardopTnc.Config.ArqBandwidth)}MAX"
-        + $"{ardopShift.Describe()})");
+        + $"{ardopShift.Describe()}, busy watch {ardopBusy.LowHz:F0}-{ardopBusy.HighHz:F0} Hz)");
 }
 await using var ardopLifetime = ardopServer;
 
