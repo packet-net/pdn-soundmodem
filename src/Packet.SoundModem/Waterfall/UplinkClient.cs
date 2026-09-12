@@ -413,6 +413,13 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                 hex = frame.FrameHex,
                 plain = frame.PlainIl2p ? true : (bool?)null,
                 monitorOnly = frame.MonitorOnly ? true : (bool?)null,
+                // What stood behind the reading, in the two facts a row read back out of a
+                // monitor's own copy of this log needs to make the same claim about a station as
+                // the live row did: whether the trailer corroborated it, and how far the chase had
+                // to move to reach it. Absent where there is nothing to say, like every other
+                // optional field here.
+                trailerNearBits = frame.TrailerNearBits,
+                chasedBits = frame.ChasedBits,
                 // The two measurements and the verdict this station's own modem put on them, so
                 // that a relayed row carries the level its operator sees and the monitor does not
                 // have to hold a copy of a rule that belongs to a demodulator it is not running.
@@ -425,6 +432,11 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                 // measurement rather than instead of it: the monitor logs what this station
                 // measured and shows what this station's own page shows.
                 peakWorthShowing = frame.PeakWorthShowing,
+                // And the same answer about the burst SNR above, which is a band reading rather
+                // than a measurement of the frame and belongs on a row only where something
+                // checked the frame. Sent beside the measurement rather than instead of it, for
+                // the reason the peak is.
+                snrWorthShowing = frame.SnrWorthShowing,
                 at = frame.At.ToUniversalTime()
                     .ToString("O", System.Globalization.CultureInfo.InvariantCulture),
                 raw = frame.Raw is null ? null : Convert.ToBase64String(frame.Raw),

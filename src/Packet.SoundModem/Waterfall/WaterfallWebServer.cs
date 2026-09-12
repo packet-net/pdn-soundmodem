@@ -226,6 +226,20 @@ public sealed class WaterfallOptions
 /// the column existed, for the same reason as <paramref name="MonitorOnly"/>: what stood behind
 /// that frame was not written down, and a badge is a claim.
 /// </param>
+/// <param name="TrailerNearBits">
+/// For a row only the plain reading produced, how far the trailer that followed it was from the
+/// trailer its payload implies, where that was close enough to corroborate it
+/// (<see cref="Modems.FrameQuality.TrailerNearBits"/>). Read back beside
+/// <paramref name="ChasedBits"/> so that a replayed row makes the same claim about a station as
+/// the live row did: the pair is what separates a reading something agreed with from a reading
+/// nothing checked. Null on a row logged before the column existed, which is "nothing said".
+/// </param>
+/// <param name="ChasedBits">
+/// How many wire bits chase decoding flipped to reach this row
+/// (<see cref="Modems.FrameQuality.ChasedBits"/>). Null where no chase was needed, where the
+/// modem supplied no confidence, and on a row logged before the column existed - all of which
+/// read as "not chased", which is the truth available and the reading that keeps a callsign.
+/// </param>
 public sealed record LoggedFrame(
     DateTimeOffset HeardAt,
     int SubChannel,
@@ -243,7 +257,24 @@ public sealed record LoggedFrame(
     double? PeakDbFs = null,
     bool? Clipped = null,
     Audio.FrameLevel? Level = null,
-    bool? PeakWorthShowing = null);
+    bool? PeakWorthShowing = null,
+    int? TrailerNearBits = null,
+    int? ChasedBits = null)
+{
+    /// <summary>
+    /// Whether the callsigns this row was logged with may be presented as a station
+    /// (<see cref="Modems.DecodeStanding.CallsignWorthShowing"/>).
+    /// </summary>
+    /// <remarks>
+    /// The same verdict the live row took, reached from the same three facts read back out of the
+    /// log rather than stored beside them - they are already columns, and a rule read off the
+    /// numbers cannot disagree with the numbers. Without this a browser reloading the page got the
+    /// callsign back that the live row had withheld, which is the whole fix undone by a refresh.
+    /// A row from before the columns says nothing and keeps its callsign.
+    /// </remarks>
+    public bool CallsignWorthShowing =>
+        Modems.DecodeStanding.CallsignWorthShowing(PlainIl2p, TrailerNearBits, ChasedBits);
+}
 
 /// <summary>A band the host declares rather than the waterfall measuring it.</summary>
 /// <param name="SubChannel">Which modem, for ordering and labels.</param>
@@ -1423,9 +1454,17 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             burstLines = lines;
         }
 
+        // A callsign on a row is a claim, and a reading nothing checked cannot support one. The
+        // verdict is the decode's own (FrameQuality.CallsignWorthShowing, taken where the facts
+        // behind it live), and this only obeys it: the frame is still listed, still badged, still
+        // logged and still relayed, and simply does not name a station. What that costs is the
+        // measured quarter of the class that were real, which were being withheld from the host
+        // anyway; what it buys is the other three quarters not appearing on the waterfall as
+        // GB7BPQ (docs/dev/false-decodes.md).
         string? from = null;
         string? to = null;
-        if (Ax25AddressParser.TryParse(frame, out string source, out string destination))
+        if (quality.CallsignWorthShowing
+            && Ax25AddressParser.TryParse(frame, out string source, out string destination))
         {
             from = source;
             // A blank destination field parses to "" - send null, as the backlog does, and the
@@ -1443,7 +1482,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // right and the reading of them is not, and which encapsulation carried it is the
             // first thing worth knowing. The bytes come too, because the panel is where an
             // operator notices one of these and the next thing they will want is to copy them.
-            note: Ax25AttributionNote.For(frame),
+            // The overload taking the quality also covers the other way a row ends up with no
+            // callsign - a header that read perfectly well behind a decode that established
+            // nothing - because "unattributed" on bytes that plainly are an address field would
+            // otherwise send somebody looking for a parser bug.
+            note: Ax25AttributionNote.For(frame, quality),
             headerType: quality.HeaderType?.ToString(),
             frameHex: from is null && to is null ? Convert.ToHexString(frame) : null,
             // Reed-Solomon and nothing else stood behind this frame, and on an -il2pc modem the
@@ -1461,8 +1504,17 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             clipped: quality.Clipped,
             level: quality.Level,
             peakWorthShowing: quality.PeakWorthShowing,
-            // For a relay, and for nobody else: a monitor folds its own links out of these bytes
-            // rather than being sent a summary of them.
+            // And the same answer about the SNR, made by the decode rather than here: a band
+            // reading beside a frame nothing checked is the number that made a fabricated row
+            // indistinguishable from a real one (FrameQuality.SnrWorthShowing). The measurement
+            // itself is passed along untouched, as the peak is, because a monitor keeps its own
+            // copy of this station's log and the figure is evidence there.
+            snrWorthShowing: quality.SnrWorthShowing,
+            // For a relay, and for nobody else: the two facts a monitor's own copy of this log
+            // needs to reach the verdict above for itself, and the bytes it folds its own links
+            // out of rather than being sent a summary of them.
+            trailerNearBits: quality.TrailerNearBits,
+            chasedBits: quality.ChasedBits,
             raw: frame);
 
         // Everything above lists the frame; this last step makes a claim about the channel, and
@@ -1807,6 +1859,34 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     private static double? ShownPeak(double? peakDbFs, bool? peakWorthShowing) =>
         peakWorthShowing is false || peakDbFs is not { } peak ? null : Math.Round(peak, 1);
 
+    /// <summary>
+    /// The burst SNR a page is sent for a frame, or nothing where nothing checked the frame.
+    /// </summary>
+    /// <remarks>
+    /// <para>The third mapping beside <see cref="LevelTag"/> and <see cref="ShownPeak"/>, and the
+    /// same shape: the answer belongs to the decode
+    /// (<see cref="Modems.DecodeStanding.SnrWorthShowing"/>) and arrives here on
+    /// <see cref="Modems.FrameQuality.SnrWorthShowing"/>, on a live row or a relayed one.</para>
+    /// <para>Why it is not simply drawn: this figure is in-band power over a rolling
+    /// <em>minimum</em> noise floor taken off the display's own FFT lines, not a measurement of
+    /// the frame. It cannot report below about 6 dB, because every line in it had to clear the
+    /// burst gate at that ratio; its denominator is the quietest of thirty half-second blocks;
+    /// and for two seconds after a run ends it repeats the previous burst's number verbatim
+    /// (<see cref="BandActivityTracker"/>). Beside a verified frame it is a fair strength cue.
+    /// Beside a frame nothing checked it is what made a fabricated row read as a real station at
+    /// a plausible strength - and, through the carry-over, at the <em>same</em> strength as the
+    /// real transmission just before it, which is exactly what was reported off air.</para>
+    /// <para><b>Only the row loses the number.</b> The frame log's <c>snr_db</c> and the uplink's
+    /// <c>snrDb</c> carry it whatever the reading was worth, because it is evidence and it is how
+    /// this defect was measured in the first place. Null in
+    /// <paramref name="snrWorthShowing"/> is "nothing said" and shows the figure: a relayed row
+    /// from a station too old to answer listed its figure before this existed.</para>
+    /// </remarks>
+    /// <param name="snrDb">The measured burst SNR, or null where nothing measured one.</param>
+    /// <param name="snrWorthShowing">What the decode said about showing it.</param>
+    private static double? ShownSnr(double? snrDb, bool? snrWorthShowing) =>
+        snrWorthShowing is false ? null : snrDb;
+
     // `raw` is the frame's own bytes, where the caller has them, and exists for the relay: a
     // monitor reads them into its own link observer rather than being sent a summary of them.
     // Nothing is sent to a browser that was not sent before - the panel already has everything it
@@ -1819,7 +1899,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         string? note = null, string? headerType = null, string? frameHex = null,
         bool plainIl2p = false, bool monitorOnly = false, double? txTrimHz = null,
         double? peakDbFs = null, bool? clipped = null, Audio.FrameLevel? level = null,
-        bool? peakWorthShowing = null, byte[]? raw = null)
+        bool? peakWorthShowing = null, bool? snrWorthShowing = null,
+        int? trailerNearBits = null, int? chasedBits = null, byte[]? raw = null)
     {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -1830,7 +1911,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             from,
             to,
             lenBytes = lengthBytes,
-            snrDb,
+            // The band's reading of the burst, on the rows where the frame it is drawn beside was
+            // checked by something. Absent where nothing checked it (ShownSnr): the figure is a
+            // band measurement with a floor and a two-second carry-over, and beside such a frame
+            // it is the thing that makes the row look like a real signal. The relayed copy below
+            // keeps it either way - it is a measurement, and the far end's own page is not the
+            // only thing that reads one.
+            snrDb = ShownSnr(snrDb, snrWorthShowing),
             burstLines,
             offsetHz,
             corrected,
@@ -1909,6 +1996,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 FrameHex = frameHex,
                 PlainIl2p = plainIl2p,
                 MonitorOnly = monitorOnly,
+                // And the two facts behind those, which a monitor writes into its own copy of
+                // this station's log so that a row replayed out of it withholds the callsign the
+                // live row withheld.
+                TrailerNearBits = trailerNearBits,
+                ChasedBits = chasedBits,
                 PeakDbFs = peakDbFs,
                 Clipped = clipped,
                 // And what this station's own modem made of them, which a monitor cannot work out
@@ -1917,6 +2009,10 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 // sends and is not what this one heard.
                 Level = level,
                 PeakWorthShowing = peakWorthShowing,
+                // And what the decode said about the SNR beside it, for the same reason: the
+                // monitor logs what this station measured and shows what this station's own page
+                // shows, without holding a copy of a rule about a decode it did not make.
+                SnrWorthShowing = snrWorthShowing,
                 At = _options.TimeProvider.GetUtcNow(),
                 Raw = raw,
             });
@@ -1975,7 +2071,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // Both null from a station running a version that does not send them, which is what
             // the wire's tolerance of their absence buys: the row lists as it always did.
             peakDbFs: frame.PeakDbFs, clipped: frame.Clipped, level: frame.Level,
-            peakWorthShowing: frame.PeakWorthShowing,
+            peakWorthShowing: frame.PeakWorthShowing, snrWorthShowing: frame.SnrWorthShowing,
+            trailerNearBits: frame.TrailerNearBits, chasedBits: frame.ChasedBits,
             raw: frame.Raw);
 
         // The same rule OnFrame applies, for the same reason: a frame Reed-Solomon alone stood
@@ -3025,8 +3122,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 at = f.HeardAt.ToUniversalTime().ToString("O"),
                 sub = f.SubChannel,
                 mode = f.Mode,
-                from = f.From,
-                to = f.To,
+                // The same verdict the live row took, read back off the same columns: a row whose
+                // reading nothing checked and whose bits the chase moved names nobody here either.
+                // A browser that reloaded the page used to get those callsigns back.
+                from = f.CallsignWorthShowing ? f.From : null,
+                to = f.CallsignWorthShowing ? f.To : null,
                 lenBytes = f.LengthBytes,
                 offsetHz = f.OffsetHz is { } offset ? Math.Round(offset, 1) : (double?)null,
                 corrected = f.CorrectedBytes,

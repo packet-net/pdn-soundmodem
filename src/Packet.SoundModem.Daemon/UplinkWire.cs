@@ -271,6 +271,13 @@ internal static class UplinkWire
             FrameHex = Capped(root, "hex", NoteCap),
             PlainIl2p = Bool(root, "plain") ?? false,
             MonitorOnly = Bool(root, "monitorOnly") ?? false,
+            // The two facts about what stood behind the reading, so this site's copy of the
+            // station's log carries them and a row replayed out of it withholds the same callsign
+            // the live row withheld. Absent from a station that does not send them, and null
+            // then, which reads as "not chased" and keeps the callsign - the behaviour every
+            // monitor had before these existed.
+            TrailerNearBits = Int(root, "trailerNearBits"),
+            ChasedBits = Int(root, "chasedBits"),
             // Absent from a station that does not measure them, and left null rather than
             // defaulted: a row with no level shows none, which is what every page did before
             // there was one.
@@ -287,6 +294,10 @@ internal static class UplinkWire
             // what every monitor did before this field existed, and it is the honest reading of
             // a station that has not answered.
             PeakWorthShowing = Bool(root, "peakWorthShowing"),
+            // And the same question about the burst SNR. Absent from a station that does not say,
+            // and null then, which lists the figure: that is what every monitor did before this
+            // field existed, and it is the honest reading of a station that has not answered.
+            SnrWorthShowing = Bool(root, "snrWorthShowing"),
             // Clamped to a day either side of this site's own clock. A station is a semi-trusted
             // publisher and this is the one field of its own it could use against itself: a frame
             // dated in the year 9999 is written into the site's copy of its log and sorts above

@@ -381,7 +381,8 @@ internal sealed class FrameLog : IAsyncDisposable
             query.CommandText = """
                 SELECT heard_at, sub_channel, mode, source, destination,
                        length, corrected, crc_valid, offset_hz, direction, tx_trim_hz,
-                       monitor_only, plain_il2p, peak_dbfs, clipped, level, peak_shown
+                       monitor_only, plain_il2p, peak_dbfs, clipped, level, peak_shown,
+                       trailer_near_bits, chased_bits
                 FROM frames ORDER BY id DESC LIMIT $count
                 """;
             query.Parameters.AddWithValue("$count", count);
@@ -421,7 +422,13 @@ internal sealed class FrameLog : IAsyncDisposable
                     FrameLevelText.Parse(row.IsDBNull(15) ? null : row.GetString(15)),
                     // Null on a row from before the column, which is listed with its figure: the
                     // build that wrote it drew one, and nothing here can say it should not have.
-                    row.IsDBNull(16) ? null : row.GetInt32(16) != 0));
+                    row.IsDBNull(16) ? null : row.GetInt32(16) != 0,
+                    // And the pair that says what stood behind the reading, so a replayed row
+                    // makes the same claim about a station as the live row did: a corroborating
+                    // trailer, and how many bits the chase had to move. Null on a row from before
+                    // the columns, which reads as "nothing said" and keeps its callsign.
+                    row.IsDBNull(17) ? null : row.GetInt32(17),
+                    row.IsDBNull(18) ? null : row.GetInt32(18)));
             }
         }
         catch (Exception e) when (e is SqliteException or IOException or FormatException)
@@ -461,7 +468,8 @@ internal sealed class FrameLog : IAsyncDisposable
             query.CommandText = """
                 SELECT heard_at, sub_channel, mode, source, destination,
                        length, corrected, crc_valid, offset_hz, direction, tx_trim_hz,
-                       monitor_only, plain_il2p, payload, peak_dbfs, clipped, level, peak_shown
+                       monitor_only, plain_il2p, payload, peak_dbfs, clipped, level, peak_shown,
+                       trailer_near_bits, chased_bits
                 FROM frames ORDER BY id DESC LIMIT $count
                 """;
             query.Parameters.AddWithValue("$count", count);
@@ -485,7 +493,11 @@ internal sealed class FrameLog : IAsyncDisposable
                     row.IsDBNull(14) ? null : row.GetDouble(14),
                     row.IsDBNull(15) ? null : row.GetInt32(15) != 0,
                     FrameLevelText.Parse(row.IsDBNull(16) ? null : row.GetString(16)),
-                    row.IsDBNull(17) ? null : row.GetInt32(17) != 0),
+                    row.IsDBNull(17) ? null : row.GetInt32(17) != 0,
+                    // Read here as well as in Recent, so that one of these rows says the same
+                    // thing about a station whichever query produced it.
+                    row.IsDBNull(18) ? null : row.GetInt32(18),
+                    row.IsDBNull(19) ? null : row.GetInt32(19)),
                     (byte[])row.GetValue(13)));
             }
         }

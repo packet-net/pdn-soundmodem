@@ -667,6 +667,11 @@ internal sealed class RelayStation : IMonitorStation
                 frame.Mode, frame.LengthBytes, frame.CorrectedBytes, frame.CrcValid,
                 FrequencyOffsetHz: frame.OffsetHz, PlainIl2p: frame.PlainIl2p,
                 MonitorOnly: frame.MonitorOnly, SnrDb: frame.SnrDb,
+                // What stood behind the far station's reading, written into this site's copy of
+                // its log so that a row replayed out of the backlog withholds the callsign the
+                // live row withheld. Null from a station too old to send them, and a row with
+                // nothing said keeps its callsign.
+                TrailerNearBits: frame.TrailerNearBits, ChasedBits: frame.ChasedBits,
                 // The far station's own verdict, carried into this site's copy of its log
                 // rather than recomputed: the thresholds belong to the modem that decoded the
                 // frame, and that modem is at the other end of the uplink. Null from a station

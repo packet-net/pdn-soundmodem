@@ -377,6 +377,20 @@ declined. It is the same rule the [metrics](#only-frames-that-vouched-for-themse
 has always applied, now applied to the pane beside it. Nothing else changes: the frame is still
 listed, still logged, still in the journal, and `acceptPlainIl2p` still decides the host.
 
+**And one class of them is listed without a callsign or an SNR** (2026-09-12). A plain reading
+that nothing corroborated and that chase decoding had to move bits to reach is not evidence of who
+transmitted: on the 40 m slot that produced it, three quarters of that class were payloads no
+station ever sent, arriving under near-miss spellings of the slot's real regulars - `16WBPQ` and
+`EVWBPQ` for GB7BPQ - and sometimes under the correct spelling. Such a row keeps its `RS ONLY`
+badge, its size, its mode and its bytes, and says in its note why it names nobody. The band SNR
+comes off any plain reading nothing corroborated, chased or not: that figure is band power over a
+rolling minimum noise floor rather than a measurement of the frame, it cannot read below about
+6 dB, and it repeats the previous burst's figure for two seconds - so beside an unchecked frame it
+was the thing that made a fabricated row read as a real station at a plausible strength. The
+callsign and the figure are both still written to the [frame log](#framelog), and the figure still
+goes up an [uplink](#publish): a record of what the station read is not the same thing as a claim
+on a row. `docs/dev/false-decodes.md` has the measurements.
+
 What it does **not** do by default is give the frame to your KISS host. That is the one thing
 `acceptPlainIl2p` decides:
 
@@ -1827,7 +1841,7 @@ Omit the section and frames come and go without being written down. One row per 
 | `heard_at` | UTC, ISO 8601 |
 | `direction` | `rx` for a frame the station heard, `tx` for one it sent |
 | `sub_channel`, `mode`, `mode_name` | which modem carried it, and what it is - `bpsk300-il2pc` and `BPSK300 IL2Pc` |
-| `source`, `destination` | AX.25 callsigns where the frame carries them; null where it does not |
+| `source`, `destination` | AX.25 callsigns where the frame carries them; null where it does not. Both halves of the address field have to hold up: the destination must read as a callsign or be genuinely blank (all six bytes shifted spaces, which is what a beacon addressed to nobody sends), because a destination that is neither is seven bytes of header that did not survive and the source beside it is not evidence of who transmitted. That is a real population and not a theoretical one - Reed-Solomon mis-correction of an IL2P header hands back a real regular's callsign one or two characters out |
 | `length`, `corrected`, `crc_valid` | size, FEC corrections applied, whether the CRC checked - null on a received frame means there was no CRC to check, which on an IL2P+CRC modem means it was read as [plain IL2P](#acceptplainil2p); the next three columns say what it was read as and what became of it |
 | `plain_il2p` | 1 for a frame read as [plain IL2P](#acceptplainil2p), with no trailing CRC behind it; 0 for one that was not, which is every other receive there is - an IL2P+CRC frame, and equally an HDLC, an FX.25 or an ARDOP one. So `plain_il2p = 0` means "not read RS-only" and **not** "verified by a CRC": on those last three there was no trailing CRC to check either, and `crc_valid` is null beside the 0. A fact about the decode rather than about what became of the frame, which is why it is not the same column as `monitor_only` - and its own column rather than a null `crc_valid`, which is also null on HDLC, on FX.25, on ARDOP and on transmitted rows. What the waterfall panel draws its **`RS ONLY`** badge from, live and on the opening backlog alike. Null on transmitted rows and on rows logged before the column existed |
 | `trailer_near_bits` | on a frame delivered by [trailer corroboration](#acceptplainil2p): the measured distance, in wire bits, between the 32 trailer bits received and the trailer the payload implies (0-4). Null on every other row, so a `crc_valid`-null frame with this set is one the host received on the trailer's evidence |

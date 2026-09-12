@@ -149,7 +149,109 @@ public readonly record struct FrameQuality(
     double? PeakDbFs = null,
     bool? Clipped = null,
     Packet.SoundModem.Audio.FrameLevel? Level = null,
-    bool? PeakWorthShowing = null);
+    bool? PeakWorthShowing = null)
+{
+    /// <summary>
+    /// Whether <see cref="SnrDb"/> is a figure worth putting beside this frame on a row
+    /// (<see cref="DecodeStanding.SnrWorthShowing"/>).
+    /// </summary>
+    /// <remarks>
+    /// Derived from the two fields that say what stood behind the reading, so it cannot disagree
+    /// with them, and read by the page, the burst tag and the uplink rather than each of them
+    /// reapplying a rule. <b>The measurement is kept either way</b>: this hides a figure on a row
+    /// and never a value in the frame log, the journal or the uplink.
+    /// </remarks>
+    public bool SnrWorthShowing => DecodeStanding.SnrWorthShowing(PlainIl2p, TrailerNearBits);
+
+    /// <summary>
+    /// Whether the callsigns read out of this frame may be presented as a station
+    /// (<see cref="DecodeStanding.CallsignWorthShowing"/>).
+    /// </summary>
+    /// <remarks>
+    /// Same seam and the same reason: a claim about who transmitted is a property of the decode,
+    /// taken here where the three facts behind it live, and carried. The bytes and the callsigns
+    /// read out of them still go to the frame log and the journal, which are records of what the
+    /// station read; this decides only whether a row names a station.
+    /// </remarks>
+    public bool CallsignWorthShowing =>
+        DecodeStanding.CallsignWorthShowing(PlainIl2p, TrailerNearBits, ChasedBits);
+}
+
+/// <summary>
+/// What a reading of a frame established, and therefore which of the things a row can say about
+/// it this station is entitled to say.
+/// </summary>
+/// <remarks>
+/// <para>
+/// One definition, in one place, because two carriers ask it: <see cref="FrameQuality"/> for a
+/// frame as it is decoded, and <c>LoggedFrame</c> for the same frame read back out of the log
+/// into a browser's opening backlog. A rule reapplied at each edge is how a badge came to be dead
+/// for a release.
+/// </para>
+/// <para>
+/// <b>Measured, not assumed.</b> On the GB7RDG 40 m slot, over a week of its own frame log, the
+/// share of frames whose payload was never seen again - a payload seen exactly once on a band
+/// where everything repeats all day is very likely a payload nobody sent - ran 3.5% on
+/// CRC-verified frames, 1.5% on CRC-verified frames that chase decoding had rescued, 8 to 10% on
+/// Reed-Solomon-only readings, and <b>75.6%</b> on Reed-Solomon-only readings that chase had
+/// rescued. That last class is the one this withholds a callsign from. Chase decoding is not the
+/// fault and is not capped here: behind a CRC it is the best-behaved class measured. Chase with
+/// nothing checking it is. See docs/dev/false-decodes.md.
+/// </para>
+/// <para>
+/// Not <see cref="DecodeConfidence"/>, which answers two neighbouring questions and neither of
+/// these: which of several readings of one burst to name, and whether a reading is evidence that
+/// anybody transmitted at all. This is narrower and is about one row's own wording - a frame can
+/// be worth listing, worth logging and worth badging while still not being worth a callsign.
+/// </para>
+/// </remarks>
+public static class DecodeStanding
+{
+    /// <summary>
+    /// Whether nothing but Reed-Solomon's own arithmetic stood behind a reading: it arrived as
+    /// plain IL2P, with no trailing CRC, and the trailer that followed it did not corroborate it
+    /// either (<see cref="FrameQuality.TrailerNearBits"/>).
+    /// </summary>
+    /// <remarks>
+    /// False for a verified CRC, for a corroborated trailer, and for HDLC and FX.25, whose FCS
+    /// passed: in all of those something independent of the decoder agreed with the bytes.
+    /// </remarks>
+    public static bool NothingChecked(bool plainIl2p, int? trailerNearBits) =>
+        plainIl2p && trailerNearBits is null;
+
+    /// <summary>
+    /// Whether a burst SNR belongs on a row for such a reading.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="FrameQuality.SnrDb"/> is a band measurement and not a measurement of the frame:
+    /// mean in-band power over a rolling <em>minimum</em> noise floor, which floors the figure
+    /// near the 6 dB the burst gate demanded of every line in it, and which repeats the previous
+    /// burst's figure for two seconds after a run ends (<c>BandActivityTracker</c>). Beside a
+    /// frame something checked, that is a useful strength cue. Beside one nothing checked, it is
+    /// what makes a row look like a real signal at a real strength - a fabricated frame emitted
+    /// shortly after a real transmission on the same band inherits that transmission's number
+    /// exactly, which is why the two were indistinguishable on the waterfall.
+    /// </remarks>
+    public static bool SnrWorthShowing(bool plainIl2p, int? trailerNearBits) =>
+        !NothingChecked(plainIl2p, trailerNearBits);
+
+    /// <summary>
+    /// Whether the callsigns read out of such a reading may be presented as a station.
+    /// </summary>
+    /// <remarks>
+    /// A callsign on a row is a claim, and this class cannot support one: Reed-Solomon alone, with
+    /// the chase having flipped the receiver's least-confident bits until the parity closed, and
+    /// nothing checking the result. The IL2P header carries two parity symbols, so mis-correction
+    /// is cheap, and what it produces is a roll-call of the slot's real regulars one or two
+    /// characters out - 16WBPQ and EVWBPQ for GB7BPQ, 16WLOX-2 for GB7LOX-2, EOSRSM-1 for EI0RSI -
+    /// and, when it walks all the way back, the correct spelling of a station that did not
+    /// transmit. Such a frame is still listed, still badged RS ONLY and still logged; it simply
+    /// does not name anybody. Nothing downstream loses by it: the class is withheld from the host
+    /// already, and the links pane already refuses it.
+    /// </remarks>
+    public static bool CallsignWorthShowing(bool plainIl2p, int? trailerNearBits, int? chasedBits) =>
+        !(NothingChecked(plainIl2p, trailerNearBits) && chasedBits > 0);
+}
 
 /// <summary>
 /// How much a reading of a transmission actually established, for choosing between two decoder
