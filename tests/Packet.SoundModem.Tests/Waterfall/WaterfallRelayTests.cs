@@ -622,11 +622,48 @@ public class WaterfallRelayTests : IDisposable
             "and a sign slicer's figure is not worth a row, which only its own modem knows");
     }
 
-    /// <summary>One real decode of <paramref name="mode"/>, as the station's relay saw it.</summary>
-    private static async Task<RelayedFrame> HeardAsync(string mode)
+    /// <summary>
+    /// A relayed row also carries what stood behind the station's reading of the frame, and what
+    /// the station therefore did about the SNR figure beside it.
+    /// </summary>
+    /// <remarks>
+    /// <para>Two real decodes by one <c>bpsk300</c> bank, differing only in what was transmitted:
+    /// an IL2P+CRC burst, which the trailing CRC verifies, and a plain IL2P burst, which the same
+    /// bank reads the second way and nothing checks. That second reading is the one that
+    /// fabricates stations on a marginal channel, and the band SNR printed beside it is what made
+    /// a fabricated row read as a real one.</para>
+    /// <para>The measurement is not withheld from the wire - a monitor keeps its own copy of the
+    /// station's frame log, and this figure is how the defect was measured in the first place. The
+    /// two facts cross for that copy too, so a row replayed out of it withholds the callsign the
+    /// live row withheld.</para>
+    /// </remarks>
+    [Fact]
+    public async Task A_Relayed_Row_Says_What_Stood_Behind_The_Stations_Reading()
     {
+        RelayedFrame verified = await HeardAsync("bpsk300", by: "bpsk300");
+        verified.PlainIl2p.Should().BeFalse("the trailing CRC verified this one");
+        verified.SnrWorthShowing.Should().BeTrue(
+            "beside a frame something checked, a band reading is a fair strength cue");
+
+        RelayedFrame plainReading = await HeardAsync("bpsk300-nocrc", by: "bpsk300");
+        plainReading.PlainIl2p.Should().BeTrue("the same bank read this one the plain way");
+        plainReading.TrailerNearBits.Should().BeNull("and no trailer corroborated it");
+        plainReading.SnrWorthShowing.Should().BeFalse(
+            "so the figure does not belong on a row, and only its own station can say so");
+    }
+
+    /// <summary>
+    /// One real decode of <paramref name="mode"/>, as the station's relay saw it.
+    /// </summary>
+    /// <param name="mode">The mode the burst was transmitted in.</param>
+    /// <param name="by">The mode the station listens in; the same one unless a case says
+    /// otherwise, and a different one where the point is what a link makes of a neighbour that
+    /// does not run its framing.</param>
+    private static async Task<RelayedFrame> HeardAsync(string mode, string? by = null)
+    {
+        string listening = by ?? mode;
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
-        channel.AddModem(0, sink => ModemCatalog.Create(mode, SampleRate, sink));
+        channel.AddModem(0, sink => ModemCatalog.Create(listening, SampleRate, sink));
         await using WaterfallWebServer server = WaterfallWebServer.Routed(channel);
         var relay = new RecordingRelay();
         server.Relay = relay;
@@ -636,7 +673,7 @@ public class WaterfallRelayTests : IDisposable
             .Modulate(TestFrame(), txDelayMilliseconds: 100));
         channel.ProcessReceive(new float[SampleRate / 4]);
 
-        return relay.Frames.Should().ContainSingle($"{mode} decodes its own loopback").Subject;
+        return relay.Frames.Should().ContainSingle($"{listening} decodes a {mode} burst").Subject;
     }
 
     /// <summary>
@@ -837,6 +874,62 @@ public class WaterfallRelayTests : IDisposable
             ["loud", null, null],
             "the station's own verdict, then a frame it measured and found fine, then one it "
                 + "could not judge - and only the first is worth a badge");
+    }
+
+    /// <summary>
+    /// And the same for the band SNR: a pushed row draws the figure its station said was worth
+    /// drawing, and a station that said nothing is not read as saying no.
+    /// </summary>
+    /// <remarks>
+    /// The monitor cannot answer this for itself either. Whether anything checked the frame is a
+    /// property of a decode made at the far end of the uplink, and the figure is band power over a
+    /// rolling minimum floor rather than a measurement of the frame - beside an unchecked reading
+    /// it is what makes a fabricated row read as a real station at a plausible strength. The
+    /// measurement crosses the wire in all three cases, because the monitor writes these rows into
+    /// its own frame log.
+    /// </remarks>
+    [Fact]
+    public async Task A_Pushed_Rows_Band_Snr_Is_Drawn_Only_Where_Its_Station_Said_So()
+    {
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        using ClientWebSocket socket = await ConnectAsync(port);
+
+        RelayedFrame Pushed(bool? snrWorthShowing) => new()
+        {
+            SubChannel = 0, Mode = "bpsk300-il2pc", From = "GB7BPQ", To = "GB7RDG-2",
+            LengthBytes = 24, CrcValid = null, PlainIl2p = true, MonitorOnly = true,
+            At = DateTimeOffset.UnixEpoch, Raw = TestFrame(),
+            SnrDb = 9.4, SnrWorthShowing = snrWorthShowing,
+        };
+
+        server.PushFrame(Pushed(snrWorthShowing: false));
+        server.PushFrame(Pushed(snrWorthShowing: true));
+
+        // And a station on a release that does not say, whose rows a monitor has always listed
+        // with their figure.
+        server.PushFrame(Pushed(snrWorthShowing: null));
+
+        const string marker = "pushed-snr";
+        server.SetRadioStatus(marker);
+        List<(WebSocketMessageType Kind, byte[] Payload)> messages = await DrainAsync(socket, marker);
+
+        double?[] figures = [.. messages
+            .Where(m => Describe(m) == "frame")
+            .Select(m =>
+            {
+                using JsonDocument row = JsonDocument.Parse(m.Payload);
+                return row.RootElement.GetProperty("snrDb") is { ValueKind: JsonValueKind.Number } snr
+                    ? snr.GetDouble()
+                    : (double?)null;
+            })];
+
+        figures.Should().Equal(
+            [null, 9.4, 9.4],
+            "the station said no, then yes, then nothing at all - and only the first is withheld");
     }
 
     /// <summary>

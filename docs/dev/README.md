@@ -15,6 +15,7 @@ Every file in this folder opens with a status line saying what it describes and 
 | [modem-plugins.md](modem-plugins.md) | How the daemon loads a modem it does not contain: the plugin contract, registry and loader. |
 | [mode-modulation-reference.md](mode-modulation-reference.md) | How each NinoTNC-lineage mode is carried on air, FM or SSB, and the FM deviation targets. |
 | [receive-levels.md](receive-levels.md) | The measurements behind the TOO LOUD and TOO QUIET thresholds, modem by modem. |
+| [false-decodes.md](false-decodes.md) | What a row may claim about a frame: the measurement behind withholding a callsign, and a band SNR, from a reading nothing checked. |
 | [frequency-matching.md](frequency-matching.md) | Measuring how far off frequency a heard station is, and transmitting to suit. |
 | [uplink-wire-format.md](uplink-wire-format.md) | The station-to-monitor uplink wire format, the normative description UplinkWire.cs cites. |
 | [documentation-plan.md](documentation-plan.md) | The plan for this documentation rewrite. It moves to the archive when the work is finished. |

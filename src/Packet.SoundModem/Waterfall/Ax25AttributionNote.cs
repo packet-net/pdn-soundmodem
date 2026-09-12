@@ -1,7 +1,7 @@
 namespace Packet.SoundModem.Waterfall;
 
 /// <summary>
-/// Says, in a line, why a decoded frame yielded no callsigns.
+/// Says, in a line, why a decoded frame carries no callsigns on the row an operator is looking at.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -12,8 +12,10 @@ namespace Packet.SoundModem.Waterfall;
 /// notices something it cannot explain should write down what it noticed.
 /// </para>
 /// <para>
-/// Deliberately a diagnostic and not a parser: <see cref="Ax25AddressParser"/> decides
-/// whether a frame is attributable and nothing here changes that verdict. This only explains it.
+/// Deliberately a diagnostic and not a parser: <see cref="Ax25AddressParser"/> decides whether a
+/// frame's bytes yield callsigns and <see cref="Modems.DecodeStanding"/> decides whether the
+/// decode behind them supports naming a station. Nothing here changes either verdict. This only
+/// explains them.
 /// </para>
 /// </remarks>
 public static class Ax25AttributionNote
@@ -57,9 +59,47 @@ public static class Ax25AttributionNote
                 + $"{shown}, not a shifted callsign character";
         }
 
-        // Every character is legal but the parse still failed - the remaining way that happens is
-        // a source field that is all spaces, i.e. an empty source callsign. (A blank destination
-        // alone no longer unattributes a frame: the parser reads each field on its own.)
+        // Every character is legal and the parse still failed, which leaves two shapes, and they
+        // are not the same fault. A destination that begins with a space and then carries
+        // characters is neither a callsign nor the blank field a beacon leaves, so the header did
+        // not survive and the source half is not trustworthy either (see Ax25AddressParser).
+        if (!Ax25AddressParser.IsBlank(frame[..7]))
+        {
+            return "the destination field is neither a callsign nor blank, so the address field "
+                + "did not survive";
+        }
+
+        // And the other one: a source field that is all spaces, i.e. an empty source callsign. (A
+        // blank destination alone does not unattribute a frame; a corrupt one does.)
         return "the address field holds legal characters but an empty source callsign";
+    }
+
+    /// <summary>
+    /// The same, for a frame whose decode is also in question: why the row carries no callsigns,
+    /// whether that is because the bytes would not read or because nothing checked the bytes that
+    /// did.
+    /// </summary>
+    /// <remarks>
+    /// The second case is the one this exists for. A frame read on Reed-Solomon alone and reached
+    /// only after chase decoding flipped bits has nothing standing behind the header it names, and
+    /// three quarters of that class on the live 40 m slot were payloads no station ever sent
+    /// (docs/dev/false-decodes.md). Such a row is listed, badged and logged exactly as before and
+    /// simply does not claim a station - and this says so, because "unattributed" on a frame whose
+    /// address field read perfectly well would otherwise send somebody looking for a parse bug.
+    /// </remarks>
+    /// <param name="frame">The decoded frame.</param>
+    /// <param name="quality">What the decode of it established.</param>
+    public static string? For(ReadOnlySpan<byte> frame, in Modems.FrameQuality quality)
+    {
+        if (quality.CallsignWorthShowing || !Ax25AddressParser.TryParse(frame, out _, out _))
+        {
+            return For(frame);
+        }
+
+        string chased = quality.ChasedBits is int bits
+            ? $"chase decoding moved {bits} bit{(bits == 1 ? "" : "s")} to reach it"
+            : "chase decoding moved bits to reach it";
+        return $"callsign withheld: Reed-Solomon alone stood behind this reading and {chased}, "
+            + "so nothing checked the header it names";
     }
 }

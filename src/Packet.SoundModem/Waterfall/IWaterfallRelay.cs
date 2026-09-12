@@ -148,6 +148,26 @@ public sealed record RelayedFrame
     public bool MonitorOnly { get; init; }
 
     /// <summary>
+    /// How far the trailer that followed a plain-only reading was from the trailer its payload
+    /// implies, where that was close enough to corroborate it
+    /// (<see cref="Modems.FrameQuality.TrailerNearBits"/>); null where nothing corroborated it.
+    /// </summary>
+    /// <remarks>
+    /// Sent with <see cref="ChasedBits"/> because a monitor writes the station's rows into its own
+    /// frame log, and these two are what a row read back out of that log needs to make the same
+    /// claim about a station as the live row did. Without them a monitor listed a frame
+    /// unattributed and then named it after a page reload, which is the reported defect all over
+    /// again one hop downstream. Null from a station running a version that does not send them.
+    /// </remarks>
+    public int? TrailerNearBits { get; init; }
+
+    /// <summary>
+    /// How many wire bits chase decoding flipped to reach the frame
+    /// (<see cref="Modems.FrameQuality.ChasedBits"/>); null where no chase was needed.
+    /// </summary>
+    public int? ChasedBits { get; init; }
+
+    /// <summary>
     /// How loud the audio this frame arrived on was, in dBFS, over the frame's own stretch of it
     /// (see <see cref="Modems.FrameQuality.PeakDbFs"/>). Null from a station running a version
     /// that does not measure it, which is what makes it safe to add: a monitor lists such a row
@@ -187,6 +207,22 @@ public sealed record RelayedFrame
     /// as it always was.
     /// </remarks>
     public bool? PeakWorthShowing { get; init; }
+
+    /// <summary>
+    /// Whether the station's own decode of this frame established enough for
+    /// <see cref="SnrDb"/> to belong on a row.
+    /// </summary>
+    /// <remarks>
+    /// The same reasoning again, on the other figure. A burst SNR is band power over a rolling
+    /// minimum floor rather than a measurement of the frame, and beside a reading nothing checked
+    /// it is what makes a fabricated row look like a real station at a real strength
+    /// (<see cref="Modems.DecodeStanding.SnrWorthShowing"/>). <see cref="SnrDb"/> crosses the wire
+    /// either way, because a monitor keeps its own copy of the station's frame log and the
+    /// measurement is evidence there whether or not a page draws it. Null from a station running a
+    /// version that does not say, and such a row is listed with its figure exactly as it always
+    /// was.
+    /// </remarks>
+    public bool? SnrWorthShowing { get; init; }
 
     /// <summary>When the station decoded it, or sent it (UTC).</summary>
     public DateTimeOffset At { get; init; }
