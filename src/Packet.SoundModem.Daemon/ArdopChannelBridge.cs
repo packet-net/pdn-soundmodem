@@ -1,3 +1,4 @@
+using M0LTE.Ardop.Arq;
 using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Daemon;
@@ -30,6 +31,11 @@ internal sealed class ArdopChannelBridge
 
     /// <summary>Widest bandwidth ARDOP 1 negotiates, and so the most that has to fit.</summary>
     internal const double WidestBandwidthHz = 2000.0;
+
+    /// <summary>The bandwidths ARDOP 1 can negotiate, in Hz, spelled for a message that has to list
+    /// them. The set itself is the package's, not ours; see <see cref="TryArqBandwidth"/>.
+    /// </summary>
+    internal const string NegotiableBandwidths = "200, 500, 1000 or 2000";
 
     /// <summary>
     /// The nominal SSB transmit passband a shifted centre has to live inside. Nyquist is the
@@ -232,13 +238,64 @@ internal sealed class ArdopChannelBridge
         + (IsBridged ? $", engine {_engineRate} Hz bridged to the {_channelRate} Hz channel" : "");
 
     /// <summary>
+    /// The ARQBW a stated <c>"bandwidth"</c> asks the TNC for, or false when ARDOP cannot
+    /// negotiate that width at all. The MAX form rather than FORCED: a cap on what this station
+    /// accepts as IRS and asks for as ISS, leaving a narrower peer free to settle lower.
+    /// </summary>
+    /// <remarks>
+    /// The number is turned into the host-command spelling and handed to the package's own
+    /// parser rather than mapped by a table here, so the daemon cannot come to accept a width
+    /// ARDOP does not have: 500 becomes <c>500MAX</c>, and 300, 2400 or 0 become nothing.
+    /// </remarks>
+    internal static bool TryArqBandwidth(double bandwidthHz, out ArdopBandwidth arqBandwidth)
+    {
+        arqBandwidth = ArdopBandwidth.Undefined;
+        if (bandwidthHz <= 0 || bandwidthHz != Math.Floor(bandwidthHz))
+        {
+            return false;
+        }
+
+        string spelling = ((long)bandwidthHz).ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + "MAX";
+        if (!ArdopBandwidthExtensions.TryParse(spelling, out ArdopBandwidth parsed))
+        {
+            return false;
+        }
+
+        arqBandwidth = parsed;
+        return true;
+    }
+
+    /// <summary>
+    /// The ARQBW an ardop modem entry gets at start-up: its <c>"bandwidth"</c>, or the widest
+    /// when it states none.
+    /// </summary>
+    /// <remarks>
+    /// An unset bandwidth keeps the widest deliberately. It is what the planner already reserves
+    /// (<see cref="WidestBandwidthHz"/>), what ardopcf itself defaults to, and the only answer
+    /// that cannot surprise: narrowing an unstated setting would quietly refuse sessions a
+    /// station has been completing for as long as it has been running. Where 2000 Hz does not
+    /// fit the planned centre, <see cref="Concern"/> says so at start-up.
+    /// Anything not negotiable is refused when the file is read, so this is only ever reached
+    /// with a width ARDOP has.
+    /// </remarks>
+    internal static ArdopBandwidth ArqBandwidthFor(double? bandwidthHz) =>
+        bandwidthHz is double hz && TryArqBandwidth(hz, out ArdopBandwidth arq)
+            ? arq
+            : ArdopBandwidth.B2000Max;
+
+    /// <summary>
     /// Why a centre may not work, or null if it is fine. A warning rather than a refusal: which
     /// bandwidth ARDOP ends up using is negotiated per session, so at start-up all that can be
     /// said is which of them will still fit.
     /// </summary>
     /// <param name="engineRate">The engine's rate, not the channel's: the shift runs at the
     /// engine rate, so its Nyquist is the hard ceiling however wide the channel is.</param>
-    internal static string? Concern(double centreHz, int engineRate)
+    /// <param name="cappedHz">The widest session this station will negotiate, which is its
+    /// ARQBW. Only room for that much has to be found: warning that a 2000 Hz session would be
+    /// clipped would be describing a session a 500 Hz station cannot have.</param>
+    internal static string? Concern(
+        double centreHz, int engineRate, double cappedHz = WidestBandwidthHz)
     {
         double nyquist = engineRate / 2.0;
         if (centreHz <= 0 || centreHz >= nyquist)
@@ -249,11 +306,11 @@ internal sealed class ArdopChannelBridge
 
         double widestFits = Math.Max(
             0, Math.Min(centreHz - PassbandLowHz, PassbandHighHz - centreHz) * 2);
-        return widestFits >= WidestBandwidthHz
+        return widestFits >= cappedHz
             ? null
             : $"centre {centreHz:F0} Hz leaves room for an ARDOP bandwidth of {widestFits:F0} Hz "
               + $"within a nominal {PassbandLowHz:F0}-{PassbandHighHz:F0} Hz SSB passband; sessions "
-              + $"negotiating wider than that (up to {WidestBandwidthHz:F0} Hz) will be clipped by "
+              + $"negotiating wider than that (up to {cappedHz:F0} Hz) will be clipped by "
               + "the radio's filter. Check it against your rig's actual transmit passband";
     }
 }

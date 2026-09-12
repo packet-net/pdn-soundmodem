@@ -406,8 +406,9 @@ internal static class RfPlan
         }
 
         text.Append(
-            "  An ARDOP modem's width is its negotiated maximum; \"bandwidth\" on it plans for "
-            + "less and caps what it negotiates.");
+            "  An ARDOP modem's width is its negotiated maximum; \"bandwidth\" on it (200, 500, "
+            + "1000 or 2000) plans for less and becomes the TNC's ARQBW, so no session is "
+            + "accepted or asked for wider than that.");
         return text.ToString();
     }
 

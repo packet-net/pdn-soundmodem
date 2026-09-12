@@ -1843,7 +1843,14 @@ if (benchTxTest is null && ardopModem is not null)
     // The engine rate, not the channel rate: the centre shift runs at the engine rate however
     // wide the channel is, so its Nyquist is the bound that matters.
     if (ardopModem.Frequency is double ardopCentre
-        && ArdopChannelBridge.Concern(ardopCentre, M0LTE.Ardop.ArdopModulator.SampleRate)
+        && ArdopChannelBridge.Concern(
+            ardopCentre,
+            M0LTE.Ardop.ArdopModulator.SampleRate,
+            // The cap, not the widest ARDOP has: on a station held to 500 Hz there is no 2000 Hz
+            // session to be clipped, and a warning about one would send an operator looking for
+            // a fault that cannot happen.
+            M0LTE.Ardop.Arq.ArdopBandwidthExtensions.Hertz(
+                ArdopChannelBridge.ArqBandwidthFor(ardopModem.Bandwidth)))
             is string ardopConcern)
     {
         Console.Error.WriteLine($"ardop: WARNING - {ardopConcern}");
@@ -1896,6 +1903,14 @@ if (benchTxTest is null && ardopModem is not null)
         },
     };
     channel.AddReceiveTap(samples => ardopTnc.ProcessReceive(ardopShift.Receive(samples)));
+
+    // The configured width is the TNC's cap, not just the planner's reservation. Without this
+    // the station kept the library default of 2000MAX however narrow a slot the band plan had
+    // put it in, and ARQBW governs both ends of that: what it accepts as IRS and what it asks
+    // for as ISS (issue #459). CALLBW is deliberately left at UNDEFINED, which means "use
+    // ARQBW": two settings that have to agree is a way to be half-configured, and a host that
+    // wants a narrower single call can still send its own CALLBW.
+    ardopTnc.Config.ArqBandwidth = ArdopChannelBridge.ArqBandwidthFor(ardopModem.Bandwidth);
 
     // ARDOP demodulates inside the virtual TNC, so its frames never reach the channel event the
     // waterfall and the frame log listen to - without this the ARDOP band is drawn and its
@@ -1954,7 +1969,9 @@ if (benchTxTest is null && ardopModem is not null)
     ardopServer.Start();
     Console.WriteLine(
         $"ardop host tcp: {(Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString())}:{ardopServer.LocalCommandPort} (data {ardopServer.LocalDataPort}, "
-        + $"ardopcf-compatible virtual TNC, modem {ardopModem.SubChannel}{ardopShift.Describe()})");
+        + $"ardopcf-compatible virtual TNC, modem {ardopModem.SubChannel}, ARQBW "
+        + $"{M0LTE.Ardop.Arq.ArdopBandwidthExtensions.Hertz(ardopTnc.Config.ArqBandwidth)}MAX"
+        + $"{ardopShift.Describe()})");
 }
 await using var ardopLifetime = ardopServer;
 

@@ -293,6 +293,82 @@ public class DaemonConfigTests : IDisposable
         error.Should().Contain("One ARDOP TNC per channel");
     }
 
+    [Theory]
+    [InlineData(300)]
+    [InlineData(2400)]
+    [InlineData(1500)]
+    public void An_Ardop_Bandwidth_Ardop_Cannot_Negotiate_Is_Rejected_With_The_Four_That_Work(
+        int bandwidth)
+    {
+        // The key is the TNC's ARQBW now, and ARDOP has four widths. Any other number used to be
+        // taken quietly and planned for, reserving room no session could ever occupy (#459).
+        string path = WriteConfig($$"""
+            {"device": "null", "modems": [
+              {"subChannel": 0, "mode": "afsk300"},
+              {"subChannel": 1, "mode": "ardop", "bandwidth": {{bandwidth}}}
+            ]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain($"\"bandwidth\": {bandwidth}", "name the value that is wrong");
+        error.Should().Contain("modem 1", "and say which modem carries it");
+        error.Should().Contain("200, 500, 1000 or 2000", "and list the ones that work");
+        error.Should().Contain("remove \"bandwidth\"", "and say what happens if it is dropped");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Theory]
+    [InlineData(200)]
+    [InlineData(500)]
+    [InlineData(1000)]
+    [InlineData(2000)]
+    public void The_Four_Widths_Ardop_Negotiates_Are_Accepted(int bandwidth)
+    {
+        string path = WriteConfig($$"""
+            {"device": "null", "modems": [
+              {"subChannel": 0, "mode": "afsk300"},
+              {"subChannel": 1, "mode": "ardop", "bandwidth": {{bandwidth}}}
+            ]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Modems[1].Bandwidth.Should().Be(bandwidth);
+    }
+
+    [Fact]
+    public void An_Ardop_Entry_With_No_Bandwidth_Still_Loads_And_Still_Plans_For_The_Widest()
+    {
+        // Unchanged on purpose: unset means the widest, which is what the planner reserves and
+        // what ardopcf itself defaults to. See ArdopBandwidthTests for the reasoning.
+        string path = WriteConfig("""
+            {"device": "null", "modems": [{"subChannel": 0, "mode": "ardop"}]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Modems[0].Bandwidth.Should().BeNull();
+    }
+
+    [Fact]
+    public void A_Bandwidth_Ardop_Cannot_Negotiate_Is_Still_Fine_On_A_Packet_Modem()
+    {
+        // The four-width rule is ARDOP's, not the planner's: on a packet mode "bandwidth" only
+        // overrides what was measured off the modem, and any width is a legitimate override.
+        string path = WriteConfig("""
+            {"device": "null", "modems": [{"subChannel": 0, "mode": "afsk300", "bandwidth": 450}]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Modems[0].Bandwidth.Should().Be(450);
+    }
+
     [Fact]
     public void Ardop_Configured_Both_Ways_At_Once_Is_Rejected_With_The_Way_Out()
     {
