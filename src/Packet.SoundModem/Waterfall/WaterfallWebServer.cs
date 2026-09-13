@@ -2433,6 +2433,14 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     public const string TestTransmissionMode = "tx-test";
 
     /// <summary>
+    /// The mode string a Morse station identification is filed under, in the panel and in the
+    /// frame log. A sibling of <see cref="TestTransmissionMode"/> and for the same reasons: an
+    /// ident is a keyup carrying no frame, it renders as "CW ident", and a query for what a modem
+    /// sent never picks one up by accident.
+    /// </summary>
+    public const string IdentTransmissionMode = "cw-ident";
+
+    /// <summary>
     /// Receive audio to whoever asked for it, as [0x02][s16 LE mono] at the channel rate.
     /// </summary>
     /// <remarks>

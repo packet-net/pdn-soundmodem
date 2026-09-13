@@ -99,6 +99,23 @@ public sealed class PagingTcpServer : IAsyncDisposable
     /// - so this is the journal's to record.</summary>
     public event Action<PageDropEvent>? PageDropped;
 
+    /// <summary>
+    /// A page that has actually gone out: raised once its audio has reached the device, which is
+    /// the counterpart of <see cref="PageDropped"/> and the only way anything outside this server
+    /// can know a page was transmitted.
+    /// </summary>
+    /// <remarks>
+    /// <para>Paging goes through the channel's audio path rather than as an addressed frame, so
+    /// none of it raises <see cref="SoundModemChannel.FrameTransmitted"/> and a station's record
+    /// of what it put on the air had no page in it at all (issue #473). This event is what the
+    /// daemon writes that record from; the library keeps no log of its own.</para>
+    /// <para>On completion, never on submission. A page the channel accepts can still die waiting
+    /// - an ARQ session holding the channel past the inhibit timeout, a PTT failure - and that is
+    /// what <see cref="PageDropped"/> announces. A transmission that did not happen must not be
+    /// recorded as one.</para>
+    /// </remarks>
+    public event Action<PageSentEvent>? PageSent;
+
     /// <summary>Starts accepting clients.</summary>
     public void Start()
     {
@@ -257,10 +274,13 @@ public sealed class PagingTcpServer : IAsyncDisposable
             return $"ERR text too long (max {MaxTextLength} characters)";
         }
 
+        // Named once: what the page is, as the client spelled it, is both what selects the
+        // encoding below and what a record of the transmission says it sent.
+        string kind = parts[3].ToUpperInvariant();
         PocsagMessage page;
         try
         {
-            page = parts[3].ToUpperInvariant() switch
+            page = kind switch
             {
                 "ALPHA" => PocsagMessage.Alphanumeric(ric, text, function),
                 "NUMERIC" => PocsagMessage.Numeric(ric, text, function),
@@ -302,6 +322,17 @@ public sealed class PagingTcpServer : IAsyncDisposable
                 id, droppedRic, t.Exception?.GetBaseException().Message ?? "unknown")),
             CancellationToken.None,
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+        // And the same again for the page that DID go out, which is the half nothing was
+        // watching: a station could page all day and answer "what did I transmit" with silence.
+        // Raised here rather than above the enqueue for the reason the drop exists at all - at
+        // submission all that is known is that the page was accepted.
+        var went = new PageSentEvent(id, ric, function, kind, text);
+        _ = sent.ContinueWith(
+            _ => PageSent?.Invoke(went),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
         return $"OK {id}";
     }
@@ -397,3 +428,31 @@ public sealed class PagingTcpServer : IAsyncDisposable
 /// <summary>A queued page that never went out: the id its client was answered <c>OK</c>
 /// with, the RIC it addressed, and why the channel refused it.</summary>
 public readonly record struct PageDropEvent(int Id, uint Ric, string Reason);
+
+/// <summary>
+/// A page that went on the air: the id its client was answered <c>OK</c> with, and the page
+/// itself as it was submitted.
+/// </summary>
+/// <param name="Id">The submission id the client was given.</param>
+/// <param name="Ric">The pager addressed.</param>
+/// <param name="Function">The function bits, 0-3.</param>
+/// <param name="Kind"><c>ALPHA</c>, <c>NUMERIC</c> or <c>TONE</c>.</param>
+/// <param name="Text">The message; empty on a tone-only page.</param>
+public readonly record struct PageSentEvent(int Id, uint Ric, int Function, string Kind, string Text)
+{
+    /// <summary>
+    /// The page in one line, spelled the way this server spells a page it hears off the air
+    /// (<c>HEARD 1234567 1 ALPHA hello</c>), so that what a station sent and what it heard read
+    /// alike in a record that holds both.
+    /// </summary>
+    /// <remarks>
+    /// The leading <c>page </c> is load-bearing where this is kept as a frame log's payload, for
+    /// the reason the tx test's <c>tx test: </c> prefix is: anything reading a payload as an
+    /// AX.25 address shifts each byte right by one and accepts <c>[A-Z0-9]</c>, so a sentence can
+    /// mint a station that does not exist. The space at index 4 shifts to 0x10, which is neither,
+    /// so these bytes are refused as an address whatever the page says.
+    /// </remarks>
+    public string Summary => Text.Length == 0
+        ? $"page {Ric} {Function} {Kind}"
+        : $"page {Ric} {Function} {Kind} {Text}";
+}

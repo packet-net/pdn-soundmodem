@@ -25,7 +25,6 @@ namespace Packet.SoundModem.Ident;
 public sealed class StationIdentifier
 {
     private readonly TimeProvider _time;
-    private readonly double _toneHz;
     private readonly double _wpm;
     private readonly double _amplitude;
     private readonly int _sampleRate;
@@ -78,7 +77,8 @@ public sealed class StationIdentifier
         }
 
         _time = time ?? TimeProvider.System;
-        _toneHz = toneHz;
+        Callsign = callsign.Trim();
+        ToneHz = toneHz;
         _wpm = wordsPerMinute;
         _amplitude = amplitude;
         _sampleRate = sampleRate;
@@ -87,6 +87,33 @@ public sealed class StationIdentifier
 
     /// <summary>The message that will be sent, e.g. <c>M0LTE</c> or <c>M0LTE FREEDV-DATAC1</c>.</summary>
     public string Text { get; }
+
+    /// <summary>
+    /// The callsign alone, without the mode suffix <see cref="Text"/> may carry: who the
+    /// transmission was from, for a record of it that has a column for that.
+    /// </summary>
+    public string Callsign { get; }
+
+    /// <summary>
+    /// The audio frequency the ident is keyed on. Where the energy of the transmission actually
+    /// was, which is what a log of it wants to say, and not derivable from the modem it belongs
+    /// to: an ident defaults to that modem's centre but can be told to sit anywhere.
+    /// </summary>
+    public double ToneHz { get; }
+
+    /// <summary>
+    /// What a record of one identification holds, for a log whose rows are frames: an ident is
+    /// not a frame, so what is kept is the sentence describing what went out, exactly as the
+    /// operator's test transmission keeps its own.
+    /// </summary>
+    /// <remarks>
+    /// <b>The <c>cw ident: </c> prefix is load-bearing.</b> Everything that reads a payload as an
+    /// AX.25 frame shifts each byte right by one and accepts <c>[A-Z0-9]</c>, so a sentence can
+    /// mint a station that never transmitted. <c>'w' &gt;&gt; 1</c> is <c>';'</c>, which is not
+    /// accepted, so this row reads as unattributed however the callsign is spelled. The same trap
+    /// and the same answer as the tx test's <c>tx test: </c>; see TxTestRecord.
+    /// </remarks>
+    public string TransmissionRecord => $"cw ident: {Text}";
 
     /// <summary>How long after an identification the next one may fall due.</summary>
     public TimeSpan Interval { get; }
@@ -134,7 +161,7 @@ public sealed class StationIdentifier
 
     /// <summary>The keyed audio for one identification, at the channel's rate.</summary>
     public float[] Render() =>
-        MorseGenerator.Real(Text, _toneHz, _amplitude, _wpm, _sampleRate);
+        MorseGenerator.Real(Text, ToneHz, _amplitude, _wpm, _sampleRate);
 
     /// <summary>
     /// Records that an identification has been sent: stamps the clock and clears the debt, so
