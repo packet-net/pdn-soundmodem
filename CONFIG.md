@@ -499,6 +499,12 @@ tx[3] freedv-datac1 M0LTE>TEST 30 bytes
 id[3] M0LTE in CW
 ```
 
+**And it is written down**, in the [frame log](#framelog) and the waterfall's frames panel, with
+`mode` = `cw-ident` and `direction` = `tx`. An ident keys the radio, so it belongs in the record of
+what this station transmitted; it is not a frame, so what the row's `payload` holds is the sentence
+that went out (`cw ident: M0LTE FREEDV-DATAC1`), `audio_hz` is the tone it was keyed on, and
+`rf_hz` is where that lands on the band when a band plan says what the dial is.
+
 `includeMode` sends `M0LTE FREEDV-DATAC1` instead of `M0LTE`, which tells a listener who just
 heard something they could not read what it actually was. It costs about two seconds.
 
@@ -1866,11 +1872,23 @@ inventing a measurement of ourselves. Everything else - who to who, mode, length
 recorded exactly as for a frame heard. A row is written once the audio has gone to the device, so
 a logged transmission is one that actually went on air.
 
-**A [transmitter test](#txtest) is a row too**, written the same way with `mode` = `tx-test`. It
-is not a frame and has no callsigns, so `source` and `destination` are null and `payload` holds the
-sentence describing what went out (`tx test: two-tone 700+1900 Hz, 5.0 s, peak level 0.80 - done,
-5.0 s on air`); `audio_hz` is the tone, or the midpoint of the pair, and `rf_hz` is null. Exclude
-them with `mode != 'tx-test'` when you are counting traffic.
+**Everything that keys the radio is a row, not just the frames.** Five things can transmit and all
+five are written down: a KISS frame, an [ARDOP](#ardop) burst, a [transmitter test](#txtest), a
+[Morse identification](#identify) and a [POCSAG page](#paging). The last three are not frames and
+have no callsigns, so `source` and `destination` are null on them and `payload` holds the sentence
+describing what went out:
+
+| What it was | `mode` | `payload` | `audio_hz` |
+|---|---|---|---|
+| A transmitter test | `tx-test` | `tx test: two-tone 700+1900 Hz, 5.0 s, peak level 0.80 - done, 5.0 s on air` | the tone, or the midpoint of the pair; `rf_hz` null |
+| A Morse identification | `cw-ident` | `cw ident: M0LTE AFSK1200` | the ident tone; `rf_hz` is where it lands on the band, on a band-planned SSB station |
+| A POCSAG page | `pocsag1200` (whatever `baud` says) | `page 1234567 1 ALPHA HELLO` | null, and `rf_hz` null: POCSAG is baseband FSK and the paging section has no frequency of its own |
+
+Exclude them with `mode NOT IN ('tx-test', 'cw-ident')` when you are counting packet traffic.
+
+**This log is the only place your own transmissions can appear.** The receiver is muted while
+transmitting, so a station's own bursts are missing from [`rawCapture`](#rawcapture) as well as
+from the waterfall: "what did I put on the air, and when" is a question only this table answers.
 
 So "who have I heard on 40m today" is a query - and it now has to say that it means *heard*,
 since your own frames are in the table too:
@@ -2283,6 +2301,13 @@ The grammar is one UTF-8 command per line - `PAGE <ric> <function> ALPHA|NUMERIC
 replying `OK <id>` or `ERR <reason>`. Every page heard on channel is broadcast to all
 connected clients as a `HEARD …` line. Transmissions share the CSMA/PTT path with the packet
 modems.
+
+`OK` means queued, so what became of a page is said on the console and in the
+[frame log](#framelog): a page that went out writes `page[1] to 1234567 sent (pocsag1200)` and a
+`direction` = `tx` row whose `payload` is the page itself (`page 1234567 1 ALPHA HELLO`), and one
+that was accepted and then died waiting - an ARDOP session holding the channel past its timeout, a
+PTT failure - writes `page[1] to 1234567 DROPPED: ...` to stderr and no row at all. A transmission
+that did not happen is not logged as one.
 
 ## `ardop`
 

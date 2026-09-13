@@ -228,4 +228,39 @@ public class StationIdentifierTests
         // transmitter with a different drive - and so a different ALC story - than the data.
         peak.Should().BeApproximately(0.8f, 0.01f);
     }
+
+    [Fact]
+    public void An_identification_is_recorded_as_the_sentence_that_went_out()
+    {
+        FakeTimeProvider time = Clock();
+
+        Identifier(time).TransmissionRecord.Should().Be("cw ident: M0LTE");
+        Identifier(time, mode: "bpsk300").TransmissionRecord.Should().Be("cw ident: M0LTE BPSK300",
+            "what went out was the callsign and the mode, and the record says what went out");
+    }
+
+    [Fact]
+    public void A_recorded_identification_is_not_read_as_a_callsign()
+    {
+        // An ident is not a frame, so what a frame log keeps for it is that sentence - and
+        // everything that reads a payload as an AX.25 frame shifts each byte right by one and
+        // accepts [A-Z0-9]. Reading these bytes as an address would mint a station that never
+        // transmitted, so the prefix has to refuse the read on its own.
+        byte[] payload = System.Text.Encoding.ASCII.GetBytes(
+            Identifier(Clock(), mode: "bpsk300").TransmissionRecord);
+
+        Packet.SoundModem.Waterfall.Ax25AddressParser
+            .TryParse(payload, out string from, out string to).Should().BeFalse();
+        from.Should().BeEmpty();
+        to.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void The_callsign_and_the_tone_are_stated_for_whatever_records_the_transmission()
+    {
+        StationIdentifier id = Identifier(Clock(), mode: "bpsk300");
+
+        id.Callsign.Should().Be("M0LTE", "the mode suffix is part of what is sent, not of who sent it");
+        id.ToneHz.Should().Be(1500, "where the energy of the transmission was; a log has a column for it");
+    }
 }

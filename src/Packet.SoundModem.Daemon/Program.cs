@@ -2034,6 +2034,16 @@ if (benchTxTest is null && ardopModem is not null)
 }
 await using var ardopLifetime = ardopServer;
 
+// Which sub-channel this station's own service transmissions are filed under in the frame log and
+// the frames panel: the operator's test tone and a POCSAG page, neither of which is a modem's
+// traffic and neither of which has a sub-channel of its own. A label, not a choice: the transmit
+// path is shared - one output device and one PTT line, whichever modem's frame is going out - so
+// a test measures the same path whatever this says. It is the sub-channel a KISS frame on port 0
+// would reach: 0 where there is a modem there, and the lowest configured otherwise.
+int serviceTxSubChannel = modems.Any(m => m.SubChannel == 0)
+    ? 0
+    : modems.Count > 0 ? modems.Min(m => m.SubChannel) : 0;
+
 Packet.SoundModem.Pocsag.PagingTcpServer? pagingServer = null;
 if (benchTxTest is null && paging is not null)
 {
@@ -2047,6 +2057,25 @@ if (benchTxTest is null && paging is not null)
     // the journal is the only place the loss can be recorded, exactly as for KISS frames.
     pagingServer.PageDropped += drop => Console.Error.WriteLine(
         $"page[{drop.Id}] to {drop.Ric} DROPPED: {drop.Reason}");
+
+    // And the page that did go out, which was written down nowhere at all: paging hands the
+    // channel audio rather than an addressed frame, so it raises none of the events the frames
+    // panel and the frame log are built on, and a station that had paged all day answered "what
+    // did I put on the air" with silence (#473). Listed like the operator's test tone, which is
+    // not a frame either: the payload is the sentence describing what went out, the RIC is who it
+    // was to, and there is no audio or RF centre to state - POCSAG is baseband FSK, and the
+    // paging section has no frequency of its own to report.
+    string pagingMode = pagingServer.Mode;
+    pagingServer.PageSent += page =>
+    {
+        Console.WriteLine($"page[{page.Id}] to {page.Ric} sent ({pagingMode})");
+        byte[] record = System.Text.Encoding.ASCII.GetBytes(page.Summary);
+        waterfallServer?.ReportTransmittedFrame(
+            serviceTxSubChannel, pagingMode, from: null,
+            to: page.Ric.ToString(CultureInfo.InvariantCulture), record.Length);
+        frameLog?.RecordTransmitted(
+            serviceTxSubChannel, record, pagingMode, audioHz: null, rfHz: null);
+    };
     pagingServer.AcceptFailed += why => Console.Error.WriteLine(
         $"paging: accept failed: {why} - listening continues");
     pagingServer.Start();
@@ -2735,15 +2764,6 @@ string? txTestRefusal =
         ? "no \"ptt\" is configured, so this daemon does not key the radio"
     : null;
 
-// Which sub-channel a test is filed under in the frame log and the frames panel. A label, not a
-// choice: the transmit path is shared - one output device and one PTT line, whichever modem's
-// frame is going out - so a test measures the same path whatever this says. It is the
-// sub-channel a KISS frame on port 0 would reach: 0 where there is a modem there, and the lowest
-// configured otherwise.
-int txTestSubChannel = modems.Any(m => m.SubChannel == 0)
-    ? 0
-    : modems.Count > 0 ? modems.Min(m => m.SubChannel) : 0;
-
 var txTestRunner = new TxTestRunner(new TxTestOptions
 {
     Channel = channel,
@@ -2752,7 +2772,7 @@ var txTestRunner = new TxTestRunner(new TxTestOptions
     MaxSeconds = txTestConfig.MaxSeconds,
     Amplitude = txTestConfig.Amplitude,
     Refusal = txTestRefusal,
-    SubChannel = txTestSubChannel,
+    SubChannel = serviceTxSubChannel,
     Report = status => waterfallServer?.ReportTxTest(status),
     Recorded = record =>
     {
@@ -2861,6 +2881,36 @@ if (identifiers.Count > 0)
                     // clearing the debt for it would mean the station quietly stopped identifying.
                     owed.NoteIdentified();
                     Console.WriteLine($"id[{sub}] {owed.Text} in CW");
+
+                    // And written down where transmissions are written down, on the same terms as
+                    // the operator's test tone. An ident keys the radio, and until now it left
+                    // nothing behind but that console line: a station could identify every ten
+                    // minutes all afternoon and have no record of having transmitted at all
+                    // (#473). It is not a frame, so the payload is the sentence describing what
+                    // went out; the callsign is ours to state rather than parse out of prose, so
+                    // the row is attributed the way an ARDOP one is.
+                    byte[] identRecord =
+                        System.Text.Encoding.ASCII.GetBytes(owed.TransmissionRecord);
+
+                    // Where the ident actually lands on the band, which is not the modem's own
+                    // centre: the dial plus its tone on USB, minus it on LSB. Null without a band
+                    // plan, there being no dial to add to, and null on FM, where the channel is
+                    // the RF and there is no arithmetic to do - the same rule the start-up line
+                    // and the operator page already follow.
+                    double? identRfHz = bandPlan is not null && !bandPlan.IsFm
+                        ? bandPlan.IsUpperSideband
+                            ? bandPlan.DialHz + owed.ToneHz
+                            : bandPlan.DialHz - owed.ToneHz
+                        : null;
+
+                    waterfallServer?.ReportTransmittedFrame(
+                        sub,
+                        Packet.SoundModem.Waterfall.WaterfallWebServer.IdentTransmissionMode,
+                        owed.Callsign, to: null, identRecord.Length);
+                    frameLog?.RecordTransmitted(
+                        sub, identRecord,
+                        Packet.SoundModem.Waterfall.WaterfallWebServer.IdentTransmissionMode,
+                        owed.ToneHz, identRfHz);
                 }
                 catch (Exception refused) when (refused is InvalidOperationException or ArgumentException)
                 {
