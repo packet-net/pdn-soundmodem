@@ -294,9 +294,15 @@ internal sealed class FrameLog : IAsyncDisposable
     /// When it went out, for a transmission made somewhere else: a relayed station's own clock.
     /// Null is this process's own, which is every frame this process sent itself.
     /// </param>
+    /// <param name="modeName">
+    /// Overrides the human-readable name derived from <paramref name="mode"/>, as on
+    /// <see cref="Record"/> and for the same reason: ARDOP names the frame type, so a station's
+    /// own "ARDOP ConReq500M" reads as the far end's row for the same burst does rather than as
+    /// one more identical "ARDOP".
+    /// </param>
     internal void RecordTransmitted(
         int subChannel, byte[] frame, string mode, double? audioHz, double? rfHz,
-        double? txTrimHz = null, DateTimeOffset? at = null)
+        double? txTrimHz = null, DateTimeOffset? at = null, string? modeName = null)
     {
         if (Backlogged())
         {
@@ -309,7 +315,7 @@ internal sealed class FrameLog : IAsyncDisposable
             Transmitted: true,
             subChannel,
             mode,
-            ModeNames.Display(mode),
+            modeName ?? ModeNames.Display(mode),
             string.IsNullOrWhiteSpace(source) ? null : source,
             string.IsNullOrWhiteSpace(destination) ? null : destination,
             frame.Length,
