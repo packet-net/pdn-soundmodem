@@ -1775,6 +1775,38 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
 
     /// <summary>
+    /// Reports a frame sent by a transmitter that is not one of the channel's sub-channel modems -
+    /// ARDOP, which transmits as a whole virtual TNC through the channel's audio path and so never
+    /// raises <see cref="Channel.SoundModemChannel.FrameTransmittedWithTrim"/>.
+    /// </summary>
+    /// <remarks>
+    /// The transmit half of <see cref="ReportFrame"/>, and listed the same way
+    /// <see cref="OnFrameTransmitted"/> lists a modem's own frame: no SNR, offset, FEC count or
+    /// CRC, because those are receive measurements and inventing them for our own transmission
+    /// would be inventing a measurement of ourselves. What a station DOES know about its own
+    /// burst is who it was to, which the caller states rather than the parser guessing: ARDOP
+    /// carries the callsigns in its connect handshake and its ID frames, and nothing else it
+    /// sends carries one at all. No transmit trim either - ARDOP owns its own centre.
+    /// </remarks>
+    /// <param name="subChannel">The sub-channel the transmitter is filed under.</param>
+    /// <param name="mode">The mode the row is labelled with, as the receive rows spell it.</param>
+    /// <param name="from">The station sending, where the frame type names one.</param>
+    /// <param name="to">The station called, where the frame type names one.</param>
+    /// <param name="lengthBytes">The payload length the row reports.</param>
+    public void ReportTransmittedFrame(
+        int subChannel, string mode, string? from, string? to, int lengthBytes)
+    {
+        if (_source is null)
+        {
+            return;   // not started; nothing to attribute the frame to and nobody to tell
+        }
+
+        BroadcastFrame(
+            subChannel, mode, from, to, lengthBytes, snrDb: null, burstLines: null,
+            offsetHz: null, corrected: null, crc: null, transmitted: true);
+    }
+
+    /// <summary>
     /// Reports a station identification heard by an <see cref="Modems.IdBeaconGhost"/> - the 300
     /// AFSK AX.25 ident a NinoTNC sends alongside, and not inside, its PSK SSB data mode.
     /// </summary>

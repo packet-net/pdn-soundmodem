@@ -413,6 +413,41 @@ public class WaterfallWebServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_Frame_Sent_By_Something_That_Is_Not_A_Modem_Is_Listed_As_Ours()
+    {
+        // ARDOP transmits as a whole virtual TNC through the channel's audio path, so the
+        // channel's own transmit event - which is what lists every other mode's traffic - never
+        // fires for it and the panel showed the station's own ARQ sessions as nothing at all
+        // (issue #471). Reported here instead, and marked as ours so the page draws it as a
+        // transmission rather than as a station we heard.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        _server.ReportTransmittedFrame(2, "ConReq500M", "GB7RDG", "M0LTE", 0);
+
+        JsonDocument? frame = null;
+        while (frame is null)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind == WebSocketMessageType.Text)
+            {
+                frame = JsonDocument.Parse(payload);
+            }
+        }
+
+        frame.RootElement.GetProperty("tx").GetBoolean().Should().BeTrue();
+        frame.RootElement.GetProperty("sub").GetInt32().Should().Be(2);
+        frame.RootElement.GetProperty("mode").GetString().Should().Be("ConReq500M");
+        frame.RootElement.GetProperty("from").GetString().Should().Be("GB7RDG");
+        frame.RootElement.GetProperty("to").GetString().Should().Be("M0LTE");
+        frame.RootElement.GetProperty("snrDb").ValueKind.Should().Be(
+            JsonValueKind.Null, "measuring our own transmission would be inventing a measurement");
+        frame.RootElement.GetProperty("crc").ValueKind.Should().Be(JsonValueKind.Null);
+        frame.Dispose();
+    }
+
+    [Fact]
     public async Task A_Browser_Opens_On_The_Stations_Logged_Frames()
     {
         // A panel that starts empty says nothing about a channel that has been busy all morning,

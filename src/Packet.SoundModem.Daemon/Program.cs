@@ -1955,6 +1955,33 @@ if (benchTxTest is null && ardopModem is not null)
                 survey?.NoteDecode(ardopSub, data, quality, ax25: false);
             }
         };
+
+        // And our own transmissions, which the panel never listed at all. ARDOP transmits as a
+        // whole virtual TNC through the channel's audio path rather than as an IModem, so the
+        // channel's FrameTransmitted event - which is what puts every other mode's traffic in
+        // the panel and the log - never fires for it. On the live 40 m station that meant a
+        // whole ARQ session left no trace: ten connect requests over forty seconds, an empty
+        // panel, and nothing to tell an operator apart from a modem that did nothing (#471).
+        // The TNC hands the frame over once the burst has gone out, named the way the station
+        // hearing it names it, so our ConReq500M row reads as their row for the same burst
+        // does, and a logged transmission is still one that actually went on air.
+        ardopTnc.FrameTransmitted += frame =>
+        {
+            byte[] data = frame.Data ?? [];
+            // Ours to state rather than parse: ARDOP carries both callsigns in clear in the
+            // connect handshake and in ID frames, and nothing else it sends carries one.
+            string? from = string.IsNullOrWhiteSpace(frame.Caller) ? null : frame.Caller;
+            string? to = string.IsNullOrWhiteSpace(frame.Target) ? null : frame.Target;
+
+            waterfallServer?.ReportTransmittedFrame(ardopSub, frame.Name, from, to, data.Length);
+
+            // "ardop" in the mode column, as the receive rows carry, and the frame type in the
+            // name: one query for what this modem did includes both directions, and the panel
+            // still says which frame it was.
+            frameLog?.RecordTransmitted(
+                ardopSub, data, "ardop", ardopAudioHz, ardopRfHz,
+                modeName: $"ARDOP {frame.Name}");
+        };
     }
 
     // Hold the packet modems off the air for the length of an ARQ session. Their frames are

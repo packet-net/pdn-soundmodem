@@ -690,6 +690,26 @@ public class FrameLogTests : IDisposable
     }
 
     [Fact]
+    public async Task An_Ardop_Frame_This_Station_Sent_Is_Logged_Under_Its_Frame_Type_Too()
+    {
+        // The transmit half of the same question. ARDOP does not transmit as a modem, so until
+        // now nothing wrote its own bursts down at all and a session this station started left
+        // no trace in its own journal (issue #471). The row has to name the frame the way the
+        // receive row names it, or our connect request and the far end's copy of the same burst
+        // read as two different kinds of event.
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.RecordTransmitted(
+                2, [], "ardop", audioHz: 1500, rfHz: 7_050_950, modeName: "ARDOP ConReq500M"));
+
+        Dictionary<string, object?> row = rows.Should().ContainSingle().Subject;
+        row["direction"].Should().Be("tx");
+        row["mode"].Should().Be("ardop", "one query for this modem's traffic covers both directions");
+        row["mode_name"].Should().Be("ARDOP ConReq500M");
+        row["crc_valid"].Should().BeNull("checking a frame is something a receiver does");
+        row["length"].Should().Be(0L, "a connect request carries no payload");
+    }
+
+    [Fact]
     public async Task A_Frame_The_Station_Read_And_Withheld_Is_Still_Written_Down()
     {
         // The log is fed from the monitor path, so a frame shown to the operator and not passed
