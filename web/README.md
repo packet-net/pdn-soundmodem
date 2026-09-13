@@ -29,16 +29,34 @@ link here to frame anything for.
 so the npm package, the NuGet package and the .debs all ship the same number from the same
 commit.
 
-## Build and run
+## Run the demo
+
+The demo loads the published package from a CDN, so there is nothing to build:
 
 ```sh
-./build.sh --aot                      # what ships; drop --aot for a smaller, slower build
 python3 -m http.server 8080           # any static server, from THIS directory
 ```
 
 Then open `http://localhost:8080/demo/`. It has to be https or localhost: the microphone and
 Web Serial both need a secure context. Chrome or Edge, because Web Serial does not exist in
 Firefox or Safari.
+
+Add `?local` to load the modem from this working tree instead, for developing the package and
+the page together - `./build.sh` first, so the WebAssembly bundle is there for it to load.
+
+The modem comes from jsDelivr rather than esm.sh, and that is not a preference. This package is
+already plain ESM with no dependencies, so it needs no transform and must not get one: esm.sh
+bundles each module and hands back a re-export stub for the AudioWorklet, which a worklet
+cannot follow because worklet scope has no module resolution. The modem would load and then be
+deaf. jsDelivr serves the files byte for byte as published (checked), so every
+`new URL(..., import.meta.url)` inside the package still resolves to the WebAssembly bundle and
+to the worklet.
+
+## Build the package
+
+```sh
+./build.sh --aot                      # what ships; drop --aot for a smaller, slower build
+```
 
 ## Verifying it
 
