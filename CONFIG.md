@@ -1925,8 +1925,12 @@ what the station has been doing rather than only what it has been hearing.
 
 The packaged service runs unprivileged and the unit declares `StateDirectory=pdn-soundmodem`, so
 systemd creates `/var/lib/pdn-soundmodem/` owned by the service user and the default path just
-works. If you move it, the service user has to be able to write to wherever you move it to - the
-daemon says so plainly at start-up rather than running without a log you asked for.
+works. The default is `frames.db` in whatever `$STATE_DIRECTORY` systemd hands the process, so a
+template instance (`pdn-soundmodem@NAME`) logs to `/var/lib/pdn-soundmodem/NAME/frames.db` and
+never shares a file with the plain unit or another instance; the `survey` and `rawCapture`
+defaults below follow the same rule. If you move it, the service user has to be able to write to
+wherever you move it to - the daemon says so plainly at start-up rather than running without a
+log you asked for.
 
 ## `survey`
 
@@ -1961,7 +1965,7 @@ captured at all.
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `path` | string | `/var/lib/pdn-soundmodem/survey` | Where captures are written |
+| `path` | string | `survey` in the state directory (`/var/lib/pdn-soundmodem/survey` under the shipped unit) | Where captures are written |
 | `maxBytes` | number | `536870912` (512 MB) | Byte budget for that directory |
 | `maxPerHour` | int | `30` | Captures in any rolling hour |
 | `cooldownSeconds` | number | `120` | How long the same part of the spectrum is left alone after a capture |
@@ -2266,7 +2270,7 @@ as chunked 16-bit mono WAVs at the channel DSP rate:
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `path` | string | `/var/lib/pdn-soundmodem/raw` | Where chunks land, named `raw-<UTC>.wav` |
+| `path` | string | `raw` in the state directory (`/var/lib/pdn-soundmodem/raw` under the shipped unit) | Where chunks land, named `raw-<UTC>.wav` |
 | `maxBytes` | number | 4 GiB | Directory budget; the oldest chunks are pruned to fit |
 | `chunkMinutes` | int | `15` | Audio minutes per chunk |
 

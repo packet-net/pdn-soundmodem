@@ -4,8 +4,9 @@
 #   packaging/build-deb.sh <version> [amd64|arm64|armhf] [outdir]
 #
 # Produces <outdir>/pdn-soundmodem_<version>_<arch>.deb containing a self-contained
-# single-file build (no .NET runtime dependency on the target), a systemd unit and an
-# example config. Default outdir is <repo>/artifacts.
+# single-file build (no .NET runtime dependency on the target), a systemd unit, a template
+# unit for running more than one modem (pdn-soundmodem@NAME reads NAME.json) and an example
+# config. Default outdir is <repo>/artifacts.
 #
 # Layout note: PublishSingleFile bundles the managed assemblies and the runtime, but
 # leaves per-package native shims (libSystem.IO.Ports.Native.so) loose beside the
@@ -66,6 +67,7 @@ done
 ln -s "..${PKGDIR#/usr}/pdn-soundmodem" "$STAGE/root/usr/bin/pdn-soundmodem"
 
 install -m 0644 "$HERE/pdn-soundmodem.service" "$STAGE/root$UNITDIR/pdn-soundmodem.service"
+install -m 0644 "$HERE/pdn-soundmodem@.service" "$STAGE/root$UNITDIR/pdn-soundmodem@.service"
 install -m 0644 "$HERE/copyright" "$STAGE/root$DOCDIR/copyright"
 # The seed config lives under /usr/share/pdn-soundmodem, NOT /usr/share/doc: Debian
 # permits /usr/share/doc to be stripped (the official Ubuntu images ship a dpkg
@@ -112,12 +114,19 @@ Description: Headless soundcard packet-radio modem (KISS TCP)
  PTT and then "systemctl restart pdn-soundmodem"; until you do, the service will
  fail to start and "systemctl status pdn-soundmodem" will say why.
  .
+ A second modem on the same machine is a second config file and a template
+ instance: /etc/pdn-soundmodem/NAME.json and "systemctl enable --now
+ pdn-soundmodem@NAME". Instances are never enabled by the package.
+ .
  GPL-3.0-or-later.
 EOF
 
 # --- maintainer scripts -------------------------------------------------------
 # The systemd stanzas follow dh_installsystemd's default output: enable the unit and
-# start it on install, restart it on upgrade. Note the consequence - the seeded config
+# start it on install, restart it on upgrade. The template's instances are the operator's:
+# never enabled or started by the package, but a running one is restarted on upgrade
+# (it is running the old binary), stopped on remove and un-enabled on purge, the same as
+# the plain unit. Note the consequence - the seeded config
 # names a sound device and PTT line that will not exist on most machines, so the first
 # start after a fresh install is expected to fail until an admin edits it. That is the
 # Debian-conventional posture and a deliberate choice; `systemctl status` after install
@@ -143,8 +152,19 @@ case "$1" in
     echo "pdn-soundmodem: edit $CONFIG for your sound device and PTT, then"
     echo "                systemctl restart pdn-soundmodem. Until then the service will"
     echo "                fail to start - systemctl status pdn-soundmodem says why."
+    echo "                A second modem is /etc/pdn-soundmodem/NAME.json and"
+    echo "                systemctl enable --now pdn-soundmodem@NAME."
     ;;
 esac
+
+# Template instances currently running, one unit name per line; empty when systemd is not
+# running. list-units only lists loaded units, which is what a running instance is.
+running_instances() {
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null; then
+        systemctl list-units --plain --no-legend --state=active,activating 'pdn-soundmodem@*.service' 2>/dev/null \
+            | awk '{print $1}'
+    fi
+}
 
 if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ]; then
     if command -v deb-systemd-helper >/dev/null; then
@@ -165,6 +185,12 @@ if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-decon
         if [ -n "${2:-}" ]; then _action=restart; else _action=start; fi
         if command -v deb-systemd-invoke >/dev/null; then
             deb-systemd-invoke "$_action" 'pdn-soundmodem.service' >/dev/null || true
+            # An upgrade replaced the binary under every running instance too.
+            if [ -n "${2:-}" ]; then
+                for _unit in $(running_instances); do
+                    deb-systemd-invoke restart "$_unit" >/dev/null || true
+                done
+            fi
         fi
     fi
 fi
@@ -176,8 +202,16 @@ cat > "$STAGE/root/DEBIAN/prerm" <<'EOF'
 #!/bin/sh
 set -e
 
+running_instances() {
+    systemctl list-units --plain --no-legend --state=active,activating 'pdn-soundmodem@*.service' 2>/dev/null \
+        | awk '{print $1}'
+}
+
 if [ -d /run/systemd/system ] && [ "$1" = "remove" ] && command -v deb-systemd-invoke >/dev/null; then
     deb-systemd-invoke stop 'pdn-soundmodem.service' >/dev/null || true
+    for _unit in $(running_instances); do
+        deb-systemd-invoke stop "$_unit" >/dev/null || true
+    done
 fi
 
 exit 0
@@ -200,6 +234,12 @@ if [ "$1" = "purge" ]; then
         deb-systemd-helper purge 'pdn-soundmodem.service' >/dev/null || true
         deb-systemd-helper unmask 'pdn-soundmodem.service' >/dev/null || true
     fi
+    # Template instances are enabled by the operator, not the package, so deb-systemd-helper
+    # knows nothing of them: remove their enable symlinks by hand, or a purged machine keeps
+    # wants links to a unit that no longer exists. The instances' own config files
+    # (/etc/pdn-soundmodem/NAME.json) are the operator's and are kept, like any other
+    # file an admin put in /etc; so is everything under /var/lib/pdn-soundmodem.
+    rm -f /etc/systemd/system/*.wants/pdn-soundmodem@*.service
     # soundmodem.json is seeded by postinst, not shipped by dpkg, so dpkg will not
     # remove it on purge - do it here.
     rm -f /etc/pdn-soundmodem/soundmodem.json
