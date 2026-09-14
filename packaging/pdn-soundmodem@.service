@@ -1,0 +1,39 @@
+[Unit]
+Description=pdn-soundmodem headless soundcard packet modem (%i)
+Documentation=https://github.com/packet-net/pdn-soundmodem
+After=sound.target network.target
+# One instance per config file: pdn-soundmodem@NAME runs /etc/pdn-soundmodem/NAME.json with
+# its own state directory under /var/lib/pdn-soundmodem/NAME. It is the plain unit
+# (pdn-soundmodem.service) with the paths parameterised and nothing else changed, for a
+# machine with more than one sound card and radio. Each file must claim its own ports:
+# kissPort, the waterfall, paging and ARDOP ports and any per-modem "port" are all bound
+# per process, and the second process to ask for a port fails to start and says so.
+# Fail the condition rather than crash-loop if the file is missing.
+ConditionPathExists=/etc/pdn-soundmodem/%i.json
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pdn-soundmodem --config /etc/pdn-soundmodem/%i.json
+Restart=on-failure
+RestartSec=5
+# Exit 2, and only 2, is "your configuration is wrong": stay stopped so the operator can read
+# why, as the plain unit does.
+RestartPreventExitStatus=2
+User=pdn-soundmodem
+# Nested under the plain unit's directory. The daemon's default frame log, survey and raw
+# capture paths follow $STATE_DIRECTORY, so two instances never share a SQLite file.
+StateDirectory=pdn-soundmodem/%i
+StateDirectoryMode=0750
+# audio: /dev/snd/*. dialout: serial PTT. CM108 PTT on /dev/hidraw* needs the udev rule the
+# plain unit describes.
+SupplementaryGroups=audio dialout
+LimitRTPRIO=10
+
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=full
+# For the configuration API's "?persist=true", as in the plain unit; inert without "api".
+ReadWritePaths=/etc/pdn-soundmodem
+
+[Install]
+WantedBy=multi-user.target

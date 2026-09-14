@@ -139,16 +139,9 @@ internal static class MixerStateFile
             return configured.Trim();
         }
 
-        string? state = Environment.GetEnvironmentVariable("STATE_DIRECTORY");
-        if (!string.IsNullOrEmpty(state))
+        if (StateDirectory.Current is { } state)
         {
-            // systemd hands over a colon-separated list when there is more than one; the first
-            // is this unit's own.
-            string first = state.Split(':')[0];
-            if (first.Length > 0)
-            {
-                return Path.Combine(first, DefaultName);
-            }
+            return Path.Combine(state, DefaultName);
         }
 
         string directory = Path.GetDirectoryName(configPath) is { Length: > 0 } beside ? beside : ".";

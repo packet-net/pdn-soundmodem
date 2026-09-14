@@ -222,6 +222,8 @@ jobs:
             echo "$listing"
             # A package that ships no unit file is not the package we meant to ship.
             grep -q 'usr/lib/systemd/system/pdn-soundmodem\.service$' <<<"$listing"
+            # The template instances (pdn-soundmodem@NAME) run from this one.
+            grep -q 'usr/lib/systemd/system/pdn-soundmodem@\.service$' <<<"$listing"
             grep -q 'usr/lib/pdn-soundmodem/pdn-soundmodem$' <<<"$listing"
             grep -q 'usr/bin/pdn-soundmodem ->' <<<"$listing"
             # postinst seeds the config from this path; if it moves, install breaks.

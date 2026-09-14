@@ -236,10 +236,8 @@ internal sealed class ConfigApi
         // ephemeral path of "pending-config.json", whose own directory name is empty, and
         // Directory.CreateDirectory("") throws ArgumentException. On the bench that surfaced as a
         // POST that set the card and then aborted the connection (2026-09-05).
-        string? state = Environment.GetEnvironmentVariable("STATE_DIRECTORY");
-        string directory = !string.IsNullOrEmpty(state)
-            ? state
-            : Path.GetDirectoryName(configPath) is { Length: > 0 } beside ? beside : ".";
+        string directory = StateDirectory.Current
+            ?? (Path.GetDirectoryName(configPath) is { Length: > 0 } beside ? beside : ".");
         return Path.Combine(directory, "pending-config.json");
     }
 

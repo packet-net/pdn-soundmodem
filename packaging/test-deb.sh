@@ -44,6 +44,7 @@ check "/usr/bin/pdn-soundmodem symlink" "[ -L /usr/bin/pdn-soundmodem ]"
 check "payload in /usr/lib"             "[ -x /usr/lib/pdn-soundmodem/pdn-soundmodem ]"
 check "native shim shipped"             "[ -f /usr/lib/pdn-soundmodem/libSystem.IO.Ports.Native.so ]"
 check "systemd unit installed"          "[ -f /usr/lib/systemd/system/pdn-soundmodem.service ]"
+check "template unit installed"         "[ -f /usr/lib/systemd/system/pdn-soundmodem@.service ]"
 # Must not live under /usr/share/doc: postinst reads it, and Debian permits doc to be
 # stripped (the official Ubuntu images ship a dpkg path-exclude for exactly that).
 check "example config outside doc"      "[ -f /usr/share/pdn-soundmodem/soundmodem.example.json ]"
@@ -104,6 +105,9 @@ check "package installed"     "dpkg -l pdn-soundmodem | grep -q '^ii'"
 check "systemd sees the unit" "systemctl cat pdn-soundmodem.service >/dev/null 2>&1"
 verify=$(systemd-analyze verify /usr/lib/systemd/system/pdn-soundmodem.service 2>&1)
 [ -z "$verify" ] && ok "systemd-analyze verify is clean" || bad "systemd-analyze verify: $verify"
+# A template is verified through an instance name, so %i has something to expand to.
+verify=$(systemd-analyze verify pdn-soundmodem@second.service 2>&1)
+[ -z "$verify" ] && ok "template verifies as an instance" || bad "template verify: $verify"
 state=$(systemctl is-enabled pdn-soundmodem.service 2>&1)
 [ "$state" = "enabled" ] && ok "enabled on install" || bad "expected enabled on install, got '$state'"
 # postinst starts it too. There is no sound card in here so it will not stay up, but
@@ -125,6 +129,33 @@ else
   ok "unit ran the binary (no exec/lib failure)"
 fi
 systemctl stop pdn-soundmodem.service >/dev/null 2>&1
+
+echo
+echo "== a template instance runs beside the plain unit =="
+# Two null-device stations on two KISS ports, one per config file. The plain unit keeps its
+# seeded file's name; the instance is whatever NAME.json the operator writes.
+cp /etc/pdn-soundmodem/soundmodem.json /tmp/seeded.json
+printf '{ "device": "null", "kissPort": 18201, "frameLog": {} }\n' > /etc/pdn-soundmodem/soundmodem.json
+printf '{ "device": "null", "kissPort": 18202, "frameLog": {} }\n' > /etc/pdn-soundmodem/second.json
+systemctl reset-failed pdn-soundmodem >/dev/null 2>&1 || true
+systemctl enable --now pdn-soundmodem@second.service >/dev/null 2>&1
+systemctl start pdn-soundmodem.service >/dev/null 2>&1
+sleep 4
+check "instance enabled"                "[ \"\$(systemctl is-enabled pdn-soundmodem@second.service)\" = enabled ]"
+check "instance active"                 "systemctl is-active --quiet pdn-soundmodem@second.service"
+check "plain unit active beside it"     "systemctl is-active --quiet pdn-soundmodem.service"
+check "instance state dir created"      "[ -d /var/lib/pdn-soundmodem/second ]"
+check "instance state dir is the service user's" \
+      "[ \"\$(stat -c %U /var/lib/pdn-soundmodem/second)\" = pdn-soundmodem ]"
+# The default frame log follows $STATE_DIRECTORY, so the two are two files, not one.
+check "instance frame log under its own dir" "[ -f /var/lib/pdn-soundmodem/second/frames.db ]"
+check "plain unit frame log where it was"    "[ -f /var/lib/pdn-soundmodem/frames.db ]"
+journalctl -u pdn-soundmodem@second.service --no-pager 2>/dev/null \
+  | grep -q 'frame log: /var/lib/pdn-soundmodem/second/frames.db' \
+  && ok "instance journal names its own frame log" || bad "instance journal does not name /var/lib/pdn-soundmodem/second/frames.db"
+instance_started=$(systemctl show pdn-soundmodem@second.service -p ExecMainStartTimestampMonotonic --value 2>/dev/null)
+systemctl stop pdn-soundmodem.service >/dev/null 2>&1
+cp /tmp/seeded.json /etc/pdn-soundmodem/soundmodem.json
 
 echo
 echo "== a bad config stops, and says why, instead of crash-looping =="
@@ -155,12 +186,22 @@ echo
 echo "== reinstall keeps enablement =="
 apt-get install -y -qq --reinstall "/debs/$DEB" >/dev/null 2>&1
 check "still enabled after reinstall" "[ \"\$(systemctl is-enabled pdn-soundmodem.service)\" = enabled ]"
+# The running instance was on the old binary, so postinst restarts it as it does the plain unit.
+sleep 2
+check "instance still active after reinstall" "systemctl is-active --quiet pdn-soundmodem@second.service"
+restarted=$(systemctl show pdn-soundmodem@second.service -p ExecMainStartTimestampMonotonic --value 2>/dev/null)
+[ -n "$restarted" ] && [ "$restarted" != "$instance_started" ] \
+  && ok "instance restarted on reinstall" || bad "instance not restarted on reinstall ($instance_started -> $restarted)"
 
 echo
 echo "== purge =="
 apt-get purge -y -qq pdn-soundmodem >/dev/null 2>&1
 check "unit gone"             "! systemctl cat pdn-soundmodem.service >/dev/null 2>&1"
 check "no wants symlink left" "[ ! -e /etc/systemd/system/multi-user.target.wants/pdn-soundmodem.service ]"
+check "template unit gone"    "! systemctl cat pdn-soundmodem@.service >/dev/null 2>&1"
+check "instance not running"  "! systemctl is-active --quiet pdn-soundmodem@second.service"
+check "instance wants symlink removed" "[ ! -e /etc/systemd/system/multi-user.target.wants/pdn-soundmodem@second.service ]"
+check "instance config kept"  "[ -f /etc/pdn-soundmodem/second.json ]"
 check "config removed"        "[ ! -e /etc/pdn-soundmodem/soundmodem.json ]"
 check "user removed"          "! getent passwd pdn-soundmodem >/dev/null"
 

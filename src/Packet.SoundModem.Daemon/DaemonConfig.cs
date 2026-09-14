@@ -847,9 +847,11 @@ public sealed class FrameLogConfig
 {
     /// <summary>
     /// Where to keep it. The packaged service runs as an unprivileged user, so the default sits
-    /// under its own state directory rather than somewhere it cannot write.
+    /// under its own state directory rather than somewhere it cannot write: <c>frames.db</c>
+    /// under <c>$STATE_DIRECTORY</c>, which a template instance has to itself (see
+    /// <see cref="StateDirectory"/>).
     /// </summary>
-    public string Path { get; set; } = "/var/lib/pdn-soundmodem/frames.db";
+    public string Path { get; set; } = StateDirectory.PathFor("frames.db");
 
     /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
@@ -868,8 +870,9 @@ public sealed class FrameLogConfig
 public sealed class SurveyConfig
 {
     /// <summary>Where captures are written - a WAV and a JSON sidecar per burst. The packaged
-    /// service runs unprivileged, so the default sits under its own state directory.</summary>
-    public string Path { get; set; } = "/var/lib/pdn-soundmodem/survey";
+    /// service runs unprivileged, so the default sits under its own state directory
+    /// (<c>survey</c> under <c>$STATE_DIRECTORY</c>, see <see cref="StateDirectory"/>).</summary>
+    public string Path { get; set; } = StateDirectory.PathFor("survey");
 
     /// <summary>Byte budget for that directory. On reaching it the oldest captures are deleted
     /// to make room, so a station left collecting for a week keeps its recent past rather than
@@ -935,8 +938,9 @@ public sealed class SurveyConfig
 public sealed class RawCaptureConfig
 {
     /// <summary>Where chunks are written. The packaged service runs unprivileged, so the
-    /// default sits under its own state directory.</summary>
-    public string Path { get; set; } = "/var/lib/pdn-soundmodem/raw";
+    /// default sits under its own state directory (<c>raw</c> under <c>$STATE_DIRECTORY</c>, see
+    /// <see cref="StateDirectory"/>).</summary>
+    public string Path { get; set; } = StateDirectory.PathFor("raw");
 
     /// <summary>Byte budget for the directory; the oldest chunks are pruned to fit. The
     /// default keeps roughly two days at a 12 kHz DSP rate - size it to the disk and the

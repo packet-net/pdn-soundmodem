@@ -108,6 +108,30 @@ It is already enabled at boot. If you would rather it didn't run, `sudo systemct
 KISS-over-TCP listens on port **8105** by default. Point LinBPQ, Direwolf-style APRS
 software, or the PDN node at it.
 
+### More than one modem on one machine
+
+A second sound card and radio is a second config file and a systemd template instance. The
+package ships `pdn-soundmodem@.service` beside the plain unit: `pdn-soundmodem@NAME` runs
+`/etc/pdn-soundmodem/NAME.json` with its own state directory, `/var/lib/pdn-soundmodem/NAME/`,
+where its frame log, survey captures and mixer state go by default. Nothing else differs from
+the plain unit.
+
+```sh
+sudo cp /usr/share/pdn-soundmodem/soundmodem.example.json /etc/pdn-soundmodem/vhf.json
+sudo nano /etc/pdn-soundmodem/vhf.json
+sudo systemctl enable --now pdn-soundmodem@vhf
+systemctl status pdn-soundmodem@vhf
+journalctl -u pdn-soundmodem@vhf -f
+```
+
+Each file has to name its own sound device and PTT line, and claim its own ports: `kissPort`,
+and any `waterfall`, `paging`, `ardop` or per-modem `port` it sets, are bound per process, so
+two files that both leave `kissPort` at 8105 give a second modem that fails to start and says
+the port is taken. Instances are yours: the package never enables one, an upgrade restarts
+the ones that are running, remove stops them, and purge un-enables them but keeps their config
+files. The plain unit can stay disabled (`sudo systemctl disable --now pdn-soundmodem`) on a
+machine that runs everything as named instances.
+
 ### The one file the daemon writes for itself
 
 If you set an `api.key`, the operator page grows a **Mixer** group for the sound card's capture
@@ -152,7 +176,8 @@ Unplug and replug the interface, then restart the service.
 
 Install the new `.deb` the same way. Your `/etc/pdn-soundmodem/soundmodem.json` is left
 alone, and if you had enabled the service it stays enabled. So is everything under
-`/var/lib/pdn-soundmodem`, including the mixer levels the operator page last set.
+`/var/lib/pdn-soundmodem`, including the mixer levels the operator page last set. Template
+instances that were running are restarted on the new binary; their config files are untouched.
 
 ## Uninstalling
 
@@ -161,6 +186,9 @@ sudo apt remove pdn-soundmodem     # removes the program, keeps your config
 sudo apt purge  pdn-soundmodem     # also removes the config and the system user
 ```
 
+Purge removes the seeded `soundmodem.json` and un-enables any template instances, but keeps
+the instances' own `NAME.json` files and everything under `/var/lib/pdn-soundmodem`.
+
 ## What the package installs
 
 | Path | Contents |
@@ -168,9 +196,10 @@ sudo apt purge  pdn-soundmodem     # also removes the config and the system user
 | `/usr/bin/pdn-soundmodem` | symlink to the executable |
 | `/usr/lib/pdn-soundmodem/` | the self-contained binary and its native shims |
 | `/usr/lib/systemd/system/pdn-soundmodem.service` | the systemd unit |
+| `/usr/lib/systemd/system/pdn-soundmodem@.service` | the template unit: `pdn-soundmodem@NAME` runs `/etc/pdn-soundmodem/NAME.json` |
 | `/usr/share/pdn-soundmodem/soundmodem.example.json` | the annotated example config |
 | `/etc/pdn-soundmodem/soundmodem.json` | your config, seeded on first install; never written by the daemon |
-| `/var/lib/pdn-soundmodem/` | the service user's state: the frame log, and `mixer-state.json` |
+| `/var/lib/pdn-soundmodem/` | the service user's state: the frame log, and `mixer-state.json`; a template instance has `NAME/` inside it |
 | `/usr/share/doc/pdn-soundmodem/` | copyright and changelog |
 
 ## Running without installing

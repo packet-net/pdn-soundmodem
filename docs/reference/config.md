@@ -438,7 +438,7 @@ Rules and refusals:
 
 | Key | Type | Default | What it is |
 |---|---|---|---|
-| `path` | string | `/var/lib/pdn-soundmodem/frames.db` | The SQLite file. On a monitor, the directory the per-receiver files go in. |
+| `path` | string | `frames.db` in the state directory: `/var/lib/pdn-soundmodem/frames.db` under the shipped unit, `/var/lib/pdn-soundmodem/NAME/frames.db` under `pdn-soundmodem@NAME` | The SQLite file. On a monitor, the directory the per-receiver files go in. |
 
 - Present means every frame heard and every frame sent is written down, with its audio and RF placement and the decode quality.
 - Refused when the file cannot be opened: `cannot open the frame log at <path> ... Set by "frameLog"."path". The service user must be able to write to its directory; remove the "frameLog" section to run without one.`
@@ -452,7 +452,7 @@ Rules and refusals:
 
 | Key | Type | Default | What it is |
 |---|---|---|---|
-| `path` | string | `/var/lib/pdn-soundmodem/survey` | Where captures go, a WAV and a JSON sidecar per burst. |
+| `path` | string | `survey` in the state directory (`/var/lib/pdn-soundmodem/survey` under the shipped unit) | Where captures go, a WAV and a JSON sidecar per burst. |
 | `maxBytes` | int64 | `536870912` (512 MiB) | Byte budget for the directory; the oldest captures are deleted to make room. |
 | `maxPerHour` | int | `30` | Most captures in any rolling hour. |
 | `cooldownSeconds` | number | `120` | How long the same part of the spectrum is left alone after a capture. |
@@ -516,7 +516,7 @@ Rules and refusals:
 
 | Key | Type | Default | What it is |
 |---|---|---|---|
-| `path` | string | `/var/lib/pdn-soundmodem/raw` | Where the chunks are written. |
+| `path` | string | `raw` in the state directory (`/var/lib/pdn-soundmodem/raw` under the shipped unit) | Where the chunks are written. |
 | `maxBytes` | int64 | `4294967296` (4 GiB) | Byte budget for the directory; the oldest chunks are pruned to fit. |
 | `chunkMinutes` | int | `15` | Audio minutes per WAV chunk. |
 

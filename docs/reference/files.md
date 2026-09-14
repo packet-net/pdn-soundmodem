@@ -1,6 +1,6 @@
 # Files and directories
 
-What the Debian package installs, what pdn-soundmodem reads and writes on disk, and what an upgrade, a remove or a purge leaves behind. The package is built by [`packaging/build-deb.sh`](../../packaging/build-deb.sh) and the service runs under [`packaging/pdn-soundmodem.service`](../../packaging/pdn-soundmodem.service); every path on this page is as the shipped package lays it out.
+What the Debian package installs, what pdn-soundmodem reads and writes on disk, and what an upgrade, a remove or a purge leaves behind. The package is built by [`packaging/build-deb.sh`](../../packaging/build-deb.sh) and the service runs under [`packaging/pdn-soundmodem.service`](../../packaging/pdn-soundmodem.service); every path on this page is as the shipped package lays it out. A second modem on the same machine runs as a template instance, [`pdn-soundmodem@NAME`](#more-than-one-modem), from its own config file and its own state directory.
 
 ## What the package installs
 
@@ -10,11 +10,12 @@ What the Debian package installs, what pdn-soundmodem reads and writes on disk, 
 | `/usr/lib/pdn-soundmodem/*.so` | Native libraries published beside the binary (`libSystem.IO.Ports.Native.so` for serial PTT, `libe_sqlite3.so` for the frame log). The modem finds them relative to its own real path, so the binary lives here and `/usr/bin` holds a symlink |
 | `/usr/bin/pdn-soundmodem` | Symlink to the binary above |
 | `/usr/lib/systemd/system/pdn-soundmodem.service` | The systemd unit. Enabled and started on install, restarted on upgrade |
+| `/usr/lib/systemd/system/pdn-soundmodem@.service` | The template unit. `pdn-soundmodem@NAME` runs `/etc/pdn-soundmodem/NAME.json` with `/var/lib/pdn-soundmodem/NAME/` as its state directory. Never enabled by the package |
 | `/etc/systemd/system/multi-user.target.wants/pdn-soundmodem.service` | The enable symlink, created by postinst on first install. Not shipped in the package |
 | `/usr/share/pdn-soundmodem/soundmodem.example.json` | The annotated example config, a copy of [`soundmodem.example.json`](../../soundmodem.example.json) from the repository. The file postinst seeds from |
 | `/etc/pdn-soundmodem/` | Shipped as an empty directory, so it outlives a remove and purge has to delete it by hand |
 | `/etc/pdn-soundmodem/soundmodem.json` | The station's config. Seeded by postinst from the example if absent, owned by root, mode 0644. Not a dpkg-owned file |
-| `/var/lib/pdn-soundmodem/` | The state directory. Created by systemd from `StateDirectory=` at each start, owned by the service user, mode 0750 |
+| `/var/lib/pdn-soundmodem/` | The state directory. Created by systemd from `StateDirectory=` at each start, owned by the service user, mode 0750. A template instance's is `NAME/` inside it |
 | `/usr/share/doc/pdn-soundmodem/copyright`, `changelog.Debian.gz` | Licence and changelog |
 
 The seeded config names `default` as the sound card and a CM108 interface on `/dev/hidraw0`, so the first start after a fresh install fails until the file is edited; `systemctl status pdn-soundmodem` says why. The package depends on `libc6`, `libgcc-s1`, `libstdc++6`, `libasound2` (or `libasound2t64`) and `adduser`, section `hamradio`.
@@ -30,7 +31,7 @@ The seeded config names `default` as the sound card and a CM108 interface on `/d
 | `--wav FILE`, `--wav-loop FILE` | A recording in place of live audio |
 | `/usr/share/pdn-soundmodem/soundmodem.example.json` | Only to decide whether a configuration-error message can offer a `cp` of the example |
 
-The state directory is wherever systemd's `$STATE_DIRECTORY` points, which is `/var/lib/pdn-soundmodem` under the shipped unit. Run from a terminal without it, `pending-config.json` and `mixer-state.json` sit beside the config file. `alsa.mixer.stateFile` moves the mixer state file anywhere.
+The state directory is wherever systemd's `$STATE_DIRECTORY` points, which is `/var/lib/pdn-soundmodem` under the shipped unit and `/var/lib/pdn-soundmodem/NAME` under `pdn-soundmodem@NAME`. The default `frameLog.path`, `survey.path` and `rawCapture.path` follow it too, so two instances never share a frame log. Run from a terminal without it, `pending-config.json` and `mixer-state.json` sit beside the config file and the three defaults are the `/var/lib/pdn-soundmodem` paths below. `alsa.mixer.stateFile` moves the mixer state file anywhere.
 
 Device nodes the modem opens: `/dev/snd/*` for the sound card, `/dev/ttyUSB*` or `/dev/ttyS*` for serial PTT, `/dev/hidraw*` for CM108 PTT (opened for writing). A `pipe:IN,OUT` device creates the two FIFOs if they do not exist.
 
@@ -56,11 +57,11 @@ The mixer state file is the only file written without a config section asking fo
 |---|---|
 | Service user | `pdn-soundmodem`, a system user with no home directory, created by postinst with `adduser --system --no-create-home --group` |
 | Supplementary groups | `audio` for `/dev/snd/*`; `dialout` for serial PTT on `/dev/ttyUSB*` and `/dev/ttyS*` |
-| `/var/lib/pdn-soundmodem` | `StateDirectory=pdn-soundmodem`, `StateDirectoryMode=0750`, owned by the service user; created by systemd at every start |
+| `/var/lib/pdn-soundmodem` | `StateDirectory=pdn-soundmodem`, `StateDirectoryMode=0750`, owned by the service user; created by systemd at every start. The template has `StateDirectory=pdn-soundmodem/%i` |
 | `/etc/pdn-soundmodem/soundmodem.json` | root, 0644, readable by the service. `ReadWritePaths=/etc/pdn-soundmodem` lifts `ProtectSystem=full` for that one directory so a `?persist=true` write is not blocked by the unit |
 | Hardening | `NoNewPrivileges=true`, `ProtectHome=true`, `ProtectSystem=full` |
 | Realtime priority | `LimitRTPRIO=10` permits realtime scheduling up to priority 10; nothing in the modem asks for it, so the line has no effect |
-| Start condition | `ConditionPathExists=/etc/pdn-soundmodem/soundmodem.json`: the unit does not start at all without the config file |
+| Start condition | `ConditionPathExists=/etc/pdn-soundmodem/soundmodem.json`: the unit does not start at all without the config file. The template's is `/etc/pdn-soundmodem/%i.json` |
 | Exit codes | `Restart=on-failure` with `RestartPreventExitStatus=2`: exit 2 (the configuration is wrong) is not retried, so the journal carries one explanation; any other non-zero exit, or a crash, restarts after `RestartSec=5`; exit 0 stays stopped. The config API's restart exits 1. The codes are listed in the [command-line reference](command-line.md#exit-codes) |
 
 The seeded config file is owned by root, and `ReadWritePaths` only removes the read-only mount. A `?persist=true` write from the service therefore fails with a permission error until the file is made writable by the service user, for example `chown pdn-soundmodem /etc/pdn-soundmodem/soundmodem.json`. Neither the package nor the unit does this. The 500 the modem answers with blames `ProtectSystem=full` and suggests adding `ReadWritePaths=/etc/pdn-soundmodem`, which the shipped unit already has; the file's ownership is the cause.
@@ -77,11 +78,17 @@ The rule takes effect once udev has reloaded its rules and the interface has bee
 
 | Action | Removed | Kept |
 |---|---|---|
-| Upgrade (install a newer `.deb`) | The old binary, shims, unit, example config and doc files, each replaced by the new one | `/etc/pdn-soundmodem/soundmodem.json` (postinst seeds only when the file is absent), `/var/lib/pdn-soundmodem` and everything in it, the service user, the unit's enablement. The unit is restarted if it is enabled or running |
-| Remove (`apt remove`) | Binary, shims, symlink, unit, example config, doc directory. The unit is stopped by prerm and masked by postrm | `/etc/pdn-soundmodem/soundmodem.json` and its directory, `/var/lib/pdn-soundmodem` and everything in it, the service user |
-| Purge (`apt purge`) | Everything remove removes, plus `/etc/pdn-soundmodem/soundmodem.json`, `/etc/pdn-soundmodem` if then empty, the unit's enable symlinks and mask, and the `pdn-soundmodem` user and its group (the group stays if another user has been added to it) | `/var/lib/pdn-soundmodem` and everything in it: the frame log, survey captures, raw captures and the mixer state file |
+| Upgrade (install a newer `.deb`) | The old binary, shims, units, example config and doc files, each replaced by the new one | `/etc/pdn-soundmodem/soundmodem.json` (postinst seeds only when the file is absent), every `NAME.json`, `/var/lib/pdn-soundmodem` and everything in it, the service user, the unit's enablement and each instance's. The unit is restarted if it is enabled or running, and so is every running instance |
+| Remove (`apt remove`) | Binary, shims, symlink, both units, example config, doc directory. The unit and every running instance are stopped by prerm; the unit is masked by postrm | `/etc/pdn-soundmodem/soundmodem.json`, every `NAME.json` and their directory, `/var/lib/pdn-soundmodem` and everything in it, the service user, the instances' enable symlinks |
+| Purge (`apt purge`) | Everything remove removes, plus `/etc/pdn-soundmodem/soundmodem.json`, `/etc/pdn-soundmodem` if then empty, the unit's enable symlinks and mask, every instance's enable symlink, and the `pdn-soundmodem` user and its group (the group stays if another user has been added to it) | Every `NAME.json` an operator wrote, and `/var/lib/pdn-soundmodem` and everything in it: the frame logs, survey captures, raw captures and mixer state files of the unit and of every instance |
 
-No maintainer script touches `/var/lib/pdn-soundmodem`; delete it by hand after a purge if you want it gone. A reinstall of the same version keeps the unit enabled. Postinst does not re-enable a unit an operator has disabled; it records the symlinks so purge can clean them up.
+No maintainer script touches `/var/lib/pdn-soundmodem`; delete it by hand after a purge if you want it gone. A reinstall of the same version keeps the unit enabled. Postinst does not re-enable a unit an operator has disabled; it records the symlinks so purge can clean them up. Instances are found by name: postinst and prerm ask systemd which `pdn-soundmodem@*.service` units are running, and postrm removes whatever `pdn-soundmodem@*.service` symlinks are in `/etc/systemd/system/*.wants/`.
+
+## More than one modem
+
+`pdn-soundmodem@NAME.service` is the plain unit with the two paths parameterised: `ExecStart` reads `/etc/pdn-soundmodem/NAME.json` and `StateDirectory=pdn-soundmodem/NAME` gives it `/var/lib/pdn-soundmodem/NAME/`, created and owned like the parent. User, groups, hardening, `ReadWritePaths`, the restart policy and the exit-2 rule are the same. `systemctl enable --now pdn-soundmodem@NAME` is the whole of starting one; the package never enables an instance, and the plain unit can be disabled on a machine that runs everything by name.
+
+Each config file must claim its own ports. `kissPort`, `waterfall.port`, `paging.port`, `ardop.port` and a modem entry's own `port` are all bound by the process that reads them; the second process to ask for a port fails to start with the bind error in its journal. The sound device and the PTT line must differ for the same reason. Two instances that both enable `frameLog` without a `path` write two files, `/var/lib/pdn-soundmodem/NAME/frames.db` each, because the default follows `$STATE_DIRECTORY`; a `path` set explicitly is used as written, so two files that name the same path share it, which SQLite tolerates and nothing here wants.
 
 ## Copying and backing up
 
