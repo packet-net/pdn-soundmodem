@@ -103,6 +103,36 @@ public class WaterfallWebServerTests : IAsyncLifetime
             .And.NotContain("__PAGE_VERSION__", "the placeholder must not reach a browser");
     }
 
+    /// <summary>
+    /// The config message also carries what this build of the daemon is (#480), so the page can
+    /// show it without a second round trip. This does not assert an exact version - that changes
+    /// every build - only its shape, and that it is the same value <see cref="DaemonVersion"/>
+    /// itself reports, which is what proves the wire is actually reading that helper and not a
+    /// second, divergent copy of the reflection call.
+    /// </summary>
+    [Fact]
+    public async Task The_Config_Message_Carries_The_Daemon_Version()
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        using JsonDocument config = await NextTextAsync(socket);
+
+        JsonElement daemonVersion = config.RootElement.GetProperty("daemonVersion");
+        daemonVersion.GetProperty("version").GetString().Should().Be(DaemonVersion.Version);
+        daemonVersion.GetProperty("release").GetBoolean().Should().Be(DaemonVersion.IsRelease);
+
+        JsonElement commit = daemonVersion.GetProperty("commit");
+        if (DaemonVersion.Commit is null)
+        {
+            commit.ValueKind.Should().Be(JsonValueKind.Null);
+        }
+        else
+        {
+            commit.GetString().Should().Be(DaemonVersion.Commit)
+                .And.MatchRegex("^[0-9a-f]{40}$", "the full commit the .NET SDK embeds, not a shortened form");
+        }
+    }
+
     [Fact]
     public async Task A_Captures_Audio_Can_Be_Fetched_And_Nothing_Else_Can()
     {

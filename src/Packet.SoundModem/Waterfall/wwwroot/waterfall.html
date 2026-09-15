@@ -990,6 +990,27 @@ function applyPublicFlavour() {
   $("about").hidden = detached || !parts.length;
 }
 
+// What this station is running, so the operator asking "did it actually update" has an answer
+// without leaving the page: #480. Rides in the wordmark, whose muted span is otherwise empty on
+// a plain operator page and already carries "pdn-soundmodem" on a public one (set just above, in
+// applyPublicFlavour) - the version rides along wherever that word already is. A detached links
+// window keeps "links" in the span, so it gets the full sentence as a hover title only.
+function applyDaemonVersion() {
+  const v = cfg.daemonVersion;
+  if (!v) return;
+  const short = v.release ? v.version : `${v.version} dev`;
+  const commit = v.commit ? v.commit.slice(0, 12) : "unknown";
+  const full = `pdn-soundmodem ${v.version}`
+    + (v.release ? "" : " (dev build, not a numbered release)")
+    + `, commit ${v.commit || "unknown"}`;
+  const wm = document.querySelector(".wordmark");
+  wm.querySelector("b").title = full;
+  if (detached) return;
+  const span = wm.querySelector("span");
+  span.textContent = cfg.publicMonitor ? `pdn-soundmodem ${short}` : `${short} · ${commit}`;
+  span.title = full;
+}
+
 // ---------------------------------------------------------------- receive audio (opt-in)
 // Blocks carry no timestamps and are played in arrival order. Nothing is received while the
 // station transmits, so the stream simply stops for the length of a keyup - that has to sound
@@ -2439,6 +2460,7 @@ function connect() {
         // for ever. checkPageVersion reloads once per version and no more.
         checkPageVersion(msg.page);
         applyPublicFlavour();
+        applyDaemonVersion();
         setRadioStatus(cfg.radioStatus);
         syncTxTestRunning();
         renderChips(); resizeAll(); drawRuler(); drawOverlay();

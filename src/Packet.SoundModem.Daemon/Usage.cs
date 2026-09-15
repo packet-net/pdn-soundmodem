@@ -30,6 +30,7 @@ internal static class Usage
           pdn-soundmodem [--device SPEC] [--modem N:MODE[:FREQ]]... [OPTIONS]
           pdn-soundmodem --mixer-show DEVICE
           pdn-soundmodem --uplink-token CALLSIGN
+          pdn-soundmodem --version
           pdn-soundmodem --help
 
         Options:
@@ -88,6 +89,8 @@ internal static class Usage
           --uplink-token CALLSIGN Mint one uplink token for that station and print it
                                   with the hash for a monitor's "monitor"."uplinks"
                                   entry, then exit.
+          --version               Print the version and the commit it was built from,
+                                  then exit.
           --help                  Print this and exit.
 
         With --config, the file's device, captureRate, kissPort, bind and modems are

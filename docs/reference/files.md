@@ -49,7 +49,7 @@ Device nodes the modem opens: `/dev/snd/*` for the sound card, `/dev/ttyUSB*` or
 | `$TMPDIR/pdn-soundmodem-proposed-<id>.json`, `/tmp` under the unit | Every `POST /api/config`, to validate the proposed document through the start-up parser. Deleted when the request is answered | Transient |
 | The FIFOs named in `pipe:IN,OUT` | At start, if absent. Mode 0666 before the umask | |
 
-The mixer state file is the only file written without a config section asking for it. `--mixer-show` and `--uplink-token` write nothing. `--two-tone` and `--tone` build the station as configured, so a config with `frameLog` gets one row per test, and one with `survey` or `rawCapture` has the directory created and, for `rawCapture`, a chunk written while the test runs. The journal is stdout and stderr under systemd; the modem keeps no log file of its own.
+The mixer state file is the only file written without a config section asking for it. `--mixer-show`, `--uplink-token` and `--version` write nothing. `--two-tone` and `--tone` build the station as configured, so a config with `frameLog` gets one row per test, and one with `survey` or `rawCapture` has the directory created and, for `rawCapture`, a chunk written while the test runs. The journal is stdout and stderr under systemd; the modem keeps no log file of its own.
 
 ## Ownership and permissions
 

@@ -2,7 +2,6 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.WebSockets;
-using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -746,7 +745,11 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             {
                 type = "hello",
                 protocol = ProtocolVersion,
-                version = DaemonVersion,
+                // Capped at 40 characters on the monitor's side (UplinkWire.cs), so the semver
+                // part only: the commit does not fit beside it, and the monitor has never needed
+                // it. Same value this field has always carried, now read from the one place that
+                // derives it.
+                version = DaemonVersion.Version,
                 callsign = _settings.Callsign,
                 @operator = _settings.Operator,
                 location = _settings.Location,
@@ -1224,13 +1227,6 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                 : $"{_uri.Host} closed the uplink: {Site(reason)}",
             refused);
     }
-
-    /// <summary>What this daemon is, for the monitor's own diagnostics.</summary>
-    private static readonly string DaemonVersion =
-        (typeof(UplinkClient).Assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-            ?? typeof(UplinkClient).Assembly.GetName().Version?.ToString()
-            ?? "unknown").Split('+')[0];
 
     /// <summary>
     /// Why a session ended: the sentence for the journal, or null for one that ended without a

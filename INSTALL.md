@@ -179,6 +179,10 @@ alone, and if you had enabled the service it stays enabled. So is everything und
 `/var/lib/pdn-soundmodem`, including the mixer levels the operator page last set. Template
 instances that were running are restarted on the new binary; their config files are untouched.
 
+To check it actually took: `pdn-soundmodem --version` prints the version and the commit it was
+built from, and a station already running says the same thing on its very first journal line,
+so `journalctl -u pdn-soundmodem | head` answers it without restarting anything.
+
 ## Uninstalling
 
 ```sh

@@ -9,17 +9,19 @@ pdn-soundmodem --config FILE
 pdn-soundmodem [--device SPEC] [--modem N:MODE[:FREQ]]... [OPTIONS]
 pdn-soundmodem --mixer-show DEVICE
 pdn-soundmodem --uplink-token CALLSIGN
+pdn-soundmodem --version
 pdn-soundmodem --help
 ```
 
 The installed service runs `/usr/bin/pdn-soundmodem --config /etc/pdn-soundmodem/soundmodem.json` and nothing else; see [packaging/pdn-soundmodem.service](../../packaging/pdn-soundmodem.service). A station started by hand can run from flags alone, with no file.
 
-Flags are read left to right. A flag given twice keeps the last value, except `--modem`, which adds a modem each time. `--help` and `--uplink-token` act as soon as they are read, so flags after them are not looked at. A flag that needs a value and has none, or a value that does not parse, is not checked by the modem: the .NET runtime aborts on the unhandled exception, printing `Unhandled exception. System.ArgumentException: --kiss needs a value` (or the runtime's own message for a value that does not parse) and a stack trace on stderr, with exit code `134`. The message names the argument before the gap, so `--tone 1000` with no SECONDS says `1000 needs a value`. The one exception is `--uplink-token`, which says what it needs and exits `2`.
+Flags are read left to right. A flag given twice keeps the last value, except `--modem`, which adds a modem each time. `--help`, `--version` and `--uplink-token` act as soon as they are read, so flags after them are not looked at. A flag that needs a value and has none, or a value that does not parse, is not checked by the modem: the .NET runtime aborts on the unhandled exception, printing `Unhandled exception. System.ArgumentException: --kiss needs a value` (or the runtime's own message for a value that does not parse) and a stack trace on stderr, with exit code `134`. The message names the argument before the gap, so `--tone 1000` with no SECONDS says `1000 needs a value`. The one exception is `--uplink-token`, which says what it needs and exits `2`.
 
 | Command line | Prints | Exit code |
 |---|---|---|
 | No arguments | The usage text, on stderr. Nothing is started. | `2` |
 | `--help` | The usage text, on stdout. | `0` |
+| `--version` | The version and the commit it was built from, on stdout. | `0` |
 | An unknown option | `unknown option --x`, on stderr. | `2` |
 
 ### Exit codes
@@ -31,6 +33,10 @@ Flags are read left to right. A flag given twice keeps the last value, except `-
 | `2` | A usage error or a refused configuration: no arguments, an unknown option, a flag the station cannot honour, or a config file that does not load or fails validation. The message on stderr says what to change. |
 
 The service unit sets `Restart=on-failure`, `RestartSec=5` and `RestartPreventExitStatus=2`. Exit `1` is retried every 5 seconds, so a card that was slow to appear comes up by itself. Exit `2` is not retried, so the journal carries one explanation of the refused configuration and the service stays stopped until it is fixed and started again.
+
+### Start-up
+
+The very first line the daemon writes, before `--config` is even read, is the same line `--version` prints: `pdn-soundmodem VERSION, commit SHA`. `journalctl -u pdn-soundmodem | head` answers "which version is this" for a station that has been running for a month, which was otherwise only answerable from outside the program - `dpkg -l pdn-soundmodem` on a box where the `.deb` was the last thing to write the binary, or `strings` on the binary, neither of which survives a hand-copied build ([#480](https://github.com/packet-net/pdn-soundmodem/issues/480)). A build that got no version of its own reads `pdn-soundmodem 1.0.0 (dev build, not a numbered release), commit SHA` rather than something that looks like a release.
 
 ## Station flags
 
@@ -67,6 +73,7 @@ These print, or transmit, and exit. None of them serves a KISS port, the station
 | `--tone` | `HZ SECONDS` | The same with one tone at `HZ`, for a carrier level check or an FM deviation check by Bessel null. Two values, in that order. | As `--two-tone`. |
 | `--mixer-show` | `DEVICE` | Lists every control the card has, then reports on one line the level and dB range of the capture and playback controls and the state of the AGC and mic boost switches it recognises by name (the same lists the station uses at start-up, under [`alsa`](config.md#alsa)); a card with none of those is said so. Every line is prefixed `alsa: mixer:`. Runs before anything else, reads the mixer only, and works while a station holds the card. `DEVICE` is an ALSA device name; the card is taken from it, so `plughw:CARD=Device,DEV=0` shows card `Device`. | `0`; `1` if the card has no mixer or it could not be read. |
 | `--uplink-token` | `CALLSIGN` | Mints one uplink token for that station and prints the token once, as the `token` line for the station's `publish` section, and its SHA-256 hash once, inside a ready-made `monitor.uplinks` entry for the monitor's own file. Nothing is written to disk, and the token is not shown again. | `0`; `2` if `CALLSIGN` is missing or is not one to six letters and digits with an optional `-SSID`. |
+| `--version` | none | Prints the version and the commit it was built from, on stdout: what `packaging/build-deb.sh` set with `-p:Version` for a released build, or, for a build that got no version of its own (a plain `dotnet build`, or a binary copied by hand), says so plainly rather than printing something that looks like a release. The same line the daemon writes first to the journal at start-up (see [start-up](#start-up) below, and [#480](https://github.com/packet-net/pdn-soundmodem/issues/480)). | `0`. |
 | `--help` | none | Prints the usage text on stdout. | `0`. |
 
 A `--two-tone` or `--tone` run is refused, with the reason on stderr, when:
@@ -121,9 +128,10 @@ When `--config` is given, the file is read after every flag has been parsed and 
 | `--flex-daxch` | Overrides `flex.daxChannel`. |
 | `--mixer-show` | Exits before the file is read. |
 | `--uplink-token` | Exits while the flags are being read; the file is not opened. |
+| `--version` | As `--uplink-token`. |
 | `--help` | As `--uplink-token`. |
 
-Flags with no config-file equivalent: `--txdelay`, `--wav`, `--wav-loop`, `--quality-frames`, `--psk-detector`, `--mixer-show`, `--uplink-token` and `--help`.
+Flags with no config-file equivalent: `--txdelay`, `--wav`, `--wav-loop`, `--quality-frames`, `--psk-detector`, `--mixer-show`, `--uplink-token`, `--version` and `--help`.
 
 Config-file sections and keys with no flag: `sideband`, `dialFrequency`, `modemPlugins`, `txTest`, `alsa`, `ubersdr`, `monitor`, `publish`, `api`, `frameLog`, `survey`, `metrics`, `frequencyMatching`, `rawCapture`, `deadFeed` and `idBeacons`. Within sections a flag does reach: a modem entry's `port`, `rfFrequency`, `bandwidth`, `offsetPairs`, `offsetStepHz`, `acceptPlainIl2p` and `identify`; `flex.txPowerWatts`, `flex.transmitFilterHighHz`, `flex.stationName`, `flex.arbitration` and `flex.receiveOnly`; `paging.invertPolarity`; and every `waterfall` key other than `port` and `dialFrequencyHz`. The [configuration reference](config.md) documents each of them.
 
@@ -139,6 +147,7 @@ Usage:
   pdn-soundmodem [--device SPEC] [--modem N:MODE[:FREQ]]... [OPTIONS]
   pdn-soundmodem --mixer-show DEVICE
   pdn-soundmodem --uplink-token CALLSIGN
+  pdn-soundmodem --version
   pdn-soundmodem --help
 
 Options:
@@ -197,6 +206,8 @@ Options:
   --uplink-token CALLSIGN Mint one uplink token for that station and print it
                           with the hash for a monitor's "monitor"."uplinks"
                           entry, then exit.
+  --version               Print the version and the commit it was built from,
+                          then exit.
   --help                  Print this and exit.
 
 With --config, the file's device, captureRate, kissPort, bind and modems are
