@@ -36,7 +36,7 @@ The service unit sets `Restart=on-failure`, `RestartSec=5` and `RestartPreventEx
 
 ### Start-up
 
-The very first line the daemon writes, before `--config` is even read, is the same line `--version` prints: `pdn-soundmodem VERSION, commit SHA`. `journalctl -u pdn-soundmodem | head` answers "which version is this" for a station that has been running for a month, which was otherwise only answerable from outside the program - `dpkg -l pdn-soundmodem` on a box where the `.deb` was the last thing to write the binary, or `strings` on the binary, neither of which survives a hand-copied build ([#480](https://github.com/packet-net/pdn-soundmodem/issues/480)). A build that got no version of its own reads `pdn-soundmodem 1.0.0 (dev build, not a numbered release), commit SHA` rather than something that looks like a release.
+The very first line the daemon writes, before `--config` is even read, is the same line `--version` prints: `pdn-soundmodem VERSION, commit SHA`. `journalctl -u pdn-soundmodem | head` answers "which version is this" for a station that has been running for a month, which was otherwise only answerable from outside the program - `dpkg -l pdn-soundmodem` on a box where the `.deb` was the last thing to write the binary, or `strings` on the binary, neither of which survives a hand-copied build ([#480](https://github.com/packet-net/pdn-soundmodem/issues/480)). A build that got no version of its own reads `pdn-soundmodem 0.0.0-dev (dev build, not a numbered release), commit SHA` rather than something that looks like a release.
 
 ## Station flags
 

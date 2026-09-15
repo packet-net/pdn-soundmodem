@@ -19,15 +19,25 @@ namespace Packet.SoundModem.Waterfall;
 /// exactly the case #480 was filed over: a station that had "definitely updated" and had no way
 /// to say to what. <see cref="IsRelease"/> and <see cref="Describe"/> exist so that build never
 /// gets presented as though it were a numbered release.</para>
+/// <para><see cref="UnversionedDefault"/> is deliberately not the SDK's own out-of-the-box
+/// default of 1.0.0: that is a real version this project can release one day, so a build that
+/// happened to carry it would be indistinguishable from that release. <c>Directory.Build.props</c>
+/// sets every project's <c>&lt;Version&gt;</c> to <c>0.0.0-dev</c> instead - a number no tagged
+/// release (v0.1.0 and up) can ever take, so the constant here can check for that one spelling
+/// and never risk aliasing a real release again. The point is the version number itself, not the
+/// exact digits, so if the default in <c>Directory.Build.props</c> ever needs to move, move this
+/// constant to match rather than special-casing a second value here.</para>
 /// </remarks>
 public static class DaemonVersion
 {
     /// <summary>
-    /// The version every project in this repo gets when nothing names one of its own (no
-    /// <c>&lt;Version&gt;</c> in a <c>.csproj</c>, no <c>-p:Version</c>). A build carrying this
-    /// is not a numbered release, whatever commit rides beside it.
+    /// The version every project in this repo gets when nothing names one of its own: what
+    /// <c>Directory.Build.props</c> sets <c>&lt;Version&gt;</c> to, overridden by
+    /// <c>-p:Version</c> for a real build. Not the SDK's own default (1.0.0), which is a real
+    /// version this project can release; a build carrying this one is never a numbered release,
+    /// whatever commit rides beside it.
     /// </summary>
-    public const string UnversionedDefault = "1.0.0";
+    public const string UnversionedDefault = "0.0.0-dev";
 
     /// <summary>Printed when the assembly carries no version metadata at all - not a build this
     /// repo's own tooling produces, but handled rather than thrown on, as the reflection call

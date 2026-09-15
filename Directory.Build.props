@@ -7,6 +7,14 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- A build with no -p:Version of its own (a plain "dotnet build", a hand-copied binary, a
+         local "dotnet pack") gets this rather than the SDK's own default of 1.0.0, which is a
+         real version this project will one day release and cannot be told apart from a build
+         nothing versioned. 0.0.0-dev is not a version this repo's tags (v0.1.0 and up) will ever
+         reach, so it stays a safe "this build got no version" marker forever.
+         packaging/build-deb.sh and .github/workflows/release.yml both pass -p:Version explicitly
+         and override this; see DaemonVersion.UnversionedDefault. -->
+    <Version>0.0.0-dev</Version>
   </PropertyGroup>
 
   <PropertyGroup>
