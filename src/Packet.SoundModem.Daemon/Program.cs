@@ -1943,11 +1943,15 @@ if (benchTxTest is null && ardopModem is not null)
             // back in a PingAck; every other frame type carries a zero SnDb that was never
             // computed. Passing that zero straight through claimed a measurement on every row
             // that was not a Ping or a PingAck - a frame that decoded perfectly reading as a
-            // station on the edge of the noise (#479).
-            double? snDb = frame.Name switch
+            // station on the edge of the noise (#479). Switched on the frame-type code rather
+            // than frame.Name: Name is a display string owned by M0LTE.Ardop for a human to read,
+            // and if the package ever renamed it both arms below would silently stop matching -
+            // this gating would turn itself off with nothing failing. Type is the wire code the
+            // two constants are defined against, so a rename of the label cannot touch it.
+            double? snDb = frame.Type switch
             {
-                "Ping" => frame.SnDb,
-                "PingAck" => frame.PingAckSnDb,
+                M0LTE.Ardop.ArdopFrameType.Ping => frame.SnDb,
+                M0LTE.Ardop.ArdopFrameType.PingAck => frame.PingAckSnDb,
                 _ => null,
             };
 
