@@ -1089,6 +1089,17 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             radioStatus = _radioStatus,
             sideband = _options.Sideband,
             page = Page.Value.Version,
+            // Additive, like every other field here: an older tab that has never heard of it
+            // just does not draw it. Not on the uplink wire (docs/dev/uplink-wire-format.md) -
+            // that document governs the station-to-monitor protocol only, and says outright that
+            // this one, the browser protocol, "may change whenever the page does, because the
+            // page and the server ship in the same binary" - so nothing there needed touching.
+            daemonVersion = new
+            {
+                version = DaemonVersion.Version,
+                commit = DaemonVersion.Commit,
+                release = DaemonVersion.IsRelease,
+            },
             publicMonitor = _options.Public,
             title = _options.Title,
             about = _options.About,

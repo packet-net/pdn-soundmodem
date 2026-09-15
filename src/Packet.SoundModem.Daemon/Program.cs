@@ -74,6 +74,10 @@ string? flexDaxCh = null;
 // answers "what are my card's control names and what is it set to" without stopping the station.
 string? mixerShow = null;
 
+// One line, read by both --version and the start-up banner below, so there is exactly one
+// sentence in the whole program that answers "which version is this" (#480).
+static string VersionLine() => $"pdn-soundmodem {DaemonVersion.Describe()}";
+
 // Nothing on the command line used to start a station on the default sound card with one
 // afsk1200 modem and KISS on 8105. That station is still one flag away (--config with a file
 // holding {} gives the same thing, and the installed service always passes --config), but a bare
@@ -121,6 +125,9 @@ for (int i = 0; i < args.Length; i++)
         // Takes the callsign the token is for, and says so rather than throwing when it is
         // missing: this is often the first thing a new site owner runs.
         case "--uplink-token": return UplinkToken.Print(i + 1 < args.Length ? args[++i] : null);
+        case "--version":
+            Console.WriteLine(VersionLine());
+            return 0;
         case "--help":
             Console.WriteLine(Usage.Text);
             return 0;
@@ -129,6 +136,14 @@ for (int i = 0; i < args.Length; i++)
             return 2;
     }
 }
+
+// The station's own first word: #480 was a live operator unable to answer "which version is
+// this" from the software itself, for a station that had been running long enough that nobody
+// remembered what was last deployed. journalctl -u pdn-soundmodem | head now answers it, whether
+// that station started a minute or a month ago. Every one-shot flag above (--help, --version,
+// --uplink-token, --mixer-show) has already returned by here, so this is start-up proper's first
+// line, before --config is even read.
+Console.WriteLine(VersionLine());
 
 // Before anything else is built: this reads a card and exits, and it deliberately works while
 // another process holds the PCM, which is the state a station's mixer is usually asked about in.
