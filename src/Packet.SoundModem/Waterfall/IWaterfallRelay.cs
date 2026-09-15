@@ -224,6 +224,14 @@ public sealed record RelayedFrame
     /// </remarks>
     public bool? SnrWorthShowing { get; init; }
 
+    /// <summary>
+    /// ARDOP's own 0-100 constellation quality for this frame
+    /// (<see cref="Modems.FrameQuality.Quality"/>), where the station's demodulator reports one.
+    /// Null from a station running a version that does not send it, and on every frame from a
+    /// mode that reports nothing on this scale, which is everything but ARDOP.
+    /// </summary>
+    public int? Quality { get; init; }
+
     /// <summary>When the station decoded it, or sent it (UTC).</summary>
     public DateTimeOffset At { get; init; }
 

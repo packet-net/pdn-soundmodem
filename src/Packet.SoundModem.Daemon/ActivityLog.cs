@@ -110,6 +110,77 @@ internal static class ActivityLog
     internal static string Dropped(int subChannel, ReadOnlySpan<byte> frame, Exception reason) =>
         $"tx[{subChannel}] DROPPED {Addresses(frame)} {frame.Length} bytes: {reason.Message}";
 
+    /// <summary>
+    /// A frame ARDOP decoded, on the terms ARDOP carries: its own frame type in place of a mode
+    /// string, its callsigns stated rather than parsed - ARDOP frames are not AX.25, so
+    /// <see cref="Ax25AddressParser"/> would print "(no ax25 header)" on every one of them - and
+    /// its own quality and signal-to-noise figures rather than the packet modems' FEC count and
+    /// frequency offset, which ARDOP has neither of.
+    /// </summary>
+    /// <remarks>
+    /// Nothing ARDOP hears or sends reached the journal before this: it demodulates inside the
+    /// virtual TNC, never raises the channel event <see cref="StationFactory.JournalReceivedFrames"/>
+    /// listens to, and until now the frames panel and the frame log knew about a receive that
+    /// journalctl said nothing about at all (issue #478).
+    /// </remarks>
+    /// <param name="subChannel">The sub-channel ARDOP is configured on.</param>
+    /// <param name="frameName">The ARDOP frame type, e.g. <c>IDFrame</c> or <c>ConReq500M</c>.</param>
+    /// <param name="from">The station stated in the frame, where it carries one.</param>
+    /// <param name="to">The station it was addressed to, where the frame type carries one.</param>
+    /// <param name="lengthBytes">The frame's payload length.</param>
+    /// <param name="decodedOk">Whether it decoded cleanly (RS/CRC verified where the type carries
+    /// them); null is not a state ARDOP reports here.</param>
+    /// <param name="quality">ARDOP's own 0-100 constellation quality, measured for every frame it
+    /// decodes.</param>
+    /// <param name="snDb">
+    /// ARDOP's own reported signal-to-noise in dB, only on the Ping and PingAck rows it is
+    /// actually computed for; null on everything else, rather than the 0 dB the underlying figure
+    /// carries when it was never measured (issue #479).
+    /// </param>
+    internal static string ArdopReceived(
+        int subChannel, string frameName, string? from, string? to, int lengthBytes,
+        bool? decodedOk, int quality, double? snDb)
+    {
+        var text = new System.Text.StringBuilder();
+        text.Append($"rx[{subChannel}] ardop {frameName} ");
+        text.Append(ArdopAddresses(from, to));
+        text.Append($" {lengthBytes} bytes");
+
+        if (decodedOk is bool ok)
+        {
+            text.Append(ok ? "  crc ok" : "  CRC BAD");
+        }
+
+        text.Append($"  q {quality}");
+
+        if (snDb is double sn)
+        {
+            text.Append($"  sn {sn:+0.0;-0.0} dB");
+        }
+
+        return text.ToString();
+    }
+
+    /// <summary>A frame this station sent over ARDOP, logged once it has actually gone out - the
+    /// ARDOP counterpart of <see cref="Transmitted"/>.</summary>
+    /// <remarks>
+    /// No quality or signal-to-noise: those are receive measurements, and ARDOP's own transmitted-
+    /// frame type carries neither - a station cannot measure its own burst, the same reason the
+    /// AX.25 <see cref="Transmitted"/> line carries no SNR or FEC count either.
+    /// </remarks>
+    internal static string ArdopTransmitted(
+        int subChannel, string frameName, string? from, string? to, int lengthBytes) =>
+        $"tx[{subChannel}] ardop {frameName} {ArdopAddresses(from, to)} {lengthBytes} bytes";
+
+    /// <summary>
+    /// <c>SOURCE&gt;DEST</c> as ARDOP states it rather than parses it, or a marker that is
+    /// honestly not a callsign where it named neither. ARDOP's connect handshake, Ping and ID
+    /// frames carry both or one of the pair in clear; a data frame belonging to someone else's
+    /// session carries neither.
+    /// </summary>
+    private static string ArdopAddresses(string? from, string? to) =>
+        from is null ? "(no callsign)" : $"{from}>{to ?? "?"}";
+
     /// <summary>A host attached to a KISS port.</summary>
     internal static string ClientConnected(int port, int? dedicatedSubChannel, KissClientEvent e) =>
         $"kiss[{port}] {Host(e.Remote)} connected - {Clients(e.Clients)}{Serving(dedicatedSubChannel)}";

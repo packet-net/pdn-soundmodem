@@ -1869,6 +1869,9 @@ function logFrame(ev) {
   const bits = [];
   bits.push(`${ev.sub}·${esc(ev.mode)}`);
   if (ev.snrDb != null) bits.push(`<i>${ev.snrDb.toFixed(1)} dB</i>`);
+  // ARDOP's own 0-100 constellation quality, beside its own dB figure: measured for every frame
+  // it decodes, unlike snrDb above which it only ever sends on a Ping or a PingAck.
+  if (ev.quality != null) bits.push(`<i title="ARDOP's own reported frame quality, 0 to 100">q ${ev.quality}</i>`);
   // Whole dB. The card's own steps are whole dB and this is a figure to act on, not to trend.
   if (ev.peakDbFs != null) {
     // Rounded here rather than with toFixed, which renders anything from -0.5 up as "-0 dBFS".

@@ -240,6 +240,15 @@ public sealed class WaterfallOptions
 /// modem supplied no confidence, and on a row logged before the column existed - all of which
 /// read as "not chased", which is the truth available and the reading that keeps a callsign.
 /// </param>
+/// <param name="Quality">
+/// ARDOP's own 0-100 constellation quality (<see cref="Modems.FrameQuality.Quality"/>). Null on
+/// every row that is not ARDOP, and on an ARDOP row logged before the column existed.
+/// </param>
+/// <param name="ArdopSnDb">
+/// ARDOP's own reported signal-to-noise in dB (<see cref="Modems.FrameQuality.ArdopSnDb"/>), only
+/// on the Ping and PingAck rows it was actually computed for. Null everywhere else, rather than
+/// the 0 dB the underlying figure carries when it was never measured (issue #479).
+/// </param>
 public sealed record LoggedFrame(
     DateTimeOffset HeardAt,
     int SubChannel,
@@ -259,7 +268,9 @@ public sealed record LoggedFrame(
     Audio.FrameLevel? Level = null,
     bool? PeakWorthShowing = null,
     int? TrailerNearBits = null,
-    int? ChasedBits = null)
+    int? ChasedBits = null,
+    int? Quality = null,
+    double? ArdopSnDb = null)
 {
     /// <summary>
     /// Whether the callsigns this row was logged with may be presented as a station
@@ -1766,6 +1777,24 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// demodulator's own measurement is better than anything the band tracker can infer from a
     /// burst that overlaps the packet slots.
     /// </remarks>
+    /// <param name="subChannel">The sub-channel the demodulator is filed under.</param>
+    /// <param name="mode">The mode the row is labelled with - ARDOP's own frame type name.</param>
+    /// <param name="from">The station sending, where the frame type names one.</param>
+    /// <param name="to">The station addressed, where the frame type names one.</param>
+    /// <param name="lengthBytes">The payload length the row reports.</param>
+    /// <param name="snrDb">
+    /// The demodulator's own signal-to-noise reading, where it has one to give: better than
+    /// anything the band tracker can infer from a burst that overlaps the packet slots.
+    /// </param>
+    /// <param name="decodedOk">Whether the frame decoded cleanly, where the demodulator judges
+    /// that.</param>
+    /// <param name="quality">
+    /// ARDOP's own 0-100 constellation quality for this frame, or null on a mode that does not
+    /// report one on this scale (issue #479). Carried separately from <paramref name="snrDb"/>:
+    /// quality is measured for every frame ARDOP decodes, while <paramref name="snrDb"/> is only
+    /// ever passed by the caller for a Ping or a PingAck, and the two would otherwise be shown as
+    /// if they answered the same question.
+    /// </param>
     public void ReportFrame(
         int subChannel,
         string mode,
@@ -1773,7 +1802,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         string? to,
         int lengthBytes,
         double? snrDb,
-        bool? decodedOk)
+        bool? decodedOk,
+        int? quality = null)
     {
         if (_source is null)
         {
@@ -1782,7 +1812,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
         BroadcastFrame(
             subChannel, mode, from, to, lengthBytes, snrDb,
-            burstLines: null, offsetHz: null, corrected: null, crc: decodedOk);
+            burstLines: null, offsetHz: null, corrected: null, crc: decodedOk, quality: quality);
     }
 
     /// <summary>
@@ -1943,7 +1973,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         bool plainIl2p = false, bool monitorOnly = false, double? txTrimHz = null,
         double? peakDbFs = null, bool? clipped = null, Audio.FrameLevel? level = null,
         bool? peakWorthShowing = null, bool? snrWorthShowing = null,
-        int? trailerNearBits = null, int? chasedBits = null, byte[]? raw = null)
+        int? trailerNearBits = null, int? chasedBits = null, byte[]? raw = null,
+        int? quality = null)
     {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -2005,6 +2036,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // the word for it. Absent is a frame with nothing to say about it, which is most of
             // them and is what "the level is fine" looks like.
             level = LevelTag(level),
+            // ARDOP's own 0-100 constellation quality, on every frame it decodes; null on every
+            // other mode, which reports nothing on this scale (#479).
+            quality,
         }, Json);
         Broadcast(WebSocketMessageType.Text, message);
 
@@ -2056,6 +2090,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 // monitor logs what this station measured and shows what this station's own page
                 // shows, without holding a copy of a rule about a decode it did not make.
                 SnrWorthShowing = snrWorthShowing,
+                // ARDOP's own quality, carried the same way: a monitor keeps its own copy of the
+                // station's frame log and this is a measurement, not a derived verdict (#479).
+                Quality = quality,
                 At = _options.TimeProvider.GetUtcNow(),
                 Raw = raw,
             });
@@ -2116,7 +2153,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             peakDbFs: frame.PeakDbFs, clipped: frame.Clipped, level: frame.Level,
             peakWorthShowing: frame.PeakWorthShowing, snrWorthShowing: frame.SnrWorthShowing,
             trailerNearBits: frame.TrailerNearBits, chasedBits: frame.ChasedBits,
-            raw: frame.Raw);
+            raw: frame.Raw, quality: frame.Quality);
 
         // The same rule OnFrame applies, for the same reason: a frame Reed-Solomon alone stood
         // behind is not evidence that the pair of callsigns in it were ever talking, so it is

@@ -132,6 +132,23 @@ namespace Packet.SoundModem.Modems;
 /// <b>The measurement is kept either way</b>: this hides a figure on a row and never a value in
 /// the frame log or on the uplink.
 /// </param>
+/// <param name="Quality">
+/// ARDOP's own 0-100 constellation quality for the frame (<c>ArdopDecodedFrame.Quality</c> in
+/// <c>M0LTE.Ardop</c>), for every frame its demodulator recovers, whether or not it decoded
+/// cleanly. Null on every other mode's frame, since nothing else in the catalogue reports a
+/// figure on this scale (issue #479).
+/// </param>
+/// <param name="ArdopSnDb">
+/// ARDOP's own reported signal-to-noise in dB, referenced to a 3 kHz noise bandwidth
+/// (<c>ArdopDecodedFrame.SnDb</c>/<c>PingAckSnDb</c>). Deliberately not <paramref name="SnrDb"/>:
+/// that field is the channel's own band-tracker reading, in-band power over a rolling minimum
+/// floor against the modem's own occupied bandwidth, and the two are not comparable without
+/// converting between reference bandwidths - the same warning <paramref name="SnrDb"/> already
+/// carries against the simulation ladder's 3 kHz reference, which this figure actually uses. Null
+/// on every frame type ARDOP does not compute one for, which is everything but a Ping (measured)
+/// and a PingAck (echoed back from the far station) - showing 0 dB there would be a claimed
+/// measurement that was never made (issue #479).
+/// </param>
 public readonly record struct FrameQuality(
     string Mode,
     int FrameBytes,
@@ -149,7 +166,9 @@ public readonly record struct FrameQuality(
     double? PeakDbFs = null,
     bool? Clipped = null,
     Packet.SoundModem.Audio.FrameLevel? Level = null,
-    bool? PeakWorthShowing = null)
+    bool? PeakWorthShowing = null,
+    int? Quality = null,
+    double? ArdopSnDb = null)
 {
     /// <summary>
     /// Whether <see cref="SnrDb"/> is a figure worth putting beside this frame on a row

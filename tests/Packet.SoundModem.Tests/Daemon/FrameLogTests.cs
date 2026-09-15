@@ -322,6 +322,69 @@ public class FrameLogTests : IDisposable
         log.RecentWithPayload(10)[0].Frame.PeakWorthShowing.Should().BeFalse();
     }
 
+    /// <summary>
+    /// ARDOP's own quality and signal-to-noise figures go into their own columns, distinct from
+    /// <c>snr_db</c>: that column is the packet modems' band-tracker reading, referenced to the
+    /// modem's own occupied bandwidth, and ARDOP's figure is referenced to a fixed 3 kHz - the two
+    /// are not the same measurement and must not share a column (#479).
+    /// </summary>
+    [Fact]
+    public async Task Ardops_Quality_And_Signal_To_Noise_Go_Into_Their_Own_Columns()
+    {
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.Record(
+                0, Frame(), new FrameQuality(
+                    "ardop", FrameBytes: 0, CorrectedBytes: null, CrcValid: true,
+                    Quality: 78, ArdopSnDb: -3.0),
+                null, null, modeName: "ARDOP IDFrame"));
+
+        rows.Should().HaveCount(1);
+        rows[0]["quality"].Should().Be(78L);
+        rows[0]["ardop_sn_db"].Should().Be(-3.0);
+        rows[0]["snr_db"].Should().BeNull(
+            "the band tracker never ran over an ARDOP frame, and ArdopSnDb is a different "
+                + "reference bandwidth from what this column means everywhere else");
+    }
+
+    /// <summary>A frame from a mode that is not ARDOP reports nothing on either of ARDOP's own
+    /// scales, so both columns stay null rather than a claimed measurement of zero.</summary>
+    [Fact]
+    public async Task A_Packet_Frame_Leaves_Ardops_Two_Columns_Null()
+    {
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.Record(0, Frame(), Quality(), null, null));
+
+        rows[0]["quality"].Should().BeNull("only ARDOP reports a figure on this scale");
+        rows[0]["ardop_sn_db"].Should().BeNull("only ARDOP reports this measurement");
+    }
+
+    /// <summary>
+    /// The backlog queries the panel opens on read ARDOP's two figures back exactly as they were
+    /// logged, the same way they already do for every other column added since (#479).
+    /// </summary>
+    [Fact]
+    public async Task The_Backlog_Reads_Ardops_Quality_And_Signal_To_Noise_Back()
+    {
+        await using FrameLog log = FrameLog.Open(DbPath, _time);
+        log.Record(
+            0, Frame(from: "GB7NOT"), new FrameQuality(
+                "ardop", FrameBytes: 0, CorrectedBytes: null, CrcValid: true,
+                Quality: 78, ArdopSnDb: -3.0),
+            null, null, modeName: "ARDOP IDFrame");
+
+        for (int i = 0; i < 100 && log.Recent(10).Count < 1; i++)
+        {
+            await Task.Delay(20);
+        }
+
+        IReadOnlyList<Packet.SoundModem.Waterfall.LoggedFrame> recent = log.Recent(10);
+        recent[0].Quality.Should().Be(78);
+        recent[0].ArdopSnDb.Should().Be(-3.0);
+
+        log.RecentWithPayload(10)[0].Frame.Quality.Should().Be(78);
+        log.RecentWithPayload(10)[0].Frame.ArdopSnDb.Should().Be(-3.0);
+    }
+
     private static FrameQuality Quality(string mode = "bpsk300-il2pc") =>
         new(mode, FrameBytes: 32, CorrectedBytes: 2, CrcValid: true,
             FrequencyOffsetHz: -3.5, EmphasisDb: null);
