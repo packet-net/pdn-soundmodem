@@ -200,6 +200,50 @@ public class ActivityLogTests
     }
 
     [Fact]
+    public void An_Ardop_Receive_Names_The_Frame_Type_The_Callsigns_And_The_Quality()
+    {
+        string line = ActivityLog.ArdopReceived(
+            2, "IDFrame", "GB7NOT-2", null, 0, decodedOk: true, quality: 78, snDb: null);
+
+        line.Should().Be("rx[2] ardop IDFrame GB7NOT-2>? 0 bytes  crc ok  q 78");
+    }
+
+    [Fact]
+    public void An_Ardop_Receive_With_No_Callsign_Says_So_Rather_Than_Inventing_One()
+    {
+        // A data frame belonging to someone else's session carries no callsign at all - not
+        // even the marker's own AX.25 address field to fall back on, because ARDOP is not AX.25.
+        string line = ActivityLog.ArdopReceived(
+            2, "0FEC64", null, null, 12, decodedOk: false, quality: 41, snDb: null);
+
+        line.Should().Contain("(no callsign)");
+        line.Should().NotMatch("*>*", "a marker that reads like a callsign pair is worse than none");
+    }
+
+    [Fact]
+    public void An_Ardop_Receives_Signal_To_Noise_Is_Shown_Only_When_Ardop_Actually_Measured_One()
+    {
+        // The live defect: ArdopDecodedFrame.SnDb is 0 on every frame that is not a Ping, and
+        // passing it straight through read as a station on the edge of the noise beside a frame
+        // that decoded perfectly (#479).
+        string ping = ActivityLog.ArdopReceived(
+            2, "Ping", "M0LTE", "GB7RDG", 12, decodedOk: true, quality: 90, snDb: -3.0);
+        string idFrame = ActivityLog.ArdopReceived(
+            2, "IDFrame", "GB7NOT", null, 0, decodedOk: true, quality: 78, snDb: null);
+
+        ping.Should().Contain("sn -3.0 dB");
+        idFrame.Should().NotContain("sn", "IDFrame never measures one, and 0 dB would be a claim");
+    }
+
+    [Fact]
+    public void An_Ardop_Transmission_Names_The_Frame_Type_And_The_Callsigns()
+    {
+        string line = ActivityLog.ArdopTransmitted(2, "ConReq500M", "M0LTE", "GB7RDG", 0);
+
+        line.Should().Be("tx[2] ardop ConReq500M M0LTE>GB7RDG 0 bytes");
+    }
+
+    [Fact]
     public void A_Kiss_Client_Line_Says_Which_Port_Which_Host_And_What_That_Port_Reaches()
     {
         var remote = new System.Net.IPEndPoint(System.Net.IPAddress.Parse("192.168.1.50"), 54312);

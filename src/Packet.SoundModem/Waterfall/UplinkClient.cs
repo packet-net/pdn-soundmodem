@@ -437,6 +437,10 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                 // checked the frame. Sent beside the measurement rather than instead of it, for
                 // the reason the peak is.
                 snrWorthShowing = frame.SnrWorthShowing,
+                // ARDOP's own 0-100 constellation quality, absent on every mode that reports
+                // nothing on this scale - which is everything but ARDOP - and on a station
+                // running a version that does not send it (#479).
+                quality = frame.Quality,
                 at = frame.At.ToUniversalTime()
                     .ToString("O", System.Globalization.CultureInfo.InvariantCulture),
                 raw = frame.Raw is null ? null : Convert.ToBase64String(frame.Raw),

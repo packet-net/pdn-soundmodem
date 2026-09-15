@@ -298,6 +298,10 @@ internal static class UplinkWire
             // and null then, which lists the figure: that is what every monitor did before this
             // field existed, and it is the honest reading of a station that has not answered.
             SnrWorthShowing = Bool(root, "snrWorthShowing"),
+            // ARDOP's own 0-100 constellation quality. Absent from a station running a version
+            // that does not send it, and null then - a row from before this field existed, listed
+            // exactly as it always was (#479).
+            Quality = Int(root, "quality"),
             // Clamped to a day either side of this site's own clock. A station is a semi-trusted
             // publisher and this is the one field of its own it could use against itself: a frame
             // dated in the year 9999 is written into the site's copy of its log and sorts above

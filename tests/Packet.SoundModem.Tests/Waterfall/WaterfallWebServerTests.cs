@@ -448,6 +448,56 @@ public class WaterfallWebServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_Reported_Frame_Carries_Ardops_Own_Quality()
+    {
+        // ARDOP measures a 0-100 constellation quality for every frame it decodes, and until
+        // #479 the panel never heard about it at all.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        _server.ReportFrame(2, "IDFrame", "GB7NOT", null, 0, snrDb: null, decodedOk: true, quality: 78);
+
+        JsonDocument? frame = null;
+        while (frame is null)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind == WebSocketMessageType.Text)
+            {
+                frame = JsonDocument.Parse(payload);
+            }
+        }
+
+        frame.RootElement.GetProperty("quality").GetInt32().Should().Be(78);
+        frame.Dispose();
+    }
+
+    [Fact]
+    public async Task A_Reported_Frame_With_No_Quality_Says_Nothing_About_It()
+    {
+        // Every mode but ARDOP: quality is absent rather than zero, which would read as the
+        // worst reading on the scale rather than as "not measured".
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        _server.ReportFrame(0, "afsk1200", "M0LTE", "GB7RDG", 22, 14.0, true);
+
+        JsonDocument? frame = null;
+        while (frame is null)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind == WebSocketMessageType.Text)
+            {
+                frame = JsonDocument.Parse(payload);
+            }
+        }
+
+        frame.RootElement.GetProperty("quality").ValueKind.Should().Be(JsonValueKind.Null);
+        frame.Dispose();
+    }
+
+    [Fact]
     public async Task A_Browser_Opens_On_The_Stations_Logged_Frames()
     {
         // A panel that starts empty says nothing about a channel that has been busy all morning,

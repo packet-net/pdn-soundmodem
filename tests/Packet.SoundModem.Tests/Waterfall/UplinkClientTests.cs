@@ -609,6 +609,49 @@ public class UplinkClientTests
     }
 
     /// <summary>
+    /// ARDOP's own 0-100 constellation quality crosses the uplink like every other measurement, so
+    /// a monitor's own copy of a station's log can carry it too (#479).
+    /// </summary>
+    [Fact]
+    public async Task Ardops_Quality_Crosses_The_Uplink_When_The_Station_Has_One()
+    {
+        var clock = new FakeTimeProvider();
+        await using var monitor = new StubMonitor();
+        await using WaterfallWebServer server = StationServer(clock);
+        await using var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
+        client.Start();
+        await Until(() => client.Publishing, "the welcome");
+
+        client.Frame(AFrame() with { Quality = 78 });
+        await Until(() => monitor.TextMessagesOfType("frame").Any(), "the frame");
+
+        monitor.TextMessagesOfType("frame").Single()
+            .GetProperty("quality").GetInt32().Should().Be(78);
+    }
+
+    /// <summary>
+    /// Absent rather than a claimed zero, on the modes that report nothing on ARDOP's scale -
+    /// which today is every mode but ARDOP.
+    /// </summary>
+    [Fact]
+    public async Task A_Frame_With_No_Quality_Sends_No_Quality_Field_At_All()
+    {
+        var clock = new FakeTimeProvider();
+        await using var monitor = new StubMonitor();
+        await using WaterfallWebServer server = StationServer(clock);
+        await using var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
+        client.Start();
+        await Until(() => client.Publishing, "the welcome");
+
+        client.Frame(AFrame());
+        await Until(() => monitor.TextMessagesOfType("frame").Any(), "the frame");
+
+        monitor.TextMessagesOfType("frame").Single()
+            .TryGetProperty("quality", out _).Should().BeFalse(
+                "an optional field the station has nothing to say about is left out, not sent null");
+    }
+
+    /// <summary>
     /// A planned stop says goodbye first, so the site's journal reads "GB7RDG-2 is shutting down"
     /// rather than "connection closed" (4.2).
     /// </summary>

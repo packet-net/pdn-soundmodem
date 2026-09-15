@@ -1923,7 +1923,10 @@ if (benchTxTest is null && ardopModem is not null)
     // successfully copies is still filed as a burst inside a configured band that nothing
     // decoded: "missed". On the live 40 m station that was 15 of 33 misses, the whole ARDOP
     // slot reading as a modem that does not work.
-    if (waterfallServer is not null || frameLog is not null || survey is not null)
+    //
+    // Wired unconditionally, not just when a waterfall, a frame log or a survey exists: the
+    // journal write below is what closes #478 and journalctl is a station's console whatever
+    // else is configured, so it must not depend on any of the three.
     {
         int ardopSub = ardopModem.SubChannel;
         double? ardopAudioHz = ardopModem.Frequency ?? ArdopChannelBridge.NativeCentreHz;
@@ -1936,12 +1939,32 @@ if (benchTxTest is null && ardopModem is not null)
             string? from = string.IsNullOrWhiteSpace(frame.Caller) ? null : frame.Caller;
             string? to = string.IsNullOrWhiteSpace(frame.Target) ? null : frame.Target;
 
+            // ARDOP measures a signal-to-noise figure for a Ping it decodes, and gets one echoed
+            // back in a PingAck; every other frame type carries a zero SnDb that was never
+            // computed. Passing that zero straight through claimed a measurement on every row
+            // that was not a Ping or a PingAck - a frame that decoded perfectly reading as a
+            // station on the edge of the noise (#479).
+            double? snDb = frame.Name switch
+            {
+                "Ping" => frame.SnDb,
+                "PingAck" => frame.PingAckSnDb,
+                _ => null,
+            };
+
+            // And into the station's journal, alongside what it heard from every other modem:
+            // nothing ARDOP heard ever reached journalctl before this, because it demodulates
+            // inside the virtual TNC rather than through the channel event the journal
+            // subscribes to (#478).
+            stationJournal.Write(ActivityLog.ArdopReceived(
+                ardopSub, frame.Name, from, to, data.Length, frame.Ok, frame.Quality, snDb));
+
             waterfallServer?.ReportFrame(
-                ardopSub, frame.Name, from, to, data.Length, frame.SnDb, frame.Ok);
+                ardopSub, frame.Name, from, to, data.Length, snDb, frame.Ok, frame.Quality);
 
             var quality = new FrameQuality(
                 "ardop", data.Length, CorrectedBytes: null, CrcValid: frame.Ok,
-                FrequencyOffsetHz: null, EmphasisDb: null);
+                FrequencyOffsetHz: null, EmphasisDb: null,
+                Quality: frame.Quality, ArdopSnDb: snDb);
 
             frameLog?.Record(
                 ardopSub, data, quality, ardopAudioHz, ardopRfHz,
@@ -1972,6 +1995,12 @@ if (benchTxTest is null && ardopModem is not null)
             // connect handshake and in ID frames, and nothing else it sends carries one.
             string? from = string.IsNullOrWhiteSpace(frame.Caller) ? null : frame.Caller;
             string? to = string.IsNullOrWhiteSpace(frame.Target) ? null : frame.Target;
+
+            // Journalled beside every other transmission this station makes, for the same
+            // reason the receive side is above: until now an ARQ session keyed the radio ten
+            // times in a row and journalctl said nothing about any of them (#478).
+            stationJournal.Write(
+                ActivityLog.ArdopTransmitted(ardopSub, frame.Name, from, to, data.Length));
 
             waterfallServer?.ReportTransmittedFrame(ardopSub, frame.Name, from, to, data.Length);
 

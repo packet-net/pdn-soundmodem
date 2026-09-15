@@ -1862,12 +1862,14 @@ Omit the section and frames come and go without being written down. One row per 
 | `offset_hz` | how far off centre the sender actually was - measured, not the diversity branch that copied it; null where the decoder could not measure it |
 | `audio_hz`, `rf_hz` | where that modem sits - `rf_hz` filled in when you have given it an `rfFrequency` |
 | `payload` | the frame itself, as a blob |
+| `quality` | [ARDOP](#ardop)'s own 0-100 constellation quality for the frame, measured for every one its demodulator recovers, whether or not it decoded cleanly. Null on every other mode, which reports nothing on this scale, and on rows from before the column existed |
+| `ardop_sn_db` | [ARDOP](#ardop)'s own reported signal-to-noise in dB, referenced to a 3 kHz noise bandwidth - **not the same figure as `snr_db` above and not comparable with it without converting**. Only computed for a Ping it measured and a PingAck echoing one back; null on every other ARDOP frame rather than the 0 dB the underlying figure carries when nothing was measured, and null on every non-ARDOP row |
 
 **On a transmitted row, `heard_at` is when it went out.** The column keeps its name because
 renaming it would silently break every query, dashboard and example already written against this
 log - an ugly name is the smaller cost, and this is the note that stops it being a surprise. A
-transmitted row also leaves `corrected`, `crc_valid`, `offset_hz`, `peak_dbfs`, `clipped`, `level`
-and `peak_shown` **null**: those are receive measurements, and filling them in for our own transmission would be
+transmitted row also leaves `corrected`, `crc_valid`, `offset_hz`, `peak_dbfs`, `clipped`, `level`,
+`peak_shown`, `quality` and `ardop_sn_db` **null**: those are receive measurements, and filling them in for our own transmission would be
 inventing a measurement of ourselves. Everything else - who to who, mode, length, where the modem sits, the payload - is
 recorded exactly as for a frame heard. A row is written once the audio has gone to the device, so
 a logged transmission is one that actually went on air.
@@ -3096,6 +3098,21 @@ tx[0] DROPPED M0LTE>GB7RDG-2 28 bytes: this station receives only
 | `fec N` | Bytes the FEC corrected. Rising counts mean the link is being carried by the FEC and is closer to the edge than a clean decode suggests |
 | `±N Hz` | Measured carrier offset - what to retune by |
 | `emph ±N dB` | Diversity banks only, and only when non-zero: the far station's TX audio is twisted |
+
+[ARDOP](#ardop) is not AX.25, and demodulates outside the modem loop above, but every receive and
+every transmission gets its own line the same way:
+
+```
+rx[2] ardop IDFrame GB7NOT-2>? 0 bytes  crc ok  q 78
+tx[2] ardop ConReq500M M0LTE>GB7RDG 0 bytes
+```
+
+| Field | Means |
+|---|---|
+| `ardop` `TYPE` | In place of a mode name: ARDOP's own frame type (`IDFrame`, `ConReq500M`, `Ping`, a data frame's own type), since with ARDOP the type is most of what the line has to say |
+| `SOURCE>DEST` | Stated, not parsed - ARDOP is not AX.25, so `Ax25AddressParser` would print `(no ax25 header)` on every row. `?` for the half a frame type does not carry (a ConReq gives both, an IDFrame only the sender); `(no callsign)` where it names neither, which is a data frame belonging to someone else's session |
+| `q N` | ARDOP's own 0-100 constellation quality, on every frame it decodes |
+| `sn ±N.N dB` | ARDOP's own reported signal-to-noise, only on a Ping it measured or a PingAck echoing one back - absent everywhere else rather than claiming a measurement that was never made |
 
 Host sessions are logged too, because a host that quietly drops its TCP connection stops passing
 traffic and - from the modem's side - looks exactly like a band that went quiet:
