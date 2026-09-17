@@ -1,6 +1,6 @@
 # pdn-soundmodem
 
-A software TNC for Linux. It turns a sound card, a FlexRadio or a public web receiver into a packet modem, talks KISS over TCP to your node or APRS software, runs every NinoTNC mode, ARDOP for Winlink and POCSAG paging, and shows the band in a browser. One daemon, no GUI, one configuration file.
+A software TNC for Linux. It turns a sound card, a FlexRadio or a public web receiver into a packet modem, talks KISS over TCP to your node or APRS software, runs every NinoTNC mode, ARDOP for Winlink and POCSAG paging, and shows the band in a browser. One daemon, a web GUI, one configuration file.
 
 ## Who it is for
 
