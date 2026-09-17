@@ -1,7 +1,7 @@
 {
   "name": "@packet-net/soundmodem",
   "version": "0.0.0-dev",
-  "description": "A sound card instead of a TNC: the pdn-soundmodem DSP core in WebAssembly, with a Web Audio graph and serial PTT, producing and consuming raw AX.25 frames in the browser.",
+  "description": "A sound card instead of a TNC: the pdn-soundmodem DSP core in WebAssembly, with a Web Audio graph and serial or CM108 GPIO PTT, producing and consuming raw AX.25 frames in the browser.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "sideEffects": false,
@@ -25,7 +25,8 @@
     "README.md"
   ],
   "scripts": {
-    "types": "tsc -p tsconfig.json"
+    "types": "tsc -p tsconfig.json",
+    "test": "node --test"
   },
   "devDependencies": {
     "typescript": "^5.7.2"
@@ -42,6 +43,8 @@
     "webassembly",
     "web-audio",
     "web-serial",
+    "webhid",
+    "cm108",
     "amateur-radio",
     "ham-radio"
   ],

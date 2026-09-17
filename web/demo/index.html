@@ -52,8 +52,8 @@
       <select id="output"><option>default</option></select>
       <label for="ptt">PTT</label>
       <div class="row">
-        <select id="ptt"><option value="none">none (VOX / receive only)</option><option value="rts">serial RTS</option><option value="dtr">serial DTR</option></select>
-        <button id="pick-serial" style="width:auto; white-space:nowrap;">Port...</button>
+        <select id="ptt"><option value="none">none (VOX / receive only)</option><option value="rts">serial RTS</option><option value="dtr">serial DTR</option><option value="cm108">CM108 GPIO3</option></select>
+        <button id="pick-ptt" style="width:auto; white-space:nowrap;">Port...</button>
       </div>
       <label for="mycall">MYCALL</label>
       <input id="mycall" value="M0LTE-1" spellcheck="false">
@@ -112,7 +112,7 @@ const esm = (spec) => `https://esm.sh/${spec}`
 const local = new URLSearchParams(location.search).has('local')
 const modemUrl = local ? '../package/src/index.js' : jsdelivr(PKG.soundmodem)
 
-const { SoundModem, SerialPtt, NoPtt, SoundModemTransport } = await import(modemUrl)
+const { SoundModem, SerialPtt, Cm108Ptt, NoPtt, SoundModemTransport } = await import(modemUrl)
 const { Ax25Listener, Callsign, decodeFrame, classify } = await import(esm(PKG.ax25))
 
 const $ = (id) => document.getElementById(id)
@@ -153,16 +153,46 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(async (stream) => {
   }
 }).catch((e) => log(`no audio access: ${e.message}`, 'err'))
 
-$('pick-serial').onclick = async () => {
+// The picker button follows the keying method: a serial port for RTS/DTR, a HID device for
+// CM108. Both have to be asked for from a click, which is why neither can happen at Start.
+const pttNeedsDevice = () => $('ptt').value !== 'none'
+$('ptt').onchange = async () => {
+  $('pick-ptt').disabled = !pttNeedsDevice()
+  $('pick-ptt').textContent = $('ptt').value === 'cm108' ? 'Device...' : 'Port...'
+  // Hand back whatever was open before picking something else, so switching method does not
+  // leave a serial port or a HID device held by a tab that is no longer using it.
+  const previous = ptt
+  ptt = NoPtt
+  try { await previous.close() } catch { /* already gone */ }
+}
+$('ptt').onchange()
+
+$('pick-ptt').onclick = async () => {
   try {
-    ptt = await SerialPtt.request({ signal: $('ptt').value === 'dtr' ? 'dtr' : 'rts' })
-    log(`PTT port opened, keying ${$('ptt').value.toUpperCase()}`, 'sys')
+    if ($('ptt').value === 'cm108') {
+      // Every report goes to the console, byte for byte, because that is what anyone bringing
+      // a new interface up needs to see. The panel gets the device lines only: it is the frame
+      // monitor, and two keying lines per transmission would bury the traffic it is there for.
+      ptt = await Cm108Ptt.request({
+        debug: (message) => {
+          console.debug(`cm108: ${message}`)
+          if (!/^(key|unkey)/.test(message)) log(`cm108: ${message}`, 'sys')
+        },
+      })
+      log('CM108 opened. Pick the same dongle for audio in and out and the station is one lead.', 'sys')
+    } else {
+      ptt = await SerialPtt.request({ signal: $('ptt').value === 'dtr' ? 'dtr' : 'rts' })
+      log(`PTT port opened, keying ${$('ptt').value.toUpperCase()}`, 'sys')
+    }
   } catch (e) { log(`PTT: ${e.message}`, 'err') }
 }
 
 $('start').onclick = async () => {
   $('start').disabled = true
   try {
+    // Say so rather than coming up silently keyless: a station that transmits into an unkeyed
+    // radio looks exactly like one whose audio levels are wrong.
+    if (pttNeedsDevice() && ptt === NoPtt) log('PTT: no device chosen yet, so nothing will be keyed.', 'err')
     const dspRate = await modem.open({
       mode: $('mode').value,
       inputDeviceId: $('input').value || undefined,

@@ -86,7 +86,15 @@ public class SourceTextTests
             // Dot-directories are tooling, not source: `.git`, and `.claude`, which is where
             // agent worktrees land and would otherwise be judged as if they were this checkout.
             // `.github` is ours and is checked.
+            //
+            // `node_modules` is somebody else's source, and it is not hypothetical: `npm ci` in
+            // web/package pulls in TypeScript, whose translated diagnostic messages carry em
+            // dashes in a dozen languages, and the whole suite then goes red naming
+            // `typescript/lib/pt-br/diagnosticMessages.generated.json`. That reads as a house
+            // style violation by whoever ran the tests last, which is the wrong person and the
+            // wrong file. It is gitignored, so it can never be ours to fix.
             if (relative.Contains($"{sep}bin{sep}") || relative.Contains($"{sep}obj{sep}")
+                || relative.Contains($"{sep}node_modules{sep}")
                 || (relative.StartsWith('.') && !relative.StartsWith(".github", StringComparison.Ordinal))
                 || Frozen.Any(f => relative.StartsWith(f, StringComparison.Ordinal)))
             {
