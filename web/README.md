@@ -44,11 +44,21 @@ the keying device both need a secure context. Chrome, Edge or Opera on desktop, 
 neither Web Serial (RTS/DTR keying) nor WebHID (CM108 GPIO keying) exists in Firefox or
 Safari, and mobile Chromium ships with both switched off.
 
-The page carries the two controls a station is actually set up with: the RX and TX level
-sliders, with a meter beside the capture one, and the TX test - two tones for a linearity
-check, or one for a carrier level or an FM deviation check by Bessel null. They are the
-station page's Mixer and TX test groups with the daemon taken out of them, in the same units,
-against the same target band. `package/README.md` has the API behind them.
+The page carries the controls a station is actually set up with: the RX and TX level sliders,
+with a meter beside the capture one, a TXDELAY slider, and the TX test - two tones for a
+linearity check, or one for a carrier level or an FM deviation check by Bessel null. Those are
+the station page's Mixer and TX test groups with the daemon taken out of them, in the same
+units, against the same target band. `package/README.md` has the API behind them.
+
+Connected mode is a C and a D beside the callsign box and a line of text under the monitor: type
+into an established session and press enter, from either end of it - a station that connects to
+you lands in the same three controls with nothing clicked.
+
+The station is remembered in the browser it was set up in: the mode, MYCALL, the peer, TXDELAY,
+both levels, which kind of PTT, and which interface. Web Serial and WebHID both let a page
+re-open a device the user has already granted, so the keying comes back on a reload without
+another prompt. It is localStorage, so it is that browser only and goes nowhere near a server;
+a private window or cleared site data simply starts fresh.
 
 The page and the package ship on separate schedules - the page deploys on a push to main, the
 package only on a release - so a control can exist here before the CDN has the code behind it.

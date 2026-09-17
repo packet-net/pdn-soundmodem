@@ -8,6 +8,9 @@
 // DOM shim below costs nothing in fidelity because nothing that matters here is a pixel.
 //
 // Usage: node demo-page.mjs [old] [--json]
+//   (no args) loads the page twice against one browser store: once with nothing remembered, where
+//            it drives every control and a whole connected-mode session, and once again to prove
+//            the station it set up comes back.
 //   `old`    strips the newest package methods off the prototype first, to prove the page degrades
 //            rather than throwing when the CDN is still serving a release behind.
 //   --json   prints everything it read off the page as well, for working out why an assert failed.
@@ -49,24 +52,52 @@ for (const tag of html.matchAll(/<(input|select|button|textarea)\s([^>]*)>/g)) {
   const id = /\bid="([^"]+)"/.exec(tag[2])
   if (!id) continue
   const value = /\bvalue="([^"]*)"/.exec(tag[2])
+  const placeholder = /\bplaceholder="([^"]*)"/.exec(tag[2])
   fromMarkup.set(id[1], {
+    // The real tag, because the page asks: a remembered value that no longer names an option
+    // reads back as "" on a select and on nothing else, and that check has to be exercised.
+    tagName: tag[1].toUpperCase(),
     value: value ? value[1] : '',
+    placeholder: placeholder ? placeholder[1] : '',
     hidden: /\bhidden(\s|=|$)/.test(tag[2]),
     disabled: /\bdisabled(\s|=|$)/.test(tag[2]),
   })
 }
 
-const byId = new Map()
+let byId = new Map()
+
+// One browser, one store, across both loads of the page - which is the whole point: what the
+// first load remembers is what the second one has to come back with.
+const stored = new Map()
+Object.defineProperty(globalThis, 'localStorage', { configurable: true, writable: true, value: {
+  getItem: (k) => (stored.has(k) ? stored.get(k) : null),
+  setItem: (k, v) => stored.set(k, String(v)),
+  removeItem: (k) => stored.delete(k),
+  clear: () => stored.clear(),
+} })
 
 function makeElement(tag = 'div', id = '') {
   const node = {
     tagName: tag.toUpperCase(), id, className: '', textContent: '', innerHTML: '',
-    value: '', disabled: false, hidden: false, title: '', style: {}, children: [],
-    scrollTop: 0, scrollHeight: 0,
+    value: '', disabled: false, hidden: false, title: '', placeholder: '', style: {}, children: [],
+    scrollTop: 0, scrollHeight: 0, listeners: {},
     append(...nodes) { for (const n of nodes) this.children.push(n) },
     appendChild(n) { this.children.push(n); return n },
     remove() {},
+    focus: noop,
     setAttribute: noop, getAttribute: () => null,
+    // Real, because the page saves what you changed through these while the on* properties are
+    // claimed by what the control actually does. A shim that dropped them would lose every write
+    // to the browser store and the restore test would pass against nothing.
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn) },
+    removeEventListener(type, fn) {
+      const at = (this.listeners[type] || []).indexOf(fn)
+      if (at >= 0) this.listeners[type].splice(at, 1)
+    },
+    fire(type, event = {}) {
+      this[`on${type}`]?.(event)
+      for (const fn of this.listeners[type] || []) fn(event)
+    },
     querySelector(selector) {
       const want = /option\[value="([^"]+)"\]/.exec(selector)
       return want ? this.children.find((c) => c.value === want[1]) ?? makeElement('option') : null
@@ -75,9 +106,11 @@ function makeElement(tag = 'div', id = '') {
     get childElementCount() { return this.children.length },
     click() { this.onclick?.({ preventDefault: noop }) },
     /** What a browser does when the operator drags a slider: set, then fire. */
-    drag(to) { this.value = String(to); this.oninput?.() },
-    /** And when they pick from a select. */
-    pick(to) { this.value = String(to); this.onchange?.() },
+    drag(to) { this.value = String(to); this.fire('input') },
+    /** And when they pick from a select, or commit a text box. */
+    pick(to) { this.value = String(to); this.fire('change') },
+    /** And when they type a line and press a key. */
+    type(text, key = 'Enter') { this.value = text; this.fire('input'); return this.onkeydown?.({ key }) },
   }
   node.classList = classListFor(node)
   return node
@@ -155,6 +188,18 @@ globalThis.AudioWorkletNode = class extends FakeNode {
   constructor(ctx) { super(); ctx.worklet = this; this.port = { onmessage: null, close: noop } }
 }
 
+// A serial interface the browser has already been granted. requestPort is the picker and it
+// prompts; getPorts lists what has been granted already and does not - and that difference is
+// the whole of the remembered-interface feature.
+const fakePort = {
+  opens: 0,
+  signals: [],
+  getInfo: () => ({ usbVendorId: 0x0403, usbProductId: 0x6001 }),
+  async open() { this.opens++ },
+  async setSignals(s) { this.signals.push(s) },
+  async close() {},
+}
+
 // Node ships a read-only navigator of its own, so the shim is defined over it rather than
 // assigned to it.
 Object.defineProperty(globalThis, 'navigator', { configurable: true, writable: true, value: {
@@ -165,8 +210,12 @@ Object.defineProperty(globalThis, 'navigator', { configurable: true, writable: t
       { kind: 'audiooutput', deviceId: 'spk-1', label: 'USB PnP Sound Device' },
     ],
   },
-  // No Web Serial and no WebHID, which is the honest state of this process and is also what the
-  // page has to cope with in Firefox. PTT stays on "none" throughout.
+  serial: {
+    requestPort: async () => fakePort,
+    getPorts: async () => [fakePort],
+  },
+  // No WebHID, which is the honest state of this process and is what the page has to cope with
+  // in Firefox: the CM108 option is there and simply cannot be picked.
 } })
 
 // ---------------------------------------------------------------- run the page's own script
@@ -190,12 +239,52 @@ if (pretendOld) {
   }
 }
 
-const scratch = path.join(demoDir, `.demo-probe-${process.pid}.mjs`)
-writeFileSync(scratch, script)
-try {
-  await import(pathToFileURL(scratch).href)
-} finally {
-  unlinkSync(scratch)
+// A connected-mode session, without one. The AX.25 stack is somebody else's and two-stations.mjs
+// already drives it over this modem for real; what is untested until here is the PAGE's half -
+// that Enter writes the line, that D tears the link down, and that the three controls follow the
+// session whichever end started it and whenever it goes away. So the listener's connect is
+// replaced with one that hands back something that records what it was asked to do.
+let established = null
+class FakeSession {
+  constructor(to) {
+    this.to = to
+    this.written = []
+    this.disconnected = false
+    established = this
+  }
+
+  onData(callback) { this.deliver = callback }
+  onDisconnected(callback) { this.ended = callback }
+  async write(bytes) { this.written.push(new TextDecoder().decode(bytes)) }
+  async disconnect() { this.disconnected = true; this.ended?.() }
+  /** The peer hanging up, or the retry limit running out: the page must react the same way. */
+  dropped() { this.ended?.() }
+}
+
+const { Ax25Listener } = await import(ax25)
+const realConnect = Ax25Listener.prototype.connect
+Ax25Listener.prototype.connect = async function connect(to) {
+  if (String(to).startsWith('NOPE')) throw new Error('retry limit reached')
+  return new FakeSession(String(to))
+}
+let acceptInbound = null
+const realOnSessionAccepted = Ax25Listener.prototype.onSessionAccepted
+Ax25Listener.prototype.onSessionAccepted = function onSessionAccepted(callback) {
+  acceptInbound = callback
+  return realOnSessionAccepted.call(this, callback)
+}
+
+/** Loads the page into a fresh DOM. The browser store is deliberately NOT cleared between loads. */
+let loads = 0
+async function loadPage() {
+  byId = new Map()
+  const scratch = path.join(demoDir, `.demo-probe-${process.pid}-${loads++}.mjs`)
+  writeFileSync(scratch, script)
+  try {
+    await import(pathToFileURL(scratch).href)
+  } finally {
+    unlinkSync(scratch)
+  }
 }
 
 // ---------------------------------------------------------------- drive it
@@ -213,20 +302,32 @@ async function waitFor(what, why, ms = 4000) {
   }
   throw new Error(`gave up waiting for ${why}`)
 }
+
+const lines = () => $('log').children.map((c) => c.textContent)
 const report = { old: pretendOld }
 
+// ============================== first load: a browser that has never seen this page ==========
+await loadPage()
 await settle()
 report.modes = $('mode').children.length
 report.mode = $('mode').value
 report.banner = $('banner').textContent
 report.inputs = $('input').children.map((o) => o.textContent)
+report.peerDefault = $('peer').value
+report.peerPlaceholder = $('peer').placeholder
+report.txdelayDefault = $('txdelayRead').textContent
+report.sessionControls = {
+  connect: $('connect').disabled, disconnect: $('disconnect').disabled, line: $('line').disabled,
+}
 
-// Levels, before the modem is even open: the package keeps the dB and applies it when the graph
-// is built, so a station can be set up and then started.
+// Levels and TXDELAY, before the modem is even open: the package keeps them and applies them
+// when the graph is built.
 $('rxgain').drag(6)
 $('txgain').drag(-12)
+$('txdelay').drag(500)
 report.rxRead = $('rxgainRead').textContent
 report.txRead = $('txgainRead').textContent
+report.txdelayRead = $('txdelayRead').textContent
 report.levelNote = $('levelNote').textContent
 report.levelsDisabled = $('rxgain').disabled && $('txgain').disabled
 
@@ -238,32 +339,43 @@ report.hzHiddenForPreset = $('ttHz').hidden
 $('ttKind').pick('tone')
 report.hzShownForFreeTone = !$('ttHz').hidden
 $('ttHz').value = '1500'
-$('ttHz').oninput?.()
+$('ttHz').fire('input')
 report.freeToneSays = $('ttWhat').textContent
+
+// Set the station up, as an operator would, so the second load has something to restore.
+$('mycall').pick('M0LTE-7')
+$('peer').pick('GB7XYZ-1')
+$('mode').pick('qpsk2400')
+$('ptt').pick('rts')
+await $('pick-ptt').onclick()
+await settle()
+report.picked = { opens: fakePort.opens, unkeyed: fakePort.signals.length > 0 }
+report.remembered = JSON.parse(stored.get('pdn-soundmodem-demo') || '{}')
 
 $('start').click()
 await settle(60)
-report.startLog = $('log').children.map((c) => c.textContent).filter((t) => /running|PTT|core loaded/.test(t))
+report.startLog = lines().filter((t) => /running|PTT|core loaded/.test(t))
 report.txTestEnabled = !$('ttGo').disabled
+report.connectEnabledAfterStart = !$('connect').disabled
 
 if (!pretendOld) {
   // The gains reached the graph, either side of the core.
   report.rxGainLinear = +context.worklet.inputs[0].gain.value.toFixed(3)
   report.txGainLinear = +context.destination.inputs[0].gain.value.toFixed(3)
 
-  // A block of audio arrives; the meter reads it.
+  // A block of audio arrives; the meter reads it. Then a clipped one.
   context.worklet.port.onmessage({ data: { block: new Float32Array(8), peak: 0.125, rms: 0.05 } })
   await settle(150)
   report.meterRead = $('meterRead').textContent
-  report.meterWidth = $('meterBar').style.width
   report.meterQuiet = $('meterBar').className
-
-  // And a clipped one.
   context.worklet.port.onmessage({ data: { block: new Float32Array(8), peak: 1, rms: 0.8 } })
   await settle(150)
   report.clipLit = $('clip').className
 
-  // A two-tone test, run to its end.
+  // ---- the TX test -------------------------------------------------------------------------
+  // The one control here that puts a signal on the air on purpose, so it is the one that most
+  // needs watching: that it keys, that Stop takes it off, and that a tone the modem will not
+  // send is refused before the radio is keyed to find out.
   $('ttKind').pick('two')
   $('ttSecs').value = '3'
   $('ttGo').click()
@@ -271,12 +383,14 @@ if (!pretendOld) {
   report.whileRunning = { text: $('ttGo').textContent, amber: $('ttGo').className, says: $('ttWhat').textContent }
   await waitFor(() => context.playing, 'the test to reach the air')
   report.keyed = [...log]
+  // The burst is the length asked for, behind the TXDELAY the slider is set to.
   report.burstSeconds = +(context.playing.buffer.duration).toFixed(2)
   context.playing.finish()
   await waitFor(() => $('ttGo').textContent === 'Send', 'the button to come back')
   report.afterRunning = { text: $('ttGo').textContent, amber: $('ttGo').className, says: $('ttWhat').textContent }
 
-  // And one stopped part way through.
+  // And one stopped part way through, which says how much of it went out rather than how much
+  // was asked for.
   log.length = 0
   context.playing = null
   $('ttSecs').value = '30'
@@ -287,7 +401,7 @@ if (!pretendOld) {
   await waitFor(() => $('ttGo').textContent === 'Send', 'the stop to take effect')
   report.stopped = $('ttWhat').textContent
 
-  // A tone the modem will not send is refused before anything is keyed.
+  // A tone the modem will not send is refused, and nothing is keyed to find that out.
   log.length = 0
   context.playing = null
   $('ttKind').pick('tone')
@@ -296,22 +410,117 @@ if (!pretendOld) {
   await settle(200)
   report.refused = $('ttWhat').textContent
   report.refusedKeyed = [...log]
-} else {
+
+  // ---- the session -------------------------------------------------------------------------
+  // Connecting with nothing in the box asks the operator rather than dialling a blank callsign.
+  $('peer').value = ''
+  $('connect').click()
+  await settle()
+  report.emptyPeer = lines().at(-1)
+
+  // A connect that is refused leaves the button usable rather than stranding the page.
+  $('peer').pick('NOPE-1')
+  $('connect').click()
+  await settle(40)
+  report.refusedConnect = { says: lines().at(-1), canRetry: !$('connect').disabled }
+
+  $('peer').pick('GB7XYZ-1')
+  $('connect').click()
+  await waitFor(() => established, 'the session')
+  await settle(20)
+  report.connected = {
+    connect: $('connect').disabled, disconnect: $('disconnect').disabled,
+    line: $('line').disabled, placeholder: $('line').placeholder, says: lines().at(-1),
+  }
+
+  // A line typed into the session goes out CR-terminated and is echoed once it has been taken.
+  await $('line').type('hello from a browser')
+  await settle(20)
+  report.sent = established.written
+  report.echoed = lines().at(-1)
+  report.boxCleared = $('line').value
+
+  // What comes back is turned from CR into newlines for the pane.
+  established.deliver(new TextEncoder().encode('de GB7XYZ-1\rgo ahead\r'))
+  report.received = lines().at(-1)
+
+  // A key that is not Enter does not transmit.
+  await $('line').type('half typed', 'a')
+  report.notSentOnEveryKey = established.written.length
+
+  // D tears it down and puts the three controls back.
+  $('line').value = ''
+  $('disconnect').click()
+  await waitFor(() => established.disconnected, 'the disconnect')
+  await settle(20)
+  report.afterDisconnect = {
+    connect: $('connect').disabled, disconnect: $('disconnect').disabled,
+    line: $('line').disabled, torn: established.disconnected,
+  }
+
+  // A station connecting to US gets the same three controls, with nothing clicked.
+  const inbound = new FakeSession('M0ABC-2')
+  acceptInbound(inbound)
+  await settle(20)
+  report.inbound = {
+    says: lines().find((t) => /connected by M0ABC-2/.test(t)),
+    line: $('line').disabled, disconnect: $('disconnect').disabled,
+  }
+
+  // A second caller does not move the box out from under the line being typed.
+  acceptInbound(new FakeSession('M0DEF-3'))
+  await settle(20)
+  report.secondCaller = { says: lines().at(-1), stillWith: $('line').placeholder }
+
+  // And a link that goes away on its own puts the page back exactly as D would.
+  inbound.dropped()
+  await settle(20)
+  report.afterPeerHungUp = {
+    line: $('line').disabled, disconnect: $('disconnect').disabled, connect: $('connect').disabled,
+  }
+}
+
+if (pretendOld) {
+  // The only two lines the degraded page has to get right: what it cannot drive, and why.
   report.txTestSays = $('ttWhat').textContent
+  report.levelNote = $('levelNote').textContent
+}
+
+// ============================== second load: the station comes back ==========================
+if (!pretendOld) {
+  await loadPage()
+  await settle(60)
+  report.restored = {
+    mode: $('mode').value, mycall: $('mycall').value, peer: $('peer').value,
+    ptt: $('ptt').value, rxgain: $('rxgain').value, txgain: $('txgain').value,
+    txdelay: $('txdelay').value,
+  }
+  report.restoredReads = {
+    rx: $('rxgainRead').textContent, tx: $('txgainRead').textContent,
+    txdelay: $('txdelayRead').textContent,
+  }
+  // Reopened without a prompt: requestPort was never called on this load, getPorts was.
+  report.reopened = { opens: fakePort.opens, says: lines().find((t) => /reopened/.test(t)) }
 }
 
 if (asJson) console.log(JSON.stringify(report, null, 2))
+Ax25Listener.prototype.connect = realConnect
 
 // ---------------------------------------------------------------- what all that has to add up to
 assert.ok(report.modes > 30, 'the mode list is populated from the core')
-assert.equal(report.mode, 'afsk1200')
 assert.match(report.banner, /working tree, \d+ modes, ready/)
 assert.deepEqual(report.inputs, ['USB PnP Sound Device'], 'devices appear once access is granted')
-assert.ok(report.startLog.some((line) => /afsk1200 running/.test(line)), 'the modem opened')
+assert.ok(report.startLog.some((line) => /running/.test(line)), 'the modem opened')
+
+// No default peer. The station that used to be here is a real node, and a page that arrives
+// pointed at somebody's BBS eventually connects to it by accident.
+assert.equal(report.peerDefault, '', 'no callsign is dialled in by default')
+assert.match(report.peerPlaceholder, /callsign/)
+
+// The three session controls are dead until there is a session.
+assert.deepEqual(report.sessionControls, { connect: true, disconnect: true, line: true })
 
 if (pretendOld) {
-  // A CDN one release behind: the controls are dead and say which version is wanted, and nothing
-  // on the page threw on the way to that state.
   assert.equal(report.levelsDisabled, true, 'the sliders are disabled, not merely inert')
   assert.match(report.levelNote, /Levels needs a newer soundmodem than/)
   assert.match(report.txTestSays, /The TX test needs a newer soundmodem than/)
@@ -319,14 +528,16 @@ if (pretendOld) {
   console.log('demo page, against a package one release behind: '
     + 'both controls disabled and saying so, nothing thrown')
 } else {
-  // Levels, set before the modem was opened and applied when the graph was built.
+  // Levels and TXDELAY, set before the modem was opened and applied when the graph was built.
   assert.equal(report.rxRead, '+6.0 dB')
   assert.equal(report.txRead, '-12.0 dB')
+  assert.equal(report.txdelayDefault, '300 ms')
+  assert.equal(report.txdelayRead, '500 ms')
   assert.equal(report.rxGainLinear, 1.995, '+6 dB reached the node before the core')
   assert.equal(report.txGainLinear, 0.251, '-12 dB reached the node before the output')
   assert.match(report.levelNote, /peak in the green, -18 to -9 dBFS/)
 
-  // The meter, on a block that is in the target zone and then on one that clipped.
+  // The meter, on a block in the target zone and then on one that clipped.
   assert.equal(report.meterRead, '-18.1 dBFS')
   assert.equal(report.meterQuiet, '', 'a signal in the zone is neither quiet nor hot')
   assert.equal(report.clipLit, 'lit', 'and a clip latches')
@@ -342,29 +553,64 @@ if (pretendOld) {
   ])
   assert.equal(report.presetSays, 'FM null at 3.00 kHz deviation')
   assert.equal(report.hzHiddenForPreset, true, 'a preset carries its own frequency')
-  assert.equal(report.hzShownForFreeTone, true)
   assert.equal(report.freeToneSays, 'FM null at 3.61 kHz deviation')
 
-  // A test run to its end.
+  // The TX test: keyed, stopped, refused.
   assert.equal(report.whileRunning.text, 'Stop')
   assert.equal(report.whileRunning.amber, 'on')
   assert.equal(report.whileRunning.says, 'two-tone 700+1900 Hz, 3.0 s, peak level 0.80')
   assert.deepEqual(report.keyed, ['audio on'])
-  assert.equal(report.burstSeconds, 3.3, '3 s of tone behind 300 ms of TXDELAY silence')
+  // 3 s of tone behind the 500 ms TXDELAY the slider was dragged to, which is the slider
+  // reaching the transmit path rather than only the readout beside it.
+  assert.equal(report.burstSeconds, 3.5)
   assert.equal(report.afterRunning.text, 'Send')
-  assert.equal(report.afterRunning.amber, '')
   assert.match(report.afterRunning.says, /done, 3\.0 s on air$/)
-
-  // And one stopped part way through, which says how much of it went out rather than how much
-  // was asked for.
-  assert.match(report.stopped, /stopped after 2\.\d s$/)
-
-  // A tone the modem will not send is refused before anything is keyed.
+  assert.match(report.stopped, /stopped after 1\.\d s$/)
   assert.match(report.refused, /a test tone must be between 50 Hz/)
   assert.deepEqual(report.refusedKeyed, [], 'and the radio was not keyed to find that out')
 
-  console.log(`demo page: ${report.modes} modes, levels reach the graph either side of the core, `
-    + 'meter reads and latches a clip, and the TX test keys, stops and refuses as it should')
+  // The session.
+  assert.match(report.emptyPeer, /put a callsign in the box first/)
+  assert.match(report.refusedConnect.says, /connect failed: retry limit reached/)
+  assert.equal(report.refusedConnect.canRetry, true, 'a refusal leaves C clickable')
+  assert.deepEqual(
+    { connect: report.connected.connect, disconnect: report.connected.disconnect, line: report.connected.line },
+    { connect: true, disconnect: false, line: false },
+    'connected: C is out, D and the line box are in')
+  assert.match(report.connected.placeholder, /type a line to GB7XYZ-1/)
+  assert.match(report.connected.says, /connected to GB7XYZ-1/)
+
+  // CR, not LF: that is what a keyboard-to-keyboard line has ended with since packet began.
+  assert.deepEqual(report.sent, ['hello from a browser\r'])
+  assert.equal(report.echoed, 'hello from a browser', 'echoed once the session had taken it')
+  assert.equal(report.boxCleared, '', 'and the box is cleared for the next line')
+  assert.equal(report.received, 'de GB7XYZ-1\ngo ahead\n', 'CR comes back as newlines')
+  assert.equal(report.notSentOnEveryKey, 1, 'only Enter transmits')
+
+  assert.deepEqual(report.afterDisconnect,
+    { connect: false, disconnect: true, line: true, torn: true })
+
+  // Connected TO, with nothing clicked.
+  assert.ok(report.inbound.says, 'an inbound session is announced')
+  assert.deepEqual({ line: report.inbound.line, disconnect: report.inbound.disconnect },
+    { line: false, disconnect: false })
+  assert.match(report.secondCaller.says, /also connected; the line box stays with M0ABC-2/)
+  assert.match(report.secondCaller.stillWith, /M0ABC-2/, 'the box did not move mid-line')
+  assert.deepEqual(report.afterPeerHungUp, { line: true, disconnect: true, connect: false },
+    'a peer hanging up puts the page back exactly as D would')
+
+  // And the station comes back on a reload.
+  assert.deepEqual(report.restored, {
+    mode: 'qpsk2400', mycall: 'M0LTE-7', peer: 'GB7XYZ-1', ptt: 'rts',
+    rxgain: '6', txgain: '-12', txdelay: '500',
+  })
+  assert.deepEqual(report.restoredReads, { rx: '+6.0 dB', tx: '-12.0 dB', txdelay: '500 ms' })
+  assert.equal(report.reopened.opens, 2, 'the granted port was reopened without the picker')
+  assert.match(report.reopened.says, /PTT port reopened, keying RTS/)
+
+  console.log(`demo page: ${report.modes} modes, levels and TXDELAY reach the graph, the meter `
+    + 'latches a clip, the TX test keys and refuses as it should, a session connects, types, '
+    + 'disconnects and comes back inbound, and the whole station is remembered across a reload')
 }
 
 // setInterval(paint) keeps the page's clock running, as it does in a tab, so say when to stop.
