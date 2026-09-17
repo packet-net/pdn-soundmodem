@@ -186,12 +186,21 @@ $('start').onclick = async () => {
   }
 }
 
+// A decoded frame's address slots are Ax25Address records - a Callsign plus the C/H and
+// end-of-address bits - so it is the callsign inside that has a text form. Stringify the slot
+// itself and every line reads "[object Object]>[object Object]". On a digipeater slot the C/H
+// bit is has-been-repeated, which the usual monitor notation marks with a trailing '*'.
+const addr = (slot, repeated = false) =>
+  `${slot.callsign}${repeated && slot.crhBit ? '*' : ''}`
+
 // Every decoded frame reaches the monitor whether or not the session layer wanted it.
 const describe = (frame, kind) => {
   try {
-    const digis = frame.digipeaters?.length ? ',' + frame.digipeaters.map(String).join(',') : ''
+    const digis = frame.digipeaters?.length
+      ? ',' + frame.digipeaters.map((d) => addr(d, true)).join(',')
+      : ''
     const info = frame.info?.length ? new TextDecoder().decode(frame.info).replace(/\r/g, '\n') : ''
-    log(`${frame.source}>${frame.destination}${digis} <${classify(frame)}>\n${info}`, kind)
+    log(`${addr(frame.source)}>${addr(frame.destination)}${digis} <${classify(frame)}>\n${info}`, kind)
   } catch { log('(unparsable frame)', 'err') }
 }
 
