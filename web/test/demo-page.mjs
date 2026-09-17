@@ -261,11 +261,34 @@ class FakeSession {
   dropped() { this.ended?.() }
 }
 
-const { Ax25Listener } = await import(ax25)
+// The monitor's own feed. The page subscribes to it with modem.onFrame, and the only way to put
+// a frame in front of that from out here is to keep hold of the callback it registers.
+//
+// Every subscriber is collected, not just the last, because there are two: the page's monitor
+// pane, registered while the module is evaluating, and the transport's, registered at Start when
+// the listener starts. Keeping only the most recent one handed these frames to the AX.25 stack
+// instead of the monitor, and the stack - which has no session for a callsign the probe made up
+// - answered every one with a DM. The page's are the ones that exist before Start.
+const { SoundModem } = await import('../package/src/index.js')
+let frameSinks = []
+let monitorSinks = []
+const realOnFrame = SoundModem.prototype.onFrame
+SoundModem.prototype.onFrame = function onFrame(callback) {
+  frameSinks.push(callback)
+  return realOnFrame.call(this, callback)
+}
+
+const { Ax25Listener, encodeFrame, iFrame, ui, Callsign } = await import(ax25)
 const realConnect = Ax25Listener.prototype.connect
 Ax25Listener.prototype.connect = async function connect(to) {
   if (String(to).startsWith('NOPE')) throw new Error('retry limit reached')
-  return new FakeSession(String(to))
+  const built = new FakeSession(String(to))
+  // Exactly what the real listener does on DL_CONNECT_confirm: raise the accepted hook, and
+  // THEN resolve with the same session. That ordering is the whole of the bug this pins - a page
+  // that treats the hook as "somebody called us" wires an outbound dial twice and prints every
+  // line the far end sends twice. Reproduce it here or the assertions below pass against nothing.
+  acceptInbound?.(built)
+  return built
 }
 let acceptInbound = null
 const realOnSessionAccepted = Ax25Listener.prototype.onSessionAccepted
@@ -278,6 +301,7 @@ Ax25Listener.prototype.onSessionAccepted = function onSessionAccepted(callback) 
 let loads = 0
 async function loadPage() {
   byId = new Map()
+  frameSinks = []
   const scratch = path.join(demoDir, `.demo-probe-${process.pid}-${loads++}.mjs`)
   writeFileSync(scratch, script)
   try {
@@ -285,6 +309,9 @@ async function loadPage() {
   } finally {
     unlinkSync(scratch)
   }
+  // Whatever subscribed while the module was evaluating is the page's monitor pane; the
+  // transport's subscription comes later, at Start.
+  monitorSinks = [...frameSinks]
 }
 
 // ---------------------------------------------------------------- drive it
@@ -411,6 +438,20 @@ if (!pretendOld) {
   report.refused = $('ttWhat').textContent
   report.refusedKeyed = [...log]
 
+  // ---- the monitor and the conversation, which must not print the same text twice ----------
+  // The bug this pins was found on air against GB7RDG: an outbound session arrives at
+  // onSessionAccepted AND as the resolved connect, so it was wired twice and every line the far
+  // end sent was printed twice - three times with the monitor's own copy of the payload on top.
+  // The transcript below is that QSO, reduced to the two frames that carried text.
+  const hear = (frame) => {
+    const bytes = encodeFrame(frame)
+    for (const sink of monitorSinks) sink(bytes)
+  }
+  const iFrameBetween = (from, to, text) => iFrame({
+    source: Callsign.parse(from), destination: Callsign.parse(to),
+    nr: 0, ns: 0, info: new TextEncoder().encode(text),
+  })
+
   // ---- the session -------------------------------------------------------------------------
   // Connecting with nothing in the box asks the operator rather than dialling a blank callsign.
   $('peer').value = ''
@@ -433,6 +474,9 @@ if (!pretendOld) {
     line: $('line').disabled, placeholder: $('line').placeholder, says: lines().at(-1),
   }
 
+  // Exactly one announcement, and exactly one set of handlers, however the session arrived.
+  report.announcements = lines().filter((t) => /^connected (to|by) GB7XYZ-1$/.test(t))
+
   // A line typed into the session goes out CR-terminated and is echoed once it has been taken.
   await $('line').type('hello from a browser')
   await settle(20)
@@ -443,6 +487,34 @@ if (!pretendOld) {
   // What comes back is turned from CR into newlines for the pane.
   established.deliver(new TextEncoder().encode('de GB7XYZ-1\rgo ahead\r'))
   report.received = lines().at(-1)
+
+  // The same text arriving as a frame the monitor also hears: the header is drawn, the payload
+  // is not, because the conversation above has already printed it. This is the line that used to
+  // appear a second time.
+  const before = $('log').children.length
+  hear(iFrameBetween('GB7XYZ-1', 'M0LTE-7', 'Welcome to GB7XYZ. Type ? for Help\r'))
+  report.sessionFrameInMonitor = lines().slice(before)
+
+  // Our own transmission, traced back through the same monitor: header only again, because the
+  // echo of what was typed has already shown the text.
+  const beforeTx = $('log').children.length
+  hear(iFrameBetween('M0LTE-7', 'GB7XYZ-1', 'info\r'))
+  report.ownFrameInMonitor = lines().slice(beforeTx)
+
+  // A supervisory frame carries no text at all, and used to draw an empty line under itself.
+  const beforeRr = $('log').children.length
+  hear(iFrameBetween('GB7XYZ-1', 'M0LTE-7', ''))
+  report.emptyFrameInMonitor = lines().slice(beforeRr)
+
+  // Everything else on the channel still shows what it is carrying - a soundcard modem hears the
+  // whole channel and a QSO is no reason to stop reading it.
+  const beforeUi = $('log').children.length
+  hear(ui({
+    source: Callsign.parse('M0ZZZ-9'), destination: Callsign.parse('BEACON'),
+    info: new TextEncoder().encode('somebody else beaconing'),
+  }))
+  hear(iFrameBetween('M0ABC-1', 'M0DEF-2', 'two other stations talking'))
+  report.otherTrafficInMonitor = lines().slice(beforeUi)
 
   // A key that is not Enter does not transmit.
   await $('line').type('half typed', 'a')
@@ -569,7 +641,9 @@ if (pretendOld) {
   assert.match(report.refused, /a test tone must be between 50 Hz/)
   assert.deepEqual(report.refusedKeyed, [], 'and the radio was not keyed to find that out')
 
-  // The session.
+  // The session. One announcement for one link, however many times the listener offers it.
+  assert.deepEqual(report.announcements, ['connected to GB7XYZ-1'],
+    'an outbound dial is announced once, and as "to" rather than "by"')
   assert.match(report.emptyPeer, /put a callsign in the box first/)
   assert.match(report.refusedConnect.says, /connect failed: retry limit reached/)
   assert.equal(report.refusedConnect.canRetry, true, 'a refusal leaves C clickable')
@@ -586,6 +660,19 @@ if (pretendOld) {
   assert.equal(report.boxCleared, '', 'and the box is cleared for the next line')
   assert.equal(report.received, 'de GB7XYZ-1\ngo ahead\n', 'CR comes back as newlines')
   assert.equal(report.notSentOnEveryKey, 1, 'only Enter transmits')
+
+  // The monitor draws the session's frames without their text, because the conversation has it.
+  assert.deepEqual(report.sessionFrameInMonitor, ['GB7XYZ-1>M0LTE-7 <I>'],
+    'a session frame is one header line, not a header and a second copy of the QSO')
+  assert.deepEqual(report.ownFrameInMonitor, ['M0LTE-7>GB7XYZ-1 <I>'],
+    'and so is our own, which the echo has already shown')
+  assert.deepEqual(report.emptyFrameInMonitor, ['GB7XYZ-1>M0LTE-7 <I>'],
+    'a frame with no text draws no empty line under itself')
+  // But the channel is still the channel.
+  assert.deepEqual(report.otherTrafficInMonitor, [
+    'M0ZZZ-9>BEACON <UI>\nsomebody else beaconing',
+    'M0ABC-1>M0DEF-2 <I>\ntwo other stations talking',
+  ], 'traffic that is not this session still shows what it is carrying')
 
   assert.deepEqual(report.afterDisconnect,
     { connect: false, disconnect: true, line: true, torn: true })

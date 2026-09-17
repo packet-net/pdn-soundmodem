@@ -17,6 +17,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the scope step below diffs against the commit this push started from
       # A filename legal on Linux but not on Windows (`: ? * < > | "`) does not merely
       # inconvenience Windows users - it makes the whole repository impossible to check out
       # there. `git pull` aborts the entire tree update with "invalid path" and the clone stays
@@ -30,6 +32,40 @@ jobs:
             echo "$bad"
             exit 1
           fi
+      # How much of this run is worth doing. A change to the demo page, the npm package's
+      # JavaScript, the docs or a README cannot reach anything the .NET build compiles or the
+      # .deb ships - nothing in this job reads those paths except the house-style tests, which
+      # read every file we author and so run either way.
+      #
+      # Worth it because of what the split costs: on the last green run the whole job was 8m36s,
+      # of which restore and build were 35 seconds and the rest was the suite (5m05s), the
+      # aspiration scoreboard (49s) and the .deb smoke build (2m07s). These runners take one job
+      # at a time, so every one of those minutes is also a minute the next job spends queued -
+      # which is how a one-line HTML edit ended up holding up a release.
+      #
+      # web/modem and web/parity are deliberately NOT in the light list: they are C# and, the day
+      # one of them joins the solution, this filter is already right about them.
+      - name: Decide how much of this run is needed
+        id: scope
+        run: |
+          set -euo pipefail
+          before="${{ github.event.before }}"
+          if [ "${{ github.event_name }}" != "push" ] || [ -z "$before" ] \
+             || [ "$before" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$before^{commit}" 2> /dev/null; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "no usable base for a diff, so running everything"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$before" "${{ github.sha }}")"
+          echo "changed since $before:"; echo "$changed"
+          if grep -qvE '^(web/(demo|test|package)/|docs/)|\.md$' <<< "$changed"; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "full=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::nothing here reaches the .NET build - house style is checked, the suite, the scoreboard and the .deb are skipped"
+          fi
+
       # The xUnit v3 / MTP test apphosts (OutputType=Exe) resolve the runtime via
       # DOTNET_ROOT; the runner's distro dotnet lives outside the apphost's default
       # search paths (/usr/share/dotnet, /etc/dotnet/install_location), so register
@@ -47,11 +83,21 @@ jobs:
         run: dotnet restore --no-http-cache
       - name: Build
         run: dotnet build --configuration Release --no-restore
+      # House style on its own, for a run that is skipping the suite that normally contains it.
+      # The same two tests, run from the built apphost by class - `dotnet test --filter` is
+      # silently ignored by this runner, which is why this is the exe and not the driver.
+      - name: House style
+        if: steps.scope.outputs.full != 'true'
+        run: |
+          tests/Packet.SoundModem.Tests/bin/Release/net10.0/Packet.SoundModem.Tests \
+            -class "Packet.SoundModem.Tests.SourceTextTests"
+
       # This is the step that wedged for 90 minutes on run 34061989287 with no output at all.
       # A step timeout tighter than the job's catches a repeat faster, and it also names
       # Test as the one that timed out in the run summary, rather than leaving the whole job
       # to show up as a plain cancellation with no indication of where it stuck.
       - name: Test
+        if: steps.scope.outputs.full == 'true'
         timeout-minutes: 30
         run: dotnet test --configuration Release --no-build -- --filter-not-trait "Category=Aspiration"
 
@@ -82,6 +128,7 @@ jobs:
           done < <(find tests -path '*/TestResults/*.log' -newermt '-30 minutes' 2>/dev/null)
           [ "$found" = 1 ] || echo "::warning::no TestResults log found to report"
       - name: Aspiration scoreboard (non-blocking - red here is a to-do, not a break)
+        if: steps.scope.outputs.full == 'true'
         continue-on-error: true
         env:
           NINOTNC_ASPIRATION: "1"
@@ -90,6 +137,7 @@ jobs:
       # Smoke-build the .deb so packaging breakage surfaces here rather than at the
       # moment someone cuts a tag. amd64 only - the arch-specific part is one SDK flag.
       - name: Package smoke build (.deb)
+        if: steps.scope.outputs.full == 'true'
         run: |
           set -euo pipefail
           packaging/build-deb.sh 0.0.0-ci amd64 ./artifacts

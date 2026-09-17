@@ -242,7 +242,12 @@ const log = (text, kind = '') => {
   while ($('log').childElementCount > 500) $('log').firstElementChild.remove()
 }
 
-let modem, transport, listener, session = null, ptt = NoPtt
+let modem, transport, listener, session = null, myCall = '', ptt = NoPtt
+
+// The sessions this page has already wired handlers onto. A session reaches us twice on an
+// outbound dial (see the onSessionAccepted comment at Start), and attaching onData to it a
+// second time is how every line the far end sent got printed twice.
+const wired = new WeakSet()
 
 // ---------------------------------------------------------------- what the page remembers
 // A station is set up once, not once per reload: the mode, the callsigns, the levels, TXDELAY
@@ -577,17 +582,22 @@ $('start').onclick = async () => {
       carrierSense: transport,          // the modem's own busy detector gates every keyup
     })
     listener.onFrameTraced((event) => { if (event.direction === 'tx') describe(event.frame, 'tx') })
-    // A station is connected TO as often as it connects, and a demo that could only dial out
-    // would be half a station. An inbound session lands here with nothing having been clicked.
+    myCall = $('mycall').value.trim().toUpperCase()
+    // Every session that reaches Connected arrives here, whichever end started it - including
+    // the one our own connect() is about to return, because the listener raises this and THEN
+    // resolves the promise with the same session (listener.js, the DL_CONNECT_confirm arm).
+    // So this is the one place a session is taken up, and sessionUp is idempotent, which is
+    // what stops an outbound dial getting two sets of handlers and printing every line the far
+    // end sent twice. Found on air against GB7RDG.
     listener.onSessionAccepted((accepted) => {
-      if (session) {
+      if (session && session !== accepted) {
         // Left where it was on purpose: the box is pointed at a conversation, and moving it
         // under the operator would send the line they were halfway through typing to somebody
         // else. One radio, one QSO, and the second caller is still in the monitor.
         log(`${accepted.to} also connected; the line box stays with ${session.to}`, 'sys')
         return
       }
-      sessionUp(accepted, 'connected by')
+      sessionUp(accepted)
     })
     await listener.start()
     $('send').disabled = false
@@ -609,14 +619,29 @@ $('start').onclick = async () => {
 const addr = (slot, repeated = false) =>
   `${slot.callsign}${repeated && slot.crhBit ? '*' : ''}`
 
+// The frames of the established session: our callsign and the peer's, in either direction.
+// Their payload belongs to the conversation, which prints it in order, de-duplicated and
+// reassembled - none of which a frame-by-frame monitor is. So the monitor shows their header and
+// leaves the text to the session, and to the echo of what you typed. Printing both is how one
+// line of QSO became two lines on screen, and three once the link retried.
+const partOfSession = (frame) => {
+  if (!session) return false
+  const ends = [frame.source, frame.destination].map((a) => String(a.callsign).toUpperCase())
+  return ends.includes(String(session.to).toUpperCase()) && ends.includes(myCall)
+}
+
 // Every decoded frame reaches the monitor whether or not the session layer wanted it.
 const describe = (frame, kind) => {
   try {
     const digis = frame.digipeaters?.length
       ? ',' + frame.digipeaters.map((d) => addr(d, true)).join(',')
       : ''
-    const info = frame.info?.length ? new TextDecoder().decode(frame.info).replace(/\r/g, '\n') : ''
-    log(`${addr(frame.source)}>${addr(frame.destination)}${digis} <${classify(frame)}>\n${info}`, kind)
+    // On its own line when there is one, and no line at all when there is not: a supervisory
+    // frame carries no text, and the empty line under every RR was pure noise.
+    const info = frame.info?.length && !partOfSession(frame)
+      ? '\n' + new TextDecoder().decode(frame.info).replace(/\r/g, '\n')
+      : ''
+    log(`${addr(frame.source)}>${addr(frame.destination)}${digis} <${classify(frame)}>${info}`, kind)
   } catch { log('(unparsable frame)', 'err') }
 }
 
@@ -638,17 +663,24 @@ $('send').onclick = async () => {
 // the line box under the monitor. They are driven from here rather than from each handler, so a
 // link that goes away on its own - the peer sending DISC, or the retry limit running out - puts
 // the page back exactly as a D would.
-function sessionUp(established, how) {
+// Takes up a session, once. Called for every session the listener brings up and again by the
+// connect that asked for one, so it has to be safe to call twice with the same session: the
+// second call only repaints.
+function sessionUp(established) {
   session = established
-  log(`${how} ${established.to}`, 'sys')
-  established.onData((bytes) => {
-    // CR is what a keyboard-to-keyboard line ends with on the air; the pane wants newlines.
-    log(new TextDecoder().decode(bytes).replace(/\r/g, '\n'))
-  })
-  established.onDisconnected(() => {
-    log(`disconnected from ${established.to}`, 'sys')
-    if (session === established) sessionDown()
-  })
+  if (!wired.has(established)) {
+    wired.add(established)
+    log(`connected ${dialling === String(established.to).toUpperCase() ? 'to' : 'by'} `
+      + `${established.to}`, 'sys')
+    established.onData((bytes) => {
+      // CR is what a keyboard-to-keyboard line ends with on the air; the pane wants newlines.
+      log(new TextDecoder().decode(bytes).replace(/\r/g, '\n'))
+    })
+    established.onDisconnected(() => {
+      log(`disconnected from ${established.to}`, 'sys')
+      if (session === established) sessionDown()
+    })
+  }
   paintSession()
 }
 
@@ -667,16 +699,25 @@ function paintSession() {
   if (session) $('line').focus()
 }
 
+// Who we are dialling, while we are, so the line above can say "connected to" rather than
+// "connected by" for a session we asked for. Nothing else depends on it.
+let dialling = null
+
 $('connect').onclick = async () => {
   const peer = $('peer').value.trim()
   if (!peer) return log('connect: put a callsign in the box first', 'err')
   $('connect').disabled = true
+  dialling = peer.toUpperCase()
   log(`connect to ${peer}...`, 'sys')
   try {
-    sessionUp(await listener.connect(peer), 'connected to')
+    // The listener has already handed this to onSessionAccepted; taking it again is the
+    // idempotent no-op that makes this path independent of which order those two happen in.
+    sessionUp(await listener.connect(peer))
   } catch (e) {
     log(`connect failed: ${e.message}`, 'err')
     paintSession()
+  } finally {
+    dialling = null
   }
 }
 
