@@ -241,6 +241,20 @@ public sealed class WaterfallRouter : IAsyncDisposable
         catch (ObjectDisposedException)
         {
         }
+        catch (Exception e) when (e is InvalidOperationException or HttpListenerException or IOException)
+        {
+            // Stop() does not just stop listening: it closes the connections it is still holding,
+            // and closing one flushes and disposes its response stream. A browser that has already
+            // walked away leaves a socket that cannot be written to, so the flush throws from
+            // inside Stop() - InvalidOperationException ("The stream does not support writing")
+            // via NetworkStream.Write, or IOException if the peer reset it instead.
+            //
+            // There is nothing to do about it at this point and nothing that wants to know. We are
+            // shutting the listener down, the peer is gone, and the only thing the exception can
+            // still accomplish is to take a station's shutdown down with it: MonitorHost disposes
+            // this router, so an unhandled throw here escapes the whole monitor teardown. It did
+            // exactly that to release run 35235370433, which was otherwise green.
+        }
 
         if (_acceptLoop is not null)
         {
