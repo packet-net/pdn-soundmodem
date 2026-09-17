@@ -443,14 +443,13 @@ public class AlsaMixerConfigTests : IDisposable
     }
 
     [Fact]
-    public void The_Example_Config_Documents_The_Mixer_Without_Turning_It_On()
+    public void The_Example_Config_Sets_No_Mixer_Level()
     {
-        // The shipped example is copied onto real stations. It must show the shape and change
-        // nothing: an example that set a capture gain would silently retune every fresh install.
+        // The shipped example is copied onto real stations. An example that set a capture gain
+        // would silently retune every fresh install, on a card it has never heard.
         string example = File.ReadAllText(
             Path.Combine(RepoRoot(), "soundmodem.example.json"));
 
-        example.Should().Contain("\"alsa\"", "the section has to be discoverable in the example");
         example.Should().NotContain(
             "captureGainPercent", "the example must not still teach the key that went away");
         DaemonConfig? config = DaemonConfig.TryLoad(
@@ -463,7 +462,7 @@ public class AlsaMixerConfigTests : IDisposable
     private static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "CONFIG.md")))
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "pdn-soundmodem.slnx")))
         {
             dir = dir.Parent;
         }

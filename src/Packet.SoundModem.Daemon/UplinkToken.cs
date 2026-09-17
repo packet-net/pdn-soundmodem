@@ -75,7 +75,7 @@ internal static class UplinkToken
         output.WriteLine(
             "The site stores only the hash and never the token, so this is the one time the "
             + "token is shown.");
-        output.WriteLine("Nothing has been written to any file. See CONFIG.md, \"monitor.uplinks\".");
+        output.WriteLine("Nothing has been written to any file. See docs/reference/config.md, \"monitor.uplinks\".");
         return 0;
     }
 

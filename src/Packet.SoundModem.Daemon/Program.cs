@@ -297,7 +297,7 @@ if (configPath is not null)
 // One bounded test transmission and out, for a bench with no browser on it. The station is
 // built exactly as it would be to carry traffic - same device, same PTT, same level - because
 // the whole point is to measure what a frame gets; what does not come up is anything that
-// serves somebody else. See TxTestRunner, and the "txTest" section of CONFIG.md.
+// serves somebody else. See TxTestRunner, and the "txTest" section of docs/reference/config.md.
 Packet.SoundModem.Waterfall.TxTestRequest? benchTxTest = null;
 if (twoToneSeconds is not null && singleTone is not null)
 {
@@ -511,7 +511,7 @@ if (publishConfig is not null
     && DaemonConfig.PublishRateProblem(publishConfig, DspRate) is { } publishRateProblem)
 {
     // Through the same frame every other refusal in the file gets - the file name, the recovery
-    // text and the CONFIG.md link - because where a check had to live is not something an
+    // text and the config-reference link - because where a check had to live is not something an
     // operator reading journalctl should be able to tell.
     Console.Error.WriteLine(DaemonConfig.ConfigurationError(configPath!, publishRateProblem));
     return 2;
@@ -2827,7 +2827,7 @@ var txTestRunner = new TxTestRunner(new TxTestOptions
         // Written down where transmissions are written down. The frame log's rows are frames and
         // a tone burst is not one, so what the payload holds is the sentence describing what went
         // out - which is what the panel shows beside the row, and what a monitor site is sent for
-        // a station that publishes to one. See CONFIG.md under "frameLog".
+        // a station that publishes to one. See docs/reference/config.md under "frameLog".
         frameLog?.RecordTransmitted(
             record.SubChannel,
             record.Payload,

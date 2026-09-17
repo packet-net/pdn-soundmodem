@@ -706,7 +706,7 @@ public class FrameLevelTests
     /// <summary>
     /// Which modes can say where their frames were, and which cannot - measured by decoding a
     /// real 15-byte supervisory frame on each, because that is the frame a working link is
-    /// mostly made of and what CONFIG.md tells an operator to expect a level on.
+    /// mostly made of and what docs/reference/config.md tells an operator to expect a level on.
     /// </summary>
     /// <remarks>
     /// <para>Fifteen bytes deliberately, not a size chosen to pass. An AX.25 S-frame - RR, RNR,

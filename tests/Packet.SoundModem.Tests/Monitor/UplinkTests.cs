@@ -355,7 +355,7 @@ public class UplinkTests
         await first.DisposeAsync();
         await h.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
 
-        // CONFIG.md tells an operator on ADSL that audioRate is one of their two levers. The
+        // docs/reference/config.md tells an operator on ADSL that audioRate is one of their two levers. The
         // channel was built at the old rate and the audio checked against the new block length,
         // so the audio was accepted and painted at the wrong rate and the page was silently
         // wrong until somebody restarted the public site.

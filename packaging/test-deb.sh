@@ -176,7 +176,7 @@ log=$(journalctl -u pdn-soundmodem.service --no-pager 2>/dev/null)
 echo "$log" | grep -q 'configuration error in /etc/pdn-soundmodem/soundmodem.json' \
   && ok "journal names the file" || bad "journal does not name the offending file"
 echo "$log" | grep -q 'not valid JSON' && ok "journal says what is wrong" || bad "journal does not say what is wrong"
-echo "$log" | grep -q 'CONFIG.md' && ok "journal points at the reference" || bad "journal has no pointer to docs"
+echo "$log" | grep -q 'docs/reference/config.md' && ok "journal points at the reference" || bad "journal has no pointer to docs"
 echo "$log" | grep -q 'Unhandled exception' && bad "journal contains a stack trace" \
                                             || ok "no stack trace in the journal"
 cp /tmp/good.json /etc/pdn-soundmodem/soundmodem.json

@@ -361,7 +361,7 @@ internal sealed class RelayStation : IMonitorStation
     /// </summary>
     /// <remarks>
     /// <para>An operator changes their <c>publish</c> block and restarts their daemon; that is
-    /// the whole way any of this is configured, and CONFIG.md tells somebody on ADSL that
+    /// the whole way any of this is configured, and docs/reference/config.md tells somebody on ADSL that
     /// <c>audioRate</c> is one of their two levers. A station whose new hello was welcomed and
     /// then discarded went on being drawn at the old rate while its audio was checked against the
     /// new block length, so the page was silently wrong until somebody restarted the public site,

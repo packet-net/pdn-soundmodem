@@ -726,7 +726,7 @@ public sealed class UberSdrConfig
 /// <para>Receive only, and no host interfaces: a monitor configures no KISS, no PTT, no config
 /// API, no survey and no paging, and none of them are reachable on its port. What it serves is
 /// the picker, one page per receiver, and the JSON the picker polls.</para>
-/// <para>See <c>docs/dev/archive/monitor-plan.md</c> and CONFIG.md's <c>monitor</c> section.</para>
+/// <para>See <c>docs/dev/archive/monitor-plan.md</c> and <c>docs/reference/config.md</c>'s <c>monitor</c> section.</para>
 /// </remarks>
 public sealed class MonitorConfig
 {
@@ -788,7 +788,7 @@ public sealed class MonitorConfig
     /// </summary>
     /// <remarks>
     /// The other half of <c>publish</c>, which is what a station puts in its own config. See
-    /// <c>docs/dev/archive/uplink-plan.md</c> and CONFIG.md's <c>monitor.uplinks</c>.
+    /// <c>docs/dev/archive/uplink-plan.md</c> and <c>docs/reference/config.md</c>'s <c>monitor.uplinks</c>.
     /// </remarks>
     public List<UplinkConfig> Uplinks { get; set; } = [];
 
@@ -1195,8 +1195,8 @@ public sealed class PublishConfig
 
 /// <summary>pdn-soundmodem daemon configuration file. JSON, with comments and trailing
 /// commas accepted (see <see cref="Options"/>) and case-insensitive key matching - the
-/// shipped soundmodem.example.json relies on that and annotates itself. Full reference:
-/// CONFIG.md.</summary>
+/// shipped soundmodem.example.json carries one such comment. Full reference:
+/// docs/reference/config.md.</summary>
 public sealed class DaemonConfig
 {
     /// <summary>ALSA device for capture and playback.</summary>
@@ -2570,7 +2570,7 @@ public sealed class DaemonConfig
         }
         else
         {
-            text.AppendLine($"    copy the annotated example over {path}");
+            text.AppendLine($"    copy the example over {path}");
         }
 
         text.AppendLine("  Then edit it for your sound device and PTT, and:");
@@ -2579,11 +2579,11 @@ public sealed class DaemonConfig
         return text.ToString();
     }
 
-    /// <summary>Where the .deb puts the annotated example config.</summary>
+    /// <summary>Where the .deb puts the example config.</summary>
     internal const string ExamplePath = "/usr/share/pdn-soundmodem/soundmodem.example.json";
 
     internal const string ConfigDocUrl =
-        "https://github.com/packet-net/pdn-soundmodem/blob/main/CONFIG.md";
+        "https://github.com/packet-net/pdn-soundmodem/blob/main/docs/reference/config.md";
 }
 
 /// <summary>

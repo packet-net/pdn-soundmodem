@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Tests.Daemon;
 /// The operator-facing half of configuration loading. These messages are what an admin reads in
 /// `journalctl` after the service refuses to start, so they are worth pinning: every failure must
 /// name the file, say what is wrong in words, and say what to do about it - never surface a raw
-/// exception. See CONFIG.md § What is rejected at start-up.
+/// exception. See docs/reference/config.md § The file.
 /// </summary>
 public class DaemonConfigTests : IDisposable
 {
@@ -28,7 +28,7 @@ public class DaemonConfigTests : IDisposable
         error.Should().Contain(path, "the operator has to know which file to edit");
         error.Should().Contain("systemctl restart pdn-soundmodem",
             "the message must say how to apply the fix");
-        error.Should().Contain("CONFIG.md", "the message must point at the reference");
+        error.Should().Contain("docs/reference/config.md", "the message must point at the reference");
         error.Should().NotContain("Exception", "a stack trace is not an explanation");
         error.Should().NotContain("   at ", "a stack trace is not an explanation");
     }
@@ -63,7 +63,7 @@ public class DaemonConfigTests : IDisposable
     {
         string path = WriteConfig("""
             {
-              // the annotated example is full of these
+              // the example config carries one of these
               /* and these */
               "device": "null",
               "modems": [ { "subChannel": 0, "mode": "afsk1200", }, ],
