@@ -4,6 +4,6 @@
   "modems": [
     { "subChannel": 0, "mode": "afsk1200" }
   ],
-  "ptt": { "type": "cm108", "device": "/dev/hidraw0", "gpio": 3 },
+  "ptt": { "type": "cm108", "device": "/dev/hidraw0" },
   "waterfall": { "port": 8107 }
 }

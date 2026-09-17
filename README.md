@@ -42,7 +42,7 @@ Now follow the guide. It starts at [docs/README.md](docs/README.md), and [docs/0
 
 ## Status
 
-Every mode in the catalogue is built and usable, and each one says how far it has been proven. Some have decoded real signals off air: AFSK 1200, AFSK 300 IL2P+CRC and the 300 and 1200 baud PSK modes. Most of the rest are bench-proven in both directions against a real NinoTNC or a live QtSoundModem over a wired loop. ARDOP is validated against ardopcf, including a Pat to Pat message exchange, and the MIL-STD-188-110D waveforms are held to the standard's own AWGN masks in simulation. Which level each mode has reached, and what produced the verdict, is in [docs/05-modes.md](docs/05-modes.md).
+Every mode in the catalogue is built and usable, and each one says how far it has been proven. Some have decoded real signals off air: AFSK 1200, AFSK 300 IL2P+CRC, the 300 and 1200 baud PSK modes, the FreeDV data modes and most of the MIL-STD-188-110D waveforms, which are also held to the standard's own fading-channel masks in simulation. Most of the rest are bench-proven in both directions against a real NinoTNC or a live QtSoundModem over a wired loop. Which level each mode has reached, and what produced the verdict, is in [docs/05-modes.md](docs/05-modes.md). ARDOP is not a catalogue mode; it is validated against ardopcf, including a Pat to Pat message exchange, and its evidence is in [PROVENANCE.md](PROVENANCE.md).
 
 ## Developers
 
