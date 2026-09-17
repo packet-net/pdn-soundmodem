@@ -1,6 +1,6 @@
 # Configuration reference
 
-Every key the modem reads from its configuration file, with type, default and one sentence each. The keys are defined in `src/Packet.SoundModem.Daemon/DaemonConfig.cs`, which also refuses a file it cannot run; where a value is applied is `src/Packet.SoundModem.Daemon/Program.cs`. How to choose values for a particular station is the guide's business; this page says what each key is and what the modem refuses.
+Every key the modem reads from its configuration file, with type, default and one sentence each. The keys are defined in `src/Packet.SoundModem.Daemon/DaemonConfig.cs`, which also refuses a file it cannot run; where a value is applied is `src/Packet.SoundModem.Daemon/Program.cs`. How to choose values for a particular station is [the guide](../README.md)'s business; this page says what each key is and what the modem refuses.
 
 ## The file
 
@@ -110,7 +110,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | Key | Type | Default | What it is |
 |---|---|---|---|
 | `subChannel` | int | `0` | The KISS sub-channel (port nibble) this modem answers to, 0 to 15. |
-| `mode` | string | `"afsk1200"` | A catalogue mode name (see [modes](../modes.md)), `"ardop"` for the ARDOP virtual TNC, or a plugin mode written `pluginId:mode`. |
+| `mode` | string | `"afsk1200"` | A catalogue mode name (see [modes](../05-modes.md)), `"ardop"` for the ARDOP virtual TNC, or a plugin mode written `pluginId:mode`. |
 | `frequency` | number | the mode's own centre | Audio centre in Hz, transmit and receive. 1700 for `afsk*`, 1500 for `bpsk*` and `qpsk*` (1650 for `qpsk3600`), the spec centre for `freedv-*` and `ms110d-*`. |
 | `rfFrequency` | number | none | Where this modem sits on the band in absolute Hz; the modem then works out the dial and this modem's audio centre. See [Band placement](#band-placement-sideband-dialfrequency-and-rffrequency). |
 | `bandwidth` | number | measured from the modem; 2000 for `ardop` | How much room the band plan and the survey allow this modem, in Hz. On `ardop` it is also the TNC's ARQBW, so no session is accepted or asked for wider; only 200, 500, 1000 and 2000 are accepted there. |
@@ -600,4 +600,4 @@ Rules and refusals:
 - With no `rfFrequency` anywhere there is no plan: modems sit at their `frequency`, the page's dial comes from `waterfall.dialFrequencyHz` or `dialFrequency`, and a web receiver needs `dialFrequency` to tune at all.
 - The plan is printed at start-up as `dial: <MHz> USB` (or `channel: <MHz> FM`) followed by one `modem N <mode> at <MHz> = <Hz> Hz audio` line per modem. Refusals and warnings from the plan are prefixed `band plan:`.
 
-Related: [command-line reference](command-line.md), [ports and endpoints](ports-and-endpoints.md), [files and directories](files.md).
+Related: [the guide](../README.md), [command-line reference](command-line.md), [ports and endpoints](ports-and-endpoints.md), [files and directories](files.md).

@@ -104,8 +104,8 @@ tools/Packet.SoundModem.TncTest/      sm-tnctest: score a decoder against a reco
 web/                         the same core compiled to WebAssembly, published to npm as
                              @packet-net/soundmodem - a sound card where a KISS TNC would be
 docs/                        the user guide and reference (being written; docs/README.md is its front page)
-docs/modes.md                the mode table, exact against the catalogue
-docs/pdn-decode.md           the sweep tool, and why its default set is the whole catalogue
+docs/05-modes.md             the mode table, exact against the catalogue
+docs/13-decode-a-recording.md  the sweep tool, and why its default set is the whole catalogue
 docs/hardware/               the Tait TM8100 wiring guide, a user document
 docs/dev/                    developer documents; nothing here is user documentation
 docs/dev/roadmap.md          the one place open work is tracked

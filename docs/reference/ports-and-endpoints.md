@@ -312,4 +312,4 @@ A `monitor` section turns the process into a site on `waterfall.port`, which mus
 
 A slug is the `monitor.uplinks[].slug` of a relayed station, or the directory's slug for a listed web receiver. A slug the site does not offer is a 404.
 
-Related: [configuration reference](config.md), [command-line reference](command-line.md), [files and directories](files.md).
+Related: [the guide](../README.md), [configuration reference](config.md), [command-line reference](command-line.md), [files and directories](files.md).
