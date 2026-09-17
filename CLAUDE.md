@@ -78,8 +78,17 @@ row in the matrix. A fix isn't finished until the ledger records it.
   a shorter gap is still worth having: keep the whole block above the
   `AlsaAudioOutput`/`AlsaAudioInput` construction in `Program.cs`. `StartUpOrderTests` pins it;
   [docs/dev/roadmap.md](docs/dev/roadmap.md) #17 has the measurements.
-- CI: every workflow job MUST target `[self-hosted, Linux, X64]` - no GitHub-hosted
-  runners (no minutes budget). Same rule as packet.net.
+- CI: every job that builds, tests or packages MUST target `[self-hosted, Linux, X64]` - no
+  GitHub-hosted runners (no minutes budget). Same rule as packet.net. **One carve-out, added
+  2026-09-17**: a job that only moves files about may use `ubuntu-latest`, and `pages.yml`
+  does. The rule's reason is metered minutes, which is a billing fact about private
+  repositories; this one is public, where standard GitHub-hosted runners are free and
+  unmetered. What the rule costs such a job is the queue - our runners take one job at a time,
+  so a static-file deploy sat behind a 4 to 17 minute `ci.yml` for nothing. The test is
+  whether the job needs something that makes our runners ours (a toolchain, the NuGet cache,
+  a sound card); if it does, it stays self-hosted, and that is still everything that compiles.
+  `release.yml`'s `publish-npm` was already hosted for a different reason that also survives
+  the rule: npm refuses a provenance attestation built on a self-hosted runner.
 - PRs merge on locally-run green tests (`dotnet test`); fix forward.
 - **Cross-repo iteration**: the co-developed packages swap to local checkouts with
   `-p:FecSourcePath=... -p:Il2pSourcePath=... -p:FlexSourcePath=...` (see

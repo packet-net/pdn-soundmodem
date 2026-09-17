@@ -299,7 +299,8 @@ jobs:
         run: echo "::warning::NUGET_API_KEY is not visible to this repo - NuGet push skipped (the GitHub Release still has the .debs). Grant the org secret access to pdn-soundmodem."
 
   # The npm leg is split out onto a GitHub-hosted runner, which is a DELIBERATE
-  # EXCEPTION to the self-hosted-only rule and the only one in this repo. npm
+  # EXCEPTION to the self-hosted-only rule. It was the only one until pages.yml
+  # joined it in 2026-09; see CLAUDE.md for where the line now sits. npm
   # refuses a provenance attestation built anywhere else ("Unsupported GitHub
   # Actions runner environment: self-hosted"), and trusted publishing generates
   # provenance by default. The release job above cannot move: it needs the .NET

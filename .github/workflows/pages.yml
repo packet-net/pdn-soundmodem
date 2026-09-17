@@ -32,7 +32,20 @@ permissions:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, Linux, X64]
+    # The one job in this repository that is NOT on the self-hosted runners, and deliberately.
+    #
+    # The house rule exists because GitHub-hosted minutes are metered and we have no budget for
+    # them. That is a billing fact about private repositories: this one is public, where
+    # standard GitHub-hosted runners are free and unmetered, so the rule's reason does not
+    # reach it. What the self-hosted runners cost this job instead is the queue. They take one
+    # job at a time, a push to main starts ci.yml as well, and ci.yml runs 4 to 17 minutes on a
+    # good day with a 45 minute timeout on a bad one - all of it spent with the deploy of a
+    # static HTML file sitting behind it for no reason, because this job builds nothing. It
+    # checks out, asks npm for a version number, rewrites one line with sed and uploads the
+    # result. No .NET, no NuGet cache, no sound card, nothing that makes our runners ours.
+    #
+    # Anything that compiles or tests stays self-hosted. See CLAUDE.md.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
       name: github-pages
