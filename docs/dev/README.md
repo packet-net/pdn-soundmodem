@@ -1,6 +1,6 @@
 # Developer documents
 
-This folder is for people changing the code. Nothing here is user documentation: the guide starts at docs/README.md, which a later PR of the documentation rewrite writes, and the reference tables go under docs/reference.
+This folder is for people changing the code. Nothing here is user documentation: the guide starts at [docs/README.md](../README.md), and the reference tables are under [docs/reference](../reference/config.md).
 
 Every file in this folder opens with a status line saying what it describes and when it was last checked against the code. Those status lines are added in a later PR of the rewrite; until then each file's own header stands.
 

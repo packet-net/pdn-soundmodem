@@ -72,7 +72,7 @@ The seeded config file is owned by root, and `ReadWritePaths` only removes the r
 KERNEL=="hidraw*", ATTRS{idVendor}=="0d8c", ATTRS{idProduct}=="013c", MODE="0660", GROUP="audio"
 ```
 
-The rule takes effect once udev has reloaded its rules and the interface has been replugged. `cat /sys/class/hidraw/*/device/uevent` maps each `hidraw` node to its USB IDs (`HID_ID=0003:00000D8C:00000012` for the C-Media interface on the bench); the number moves with what else is plugged in. Serial PTT needs no rule because the unit already joins `dialout`. The [Tait TM8100 page](../hardware/tait-tm8100-cm108.md) covers one CM108 interface in detail.
+The rule takes effect once udev has reloaded its rules and the interface has been replugged. `cat /sys/class/hidraw/*/device/uevent` maps each `hidraw` node to its USB IDs (`HID_ID=0003:00000D8C:00000012` for the C-Media interface on the bench); the number moves with what else is plugged in. Serial PTT needs no rule because the unit already joins `dialout`. [02-first-station.md](../02-first-station.md#choose-the-ptt-line) walks through adding the rule, and the [Tait TM8100 page](../hardware/tait-tm8100-cm108.md) covers one CM108 interface in detail.
 
 ## Upgrade, remove and purge
 
@@ -104,4 +104,4 @@ Each config file must claim its own ports. `kissPort`, `waterfall.port`, `paging
 
 The station page and the monitor picker are two HTML files embedded in the binary as resources (`waterfall.html` and `monitor.html`) and served by the modem's own HTTP listener on the page port. Nothing is installed for them: there is no web root, no directory to serve and no page state on the machine. Display settings (dial, sideband, span, levels, volume) are kept per browser. The `web/` folder in the repository is the separate WebAssembly package and is not part of the `.deb`.
 
-Related: [configuration reference](config.md), [command-line reference](command-line.md), [ports and endpoints](ports-and-endpoints.md).
+Related: [the guide](../README.md), [configuration reference](config.md), [command-line reference](command-line.md), [ports and endpoints](ports-and-endpoints.md).

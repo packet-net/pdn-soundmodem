@@ -1,6 +1,6 @@
 # Configuration reference
 
-Every key the modem reads from its configuration file, with type, default and one sentence each. The keys are defined in `src/Packet.SoundModem.Daemon/DaemonConfig.cs`, which also refuses a file it cannot run; where a value is applied is `src/Packet.SoundModem.Daemon/Program.cs`. How to choose values for a particular station is the guide's business; this page says what each key is and what the modem refuses.
+Every key the modem reads from its configuration file, with type, default and one sentence each. The keys are defined in `src/Packet.SoundModem.Daemon/DaemonConfig.cs`, which also refuses a file it cannot run; where a value is applied is `src/Packet.SoundModem.Daemon/Program.cs`. How to choose values for a particular station is [the guide](../README.md)'s business; this page says what each key is and what the modem refuses.
 
 ## The file
 
@@ -600,4 +600,4 @@ Rules and refusals:
 - With no `rfFrequency` anywhere there is no plan: modems sit at their `frequency`, the page's dial comes from `waterfall.dialFrequencyHz` or `dialFrequency`, and a web receiver needs `dialFrequency` to tune at all.
 - The plan is printed at start-up as `dial: <MHz> USB` (or `channel: <MHz> FM`) followed by one `modem N <mode> at <MHz> = <Hz> Hz audio` line per modem. Refusals and warnings from the plan are prefixed `band plan:`.
 
-Related: [command-line reference](command-line.md), [ports and endpoints](ports-and-endpoints.md), [files and directories](files.md).
+Related: [the guide](../README.md), [command-line reference](command-line.md), [ports and endpoints](ports-and-endpoints.md), [files and directories](files.md).

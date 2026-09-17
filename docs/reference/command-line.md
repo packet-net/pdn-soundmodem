@@ -231,4 +231,4 @@ Modes for --modem N:MODE:
 Documentation: https://github.com/packet-net/pdn-soundmodem
 ```
 
-Related: [configuration reference](config.md), [ports and endpoints](ports-and-endpoints.md), [files and directories](files.md).
+Related: [the guide](../README.md), [configuration reference](config.md), [ports and endpoints](ports-and-endpoints.md), [files and directories](files.md).
