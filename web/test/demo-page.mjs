@@ -85,7 +85,13 @@ function makeElement(tag = 'div', id = '') {
     appendChild(n) { this.children.push(n); return n },
     remove() {},
     focus: noop,
-    setAttribute: noop, getAttribute: () => null,
+    setAttribute(name, value) { this.attrs[name] = String(value) },
+    getAttribute(name) { return this.attrs[name] ?? null },
+    attrs: {},
+    // The pane the handle measures itself against. A fixed 600 makes the arithmetic in the
+    // drag test something a reader can check in their head.
+    getBoundingClientRect: () => ({ top: 0, left: 0, width: 900, height: 600 }),
+    setPointerCapture: noop, releasePointerCapture: noop,
     // Real, because the page saves what you changed through these while the on* properties are
     // claimed by what the control actually does. A shim that dropped them would lose every write
     // to the browser store and the restore test would pass against nothing.
@@ -122,6 +128,7 @@ globalThis.document = {
     return byId.get(id)
   },
   createElement: (tag) => makeElement(tag),
+  body: makeElement('body'),
 }
 const $ = (id) => document.getElementById(id)
 
@@ -330,7 +337,8 @@ async function waitFor(what, why, ms = 4000) {
   throw new Error(`gave up waiting for ${why}`)
 }
 
-const lines = () => $('log').children.map((c) => c.textContent)
+const lines = () => $('monitor').children.map((c) => c.textContent)
+const said = () => $('session').children.map((c) => c.textContent)
 const report = { old: pretendOld }
 
 // ============================== first load: a browser that has never seen this page ==========
@@ -346,6 +354,37 @@ report.txdelayDefault = $('txdelayRead').textContent
 report.sessionControls = {
   connect: $('connect').disabled, disconnect: $('disconnect').disabled, line: $('line').disabled,
 }
+
+// ---- the handle between the two halves -----------------------------------------------------
+// The pane the shim hands the page is 600 high with its top at 0, so every figure below is one
+// a reader can check: a pointer at 150 puts the split a quarter of the way down.
+const drop = { pointerId: 1, preventDefault: () => {} }
+report.splitDefault = $('monitor').style.flexBasis
+
+$('split').onpointerdown(drop)
+$('split').onpointermove({ clientY: 150 })
+report.splitDragged = $('monitor').style.flexBasis
+// Neither half can be dragged shut: a pane with no height cannot be scrolled back open.
+$('split').onpointermove({ clientY: -200 })
+report.splitClampedUp = $('monitor').style.flexBasis
+$('split').onpointermove({ clientY: 5000 })
+report.splitClampedDown = $('monitor').style.flexBasis
+$('split').onpointermove({ clientY: 150 })
+$('split').onpointerup({})
+report.splitRemembered = JSON.parse(stored.get('pdn-soundmodem-demo') || '{}').split
+report.splitDraggingCleared = document.body.className
+
+$('split').ondblclick()
+report.splitReset = $('monitor').style.flexBasis
+// And from the keyboard, because a divider that can only be dragged is one some people cannot
+// move at all.
+$('split').onkeydown({ key: 'ArrowUp', preventDefault: () => {} })
+report.splitByKey = $('monitor').style.flexBasis
+report.splitAria = $('split').getAttribute('aria-valuenow')
+// Put it somewhere distinctive for the reload to find.
+$('split').onpointerdown(drop)
+$('split').onpointermove({ clientY: 180 })
+$('split').onpointerup({})
 
 // Levels and TXDELAY, before the modem is even open: the package keeps them and applies them
 // when the graph is built.
@@ -463,7 +502,7 @@ if (!pretendOld) {
   $('peer').pick('NOPE-1')
   $('connect').click()
   await settle(40)
-  report.refusedConnect = { says: lines().at(-1), canRetry: !$('connect').disabled }
+  report.refusedConnect = { says: said().at(-1), canRetry: !$('connect').disabled }
 
   $('peer').pick('GB7XYZ-1')
   $('connect').click()
@@ -471,44 +510,86 @@ if (!pretendOld) {
   await settle(20)
   report.connected = {
     connect: $('connect').disabled, disconnect: $('disconnect').disabled,
-    line: $('line').disabled, placeholder: $('line').placeholder, says: lines().at(-1),
+    line: $('line').disabled, placeholder: $('line').placeholder, says: said().at(-1),
   }
 
   // Exactly one announcement, and exactly one set of handlers, however the session arrived.
-  report.announcements = lines().filter((t) => /^connected (to|by) GB7XYZ-1$/.test(t))
+  report.announcements = said().filter((t) => /^\*\*\* connected (to|by) GB7XYZ-1$/.test(t))
 
   // A line typed into the session goes out CR-terminated and is echoed once it has been taken.
   await $('line').type('hello from a browser')
   await settle(20)
-  report.sent = established.written
-  report.echoed = lines().at(-1)
+  report.sent = [...established.written]
+  report.echoed = said().at(-1)
   report.boxCleared = $('line').value
 
-  // What comes back is turned from CR into newlines for the pane.
-  established.deliver(new TextEncoder().encode('de GB7XYZ-1\rgo ahead\r'))
-  report.received = lines().at(-1)
+  // ---- line breaks, which is the whole of the session pane ----------------------------------
+  // The cases packet-net/packet-term-tui learned on air, driven through the page's own handler.
+  const enc = (text) => new TextEncoder().encode(text)
+  const rows = (fn) => { const at = said().length; fn(); return said().slice(at) }
+
+  // A node's menu arrives as ONE information field with the CRs inside it. Every one of them is
+  // a real line break; treat them as unprintable and this is a single unreadable run of text.
+  report.menuInOneField = rows(() => established.deliver(
+    enc('READNG:GB7RDG} BBS CHAT TELSTAR\rWALL DAPPS CONNECT\rBYE INFO NODES\r')))
+
+  // A line longer than PACLEN is segmented, so a field can stop mid-line and the rest arrives in
+  // the next one. It belongs on the row that was left open, not on a new one.
+  report.splitAcrossFields = rows(() => {
+    established.deliver(enc('See https://ukpacketradio.net'))
+    established.deliver(enc('work/nodes:gb7rdg\r'))
+  })
+
+  // CRLF is one break rather than two, and a lone LF breaks as well.
+  report.crlfAndLf = rows(() => established.deliver(enc('one\r\ntwo\rthree\nfour\r\n')))
+
+  // A field of nothing but terminators adds no row - that is what stops a keepalive filling the
+  // pane with blanks - but it does close whatever line was open.
+  report.terminatorsOnly = rows(() => {
+    established.deliver(enc('half a line'))
+    established.deliver(enc('\r\r'))
+    established.deliver(enc('a new row\r'))
+  })
+
+  // A blank line a node put between two sections survives; the terminator that merely ended the
+  // last line does not draw an empty row under it.
+  report.blankLineKept = rows(() => established.deliver(enc('Header\r\rBody\r')))
+
+  // Anything outside printable ASCII becomes a dot rather than tearing the pane about.
+  report.nonPrintable = rows(() => established.deliver(
+    new Uint8Array([0x1b, 0x5b, 0x33, 0x32, 0x6d, 0x68, 0x69, 0x00, 0x0d])))
+
+  // And a line you type closes the far end's open one, so its continuation cannot land on the
+  // end of what you said.
+  report.typingClosesTheOpenLine = rows(async () => {})
+  const beforeInterleave = said().length
+  established.deliver(enc('prompt> '))
+  await $('line').type('my answer')
+  await settle(20)
+  established.deliver(enc('rest of the prompt\r'))
+  report.interleaved = said().slice(beforeInterleave)
 
   // The same text arriving as a frame the monitor also hears: the header is drawn, the payload
   // is not, because the conversation above has already printed it. This is the line that used to
   // appear a second time.
-  const before = $('log').children.length
+  const before = $('monitor').children.length
   hear(iFrameBetween('GB7XYZ-1', 'M0LTE-7', 'Welcome to GB7XYZ. Type ? for Help\r'))
   report.sessionFrameInMonitor = lines().slice(before)
 
   // Our own transmission, traced back through the same monitor: header only again, because the
   // echo of what was typed has already shown the text.
-  const beforeTx = $('log').children.length
+  const beforeTx = $('monitor').children.length
   hear(iFrameBetween('M0LTE-7', 'GB7XYZ-1', 'info\r'))
   report.ownFrameInMonitor = lines().slice(beforeTx)
 
   // A supervisory frame carries no text at all, and used to draw an empty line under itself.
-  const beforeRr = $('log').children.length
+  const beforeRr = $('monitor').children.length
   hear(iFrameBetween('GB7XYZ-1', 'M0LTE-7', ''))
   report.emptyFrameInMonitor = lines().slice(beforeRr)
 
   // Everything else on the channel still shows what it is carrying - a soundcard modem hears the
   // whole channel and a QSO is no reason to stop reading it.
-  const beforeUi = $('log').children.length
+  const beforeUi = $('monitor').children.length
   hear(ui({
     source: Callsign.parse('M0ZZZ-9'), destination: Callsign.parse('BEACON'),
     info: new TextEncoder().encode('somebody else beaconing'),
@@ -517,8 +598,9 @@ if (!pretendOld) {
   report.otherTrafficInMonitor = lines().slice(beforeUi)
 
   // A key that is not Enter does not transmit.
+  const writtenBefore = established.written.length
   await $('line').type('half typed', 'a')
-  report.notSentOnEveryKey = established.written.length
+  report.notSentOnEveryKey = established.written.length - writtenBefore
 
   // D tears it down and puts the three controls back.
   $('line').value = ''
@@ -535,14 +617,14 @@ if (!pretendOld) {
   acceptInbound(inbound)
   await settle(20)
   report.inbound = {
-    says: lines().find((t) => /connected by M0ABC-2/.test(t)),
+    says: said().find((t) => /connected by M0ABC-2/.test(t)),
     line: $('line').disabled, disconnect: $('disconnect').disabled,
   }
 
   // A second caller does not move the box out from under the line being typed.
   acceptInbound(new FakeSession('M0DEF-3'))
   await settle(20)
-  report.secondCaller = { says: lines().at(-1), stillWith: $('line').placeholder }
+  report.secondCaller = { says: said().at(-1), stillWith: $('line').placeholder }
 
   // And a link that goes away on its own puts the page back exactly as D would.
   inbound.dropped()
@@ -573,6 +655,7 @@ if (!pretendOld) {
   }
   // Reopened without a prompt: requestPort was never called on this load, getPorts was.
   report.reopened = { opens: fakePort.opens, says: lines().find((t) => /reopened/.test(t)) }
+  report.splitRestored = $('monitor').style.flexBasis
 }
 
 if (asJson) console.log(JSON.stringify(report, null, 2))
@@ -641,8 +724,19 @@ if (pretendOld) {
   assert.match(report.refused, /a test tone must be between 50 Hz/)
   assert.deepEqual(report.refusedKeyed, [], 'and the radio was not keyed to find that out')
 
+  // The handle between the two halves of the window.
+  assert.equal(report.splitDefault, '45.00%')
+  assert.equal(report.splitDragged, '25.00%', 'a pointer a quarter down puts the split there')
+  assert.equal(report.splitClampedUp, '10.00%', 'neither half can be dragged shut')
+  assert.equal(report.splitClampedDown, '90.00%')
+  assert.equal(report.splitRemembered, 0.25, 'where it was left is remembered')
+  assert.equal(report.splitDraggingCleared, '', 'and the drag styling comes off the body')
+  assert.equal(report.splitReset, '50.00%', 'a double-click evens them up')
+  assert.equal(report.splitByKey, '48.00%', 'and an arrow key moves it')
+  assert.equal(report.splitAria, '48', 'with the position published for a screen reader')
+
   // The session. One announcement for one link, however many times the listener offers it.
-  assert.deepEqual(report.announcements, ['connected to GB7XYZ-1'],
+  assert.deepEqual(report.announcements, ['*** connected to GB7XYZ-1'],
     'an outbound dial is announced once, and as "to" rather than "by"')
   assert.match(report.emptyPeer, /put a callsign in the box first/)
   assert.match(report.refusedConnect.says, /connect failed: retry limit reached/)
@@ -652,14 +746,32 @@ if (pretendOld) {
     { connect: true, disconnect: false, line: false },
     'connected: C is out, D and the line box are in')
   assert.match(report.connected.placeholder, /type a line to GB7XYZ-1/)
-  assert.match(report.connected.says, /connected to GB7XYZ-1/)
+  assert.match(report.connected.says, /^\*\*\* connected to GB7XYZ-1$/)
 
   // CR, not LF: that is what a keyboard-to-keyboard line has ended with since packet began.
   assert.deepEqual(report.sent, ['hello from a browser\r'])
   assert.equal(report.echoed, 'hello from a browser', 'echoed once the session had taken it')
   assert.equal(report.boxCleared, '', 'and the box is cleared for the next line')
-  assert.equal(report.received, 'de GB7XYZ-1\ngo ahead\n', 'CR comes back as newlines')
-  assert.equal(report.notSentOnEveryKey, 1, 'only Enter transmits')
+  assert.equal(report.notSentOnEveryKey, 0, 'only Enter transmits')
+
+  // Line breaks. Each of these is a shape a real node produces, and getting any of them wrong
+  // is the difference between a readable menu and one unbroken run of text.
+  assert.deepEqual(report.menuInOneField, [
+    'READNG:GB7RDG} BBS CHAT TELSTAR', 'WALL DAPPS CONNECT', 'BYE INFO NODES',
+  ], 'the CRs inside one information field are real line breaks')
+  assert.deepEqual(report.splitAcrossFields,
+    ['See https://ukpacketradio.network/nodes:gb7rdg'],
+    'a line segmented across two frames is put back together on one row')
+  assert.deepEqual(report.crlfAndLf, ['one', 'two', 'three', 'four'],
+    'CRLF is one break, and a lone LF is a break too')
+  assert.deepEqual(report.terminatorsOnly, ['half a line', 'a new row'],
+    'a field of terminators closes the open line and draws nothing of its own')
+  assert.deepEqual(report.blankLineKept, ['Header', '', 'Body'],
+    'a blank line between sections survives; the one that ended the last line does not')
+  assert.deepEqual(report.nonPrintable, ['.[32mhi.'],
+    'a stray byte, or a node sending ANSI colour, becomes dots rather than tearing the pane')
+  assert.deepEqual(report.interleaved, ['prompt> ', 'my answer', 'rest of the prompt'],
+    'a line you type closes the far end\'s open one rather than being continued onto')
 
   // The monitor draws the session's frames without their text, because the conversation has it.
   assert.deepEqual(report.sessionFrameInMonitor, ['GB7XYZ-1>M0LTE-7 <I>'],
@@ -692,12 +804,15 @@ if (pretendOld) {
     rxgain: '6', txgain: '-12', txdelay: '500',
   })
   assert.deepEqual(report.restoredReads, { rx: '+6.0 dB', tx: '-12.0 dB', txdelay: '500 ms' })
+  assert.equal(report.splitRestored, '30.00%', 'and the handle comes back where it was left')
   assert.equal(report.reopened.opens, 2, 'the granted port was reopened without the picker')
   assert.match(report.reopened.says, /PTT port reopened, keying RTS/)
 
   console.log(`demo page: ${report.modes} modes, levels and TXDELAY reach the graph, the meter `
     + 'latches a clip, the TX test keys and refuses as it should, a session connects, types, '
-    + 'disconnects and comes back inbound, and the whole station is remembered across a reload')
+    + 'disconnects and comes back inbound, the monitor and session halves divide with a handle '
+    + 'that drags, clamps and is remembered, a node\'s menu breaks into lines and a segmented '
+    + 'line comes back together, and the whole station survives a reload')
 }
 
 // setInterval(paint) keeps the page's clock running, as it does in a tab, so say when to stop.

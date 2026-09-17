@@ -50,9 +50,21 @@ linearity check, or one for a carrier level or an FM deviation check by Bessel n
 the station page's Mixer and TX test groups with the daemon taken out of them, in the same
 units, against the same target band. `package/README.md` has the API behind them.
 
-Connected mode is a C and a D beside the callsign box and a line of text under the monitor: type
-into an established session and press enter, from either end of it - a station that connects to
-you lands in the same three controls with nothing clicked.
+The main window is two halves with a draggable handle between them: the monitor, which is every
+frame the modem decoded plus this station's own commentary, and the session, which is the
+conversation on its own. Connected mode is a C and a D beside the callsign box and a line of text
+under the session pane: type into an established session and press enter, from either end of it -
+a station that connects to you lands in the same three controls with nothing clicked.
+
+Turning an information field into display lines is the fiddly part, and the rules are the ones
+[packet-term-tui](https://github.com/packet-net/packet-term-tui) arrived at on air (its
+`ReceivedText.cs`): a node's menu arrives as one field with the CRs inside it and every one of
+them is a real line break; CR, LF and CRLF all break and CRLF counts once; a line longer than
+PACLEN is segmented across frames and the remainder belongs on the row that was left open; a
+field of nothing but terminators closes that row and draws nothing; and anything outside
+printable ASCII becomes a dot so a stray byte cannot tear the pane about. One difference: this
+drops a single trailing terminator rather than every one of them, so the blank lines a node puts
+between sections survive.
 
 The station is remembered in the browser it was set up in: the mode, MYCALL, the peer, TXDELAY,
 both levels, which kind of PTT, and which interface. Web Serial and WebHID both let a page
