@@ -6,7 +6,7 @@ When you finish this page your RX gain will sit in the target zone on the statio
 
 - A station that is decoding frames, from [02-first-station.md](02-first-station.md).
 - A sound card of its own. The mixer group and the level meter appear only on a station with a sound card, so a FlexRadio or a web receiver station has neither; see [03-radios-and-interfaces.md](03-radios-and-interfaces.md).
-- The station page reachable in a browser, with the mixer group switched on. That needs either an `api.key` or `"waterfall": { "enableAudioControls": true }` in the config file, which is `/etc/pdn-soundmodem/soundmodem.json`. See [`api`](reference/config.md#api) and [`waterfall`](reference/config.md#waterfall).
+- The station page reachable in a browser, with the mixer group switched on. That needs either an `api.key` or `enableAudioControls` beside the `port` you already set in the config file, then a restart: `"waterfall": { "port": 8107, "enableAudioControls": true }`. See [`api`](reference/config.md#api) and [`waterfall`](reference/config.md#waterfall).
 - For the transmit half, a `ptt` block so the modem can key the radio, and something to watch the transmitter with: a monitor receiver, a panadapter, or a deviation meter.
 
 ## Why level matters
@@ -17,13 +17,13 @@ Transmit level matters for a different reason. Too much audio into an SSB radio 
 
 ## Open the mixer group
 
-Open the station page and look in the header for the group labelled **Mixer**. It carries an **RX gain** slider, the level meter, a **CLIP** indicator and a **TX gain** slider. With `api.key` set and no `enableAudioControls`, both sliders are disabled and read `key needed` until you press **Key** and paste the key, which is kept in that browser only.
+Open the station page and look in the header for the group labelled Mixer. It carries an RX gain slider, the level meter, a CLIP indicator and a TX gain slider. With `api.key` set and no `enableAudioControls`, both sliders are disabled and read `key needed` until you press Key and paste the key, which is kept in that browser only.
 
 If the group is not there, the modem did not answer `/api/mixer` with a card. Check that the station has a sound card and that one of `api.key` or `enableAudioControls` is set.
 
 ## Set the RX gain
 
-The meter shows the peak of the last 200 ms of audio arriving from the card, in dBFS, on a scale from -60 to 0. A hairline on it marks the RMS. It updates five times a second, whether or not the page's Listen button is playing audio. The sentence under it says what to aim for:
+The meter shows the peak of the last 200 ms of audio arriving from the card, in dBFS, on a scale from -60 to 0. A hairline on it marks the RMS. It updates five times a second. The sentence under it says what to aim for:
 
 ```
 Aim for received signals to peak in the green, -18 to -9 dBFS; never into the red, and with nothing on the channel the bar should sit below -30.
@@ -33,7 +33,7 @@ Move the RX gain slider until a received signal peaks in the green band. The sli
 
 Three things to watch as you go.
 
-- The **CLIP** indicator lights for three seconds whenever a sample the card delivered sat on the top or bottom code of its range. Anything that lights it is too loud; turn the gain down until it stops during the loudest station you hear.
+- The CLIP indicator lights for three seconds whenever a sample the card delivered sat on the top or bottom code of its range. Anything that lights it is too loud; turn the gain down until it stops during the loudest station you hear.
 - Red starts at -6 dBFS. Turn the gain down if a signal reaches it.
 - Below -30 dBFS the bar goes grey. With nothing on the channel it should sit there.
 
@@ -61,7 +61,7 @@ Most rows earn no badge at all. That is what a healthy RX gain looks like. The m
 
 ## Send a transmit test
 
-The **TX test** group sits beside the mixer group on an operator's page. It never appears on a public page. Pick a kind, set the seconds, and press **Send**. The modem keys the radio, sends the tones through the same transmit path a frame takes at the station's own transmit level, and unkeys.
+The TX test group sits beside the mixer group on an operator's page. Pick a kind, set the seconds, and press Send. The modem keys the radio, sends the tones through the same transmit path a frame takes at the station's own transmit level, and unkeys.
 
 ```
 tx test: two-tone 700+1900 Hz, 5.0 s, peak level 0.80
@@ -79,9 +79,9 @@ One tone is the FM check, by Bessel null. Send a single tone and raise the trans
 | 1248 Hz | 3.0 kHz deviation |
 | 2079 Hz | 5.0 kHz deviation |
 
-Aim for 2.5 to 3.0 kHz of deviation on a 12.5 kHz channel and 5.0 kHz on a 25 kHz one. The **One tone** entry takes any frequency you type between 50 Hz and half the channel's sample rate, 6000 Hz on most modes, and the page tells you the deviation its null would calibrate.
+Aim for 2.5 to 3.0 kHz of deviation on a 12.5 kHz channel and 5.0 kHz on a 25 kHz one. The One tone entry takes any frequency you type between 50 Hz and half the channel's sample rate, 6000 Hz on most modes, and the page tells you the deviation its null would calibrate.
 
-A test runs for 5 seconds unless you say otherwise, and is capped at `txTest.maxSeconds`, which is 30 by default and never above 60. **Stop** ends it early. See [`txTest`](reference/config.md#txtest) and [the station flags](reference/command-line.md#station-flags).
+A test runs for 5 seconds unless you say otherwise, and is capped at `txTest.maxSeconds`, which is 30 by default and never above 60. Stop ends it early. See [`txTest`](reference/config.md#txtest) and [the station flags](reference/command-line.md#station-flags).
 
 From a bench with no browser, stop the service so it lets go of the card, run the test with the same config file, then start the service again. `--tone 999 5` sends one tone instead, and both need the config file, which is where the `ptt` is.
 
@@ -93,7 +93,7 @@ sudo systemctl start pdn-soundmodem
 
 ## Set the TX gain
 
-Move the **TX gain** slider while the test is running and watch the effect on your monitor receiver or meter. It sets the card's playback level, which is what drives the radio's mic or data input, and it is bounded by the card's range in the same way as RX gain. Some cards mute at the bottom step; where that is so, the slider stops at the lowest step that is a level and says what is under it.
+Move the TX gain slider while the test is running and watch the effect on your monitor receiver or meter. It sets the card's playback level, which is what drives the radio's mic or data input, and it is bounded by the card's range in the same way as RX gain. Some cards mute at the bottom step; where that is so, the slider stops at the lowest step that is a level and says what is under it.
 
 When the reading is right, either leave it, in which case it is remembered in the state file, or write it down as `alsa.mixer.playbackDb`.
 
@@ -134,7 +134,6 @@ At the next start-up, a level pinned in `alsa.mixer` wins. The state file fills 
 
 - [02-first-station.md](02-first-station.md), getting the first decode this page tunes up.
 - [03-radios-and-interfaces.md](03-radios-and-interfaces.md), the audio path and the PTT line.
-- [05-modes.md](05-modes.md), which modes are in each of the three level groups.
 - [07-station-page.md](07-station-page.md), every other control on the page.
 - [12-troubleshooting.md](12-troubleshooting.md), when the audio or the keying is wrong rather than mis-set.
 - [reference/config.md](reference/config.md), every key in `alsa` and `txTest`.

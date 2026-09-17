@@ -28,12 +28,14 @@ The one hardware page, [hardware/tait-tm8100-cm108.md](hardware/tait-tm8100-cm10
 - Set my receive level: [04-levels.md](04-levels.md#set-the-rx-gain).
 - Set my TX level: [04-levels.md](04-levels.md#send-a-transmit-test).
 - Choose a mode: [05-modes.md](05-modes.md#which-family-you-want).
+- Set TXDELAY and the channel timing: [06-connect-your-software.md](06-connect-your-software.md#channel-access-is-your-softwares-to-set).
 - Connect LinBPQ: [06-connect-your-software.md](06-connect-your-software.md#linbpq).
 - Connect APRS software: [06-connect-your-software.md](06-connect-your-software.md#aprs-software).
 - Run Winlink: [06-connect-your-software.md](06-connect-your-software.md#ardop-for-pat-and-winlink-express).
 - Send pages to POCSAG pagers: [06-connect-your-software.md](06-connect-your-software.md#pocsag-paging).
 - Open the page and the KISS port to my network: [06-connect-your-software.md](06-connect-your-software.md#who-can-reach-these-ports).
 - Put several modes in one HF passband: [08-hf.md](08-hf.md#place-your-modems-by-rf-frequency).
+- Put a modem on an FM channel: [08-hf.md](08-hf.md#on-an-fm-radio).
 - Listen without a radio: [09-web-receivers.md](09-web-receivers.md).
 - Publish my station: [10-public-monitor.md](10-public-monitor.md#add-the-publish-block).
 - Run a monitor site: [10-public-monitor.md](10-public-monitor.md#run-a-monitor-site).

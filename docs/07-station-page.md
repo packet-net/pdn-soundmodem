@@ -1,6 +1,6 @@
 # The station page
 
-The station page is the browser page the modem serves: a live spectrum and waterfall, the frames it has decoded, the links it can hear, and, on your own page, the sound card's levels and a transmitter test.
+When you finish this page you can read every part of the station page, which is the browser page the modem serves: a live spectrum and waterfall, the frames it has decoded, the links it can hear, and, on your own page, the sound card's levels and a transmitter test.
 
 ![The station page, showing the header controls, two modem chips, the spectrum and ruler, the waterfall tagged with decoded callsigns, and the decoded frames panel](images/waterfall.png)
 
@@ -36,7 +36,7 @@ Listen plays the station's received audio in your browser, with a volume slider 
 
 Links opens the links pane, with the number of links currently on it. The `L` key does the same.
 
-The Mixer group sets the sound card's capture and transmit levels in dB, bounded by the card's own range, with a live meter of what the modem is hearing. Aim for received signals to peak in the green band, -18 to -9 dBFS, and never into the red; `CLIP` lights for three seconds whenever the card runs out of codes. The meter reads `no reading` after a second of silence, which is what a transmission looks like from here. [04-levels.md](04-levels.md) is the page to work from.
+The Mixer group sets the sound card's capture and transmit levels in dB, bounded by the card's own range, with a live meter of what the modem is hearing. [04-levels.md](04-levels.md) is the page to work from.
 
 The group appears only on your own page, only on a sound-card station, and only when the modem answers `/api/mixer`. That needs either `api.key` or `waterfall.enableAudioControls`. With a key set and this browser not holding it, the sliders read `key needed` and a Key button appears.
 
@@ -92,7 +92,7 @@ The second line is the sub-channel and mode, then whichever of these the frame c
 | `TOO QUIET` | The frame peaked below the level this mode starts losing link margin at. Advice rather than a fault. |
 | `SHIFTED` | One of yours, transmitted off the channel centre to land where the station you are answering is listening. |
 
-The dBFS figure, `TOO LOUD` and `TOO QUIET` appear on the two C4FSK modes and the six 1200 baud AFSK modes, which are the ones whose slicer reads the level. Every mode's measurement still reaches the frame log and the monitor.
+Which modes show the dBFS figure and the two level badges is in [04-levels.md](04-levels.md#read-the-frame-badges). Every mode's measurement still reaches the frame log and the monitor.
 
 ARDOP rows list this station's own transmissions as well as what it heard, carry ARDOP's 0 to 100 quality as `q N`, and show a dB figure on a Ping or a PingAck alone. Your own CW idents appear as mode `cw-ident` from your callsign. A POCSAG page you sent is listed as `unattributed` with the `TX` badge and its length. Neither row carries bytes.
 
@@ -114,7 +114,7 @@ Press `transcript` on a card to save its feed as a markdown file, oldest line fi
 
 An `api` section with a `key` installs the modem's HTTP API on the same port. The page uses it for one thing: reaching the mixer. Press Key, paste the key, and the sliders come alive. The key is kept in that browser and nowhere else, and the modem never sends it to a page.
 
-`waterfall.enableAudioControls` is the alternative on a page that is not public. It serves `/api/mixer` with no key at all and nothing else, so the mixer works from any browser that can reach the port.
+`waterfall.enableAudioControls` serves `/api/mixer` with no key at all and nothing else, so the mixer works from any browser that can reach the port.
 
 The same key also serves the configuration, proposal and transmit-test endpoints, which are not page controls. They are in [the API reference](reference/ports-and-endpoints.md#the-api-under-api).
 
@@ -136,7 +136,7 @@ The page loads but says it is reconnecting. The modem has stopped or the socket 
 
 No spectrum and `no audio` in the corner. The station is not getting audio from the card or the radio. Work through [04-levels.md](04-levels.md) and then [12-troubleshooting.md](12-troubleshooting.md).
 
-The Mixer group is missing. The station has no sound card, or no `api.key` and no `enableAudioControls`. A FlexRadio or web receiver station has no mixer to show.
+The Mixer group is missing. The station has no sound card, as on a FlexRadio or a web receiver, or neither key under [the header](#the-header-left-to-right) is set.
 
 Frames appear on the page but your node software sees nothing. The chip's KISS badge says `no host`. Go to [06-connect-your-software.md](06-connect-your-software.md).
 

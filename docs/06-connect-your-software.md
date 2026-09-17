@@ -65,7 +65,7 @@ The modem does not carry TXDELAY, persistence, slot time or TXTAIL in its config
 | SLOTTIME | 3 | 100 ms |
 | TXTAIL | 4 | 20 ms |
 
-Every modem in the process shares one channel, so a value sent on any port applies to all of them. The values live in memory: a restart returns to the table above, or to whatever `--txdelay` said. Full duplex is accepted and changes nothing, because the channel is half duplex.
+Every modem in the process shares one channel, so a value sent on any port applies to all of them. The values live in memory: a restart returns to the table above, or to whatever `--txdelay` said.
 
 Software that wants to know when a frame has left the radio can send it as ACKMODE, KISS command 12, with a two-byte id of its own on the front, the LinBPQ convention. The id comes back once that frame's audio has finished playing, rather than when it was queued. See [ACKMODE](reference/ports-and-endpoints.md#ackmode), and [Commands](reference/ports-and-endpoints.md#commands) for the rest of what your software may send.
 
@@ -100,7 +100,7 @@ ENDPORT
 
 `CHANNEL=A` is sub-channel 0, `B` is 1, and so on. For a second modem, add a second `PORT` block with the next letter and the same `TCPPORT`. If that does not work on your build of LinBPQ, give the second modem its own `port` as above and point a second `PORT` block at that `TCPPORT` with `CHANNEL=A`.
 
-LinBPQ sends the channel-access values over KISS when it attaches, so set them in the `PORT` block as `TXDELAY=`, `PERSIST=`, `SLOTTIME=` and `TXTAIL=`, again untested here.
+LinBPQ sends the channel-access values over KISS when it attaches, so set them in the `PORT` block as `TXDELAY=`, `PERSIST=`, `SLOTTIME=` and `TXTAIL=`.
 
 ## The PDN node
 
@@ -140,7 +140,7 @@ Point your client at the command port. Pat, Winlink Express, ARIM, gARIM and ham
 }
 ```
 
-Leave PTT to the modem: it keys the radio for ARDOP the same way it does for packet, so the client does not need a rig control path. One client at a time holds each socket, as in ardopcf, and a new connection replaces the one before it.
+Leave PTT to the modem: it keys the radio for ARDOP the same way it does for packet, so the client does not need a rig control path.
 
 ARDOP shares the channel with the packet modems rather than taking it over. While an ARQ session is up, packet frames are held in the queue and refused if they wait more than 30 seconds. Receive carries on throughout, on every modem.
 

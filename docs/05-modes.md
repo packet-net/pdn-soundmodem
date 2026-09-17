@@ -1,6 +1,6 @@
 # Modes
 
-Every mode pdn-soundmodem can run, what each is for, and how well proven each one is.
+When you finish this page you will know which mode to write in your config, what it talks to at the far end, and how well proven it is.
 
 A mode is one line of configuration: the `mode` key on a [`modems`](reference/config.md#modems) entry, or `--modem N:MODE` on the command line. The strings in the tables below are what you write, spelt as they appear here. To hear what a family sounds like, play the recordings in [samples/demo](../samples/demo/README.md).
 
@@ -37,13 +37,13 @@ Every mode carries AX.25 frames behind the framing its row states and is address
 
 | Mode | Modulation | Bit rate | Framing | DSP rate | Tunable | Radio path | Interops with | Verification |
 |---|---|---|---|---|---|---|---|---|
-| `afsk1200` | AFSK (Bell 202) | 1200 bps | AX.25 HDLC | 12 kHz | yes | FM/VHF | NinoTNC, Dire Wolf, QtSM | **On-air** - WA8LMF off-air corpus, scores at/above Dire Wolf |
+| `afsk1200` | AFSK (Bell 202) | 1200 bps | AX.25 HDLC | 12 kHz | yes | FM/VHF | NinoTNC, Dire Wolf, QtSM | **On-air** - the WA8LMF off-air corpus |
 | `afsk1200-multi` | AFSK + 3-pair offset-diversity bank | 1200 bps | AX.25 HDLC | 12 kHz | yes | FM/VHF | as `afsk1200` | **On-air** - same corpus (bank's figures) |
 | `afsk1200-fx25` | AFSK + FX.25 FEC (TX+RX) | 1200 bps | AX.25 + FX.25 | 12 kHz | yes | FM/VHF | Dire Wolf FX.25 | **Sim** - roundtrip + FEC correction tests |
 | `afsk1200-fx25rx` | AFSK + FX.25 (RX only) | 1200 bps | AX.25 + FX.25 | 12 kHz | yes | FM/VHF | as above | **Sim** |
 | `afsk1200-il2p` | AFSK | 1200 bps | IL2P+CRC | 12 kHz | yes | FM/VHF | NinoTNC (0111), Dire Wolf IL2P | **Bench** - NinoTNC corpus + July loop, both directions |
 | `afsk1200-il2p-nocrc` | AFSK | 1200 bps | IL2P | 12 kHz | yes | FM/VHF | - | **Untested** - construction only |
-| `afsk300` | AFSK (200 Hz shift) | 300 bps | AX.25 HDLC | 12 kHz | yes | SSB/HF | NinoTNC (1100) | **Bench**, caveat - corpus decodes 3/3; on-air blocked by rig CFO drift (#116); NinoTNC's own 1100 RX has quirks (see bench doc) |
+| `afsk300` | AFSK (200 Hz shift) | 300 bps | AX.25 HDLC | 12 kHz | yes | SSB/HF | NinoTNC (1100) | **Bench**, caveat - the corpus decodes; not yet proven on air, and a NinoTNC's own 1100 receive has quirks |
 | `afsk300-il2p` | AFSK | 300 bps | IL2P | 12 kHz | yes | SSB/HF | NinoTNC (1101) | **Bench** - corpus, both directions |
 | `afsk300-il2pc` | AFSK | 300 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1110) | **On-air** - first off-air decode 2026-08-02 (GB7BEX-15>GB7IOW-1 via a `ubersdr:` web receiver); bench corpus both directions |
 | `bpsk300` | BPSK + 4-pair diversity bank | 300 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1000), QtSM V26A | **On-air** - GB7RDG off-air decode + BER waterfall + 7 live 40 m frames via a `ubersdr:` web receiver (2026-08-02); caveat: open residual-miss scoreboard |
@@ -51,13 +51,13 @@ Every mode carries AX.25 frames behind the framing its row states and is address
 | `bpsk300-nocrc` | BPSK | 300 bps | IL2P | 12 kHz | yes | SSB/HF | - | **Untested** - construction only |
 | `bpsk1200` | BPSK + diversity bank | 1200 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1010), QtSM V26A | **On-air** - AWGN campaign 2026-07-28 |
 | `bpsk1200-multi` | alias of `bpsk1200` | 1200 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | as `bpsk1200` | **On-air** |
-| `qpsk600` | QPSK (V.26A) | 1200 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1001), QtSM V26A | **Bench**, caveat - corpus 9/9 since the differential default; live QtSM retest pending (#11); CFO +/-10-40 Hz (#116) |
-| `qpsk2400` | QPSK (V.26A/DW2400) | 4800 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1011), QtSM V26A type 12 (not legacy type 10 - by design, #6) | **Bench** - corpus; on-air blocked by rig CFO (#116) |
-| `qpsk3600` | QPSK | 7200 bps | IL2P+CRC | 12 kHz | yes | FM (5.0 kHz dev) | NinoTNC (0101) | **Bench** - corpus; on-air deferred to FM-capable TX (#118) |
-| `fsk9600` | GFSK (G3RUH) | 9600 bps | AX.25 HDLC | 48 kHz | no | FM (9600 port) | NinoTNC (0000), Dire Wolf, QtSM | **Bench** - corpus + head-to-head; on-air deferred (#118) |
+| `qpsk600` | QPSK (V.26A) | 1200 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1001), QtSM V26A | **Bench**, caveat - the corpus decodes; a live QtSM retest is still to come |
+| `qpsk2400` | QPSK (V.26A/DW2400) | 4800 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1011), QtSM V26A type 12 rather than the legacy type 10 | **Bench** - corpus; not yet proven on air |
+| `qpsk3600` | QPSK | 7200 bps | IL2P+CRC | 12 kHz | yes | FM (5.0 kHz dev) | NinoTNC (0101) | **Bench** - corpus; not yet proven on air |
+| `fsk9600` | GFSK (G3RUH) | 9600 bps | AX.25 HDLC | 48 kHz | no | FM (9600 port) | NinoTNC (0000), Dire Wolf, QtSM | **Bench** - corpus and a head-to-head; not yet proven on air |
 | `fsk9600-il2p` | GFSK | 9600 bps | IL2P+CRC | 48 kHz | no | FM (9600 port) | NinoTNC (0010) | **Bench** - corpus; sync-only acquisition (0 ms preamble floor) |
 | `fsk4800-il2p` | GFSK (RUH-4800) | 4800 bps | IL2P+CRC | 48 kHz | no | FM | NinoTNC (0100), Dire Wolf/QtSM RUH | **Bench** - corpus + live QtSM both directions; sync-only acquisition |
-| `c4fsk9600` | 4-level FSK (MMDVM-TNC Mode 2) | 9600 bps | IL2P+CRC | 48 kHz | no | FM (2.5 kHz dev) | NinoTNC (0011), MMDVM-TNC | **Bench** - July loop 8/8 both ways; corpus 3/3 incl. content the NinoTNC itself cannot replay-copy (adaptive equalizer, 2026-08-01); on-air deferred (#118) |
+| `c4fsk9600` | 4-level FSK (MMDVM-TNC Mode 2) | 9600 bps | IL2P+CRC | 48 kHz | no | FM (2.5 kHz dev) | NinoTNC (0011), MMDVM-TNC | **Bench** - a wired loop both ways and the corpus; not yet proven on air |
 | `c4fsk19200` | 4-level FSK | 19200 bps | IL2P+CRC | 48 kHz | no | FM (5.0 kHz dev) | NinoTNC (0001), MMDVM-TNC | **Bench** - as `c4fsk9600` |
 
 ## FreeDV DATAC (OFDM) modes
@@ -81,13 +81,13 @@ Codec2 OFDM burst waveforms for HF SSB. The payload is the same IL2P+CRC bit str
 |---|---|---|
 | `ms110d-wn0` | 75 bps Walsh fallback | **On-air** - sim hard-gated; 2026-07-27 campaign, Poor at/below mask |
 | `ms110d-wn1` | BPSK r1/8 | **On-air** - hard-gated; campaign clean |
-| `ms110d-wn2` | BPSK r1/4 | **On-air** - hard-gated; real-RF level fix (AGC, PR #103) proven live |
+| `ms110d-wn2` | BPSK r1/4 | **On-air** - hard-gated; proven live after a receive-level fix |
 | `ms110d-wn3` | BPSK r1/3 | **On-air** - hard-gated; campaign clean |
 | `ms110d-wn4` | BPSK r2/3 | **On-air** - the strongest on-air-proven MS110D point (Poor 8/9 coded-clean) |
 | `ms110d-wn5` | BPSK r3/4 | **On-air** - hard-gated; campaign clean |
-| `ms110d-wn6` | QPSK r3/4 | **On-air**, caveat - requires a disciplined RX reference (receiver phase-noise, not a modem defect; #102) |
-| `ms110d-wn7` | 8PSK r3/4 | **Partial**, caveat - AWGN on-air-proven; Poor sim hard-gated since 2026-08-20 (the 8PSK per-block ensemble, G1d); no on-air Poor confirmation possible at +19 dB over either rig |
-| `ms110d-wn8` | 16QAM r3/4 | **Partial**, caveat - AWGN on-air-proven at reachable SNR; Poor sim hard-gated since 2026-08-20 (12 / 18 per 4.3M bits, both families under the mask); no on-air Poor confirmation possible at +23 dB over either rig |
+| `ms110d-wn6` | QPSK r3/4 | **On-air**, caveat - needs a receiver with a disciplined frequency reference, because receiver phase noise limits it |
+| `ms110d-wn7` | 8PSK r3/4 | **Partial**, caveat - proven on air on a clean channel; the Poor channel is hard-gated in simulation only, because neither rig reaches the +19 dB it would need |
+| `ms110d-wn8` | 16QAM r3/4 | **Partial**, caveat - proven on air on a clean channel; the Poor channel is hard-gated in simulation only, because neither rig reaches the +23 dB it would need |
 | `ms110d-wn13` | QPSK r9/16 | **On-air**, caveat - same disciplined-reference condition as wn6 |
 
 ## Running several modems at once

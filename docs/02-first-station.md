@@ -56,7 +56,7 @@ CM108, where a GPIO pin on the radio interface itself drives the PTT:
 "ptt": { "type": "cm108", "device": "/dev/hidraw0" }
 ```
 
-Serial needs nothing extra, because the service user is already in the `dialout` group. CM108 does: `/dev/hidraw*` is root-only by default. Find your interface's USB IDs with `lsusb` (`0d8c:013c` is a common C-Media one), then write a udev rule:
+Serial needs nothing extra, because the service user is already in the `dialout` group. CM108 does: `/dev/hidraw*` is root-only by default. Find your interface's USB IDs with `lsusb` (`0d8c:013c` is a common C-Media one), then write a udev rule with your own IDs in place of those:
 
 ```sh
 sudo tee /etc/udev/rules.d/99-pdn-soundmodem-cm108.rules >/dev/null <<'EOF'
@@ -117,6 +117,8 @@ Received, on sub-channel 0, in `afsk1200`, from `M0LTE` to `APRS`, 55 bytes long
 Point a browser at `http://127.0.0.1:8107/` on the machine itself, or at `http://<the machine>:8107/` if you set `"bind": "*"`.
 
 ![The station page](images/waterfall.png)
+
+An HF station with two modems. Yours shows one chip, with a KISS badge after it.
 
 You should see a spectrum with a waterfall scrolling beneath it, one chip reading `AFSK1200` and `KISS 8105, no host`, and a Decoded frames panel that says `Nothing decoded yet.` until the first frame arrives. Each burst on the waterfall gets a tag with the callsign that sent it.
 

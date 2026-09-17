@@ -36,7 +36,7 @@ One row goes into the `frames` table per frame heard and per frame sent.
 |---|---|
 | `heard_at` | When it arrived, UTC, ISO 8601. On a `tx` row, when it went out |
 | `direction` | `rx` for a frame the station heard, `tx` for one it sent |
-| `sub_channel`, `mode`, `mode_name` | Which modem carried it, as `0`, `bpsk300-il2pc`, `BPSK300 IL2Pc` |
+| `sub_channel`, `mode`, `mode_name` | Which modem carried it, as `0`, `bpsk300-il2pc`, `BPSK300 IL2Pc`. The modem describes itself here, framing and all, so one you configured as `bpsk300` reads as `bpsk300-il2pc` |
 | `source`, `destination` | AX.25 callsigns, null where none could be read |
 | `length`, `payload` | Its size in bytes, and the frame itself as a blob |
 | `crc_valid` | 1 where the frame's CRC checked, 0 where it did not, null where there was none to check |
@@ -190,8 +190,6 @@ Collect faster than `frameWindowSeconds` (300 by default) or you lose frames. Co
 ## Import the Grafana dashboard
 
 The dashboard is at [reference/grafana/pdn-soundmodem.json](reference/grafana/pdn-soundmodem.json). In Grafana, go to Dashboards, New, Import and upload the file. Then pick your datasources from the Prometheus and InfluxDB pickers at the top of the dashboard, beside the station picker.
-
-You get nine panels: stations tracked and heard, the uncounted-frame rate, mean SNR and mean offset per station, corrected bytes, frames and bytes, and a scatter of every individual frame's SNR and offset from the per-frame feed. The station picker filters the lot.
 
 ## Check it worked
 

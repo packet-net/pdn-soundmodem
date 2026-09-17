@@ -24,7 +24,7 @@ By the end of this page you will know which `device` string and which `ptt` bloc
 
 ## Wire a sound card or an interface
 
-Write the name `aplay -L` prints for the card. Prefer the stable `plughw:CARD=Device,DEV=0` form over `plughw:1,0`, because card numbers move when you replug something. `arecord -l` and `aplay -l` list the cards themselves.
+Write the stable `plughw:CARD=Device,DEV=0` name rather than `plughw:1,0`, because card numbers move when you replug something; [02-first-station.md](02-first-station.md#find-the-sound-card) finds yours.
 
 A CM108-class interface is a USB sound card with a GPIO pin wired to the radio's PTT line, so one USB lead carries audio both ways and the keying. A DRA board, an RB-USB RIM and the board wired to a Tait TM8100 are all this kind of thing. The card is the `device` string; the pin is the `ptt` block below.
 
@@ -74,7 +74,7 @@ ptt: cm108 /dev/hidraw0 (gpio 3)
 
 Leave the `ptt` section out and the modem keys nothing. The radio's own VOX trips on the transmit audio instead.
 
-It is a poor way to run data. The radio decides when the carrier comes up, so TXDELAY has to be long enough to cover the VOX attack, and the hang time keeps the transmitter up while the other station is answering. The transmitter test is refused:
+It is a poor way to run data. The radio decides when the carrier comes up, so TXDELAY, the pause between keying and the first data, has to be long enough to cover the VOX attack, and the hang time keeps the transmitter up while the other station is answering. The transmitter test is refused:
 
 ```
 tx test: unavailable - no "ptt" is configured, so this daemon does not key the radio

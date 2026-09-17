@@ -1,6 +1,6 @@
 # Troubleshooting
 
-How to find out what a station is doing, and what to do about the things that most often go wrong.
+When you finish this page you can read what a station is telling you, and fix the things that most often go wrong.
 
 ## Read the journal first
 
@@ -172,7 +172,7 @@ cannot open the cm108 PTT device "/dev/hidraw0"
 
 Retrying is what you want at boot, because a USB interface can still be enumerating when the service starts. It is also what fills the journal while you work on it, so `systemctl stop pdn-soundmodem` until the config is right. The sound-card version of the message tells you to run `aplay -l ; arecord -l ; aplay -L`, and the FlexRadio version tells you to check the radio has finished booting.
 
-Card numbers move when devices are replugged, so prefer a stable name such as `plughw:CARD=Device,DEV=0` over `plughw:1,0`. See [radios and interfaces](03-radios-and-interfaces.md).
+Prefer a stable card name over a card number; see [radios and interfaces](03-radios-and-interfaces.md#wire-a-sound-card-or-an-interface).
 
 ## Permission problems
 
@@ -195,7 +195,7 @@ Work down this list. Most stations that hear nothing fail on one of the first th
 5. Is the sideband right? On HF, USB where the other station is on LSB decodes nothing at all. Check the `dial:` and `modem N ... at ...` lines from the band plan against what the rig is set to. See [HF](08-hf.md).
 6. Are you off frequency? If frames decode but the line ends in something like `-180 Hz`, retune by that much. The same figure is on each burst's tag on the waterfall.
 7. Are frames arriving but your software sees nothing? That is a sub-channel problem, not a decode problem. A host on the shared KISS port only sees frames whose nibble matches, and a host on a modem's own port sees that modem as nibble 0. See [Connect your software](06-connect-your-software.md) and [addressing](reference/ports-and-endpoints.md#addressing).
-8. If nothing above helped, prove the chain off the air by replaying a demo recording through the whole daemon with `--wav-loop`, as [Your first station](02-first-station.md) describes. If that decodes, the modem is fine and the problem is between the antenna and the card.
+8. If nothing above helped, prove the chain off the air by replaying a demo recording through the whole modem with `--wav-loop`, as [Your first station](02-first-station.md) describes. If that decodes, the modem is fine and the problem is between the antenna and the card.
 
 ## Lost audio and CPU starvation
 

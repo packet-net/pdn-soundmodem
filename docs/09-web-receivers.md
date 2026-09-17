@@ -100,7 +100,7 @@ Set `public` on the [`waterfall`](reference/config.md#waterfall) section to dres
 
 `title` goes in the tab and the top bar. `about` is one paragraph under it. An on-demand station also credits the web receiver it listens through and links to it.
 
-A public page hides the KISS host badges, the dial and display controls, the stats and the links pane's *Mine* filter, and it never carries the mixer or the transmitter test. The waterfall, the links pane, the decoded frames and *Listen* all stay. [07-station-page.md](07-station-page.md) goes through every control.
+A public page hides the KISS host badges, the dial and display controls, the stats and the links pane's Mine filter, and it never carries the mixer or the transmitter test. The waterfall, the links pane, the decoded frames and Listen all stay. [07-station-page.md](07-station-page.md) goes through every control.
 
 Serving the page beyond the machine needs a top-level [`bind`](reference/config.md#kissport-and-bind) of `"*"`. There is no `bind` inside `waterfall`. Anything that can reach the port can watch the station, and watching is all it can do.
 

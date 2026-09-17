@@ -167,5 +167,5 @@ Decodes you do not believe, from a live station rather than a file, are in [12-t
 
 - [05-modes.md](05-modes.md) for every mode string the sweep can run.
 - [11-logging-and-metrics.md](11-logging-and-metrics.md) for the survey captures and raw capture that produce most of the files you will point these tools at.
-- [reference/command-line.md](reference/command-line.md) for the daemon's own `--wav` and `--wav-loop`.
+- [reference/command-line.md](reference/command-line.md) for the modem's own `--wav` and `--wav-loop`.
 - [samples/demo/README.md](../samples/demo/README.md) for the nine demo recordings, with the payload each one carries.
