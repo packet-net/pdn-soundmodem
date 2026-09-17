@@ -1,15 +1,18 @@
 # Reference samples
 
-Two sets, kept for different reasons.
+Seven folders, kept for different reasons. The ones with their own README say more.
 
 | directory | what | reproducible? |
 |---|---|---|
-| `pdn/` | our transmission, one WAV per mode | **yes** - `sm-samples` regenerates them byte-for-byte |
+| `ardop/` | ardopcf's own transmissions and component vectors, the ARDOP interop oracle (see [ardop/README.md](ardop/README.md)) | **yes** - with an ardopcf build, from the scripts there |
+| `demo/` | one WAV per transmit-mode family, to listen to (see [demo/README.md](demo/README.md)) | **yes** - our own transmit paths |
 | `ninotnc/` | a real NinoTNC's transmission, one WAV per mode | **no** - recordings of physical hardware |
-| `qtsm/` | a real QtSoundModem's transmission, QPSK phase-map evidence | **no** - recordings off the snd-aloop rig |
+| `offair/` | real over-the-air captures, including the GB7RDG miss corpus (see [offair/README.md](offair/README.md)) | **no** - live RF, as it happened |
+| `pdn/` | our transmission, one WAV per mode | **yes** - `sm-samples` regenerates them byte-for-byte |
 | `pocsag/` | our POCSAG paging transmission, one WAV per rate (see [pocsag/README.md](pocsag/README.md)) | **yes** - `sm-pocsag encode` regenerates them byte-for-byte |
+| `qtsm/` | a real QtSoundModem's transmission, QPSK phase-map evidence | **no** - recordings off the snd-aloop rig |
 
-`ninotnc/` is the valuable half. Those are recordings of a NinoTNC (firmware 3.44) off pin 1
+`ninotnc/` is the valuable one. Those are recordings of a NinoTNC (firmware 3.44) off pin 1
 over the CM108 bench loop (docs/dev/bench/ninotnc-loop.md), and they are the source of the per-mode
 occupied-bandwidth references that `OccupiedBandwidthTests` holds us to - the rule being
 that we are never wider than the TNC we share a channel with. They cannot be regenerated
