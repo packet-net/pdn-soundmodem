@@ -1,0 +1,73 @@
+name: pages
+
+# Publishes web/demo/index.html - the CDN-loaded soundmodem demo - to GitHub Pages.
+#
+# The page pins an exact @packet-net/soundmodem version (see the PKG constant in
+# web/demo/index.html) so what is on screen cannot drift from what is loaded. Rather than
+# committing a version bump back to main on every release, this workflow re-pins a *copy*
+# of the page at deploy time to whatever version npm actually has published right now, so
+# the live site always matches the newest build without touching the checked-in file.
+#
+# Triggers: a published release (release.yml has just finished publishing a new build of
+# the npm package), a push to main that touches the demo itself, and workflow_dispatch for
+# a manual redeploy.
+
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - 'web/demo/**'
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the published soundmodem version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(npm view @packet-net/soundmodem version)"
+          [ -n "$version" ] || { echo "::error::npm view returned no version for @packet-net/soundmodem"; exit 1; }
+          echo "resolved @packet-net/soundmodem@$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build the site
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir _site
+          cp web/demo/index.html _site/index.html
+          # Same PKG.soundmodem line the file's own comment names as the single source of
+          # truth for both the import URL and the banner - re-pin it to what npm has now.
+          sed -i "s/@packet-net\/soundmodem@[0-9][^']*/@packet-net\/soundmodem@${{ steps.version.outputs.version }}/" _site/index.html
+          grep -F "@packet-net/soundmodem@${{ steps.version.outputs.version }}" _site/index.html
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
