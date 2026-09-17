@@ -103,7 +103,7 @@ tools/Packet.SoundModem.MultiDecode/  pdn-decode: sweep every mode over a file n
 tools/Packet.SoundModem.TncTest/      sm-tnctest: score a decoder against a recorded corpus
 web/                         the same core compiled to WebAssembly, published to npm as
                              @packet-net/soundmodem - a sound card where a KISS TNC would be
-docs/                        the user guide and reference (being written; docs/README.md is its front page)
+docs/                        the user guide and reference; docs/README.md is its front page
 docs/05-modes.md             the mode table, exact against the catalogue
 docs/13-decode-a-recording.md  the sweep tool, and why its default set is the whole catalogue
 docs/hardware/               the Tait TM8100 wiring guide, a user document
@@ -120,4 +120,4 @@ The architecture/design rationale lives in the founding research doc in packet.n
 
 ## Releases and release notes
 
-A release is a `v*` tag on `main`; `release.yml` tests, builds the NuGet package and the `.deb`s, and writes the GitHub Release notes with `scripts/release-notes.py` - one bullet per merged PR (or direct commit) since the previous tag, grouped by the conventional prefix, nothing else. So **a PR title is a release-note bullet**: write it as the plain, one-line, user-facing statement of what changed (what a station operator or a library consumer would want to read), with a `feat:`/`fix:`/`docs:`/`test:`/`chore:` prefix so it lands in the right section. The detail belongs in the PR body. Never hand-write release notes or re-add install text to them; INSTALL.md is linked from every release.
+A release is a `v*` tag on `main`; `release.yml` tests, builds the NuGet package and the `.deb`s, and writes the GitHub Release notes with `scripts/release-notes.py` - one bullet per merged PR (or direct commit) since the previous tag, grouped by the conventional prefix, nothing else. So **a PR title is a release-note bullet**: write it as the plain, one-line, user-facing statement of what changed (what a station operator or a library consumer would want to read), with a `feat:`/`fix:`/`docs:`/`test:`/`chore:` prefix so it lands in the right section. The detail belongs in the PR body. Never hand-write release notes or re-add install text to them; `docs/01-install.md` is linked from every release.

@@ -259,7 +259,7 @@ internal sealed class UplinkServer : IAsyncDisposable
     /// Configured beats derived, because the derivation cannot work behind a tunnel that rewrites
     /// the <c>Host</c> header and this site runs behind one: what reaches this process is
     /// <c>127.0.0.1:8099</c>, and the owner is the one who knows the name the world uses. See
-    /// CONFIG.md's <c>monitor.publicUrl</c>.
+    /// <c>docs/reference/config.md</c>'s <c>monitor.publicUrl</c>.
     /// </remarks>
     private string? OriginFor(HttpListenerRequest request) =>
         _options.PublicUrl is { Length: > 0 } configured

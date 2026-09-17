@@ -536,7 +536,7 @@ internal sealed record TxTestRecord(int SubChannel, string Text, double AudioHz)
     /// <summary>
     /// The record's own bytes, for a log whose rows are frames. Its text, in ASCII: the frame log
     /// stores a payload for every row and a test transmission has no frame to store, so what it
-    /// keeps is the sentence describing what went out. See CONFIG.md under <c>frameLog</c>.
+    /// keeps is the sentence describing what went out. See docs/reference/config.md under <c>frameLog</c>.
     /// </summary>
     /// <remarks>
     /// <b>The <c>tx test: </c> prefix is load-bearing.</b> Everything that reads a payload as an

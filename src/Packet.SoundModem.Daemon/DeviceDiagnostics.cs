@@ -91,9 +91,11 @@ internal static class DeviceDiagnostics
                   List what this machine actually has:
                     ls -l /dev/hidraw*
                   /dev/hidraw* is root-only by default, so the unprivileged service user cannot
-                  open it without a udev rule granting the audio group access - see the
-                  Permissions section of INSTALL.md. "Permission denied" here almost always
-                  means the rule is missing rather than the wrong device.
+                  open it without a udev rule granting the audio group access. The rule to
+                  write is under "Choose the PTT line" at
+                    https://github.com/packet-net/pdn-soundmodem/blob/main/docs/02-first-station.md
+                  "Permission denied" here almost always means the rule is missing rather than
+                  the wrong device.
                 """,
             "serial" =>
                 """

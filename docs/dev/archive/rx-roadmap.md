@@ -724,7 +724,7 @@ new `snr_db` column, the `rx[...]` journal line's `snr x.x dB` figure, the KISS 
 frame's `snrDb` and the waterfall panel all carry the IDENTICAL figure - one measurement,
 per the branch-index-offset lesson. The convention warning above is answered in
 documentation rather than the column name: `FrameQuality.SnrDb`'s doc, the frameLog table
-in CONFIG.md and the ledger entry all state it is the band-tracker ratio, NOT SNR3k. A
+in the configuration reference and the ledger entry all state it is the band-tracker ratio, NOT SNR3k. A
 quiet band at decode time yields null, never zero.
 
 ### 10. Timing diversity and the clock hold for the remaining single-carrier modes (opened 2026-08-21, issue #331)

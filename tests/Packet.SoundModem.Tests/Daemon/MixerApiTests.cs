@@ -383,14 +383,14 @@ public class MixerApiTests : IDisposable
         body.GetProperty("warn").GetBoolean().Should().BeFalse(
             "not writing it down is what the caller asked for, so it is not something to warn "
             + "them about; warning about what somebody requested teaches them to stop reading "
-            + "the field. CONFIG.md promises this");
+            + "the field. docs/reference/config.md promises this");
         File.Exists(station.StatePath).Should().BeFalse(
             "a value being tried is not a value being kept");
     }
 
     /// <summary>
     /// The three things <c>warn</c> means, in one case each, because it is a field in an API
-    /// answer that CONFIG.md makes a promise about and the operator page acts on.
+    /// answer that docs/reference/config.md makes a promise about and the operator page acts on.
     /// </summary>
     /// <remarks>
     /// True when there is something to read now - a control the config file will take back, or a

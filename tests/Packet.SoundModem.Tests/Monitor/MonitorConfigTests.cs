@@ -505,7 +505,7 @@ public class MonitorConfigTests : IDisposable
     {
         error.Should().Contain("systemctl restart pdn-soundmodem",
             "the message must say how to apply the fix");
-        error.Should().Contain("CONFIG.md", "the message must point at the reference");
+        error.Should().Contain("docs/reference/config.md", "the message must point at the reference");
         error.Should().NotContain("Exception", "a stack trace is not an explanation");
         error.Should().NotContain("   at ", "a stack trace is not an explanation");
     }

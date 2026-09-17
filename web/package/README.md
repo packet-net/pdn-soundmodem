@@ -4,7 +4,7 @@ A sound card instead of a TNC. The [pdn-soundmodem](https://github.com/packet-ne
 DSP core compiled to WebAssembly, with a Web Audio graph and a serial PTT line either side of
 it, so a browser tab with a USB audio interface is a packet modem.
 
-It sits exactly where a KISS TNC on a serial port sits: raw AX.25 frames in, raw AX.25 frames
+It sits where a KISS TNC on a serial port sits: raw AX.25 frames in, raw AX.25 frames
 out, plus a carrier-sense reading. It depends on nothing, and it knows nothing about any
 particular AX.25 implementation.
 

@@ -258,7 +258,7 @@ jobs:
           set -euo pipefail
           # One bullet per merged PR (or direct commit) since the previous tag, grouped by
           # kind, from first-parent history - no rehashed install text, no API calls. The
-          # install pointer is a single line at the end; INSTALL.md carries the detail.
+          # install pointer is a single line at the end; docs/01-install.md carries the detail.
           python3 scripts/release-notes.py "$TAG" > /tmp/relnotes.md
           cat /tmp/relnotes.md
 

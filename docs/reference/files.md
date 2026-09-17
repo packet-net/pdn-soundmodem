@@ -12,7 +12,7 @@ What the Debian package installs, what pdn-soundmodem reads and writes on disk, 
 | `/usr/lib/systemd/system/pdn-soundmodem.service` | The systemd unit. Enabled and started on install, restarted on upgrade |
 | `/usr/lib/systemd/system/pdn-soundmodem@.service` | The template unit. `pdn-soundmodem@NAME` runs `/etc/pdn-soundmodem/NAME.json` with `/var/lib/pdn-soundmodem/NAME/` as its state directory. Never enabled by the package |
 | `/etc/systemd/system/multi-user.target.wants/pdn-soundmodem.service` | The enable symlink, created by postinst on first install. Not shipped in the package |
-| `/usr/share/pdn-soundmodem/soundmodem.example.json` | The annotated example config, a copy of [`soundmodem.example.json`](../../soundmodem.example.json) from the repository. The file postinst seeds from |
+| `/usr/share/pdn-soundmodem/soundmodem.example.json` | The example config, a copy of [`soundmodem.example.json`](../../soundmodem.example.json) from the repository. The file postinst seeds from |
 | `/etc/pdn-soundmodem/` | Shipped as an empty directory, so it outlives a remove and purge has to delete it by hand |
 | `/etc/pdn-soundmodem/soundmodem.json` | The station's config. Seeded by postinst from the example if absent, owned by root, mode 0644. Not a dpkg-owned file |
 | `/var/lib/pdn-soundmodem/` | The state directory. Created by systemd from `StateDirectory=` at each start, owned by the service user, mode 0750. A template instance's is `NAME/` inside it |

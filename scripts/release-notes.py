@@ -106,7 +106,7 @@ def main():
     if not any(section in groups for section in order):
         lines.append("No recorded changes.")
         lines.append("")
-    lines.append("Packages: the `.deb` for amd64, arm64 and armhf and the NuGet package are attached; verify downloads against `SHA256SUMS`. Install, configuration and upgrade instructions: [INSTALL.md](https://github.com/packet-net/pdn-soundmodem/blob/main/INSTALL.md).")
+    lines.append("Packages: the `.deb` for amd64, arm64 and armhf and the NuGet package are attached; verify downloads against `SHA256SUMS`. Install, configuration and upgrade instructions: [docs/01-install.md](https://github.com/packet-net/pdn-soundmodem/blob/main/docs/01-install.md).")
     print("\n".join(lines))
 
 

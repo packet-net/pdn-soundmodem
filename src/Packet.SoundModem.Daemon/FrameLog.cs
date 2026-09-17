@@ -20,7 +20,7 @@ namespace Packet.SoundModem.Daemon;
 /// <para>The timestamp column is called <c>heard_at</c> for a transmitted row too, where it
 /// means "when it went out". Renaming it would be more honest about one row in ten and would
 /// silently break every query, dashboard and documented example written against the log so far,
-/// so the wart is documented (CONFIG.md § frameLog) rather than fixed.</para>
+/// so the wart is documented (docs/reference/config.md § frameLog) rather than fixed.</para>
 /// </remarks>
 internal sealed class FrameLog : IAsyncDisposable
 {

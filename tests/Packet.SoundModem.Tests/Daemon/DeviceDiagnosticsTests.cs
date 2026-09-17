@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Tests.Daemon;
 /// The message a fresh install produces. The seeded config names a CM108 on /dev/hidraw0, so on
 /// most machines this is literally the first thing an admin ever reads about pdn-soundmodem -
 /// it has to name the setting, name the file, and give the command that lists what is really
-/// there. See CONFIG.md § What is rejected at start-up.
+/// there. See docs/reference/config.md § The file.
 /// </summary>
 public class DeviceDiagnosticsTests
 {
