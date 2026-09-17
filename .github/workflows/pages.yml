@@ -62,6 +62,12 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          # Default is false, which only checks for an existing Pages site rather than
+          # creating one - the first run here failed with "Get Pages site failed [...]
+          # Not Found" because nobody had switched Settings -> Pages to Actions yet.
+          # The pages:write permission this workflow grants covers creating it.
+          enablement: true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
