@@ -10,53 +10,27 @@ Root, or an account with `sudo`.
 
 Nothing else. The package is self-contained, so there is no .NET runtime to install.
 
-## Pick the package for your architecture
+## Add the repository
 
-Ask the machine which one it wants:
+The package comes from an apt repository, so your machine can install it and keep it up to date the same way it does everything else. Fetch the signing key, then write the source line:
 
 ```sh
-dpkg --print-architecture
+curl -fsSL https://packet-net.github.io/apt/pubkey.asc | sudo gpg --dearmor -o /usr/share/keyrings/packet-net.gpg
+echo "deb [signed-by=/usr/share/keyrings/packet-net.gpg] https://packet-net.github.io/apt ./" | sudo tee /etc/apt/sources.list.d/packet-net.list
 ```
 
-| Answer | Package | Typical machine |
-|---|---|---|
-| `amd64` | `pdn-soundmodem_<version>_amd64.deb` | x86-64 PC or server |
-| `arm64` | `pdn-soundmodem_<version>_arm64.deb` | Raspberry Pi 3, 4 or 5 on 64-bit Raspberry Pi OS |
-| `armhf` | `pdn-soundmodem_<version>_armhf.deb` | 32-bit Raspberry Pi OS, older Pi |
+The second command echoes the line it wrote. apt now checks every package it fetches from that repository against the key, and refuses anything the key did not sign.
+
+If your machine has no `sudo`, become root with `su -` and run every command on this page without the `sudo` prefix.
 
 ## Install it
 
-One line fetches the right `.deb` from the latest release and installs it:
-
 ```sh
-wget -qO- https://api.github.com/repos/packet-net/pdn-soundmodem/releases/latest | grep -o "https://github.com/[^\"]*_$(dpkg --print-architecture)\.deb" | xargs -I{} sh -c 'wget -qO /tmp/pdn-soundmodem.deb "{}" && { command -v sudo >/dev/null 2>&1 && sudo apt install -y /tmp/pdn-soundmodem.deb || su -c "apt install -y /tmp/pdn-soundmodem.deb"; }'
+sudo apt update
+sudo apt install pdn-soundmodem
 ```
 
-To do it by hand instead, download the `.deb` and the `SHA256SUMS` file for your architecture from the [latest release](https://github.com/packet-net/pdn-soundmodem/releases/latest), check the download, then install it:
-
-```sh
-sha256sum -c SHA256SUMS --ignore-missing
-sudo apt install ./pdn-soundmodem_<version>_<arch>.deb
-```
-
-The checksum step should print one line per file you downloaded:
-
-```
-pdn-soundmodem_0.69.0_arm64.deb: OK
-```
-
-`apt install ./file.deb` rather than `dpkg -i` because apt pulls in the handful of system libraries the package depends on (`libasound2`, `libstdc++6` and friends); `dpkg` would leave them unmet.
-
-If your machine has no `sudo`, become root with `su -` and run every command here without the `sudo` prefix.
-
-With the `.deb` sitting in `/root`, apt prints this while installing:
-
-```
-N: Download is performed unsandboxed as root as file '/root/pdn-soundmodem_0.69.0_arm64.deb'
-   couldn't be accessed by user '_apt'. - pkgAcquire::Run (13: Permission denied)
-```
-
-That is a notice and the package installs anyway. Keep the file in `/tmp` instead and it does not appear.
+apt picks the build for your architecture, and pulls in the handful of system libraries the package depends on (`libasound2`, `libstdc++6` and friends). There is nothing to choose and nothing to download by hand.
 
 ## What the install did
 
@@ -71,7 +45,7 @@ That is a notice and the package installs anyway. Keep the file in `/tmp` instea
 
 The full list, including what the modem writes and when, is in the [files reference](reference/files.md#what-the-package-installs).
 
-The service runs as a system user called `pdn-soundmodem`, which the package creates. It is in the `audio` group so it can open `/dev/snd/*`, and in `dialout` so it can key a radio over serial PTT. CM108 keying needs one more step, a udev rule, which [02-first-station.md](02-first-station.md) covers when you get to it.
+The service runs as a system user called `pdn-soundmodem`, which the package creates. The unit gives that user the `audio` group so it can open `/dev/snd/*`, and `dialout` so it can key a radio over serial PTT, so `id pdn-soundmodem` does not list either. CM108 keying needs one more step, a udev rule, which [02-first-station.md](02-first-station.md) covers when you get to it.
 
 ## Check it worked
 
@@ -95,10 +69,11 @@ The service is enabled and started on install, but it will not be running. The s
 
 ```
 cannot open the cm108 PTT device "/dev/hidraw0"
-  Could not find file '/dev/hidraw0'.
-
+  Access to the path '/dev/hidraw0' is denied.
   Set by "ptt" in /etc/pdn-soundmodem/soundmodem.json
 ```
+
+With no interface plugged in yet the middle line reads `Could not find file '/dev/hidraw0'.` instead.
 
 Below that come a few lines of advice about permissions, and a line saying the service will keep retrying in case the device is merely late appearing.
 
@@ -106,7 +81,9 @@ Seeing that means the install is complete and the modem is waiting for a config 
 
 ## If it did not
 
-`package architecture (arm64) does not match system (armhf)` means you downloaded the wrong `.deb`. Run `dpkg --print-architecture` again and fetch the one it names.
+`Unable to locate package pdn-soundmodem` means apt has not read the repository yet, or the source line did not land. Run `sudo apt update` again and check that `cat /etc/apt/sources.list.d/packet-net.list` prints the `deb [signed-by=...]` line.
+
+`The following signatures couldn't be verified` on `apt update` means the key is missing or was written somewhere else. Fetch it again with the `curl` command above, and check that `/usr/share/keyrings/packet-net.gpg` exists.
 
 `systemctl status` says `Unit pdn-soundmodem.service could not be found`: the package did not finish installing. Run `sudo apt install -f` and read what apt says about unmet dependencies.
 
@@ -129,7 +106,11 @@ Each file has to name its own sound card and its own PTT line, and claim its own
 
 ## Upgrading
 
-Install the new `.deb` the same way, one-liner or by hand. Your config file is left alone, the service stays enabled if it was, and everything under `/var/lib/pdn-soundmodem` survives, including the mixer levels the station page last set. Template instances that were running are restarted on the new binary.
+```sh
+sudo apt update && sudo apt upgrade
+```
+
+That takes a new pdn-soundmodem along with everything else the machine has updates for. `sudo apt install pdn-soundmodem` does the same for this package alone. Your config file is left alone, the service stays enabled if it was, and everything under `/var/lib/pdn-soundmodem` survives, including the mixer levels the station page last set. Template instances that were running are restarted on the new binary.
 
 `pdn-soundmodem --version` tells you which version you now have.
 

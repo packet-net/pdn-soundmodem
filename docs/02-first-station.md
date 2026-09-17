@@ -21,7 +21,7 @@ arecord -l
 
 ```
 **** List of CAPTURE Hardware Devices ****
-card 1: Device [USB PnP Sound Device], device 0: USB Audio [USB Audio]
+card 1: Device [USB Audio Device], device 0: USB Audio [USB Audio]
   Subdevices: 1/1
   Subdevice #0: subdevice #0
 ```
@@ -34,7 +34,7 @@ aplay -L
 
 ```
 plughw:CARD=Device,DEV=0
-    USB PnP Sound Device, USB Audio
+    USB Audio Device, USB Audio
     Hardware device with all software conversions
 ```
 
@@ -56,16 +56,16 @@ CM108, where a GPIO pin on the radio interface itself drives the PTT:
 "ptt": { "type": "cm108", "device": "/dev/hidraw0" }
 ```
 
-Serial needs nothing extra, because the service user is already in the `dialout` group. CM108 does: `/dev/hidraw*` is root-only by default. Find your interface's USB IDs with `lsusb` (`0d8c:013c` is a common C-Media one), then write a udev rule with your own IDs in place of those:
+Serial needs nothing extra, because the service user is already in the `dialout` group. CM108 does: `/dev/hidraw*` is root-only by default. Find your interface's USB IDs with `lsusb` (`0d8c:0012` is a common C-Media one), then write a udev rule with your own IDs in place of those:
 
 ```sh
 sudo tee /etc/udev/rules.d/99-pdn-soundmodem-cm108.rules >/dev/null <<'EOF'
-KERNEL=="hidraw*", ATTRS{idVendor}=="0d8c", ATTRS{idProduct}=="013c", MODE="0660", GROUP="audio"
+KERNEL=="hidraw*", ATTRS{idVendor}=="0d8c", ATTRS{idProduct}=="0012", MODE="0660", GROUP="audio"
 EOF
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-Unplug and replug the interface; `ls -l /dev/hidraw*` should now show group `audio`.
+`udevadm trigger` applies the rule to what is already plugged in, so `ls -l /dev/hidraw*` should show group `audio` straight away. If it still says `root root`, unplug the interface and plug it back in.
 
 ## Write the config
 
@@ -155,6 +155,7 @@ Anything else is in [12-troubleshooting.md](12-troubleshooting.md).
 A recording can stand in for the radio. The `.deb` does not ship the recordings, so this needs a checkout of the source:
 
 ```sh
+sudo apt install git
 git clone https://github.com/packet-net/pdn-soundmodem
 cd pdn-soundmodem
 sudo systemctl stop pdn-soundmodem
