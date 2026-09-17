@@ -313,19 +313,14 @@ jobs:
     needs: release
     if: needs.release.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    # 20 rather than 10 because the last step waits for npm's registry index to
-    # catch up with the publish, which npm itself says takes a few minutes.
-    timeout-minutes: 20
+    timeout-minutes: 10
     # Trusted publishing (OIDC), configured at the npmjs end against
     # packet-net/pdn-soundmodem + this workflow file. No NPM_TOKEN: the runner
     # mints a short-lived id-token per run, so there is no secret to expire.
     # The old token had, which is what prompted this (packet-net/ax25sdl#83).
-    #
-    # actions: write is for the pages.yml dispatch in the last step.
     permissions:
       contents: read
       id-token: write
-      actions: write
     steps:
       - uses: actions/setup-node@v6
         with:
@@ -358,42 +353,3 @@ jobs:
           # first publish is refused without it; harmless on every one after.
           npm publish "$tgz" --access public
 
-      # The live demo page pins an exact @packet-net/soundmodem version and is re-pinned at
-      # deploy time, so it has to be deployed again after a publish or it goes on serving the
-      # release before this one - which is exactly what it had been doing.
-      #
-      # Dispatched rather than triggered. pages.yml used to declare `release: types: [published]`
-      # and its header said that was how a release reached it; it had never once fired in eight
-      # runs, because GitHub does not start a workflow run for an event raised with GITHUB_TOKEN,
-      # and the Release is created by the job above with that token. workflow_dispatch is the
-      # documented exception to that rule, which is why this works where the trigger did not.
-      #
-      # Waited for first, and this is the part that matters. npm answers the publish before its
-      # registry index serves the new version - "your package is being processed and may take a
-      # few minutes to become available" - and pages.yml resolves its pin by asking the registry.
-      # Dispatching the moment publish returns would therefore re-pin the page to the PREVIOUS
-      # release and go green doing it, which is worse than not deploying at all. So: wait for the
-      # registry to actually serve it, then hand pages.yml the version rather than letting it ask
-      # again and race a second time.
-      - name: Re-deploy the demo page against the version just published
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.release.outputs.version }}
-        run: |
-          set -uo pipefail
-          for attempt in $(seq 1 32); do
-            live="$(curl -sf https://registry.npmjs.org/@packet-net/soundmodem \
-              | jq -r '."dist-tags".latest' 2>/dev/null || true)"
-            [ "$live" = "$VERSION" ] && break
-            echo "registry still on ${live:-nothing} (want $VERSION), attempt $attempt"
-            sleep 15
-          done
-          if [ "${live:-}" != "$VERSION" ]; then
-            # Red on purpose. The package IS published - only the page deploy is outstanding, and
-            # `gh workflow run pages.yml -f version=$VERSION` finishes it by hand.
-            echo "::error::npm's registry never served $VERSION, so the demo page was not deployed"
-            exit 1
-          fi
-          echo "registry serves $VERSION; deploying the demo page against it"
-          gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main -f "version=$VERSION" \
-            || echo "::warning::could not dispatch pages.yml - run it by hand with version=$VERSION"

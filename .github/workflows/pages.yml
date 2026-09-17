@@ -1,35 +1,23 @@
 name: pages
 
-# Publishes web/demo/index.html - the CDN-loaded soundmodem demo - to GitHub Pages.
+# Serves one page: a redirect to where the browser station now lives.
 #
-# The page pins an exact @packet-net/soundmodem version (see the PKG constant in
-# web/demo/index.html) so what is on screen cannot drift from what is loaded. Rather than
-# committing a version bump back to main on every release, this workflow re-pins a *copy*
-# of the page at deploy time to whatever version npm actually has published right now, so
-# the live site always matches the newest build without touching the checked-in file.
+# It used to build and publish that station, which lived at web/demo in this repository. It moved
+# to packet-net/pdn-web on 2026-09-17, where it sits beside the other browser apps and is an
+# ordinary consumer of the published @packet-net/soundmodem rather than a page wired into the
+# modem's own build. What is left here is the old URL, which was published and linked, kept
+# working.
 #
-# Triggers: a push to main that touches the demo itself, and workflow_dispatch - which is
-# both the manual redeploy and how a release reaches this workflow.
-#
-# It used to declare `release: types: [published]` as well, and the line above used to say
-# that was how a release got here. It was not. In eight runs that trigger never fired once,
-# because GitHub does not start a workflow run for an event raised with GITHUB_TOKEN, and
-# release.yml creates the Release with exactly that token - so the live page re-pinned only
-# when somebody pushed to web/demo or pressed the button, and sat on the previous release in
-# between. release.yml now dispatches this workflow itself once npm's registry is actually
-# serving the new version, and passes that version in, which is the `version` input below.
-# workflow_dispatch is the one documented exception to the GITHUB_TOKEN rule.
+# Nothing re-pins a version any more either. The page asks jsDelivr for the newest 0.x of the
+# package rather than naming a release, so a release reaches it without a workflow, a token or a
+# dispatch across two repositories.
 
 on:
   push:
     branches: [main]
     paths:
-      - 'web/demo/**'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'soundmodem version to pin, e.g. 0.71.0 (default: whatever npm serves now)'
-        required: false
 
 concurrency:
   group: pages
@@ -42,69 +30,57 @@ permissions:
 
 jobs:
   deploy:
-    # The one job in this repository that is NOT on the self-hosted runners, and deliberately.
-    #
-    # The house rule exists because GitHub-hosted minutes are metered and we have no budget for
-    # them. That is a billing fact about private repositories: this one is public, where
-    # standard GitHub-hosted runners are free and unmetered, so the rule's reason does not
-    # reach it. What the self-hosted runners cost this job instead is the queue. They take one
-    # job at a time, a push to main starts ci.yml as well, and ci.yml runs 4 to 17 minutes on a
-    # good day with a 45 minute timeout on a bad one - all of it spent with the deploy of a
-    # static HTML file sitting behind it for no reason, because this job builds nothing. It
-    # checks out, asks npm for a version number, rewrites one line with sed and uploads the
-    # result. No .NET, no NuGet cache, no sound card, nothing that makes our runners ours.
-    #
-    # Anything that compiles or tests stays self-hosted. See CLAUDE.md.
+    # GitHub-hosted, as it was: this job copies one static file and needs nothing that makes the
+    # self-hosted runners ours. See CLAUDE.md for where that line sits.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Resolve the published soundmodem version
-        id: version
-        env:
-          # Empty on a push, where there are no inputs at all.
-          ASKED: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          if [ -n "$ASKED" ]; then
-            # release.yml has just published this and has already waited for the registry to
-            # serve it, so take its word rather than asking again and racing the index a second
-            # time - the race it lost would pin the page to the release before this one.
-            version="$ASKED"
-            echo "pinning to the version we were handed: $version"
-          else
-            version="$(npm view @packet-net/soundmodem version)"
-            echo "resolved @packet-net/soundmodem@$version"
-          fi
-          [ -n "$version" ] || { echo "::error::no version to pin for @packet-net/soundmodem"; exit 1; }
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Build the site
+      - name: Build the redirect
         run: |
           set -euo pipefail
           rm -rf _site
           mkdir _site
-          cp web/demo/index.html _site/index.html
-          # Same PKG.soundmodem line the file's own comment names as the single source of
-          # truth for both the import URL and the banner - re-pin it to what npm has now.
-          sed -i "s/@packet-net\/soundmodem@[0-9][^']*/@packet-net\/soundmodem@${{ steps.version.outputs.version }}/" _site/index.html
-          grep -F "@packet-net/soundmodem@${{ steps.version.outputs.version }}" _site/index.html
+          # A meta refresh and a canonical link rather than an HTTP redirect, because GitHub Pages
+          # serves static files and has no way to send a 301. The link is spelled out in the body
+          # as well: a refresh that is blocked, or a reader who arrives with scripting off, still
+          # gets somewhere to click.
+          cat > _site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+          <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Moved to pdn-web</title>
+          <link rel="canonical" href="https://packet-net.github.io/pdn-web/soundmodem-web/">
+          <meta http-equiv="refresh" content="0; url=https://packet-net.github.io/pdn-web/soundmodem-web/">
+          <style>
+            :root { color-scheme: dark; }
+            body { margin:0; padding:40px 24px; background:#101418; color:#d6e0ea;
+                   font:15px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+            main { max-width:620px; margin:0 auto; }
+            a { color:#93c5fd; }
+          </style>
+          </head>
+          <body><main>
+            <h1>The browser station has moved</h1>
+            <p>It lives at
+               <a href="https://packet-net.github.io/pdn-web/soundmodem-web/">packet-net.github.io/pdn-web/soundmodem-web/</a>
+               now, in <a href="https://github.com/packet-net/pdn-web">packet-net/pdn-web</a>
+               alongside the other browser apps.</p>
+            <p>You should be sent there automatically.</p>
+          </main></body>
+          </html>
+          HTML
+          cat _site/index.html
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v5
         with:
-          # Default is false, which only checks for an existing Pages site rather than
-          # creating one - the first run here failed with "Get Pages site failed [...]
-          # Not Found" because nobody had switched Settings -> Pages to Actions yet.
-          # The pages:write permission this workflow grants covers creating it.
           enablement: true
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
 

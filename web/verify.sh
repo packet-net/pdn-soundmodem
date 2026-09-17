@@ -62,24 +62,6 @@ else
   echo "  UNEXPECTED: $tone"; failures=$((failures + 1))
 fi
 
-echo "== the demo page's own script, run as a browser runs it =="
-# The page is the one part of this that no decode test can see: a mistyped element id or a handler
-# on the wrong event is ordinary JavaScript, and Node runs it exactly as a browser does. Twice -
-# once against this working tree, and once against a package with the newest methods taken off it,
-# because the page deploys on a push and the package only on a release, so it has to degrade
-# rather than throw when the CDN is a release behind.
-if [[ -d test/node_modules ]]; then
-  for flavour in "" old; do
-    if line=$( (cd test && node demo-page.mjs $flavour 2>&1) ); then
-      echo "  $line"
-    else
-      echo "  FAILED: $(tail -3 <<<"$line")"; failures=$((failures + 1))
-    fi
-  done
-else
-  echo "  skipped: run npm install in test/ first"
-fi
-
 echo "== the npm package, packed and loaded as a consumer would =="
 # The bundle's boot config names every asset it will fetch, and the loader treats a missing
 # one as fatal rather than optional. So the test is not "does the tarball look right", it is

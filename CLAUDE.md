@@ -111,7 +111,9 @@ tools/Packet.SoundModem.Decode/       sm-decode: one file, one mode you already 
 tools/Packet.SoundModem.MultiDecode/  pdn-decode: sweep every mode over a file nobody labelled
 tools/Packet.SoundModem.TncTest/      sm-tnctest: score a decoder against a recorded corpus
 web/                         the same core compiled to WebAssembly, published to npm as
-                             @packet-net/soundmodem - a sound card where a KISS TNC would be
+                             @packet-net/soundmodem - a sound card where a KISS TNC would be.
+                             The browser station that drives it is packet-net/pdn-web, which
+                             consumes the published package like anyone else would
 docs/                        the user guide and reference; docs/README.md is its front page
 docs/05-modes.md             the mode table, exact against the catalogue
 docs/13-decode-a-recording.md  the sweep tool, and why its default set is the whole catalogue

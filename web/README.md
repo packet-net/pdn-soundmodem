@@ -13,7 +13,6 @@ always has - a TNC on a lead, or the sound card - and the link layer above never
 ```
 modem/      the C# project that compiles the core to WebAssembly, and its JS-facing surface
 package/    the npm package: src/ is what ships, _framework/ is the built bundle
-demo/       a page that drives it, with @packet-net/ax25 as the link layer
 parity/     the native twin of the JS-facing surface, so decodes can be diffed against native
 test/       the Node harnesses: decode/loopback, and two whole stations over a simulated wire
 build.sh    builds the bundle into package/ and emits the type declarations
@@ -31,62 +30,22 @@ where a browser's mixer lives.
 so the npm package, the NuGet package and the .debs all ship the same number from the same
 commit.
 
-## Run the demo
+## The page that drives it
 
-The demo loads the published package from a CDN, so there is nothing to build:
+A browser station built on this package lives in
+[packet-net/pdn-web](https://github.com/packet-net/pdn-web), at `soundmodem-web/`, and is served
+from https://packet-net.github.io/pdn-web/soundmodem-web/. Connected-mode sessions with a
+keyboard, levels with a meter, a TXDELAY slider and the transmitter test.
 
-```sh
-python3 -m http.server 8080           # any static server, from THIS directory
-```
+It used to be `web/demo` here and moved out on 2026-09-17. It deploys on a push while this
+package deploys on a release, and the two kept needing workarounds for each other: feature
+gating in the page, path filtering in this repository's CI so an HTML edit did not run the whole
+.NET suite, and a dispatch after a release to re-pin the page. As an ordinary consumer of the
+published package it needs none of them, and it is a better test of whether this package's public
+surface is enough.
 
-Then open `http://localhost:8080/demo/`. It has to be https or localhost: the microphone and
-the keying device both need a secure context. Chrome, Edge or Opera on desktop, because
-neither Web Serial (RTS/DTR keying) nor WebHID (CM108 GPIO keying) exists in Firefox or
-Safari, and mobile Chromium ships with both switched off.
-
-The page carries the controls a station is actually set up with: the RX and TX level sliders,
-with a meter beside the capture one, a TXDELAY slider, and the TX test - two tones for a
-linearity check, or one for a carrier level or an FM deviation check by Bessel null. Those are
-the station page's Mixer and TX test groups with the daemon taken out of them, in the same
-units, against the same target band. `package/README.md` has the API behind them.
-
-The main window is two halves with a draggable handle between them: the monitor, which is every
-frame the modem decoded plus this station's own commentary, and the session, which is the
-conversation on its own. Connected mode is a C and a D beside the callsign box and a line of text
-under the session pane: type into an established session and press enter, from either end of it -
-a station that connects to you lands in the same three controls with nothing clicked.
-
-Turning an information field into display lines is the fiddly part, and the rules are the ones
-[packet-term-tui](https://github.com/packet-net/packet-term-tui) arrived at on air (its
-`ReceivedText.cs`): a node's menu arrives as one field with the CRs inside it and every one of
-them is a real line break; CR, LF and CRLF all break and CRLF counts once; a line longer than
-PACLEN is segmented across frames and the remainder belongs on the row that was left open; a
-field of nothing but terminators closes that row and draws nothing; and anything outside
-printable ASCII becomes a dot so a stray byte cannot tear the pane about. One difference: this
-drops a single trailing terminator rather than every one of them, so the blank lines a node puts
-between sections survive.
-
-The station is remembered in the browser it was set up in: the mode, MYCALL, the peer, TXDELAY,
-both levels, which kind of PTT, and which interface. Web Serial and WebHID both let a page
-re-open a device the user has already granted, so the keying comes back on a reload without
-another prompt. It is localStorage, so it is that browser only and goes nowhere near a server;
-a private window or cleared site data simply starts fresh.
-
-The page and the package ship on separate schedules - the page deploys on a push to main, the
-package only on a release - so a control can exist here before the CDN has the code behind it.
-Anything in that state is disabled and says which version it wants, rather than moving and
-reaching nothing.
-
-Add `?local` to load the modem from this working tree instead, for developing the package and
-the page together - `./build.sh` first, so the WebAssembly bundle is there for it to load.
-
-The modem comes from jsDelivr rather than esm.sh, and that is not a preference. This package is
-already plain ESM with no dependencies, so it needs no transform and must not get one: esm.sh
-bundles each module and hands back a re-export stub for the AudioWorklet, which a worklet
-cannot follow because worklet scope has no module resolution. The modem would load and then be
-deaf. jsDelivr serves the files byte for byte as published (checked), so every
-`new URL(..., import.meta.url)` inside the package still resolves to the WebAssembly bundle and
-to the worklet.
+To develop the two together, `npm link` that checkout against this one and load the page with
+`?local`, having run `./build.sh` first so the WebAssembly bundle is there to find.
 
 ## Build the package
 
@@ -102,11 +61,6 @@ node test/decode.mjs decode ../samples/ninotnc/qpsk2400.wav qpsk2400
 node test/decode.mjs loopback bpsk300                # modulate, then demodulate it back
 cd test && npm install && node two-stations.mjs qpsk3600
 ```
-
-`verify.sh` also runs the demo page's own script in Node, twice: against this working tree, and
-against a package with the newest methods stripped off it, which is the CDN being a release
-behind. A mistyped element id or a handler on the wrong event is ordinary JavaScript and Node
-runs it exactly as a browser does; it is the only thing here that watches the page.
 
 `two-stations.mjs` runs two complete stations - real DSP, real AX.25 - over a simulated wire,
 and takes a connected-mode session all the way through: SABM(E), UA, I frames, the answer,
@@ -167,8 +121,8 @@ station picks T1 from the mode's throughput.
 Nothing here has been near a radio, and the one genuinely unknown thing is browser audio
 capture: `getUserMedia` is asked for `echoCancellation`, `noiseSuppression` and
 `autoGainControl` all off, but the OS mixer's own AGC sits outside the browser's reach. That
-wants a bench session, not more code. The RX slider gives it a trim either way, and the meter
-beside it says what the demodulator is being handed, which is the reading that bench session
-needs anyway. So does the PTT-to-audio alignment: the browser owns the
+wants a bench session, not more code. `rxGainDb` gives it a trim either way, and `inputLevel`
+says what the demodulator is being handed, which is the reading that bench session needs anyway.
+So does the PTT-to-audio alignment: the browser owns the
 output buffer, so `package/src/modem.js` pads the unkey with the reported `outputLatency`, and
 that padding should be checked on a scope rather than trusted.
