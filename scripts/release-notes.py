@@ -60,8 +60,22 @@ def classify(title):
     return section, f"{scope}: {rest}" if scope else rest
 
 
+def commit_exists(ref):
+    return subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+        capture_output=True, text=True).returncode == 0
+
+
 def entries(prev, tag):
-    rng = f"{prev}..{tag}" if prev else tag
+    # On a tag push the tag is already there. On a workflow_dispatch it is not: release.yml
+    # calls this BEFORE `gh release create`, which is what creates the tag, so `prev..tag`
+    # names a commit that does not exist and git exits 128. That broke the whole documented
+    # dispatch-with-publish path on its first real use (run 35232849377): every build step
+    # passed, the .debs and both packages were made, and the release fell over on the notes.
+    # HEAD is the right end of the range because it is the commit the release will be tagged
+    # at, `gh release create --target "$GITHUB_SHA"`.
+    end = tag if commit_exists(tag) else "HEAD"
+    rng = f"{prev}..{end}" if prev else end
     raw = git("log", "--first-parent", "--format=%H%x1f%h%x1f%s%x1f%b%x1e", rng)
     out = []
     for rec in raw.split("\x1e"):
