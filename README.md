@@ -1,235 +1,67 @@
 # pdn-soundmodem
 
-A headless soundcard packet-radio modem in C# / .NET 10. No GUI, no Qt - a modem engine
-designed to serve two masters from one core:
+A software TNC for Linux. It turns a sound card, a FlexRadio or a public web receiver into a packet modem, talks KISS over TCP to your node or APRS software, runs every NinoTNC mode, ARDOP for Winlink and POCSAG paging, and shows the band in a browser. One daemon, no GUI, one configuration file.
 
-- **Integrated**: an in-process transport for the [PDN node](https://github.com/packet-net/packet.net)
-  (`kind: soundmodem` port), with native DCD fed straight into the AX.25 stack's carrier-sense
-  seam, sample-accurate TX-complete, and a browser waterfall served through the node's web UI.
-- **Standalone**: a headless-first KISS-TCP modem daemon any host application (LinBPQ, APRS
-  software, …) can attach to, in the niche QtSoundModem serves today.
+## Who it is for
 
-**Installing?** Every release ships `.deb` packages for amd64 / arm64 / armhf with a systemd
-unit. They are self-contained, so there is no .NET runtime to install on the target - grab one
-from the [latest release](https://github.com/packet-net/pdn-soundmodem/releases/latest) and
-follow **[INSTALL.md](INSTALL.md)**. Every configuration setting is documented in
-**[CONFIG.md](CONFIG.md)**.
+- Operators running a node, a BBS or an APRS station who would rather have a modem on the same machine than another box on the desk.
+- Anyone on HF who wants several modes sharing one SSB passband, interoperating with a NinoTNC and with QtSoundModem.
+- People with no antenna up: a public web receiver is a device here, so a station can listen to a band it cannot reach.
 
-## Quick Start
+## Install
 
-Packaged for Debian / Ubuntu, amd64, arm64, armhf. Probably will work on Pi OS.
+Debian, Ubuntu or Raspberry Pi OS, on amd64, arm64 or armhf. The package is self-contained, so there is no .NET runtime to install.
 
-Install / update:
-
-```
-wget -qO- https://api.github.com/repos/packet-net/pdn-soundmodem/releases/latest | grep -o "https://github.com/[^\"]*_$(dpkg --print-architecture)\.deb" | xargs -I{} sh -c 'wget -qO /tmp/pdn-soundmodem.deb "{}" && { command -v sudo >/dev/null 2>&1 && sudo apt install -y /tmp/pdn-soundmodem.deb || su -c "apt install -y /tmp/pdn-soundmodem.deb"; }'
+```sh
+curl -fsSL https://packet-net.github.io/apt/pubkey.asc | sudo gpg --dearmor -o /usr/share/keyrings/packet-net.gpg
+echo "deb [signed-by=/usr/share/keyrings/packet-net.gpg] https://packet-net.github.io/apt ./" | sudo tee /etc/apt/sources.list.d/packet-net.list
+sudo apt update
+sudo apt install pdn-soundmodem
 ```
 
-Then, edit `/etc/pdn-soundmodem/soundmodem.json`, minimal RX example using an UberSDR websdr:
+Now follow the guide. It starts at [docs/README.md](docs/README.md), and [docs/01-install.md](docs/01-install.md) covers the install in full: what it put where, how to check it worked, and what to do if it did not.
 
-```
-{
-  "device": "ubersdr:m9psy-1.instance.ubersdr.org",
-  "modems": [
-    { "subChannel": 0, "mode": "afsk300-il2pc",           "rfFrequency": 7050300, "port": 8101 },
-    { "subChannel": 1, "mode": "ardop", "bandwidth": 500, "rfFrequency": 7050950, "port": 8200 },
-    { "subChannel": 2, "mode": "bpsk300",                 "rfFrequency": 7051600, "port": 8102 }
-  ],
-  "waterfall": { "port": 8099 },
-  "bind": "0.0.0.0"
-}
-```
+![The station page: two modems drawn over the passband, each decoded frame tagged on the burst that carried it](docs/images/waterfall.png)
 
-Then, `systemctl restart pdn-soundmodem`, open your browser: `http://my-host:8099`.
+## What it does
+
+| Area | Page |
+|---|---|
+| Every mode, what it talks to and how well proven it is | [docs/05-modes.md](docs/05-modes.md) |
+| Sound cards, CM108 interfaces, serial PTT, FlexRadio | [docs/03-radios-and-interfaces.md](docs/03-radios-and-interfaces.md) |
+| Receive and transmit levels | [docs/04-levels.md](docs/04-levels.md) |
+| KISS over TCP: LinBPQ, the PDN node, APRS software | [docs/06-connect-your-software.md](docs/06-connect-your-software.md) |
+| ARDOP for Pat and Winlink Express | [docs/06-connect-your-software.md](docs/06-connect-your-software.md#ardop-for-pat-and-winlink-express) |
+| POCSAG paging | [docs/06-connect-your-software.md](docs/06-connect-your-software.md#pocsag-paging) |
+| The station page in the browser | [docs/07-station-page.md](docs/07-station-page.md) |
+| HF: several modes in one passband, placed by RF frequency | [docs/08-hf.md](docs/08-hf.md) |
+| Listening on a public web receiver | [docs/09-web-receivers.md](docs/09-web-receivers.md) |
+| Putting your station on a public monitor site | [docs/10-public-monitor.md](docs/10-public-monitor.md) |
+| The frame log, survey captures, Prometheus and Grafana | [docs/11-logging-and-metrics.md](docs/11-logging-and-metrics.md) |
+| When nothing decodes | [docs/12-troubleshooting.md](docs/12-troubleshooting.md) |
 
 ## Status
 
-All planned modem families are implemented and bench-proven. **The complete mode table -
-every mode with its capabilities and verification level - is at
-[docs/05-modes.md](docs/05-modes.md)**; per-mode validation provenance lives in the
-[mode validation ledger](docs/dev/mode-validation.md). What exists today:
+Every mode in the catalogue is built and usable, and each one says how far it has been proven. Some have decoded real signals off air: AFSK 1200, AFSK 300 IL2P+CRC and the 300 and 1200 baud PSK modes. Most of the rest are bench-proven in both directions against a real NinoTNC or a live QtSoundModem over a wired loop. ARDOP is validated against ardopcf, including a Pat to Pat message exchange, and the MIL-STD-188-110D waveforms are held to the standard's own AWGN masks in simulation. Which level each mode has reached, and what produced the verdict, is in [docs/05-modes.md](docs/05-modes.md).
 
-- **IL2P codec** (spec draft v0.6, including IL2P+CRC): full frame encode/decode - Type 0/1
-  headers, packet-synchronous scrambling, Reed-Solomon FEC (GF(2⁸) 0x11D), payload block
-  segmentation, Hamming-protected trailing CRC. Byte-exact against all three example packets
-  in the spec, with error-correction and fuzz roundtrip coverage.
+## Developers
 
-Modem coverage completes the NinoTNC mode table: all 15 of its DIP-selectable modes are
-implemented and bench-proven bidirectionally against a real NinoTNC (firmware 3.44) over a
-wired CM108 loop - 9600 GFSK (AX.25 + IL2P+CRC), 4800 GFSK, 3600/2400/600 QPSK,
-1200/300 BPSK, 1200 AFSK (AX.25 + IL2P+CRC) and 300 HF AFSK (AX.25/IL2P/IL2P+CRC), plus
-FX.25 on 1200 AFSK and C4FSK (modes 1/3, 9600 + 19200). See
-[docs/dev/bench/ninotnc-loop.md](docs/dev/bench/ninotnc-loop.md) § Coverage.
+The core is on NuGet as [`pdn-soundmodem`](https://www.nuget.org/packages/pdn-soundmodem); the assembly and namespace are `Packet.SoundModem`.
 
-**Interop is per-mode and explicit - never traded away.** Every mode states which peers it
-interoperates with, and NinoTNC compatibility is never given up to suit another modem:
+The same DSP compiled to WebAssembly is on npm as [`@packet-net/soundmodem`](https://www.npmjs.com/package/@packet-net/soundmodem), so a browser tab with a USB audio interface is a packet modem. Its own README is [web/package/README.md](web/package/README.md).
 
-- **Universal** - 1200/300 AFSK (Bell 202) and 9600 GFSK (G3RUH): interoperate with NinoTNC,
-  Dire Wolf and QtSoundModem alike.
-- **NinoTNC / QtSM V26A** - the BPSK/QPSK IL2P modes use the V.26A phase map, so they pair
-  with a NinoTNC and with QtSoundModem's **V26A** modes (not its legacy UZ7HO QPSK maps).
-- **NinoTNC + Dire-Wolf RUH** - 4800 GFSK IL2P+CRC: NinoTNC-derived, and cross-validated
-  both ways against QtSoundModem's Dire-Wolf RUH-4800.
-- **NinoTNC / MMDVM-TNC** - C4FSK 9600 + 19200 (modes 1/3): the MMDVM-TNC "Mode 2" wire
-  format, bench-proven 8/8 bidirectionally against a NinoTNC at first live attempt.
-- **FreeDV datac (waveform) / pdn (payload)** - `freedv-datac0/1/3/4/13/14` (all six
-  datac modes; datac4/13/14 are the narrow RX-band-pass-filtered set): HF OFDM burst modes
-  whose *waveform* is codec2/FreeDV-compatible (validated in both directions against
-  codec2 1.2.0's own `freedv_data_raw_tx`/`rx`), while the *payload content* is the
-  family-standard IL2P+CRC bit stream - a pdn↔pdn convention, since FreeDV defines no
-  framing at the raw-data layer (FreeDATA layers its own ARQ there instead). Frames span
-  packet boundaries within a burst, so even datac14's 3-byte packets carry full AX.25
-  frames. Runs on the 48 kHz DSP path (the engine is native 8 kHz; 48000 = 6·8000).
-- **ARDOP (Winlink) - ardopcf-compatible virtual TNC** - `--ardop <port>`: a complete
-  ARDOP 1 implementation (4FSK/4PSK/8PSK/16QAM at 200-2000 Hz, FEC + full ARQ with
-  bandwidth negotiation and gearshift) behind a byte-compatible clone of
-  [ardopcf](https://github.com/pflarue/ardop)'s TCP host interface (command port +
-  data port = port+1), so **Pat, Winlink Express, ARIM/gARIM and hamChat connect
-  unmodified** - validated by a real Pat↔Pat message exchange (our modem one side,
-  ardopcf the other), a 107-command host-transcript diff against a live ardopcf
-  (byte-identical), full-stack ARQ sessions against ardopcf in both roles, and an
-  RXO (receive-only monitor) leg decoding a third-party ardopcf↔ardopcf session.
-  PROTOCOLMODE ARQ, FEC and RXO are all supported. The ARDOP channel is dedicated
-  (`--ardop` is exclusive with `--modem`/`--paging`): ARDOP runs its own channel
-  discipline: its bursts bypass the channel's p-persistence roll rather than waiting on
-  it, since an ARQ turnaround cannot absorb one, while PTT keying and sample-domain
-  TX-complete still come from the shared channel path. What keeps it off a slot somebody
-  else is using is a per-slot busy detector (`"busyDetect": true` on the modem entry,
-  **off by default**), which band-limits the receive audio to the ARDOP modem's own slot and
-  reports `BUSY TRUE`/`BUSY FALSE` to the host; it gates starting a session and never an
-  in-flight burst. Off by default because it is an energy meter and reads busy almost
-  continuously on a real band: out-of-band FT4 lifts the noise floor across the whole
-  passband faster than the floor estimator can follow, and to an energy meter a lifted floor
-  is indistinguishable from in-band signal.
-  Documented divergences from ardopcf: `BUSYDET` 1-10 accepted but not honoured (they
-  parameterise the thresholds of a spectral detector we do not implement; `BUSYDET 0`
-  disables detection exactly as ardopcf does), log-level and CWID commands accepted but
-  inert, TXFRAME (dev command) unimplemented, VERSION reports `pdn-soundmodem`.
-- **DAPNET / POCSAG pagers** - `pocsag1200` (plus 512/2400): the paging waveform (CCIR
-  Radiopaging Code No. 1, 2-FSK NRZ + BCH(31,21)), implemented spec-first and
-  cross-validated against multimon-ng (every page byte-exact; `samples/pocsag/`).
-  1200 bd is the DAPNET amateur paging network's rate (439.9875 MHz). This is a *paging*
-  feature beside the packet modes - pages, not AX.25 frames - so it is not a KISS port:
-  the library ships `PocsagEncoder`/`PocsagDecoder`, the `sm-pocsag` CLI encodes/decodes
-  WAVs, and the daemon's `--paging <port>` endpoint takes
-  `PAGE <ric> <function> ALPHA|NUMERIC|TONE [text]` over TCP (one UTF-8 line per
-  command, `OK <id>`/`ERR <reason>` replies), transmits through the same CSMA/PTT
-  channel-access path as everything else, and broadcasts every page heard on channel to
-  its clients as `HEARD …` lines - a local paging API (pdn). Speaking the DAPNET-core
-  transmitter protocol is a possible future follow-up.
-- **MIL-STD-188-110D App D (waveform) / pdn (payload)** - `ms110d-wn0/1/2/3/4/5/6/7/8/13`:
-  the public 3 kHz serial-tone HF waveform of MIL-STD-188-110D Appendix D (the
-  Distribution-A counterpart of NATO STANAG 5069) - single-carrier 1800 Hz / 2400 Bd,
-  SRRC-shaped, an autobaud preamble, tail-biting convolutional FEC + interleaving, from a
-  Walsh-orthogonal 75 bps floor up through BPSK/QPSK/8PSK/16-QAM (6400 bps). **Phase A**
-  (Walsh/BPSK/QPSK, WN 0-6/13) and **Phase B** (8PSK WN 7, 16-QAM WN 8) are implemented;
-  all 10 waveform numbers pass the standard's Table D-LXIV AWGN performance masks at full
-  statistical budget (3 M bits, 0 errors). The equalizer stack is probe-trained with a
-  fractionally-spaced (T/2) decision-feedback (DFE) equaliser - batch regularized
-  least-squares training, NLMS adaptation, and RLS tracking for fading channels - augmented
-  by iterative turbo re-equalization (decode → re-encode → re-equalize, up to 5 passes with
-  a fixed-point convergence check and first-pass revert) and a max-log BCJR equalizer with a
-  searched echo delay for frequency-selective fading on BPSK. Channel-state decisions
-  (bidirectional vs single-pass equalization, turbo gating) come from a CFO-immune fading
-  detector: the fractional probe-to-probe tap change beyond the common rotation, classified
-  by recurring excursions over a min-tracking noise floor. The Poor-channel (Watterson
-  2-path Rayleigh) masks are the current research frontier - banked measured-not-gated in
-  Phase A, at-mask gated in Phase B (see docs/dev/archive/ms110d/phase-a-closeout.md and issues #64/#65).
-  **Phase C** (higher-order QAM, WN 9-12) is still to come. No open App-D
-  receiver existed before this one, so there is no external oracle: the interop-critical spec
-  tables were transcribed twice independently and diffed to zero value conflicts, and a
-  from-scratch Watterson/CCIR channel simulator plus the spec masks stand in for one. Like
-  the FreeDV modes it carries the family-standard IL2P+CRC payload (a pdn↔pdn convention -
-  App D defines no data-link framing; STANAG 5066 is that layer and is not implemented), so
-  it is a robust HF *bit pipe*, not a connected-ARQ port (ARDOP is the connected one). Runs
-  on the 48 kHz DSP path (native 9600 Hz). Design + verified tables: [docs/dev/ms110d/](docs/dev/ms110d/).
-
-**Per-modem audio centre (QtSoundModem-style).** Each narrow modem's audio centre is
-settable with the third field of `--modem N:MODE:FREQ` (or `"frequency"` in the config), on
-both transmit and receive - e.g. `--modem 0:bpsk300:1459` places 300 BPSK at 1459 Hz to meet
-a peer that sits off the usual centre, exactly as QtSoundModem's per-modem *Freq* does. It
-applies to the AFSK tone-pair modes (`afsk*`, centre = the mark/space midpoint, default
-1700 Hz) and the BPSK/QPSK carrier modes (`bpsk*`/`qpsk*`, default 1500 Hz; 1650 for
-`qpsk3600`). The baseband FSK families (`fsk*`/`c4fsk*`) fill DC-to-Nyquist and have no
-audio centre, and the spec-fixed waveforms (`freedv-*`, `ms110d-*`, POCSAG, ARDOP) are
-pinned by their standards - a `:FREQ` on any of those is rejected, not silently ignored.
-
-The QtSoundModem cross-validation matrix (which QtSM `ModemType` each of our modes pairs
-with, both directions) is in [docs/dev/bench/qtsm-loop.md](docs/dev/bench/qtsm-loop.md) § Results.
-
-**See it - the browser waterfall.** `--waterfall 8107` (or the `"waterfall"` config section) serves a self-contained web page - no external assets, nothing to install - with a 30 fps spectrum view over a scrolling waterfall of the shared audio passband:
-
-![Browser waterfall: two modems overlaid on the passband, each decoded frame tagged on its burst with callsign, SNR and frequency offset](docs/images/waterfall.png)
-
-- **Every configured modem is drawn over the passband** - band shading and centre line from its *measured* occupied bandwidth (at start-up each modem modulates a throwaway frame and the ITU-R SM.443 99 % OBW of that audio is what gets shaded, so any mode, including future ones, is drawn correctly with no table to maintain).
-- **Audio and RF frequency scales together**: enter the rig's dial frequency (and USB/LSB) and the ruler, modem chips and hover readout all show absolute RF alongside audio Hz; the dial is per-browser retunable, with a config default.
-- **Every decoded frame is attributed to its energy burst**: a tag rides the waterfall at the modem's frequency naming the source callsign, the burst's SNR (band power vs a min-tracking noise floor, measured from the same spectral lines the display draws) and the frequency offset of the winning decoder branch, with a bracket spanning the burst's measured extent - plus a decode log panel with the full from›to/mode/quality detail.
-- **The last transmission's power and SWR stay on screen.** On a radio that reports its meters the header shows forward power and SWR live and in red while keyed, then holds the *average over that burst* - neutral, labelled `Last TX` with the time - until the next one. Packet bursts are a fraction of a second and the gaps are minutes, so a readout that existed only during the keyup was one nobody ever read.
-- **Each modem's label says whether the node is attached** - `1 host` / `no host`, over its own dedicated KISS port when it has one, else the multiplexed one, following clients in and out. A host that quietly dropped its TCP session looks, from the modem's side, exactly like a band that went quiet.
-- Selectable span (2-4 kHz nominal for the SSB passband, wider on the 48 kHz modes), floor/top levels with auto-set, and an honest "no audio" indicator while the half-duplex channel transmits.
-- **A TX test button**, on the operator's page and never on a public one: two equal tones at 700 and 1900 Hz for an SSB linearity check, or one tone for a carrier level or an FM deviation check by Bessel null (999 Hz nulls the carrier at 2.4 kHz deviation, 500 at 1.2, 1248 at 3.0, 2079 at 5.0). It keys PTT, sends through the normal transmit path at the station's transmit level for a bounded time and unkeys, and it is refused when no `ptt` is configured. `--two-tone 5` and `--tone 999 5` do the same from a bench with no browser. See [CONFIG.md § txTest](CONFIG.md#txtest).
-- `--wav-loop FILE` replays a recording through the whole live daemon at wall-clock pace - the hardware-free way to demo or develop against the waterfall.
-
-**A station without an antenna.** `"device": "ubersdr:m9psy-1.instance.ubersdr.org"` points the
-whole modem at a public [UberSDR](https://github.com/madpsy/ka9q_ubersdr) web receiver instead of
-a sound card - of which there are many, on far better antennas than a suburban garden allows.
-The daemon takes the receiver's **IQ** stream (48 kHz of complex baseband, ±24 kHz) and
-demodulates SSB from it in-process, so every mode, the waterfall and the frame log work exactly
-as they do on a radio, and the band plan's dial tunes the receiver rather than being printed for
-you to dial in. IQ rather than the instance's own audio because holding the complex baseband
-means the receive filter is the one *your* band plan asked for and there is no AGC anywhere in
-the path. It is **receive only** - there is no transmitter at the far end of a WebSocket, so
-`ptt` is rejected and transmissions are refused with that as the reason rather than queued
-against a transmitter that will never appear. See
-[CONFIG.md § Listening to a web receiver](CONFIG.md#listening-to-a-web-receiver).
-
-**Hear it:** [samples/demo/](samples/demo/) holds one representative WAV per mode family -
-each produced by the real transmit path, carrying a genuine frame, and decoded back to its
-payload with the reference tool a ham would use (multimon-ng, codec2 `freedv_data_raw_rx`,
-ardopcf `--decodewav`) where one exists, or our own receiver where none does.
-
-The research that scoped this project lives in
-[packet.net `docs/research/headless-soundmodem.md`](https://github.com/packet-net/packet.net/blob/main/docs/research/headless-soundmodem.md).
-
-## Building
+From source you need the .NET 10 SDK, and `dpkg-dev` to build a package:
 
 ```sh
 dotnet build
 dotnet test
+packaging/build-deb.sh 0.69.0 amd64    # also arm64, armhf; cross-builds from any host
 ```
 
-To build the Debian package - see [INSTALL.md](INSTALL.md) for installing and configuring it:
+[docs/dev/README.md](docs/dev/README.md) is the index of developer documents: the roadmap, the validation ledger, the modem plugin contract, the bench rigs and the archive.
 
-```sh
-packaging/build-deb.sh 0.7.0 amd64    # also arm64, armhf; cross-builds from any host
-packaging/test-deb.sh                 # install/enable/upgrade/purge in containers (needs Docker)
-```
+## Licence and credits
 
-Tagging `v*` runs [the release workflow](.github/workflows/release.yml), which tests, builds
-all three `.deb`s and the NuGet package, attaches them to a GitHub Release and pushes the
-package to nuget.org.
+GPL-3.0-or-later; the text is in [COPYING](COPYING). It stays GPL because it is built on GPL prior art: UZ7HO SoundModem (Andrei Kopanchuk) through QtSoundModem (John Wiseman, G8BPQ), Dire Wolf (John Langner, WB2OSZ), MMDVM-TNC (Jonathan Naylor, G4KLX), the IL2P specification (Nino Carrillo, KK4HEJ), and ka9q_ubersdr (madpsy).
 
-## Licence, provenance and credits
-
-**GPL-3.0-or-later** (see [COPYING](COPYING)). This project stands on the shoulders of GPL
-prior art and stays GPL:
-
-- **UZ7HO SoundModem** (Andrei Kopanchuk, UZ7HO) via **QtSoundModem** (John Wiseman, G8BPQ) -
-  GPLv3+ - the reference for the demodulator family this project ports.
-- **Dire Wolf** (John Langner, WB2OSZ) - GPL-2.0-or-later - reference for the IL2P wire
-  behaviour, the 9600 RUH modem design, and the DPLL DCD algorithm.
-- **IL2P** is by Nino Carrillo (KK4HEJ) - [spec draft v0.6](https://tarpn.net/t/il2p/il2p-specification_draft_v0-6.pdf);
-  the IL2P implementation here is written from that spec and validated against its example
-  packets (provided by Jon Naylor, G4KLX).
-- **MMDVM-TNC** (Jonathan Naylor, G4KLX) - GPL-2.0-or-later - the "Mode 2" C4FSK wire
-  format (preamble, sync, symbol mapping) that the NinoTNC's C4FSK modes inherit and that
-  `C4fskModem` implements.
-- **ka9q_ubersdr** (madpsy) - GPL-3.0 - the web-receiver software the `ubersdr:` device talks
-  to; its `iq-recorder` client is the source of the IQ stream's packet framing, ported here
-  with provenance.
-
-The sibling [packet.net](https://github.com/packet-net/packet.net) repo is AGPL-3.0; the two
-combine under GPLv3 §13 / AGPLv3 §13. Nothing MIT-licensed may depend on this package.
-**[PROVENANCE.md](PROVENANCE.md) records, per component, what this code is truly based on.**
-
-The NuGet package id is `pdn-soundmodem`; the assembly and namespace are `Packet.SoundModem`.
+[PROVENANCE.md](PROVENANCE.md) records, component by component, what this code is based on. The sibling [packet.net](https://github.com/packet-net/packet.net) node is AGPL-3.0 and the two combine under GPLv3 section 13; nothing MIT-licensed may depend on this package.
