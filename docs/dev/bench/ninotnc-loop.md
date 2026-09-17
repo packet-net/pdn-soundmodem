@@ -1,5 +1,7 @@
 # NinoTNC ↔ CM108 bench loop (the cable-edition interop rig)
 
+Status: reference as of 2026-09-17. Describes the wired CM108-to-NinoTNC bench loop: the cable, the levels, the procedure, and the interop, TXDELAY and occupied-bandwidth figures measured on it in July 2026 against firmware 3.44. The rig is driven by `tools/Packet.SoundModem.NinoBench`, and `NinoTncParityTests`, `NinoCorpusQcTests` and `OccupiedBandwidthTests` cite its results as the reference they hold the modems to.
+
 Wiring a CM108 Radio Widget (Tom Wardill 2E0JJI, OARC - pads: PTT, OUT, IN, SQL, GND)
 directly to a NinoTNC N9600A's radio port gives a wired "RF" link between pdn-soundmodem
 and the NinoTNC - the interop gate for every mode, no radios or spectrum needed.

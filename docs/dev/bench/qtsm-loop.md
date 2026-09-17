@@ -1,5 +1,7 @@
 # QtSoundModem ↔ pdn-soundmodem interop loop (the snd-aloop edition)
 
+Status: reference as of 2026-09-17. Describes the snd-aloop virtual audio cable between QtSoundModem and this modem, how to build and configure both ends, and the interop results measured on it. The driver is `tools/Packet.SoundModem.QtsmBench`, `QtsmInteropTests` replays the corpus it captured, and the ARDOP live-session tests run against ardopcf on the same rig.
+
 QtSoundModem (UZ7HO SoundModem, ported to Qt/Linux by John Wiseman G8BPQ) is the
 **ancestor** of this modem's AFSK/BPSK/QPSK demodulator chain (see [PROVENANCE.md](../../../PROVENANCE.md)).
 This rig cross-validates the two over a virtual audio cable - no sound card, no radios -

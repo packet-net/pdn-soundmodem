@@ -1,5 +1,7 @@
 # The TM8100 internal USB board, and why it is the way it is
 
+Status: design record as of 2026-09-17. Describes the tap points, dividers, programming and timing for a board that fits inside a TM8100 body and presents one USB cable. The board itself is a third-party project, packethacking/tait-cm108; its schematic, layout and bill of materials live there, and the open items at the end are still open.
+
 The reasoning behind a board that fits inside a TM8100 radio body and presents **one USB cable to
 the host**, enumerating as a serial device on the radio's CCDI port and an audio device on its tap
 points, for headless packet operation with `pdn-soundmodem`.
@@ -25,7 +27,7 @@ on the deployed widget. Marking: **DATASHEET** stated and cited, **DERIVED** com
 arithmetic shown, **ABSENT** not in the documents.
 
 The same figures, applied to a stock CM108 widget on the auxiliary connector, are the deployed
-build in [tm8100-cm108-interface.md](../../hardware/tait-tm8100-cm108.md) with the reasoning in
+build in [tait-tm8100-cm108.md](../../hardware/tait-tm8100-cm108.md) with the reasoning in
 [tm8100-cm108-interface-notes.md](tm8100-cm108-interface-notes.md). The three notes agree on
 every level; they differ only in where the board lives and which connector it reaches.
 

@@ -1,5 +1,7 @@
 # MIL-STD-188-110D Appendix D - transcribed interop tables
 
+Status: reference as of 2026-09-17. Describes the transcription of MIL-STD-188-110D Appendix D's interop tables, how the standard was identified, and how the transcription was verified; the closing paragraphs record where the programme that consumed it ended. The tables are in `tables/` beside this file and the standard in `spec/`; the modem built from them is in this repository at `src/Packet.SoundModem/Ms110d/` and ships as the `ms110d-wn*` modes. The programme's plans, closeouts and evidence are in [../archive/ms110d](../archive/ms110d).
+
 The interop-critical tables of MIL-STD-188-110D Appendix D (WBHF - the public counterpart of
 the RESTRICTED STANAG 5069), transcribed from the standard because they are embedded as
 **images** in the PDF (no text layer). These values are load-bearing for any App D

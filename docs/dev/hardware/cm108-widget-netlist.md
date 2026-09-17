@@ -1,7 +1,9 @@
 # CM108 radio widget: netlist
 
+Status: reference as of 2026-09-17. Describes the connectivity of the CM108AH interface board used with the Tait TM8100, extracted from the upstream KiCad schematic. The board is a third-party project, tomwardill/cm108radiowidget; nothing in this repository builds it.
+
 Derived netlist for the CM108AH interface board used with the Tait TM8100 assembly in
-[tm8100-cm108-interface.md](../../hardware/tait-tm8100-cm108.md). Recorded here because the interface
+[tait-tm8100-cm108.md](../../hardware/tait-tm8100-cm108.md). Recorded here because the interface
 design depends on what the board actually does, and reading it off a schematic viewer each
 time invites the errors documented at the bottom of this file.
 

@@ -1,5 +1,7 @@
 # On-air modulation reference - FM vs SSB, and FM deviation targets
 
+Status: reference as of 2026-09-17. Describes how each NinoTNC-lineage mode is carried on the air, FM or SSB, and the peak deviation each FM mode is transmitted at. Kept as written: it is a transcription of the NinoTNC firmware modulator table, cited from eight source files, and the modes it covers are still in this repository.
+
 How each NinoTNC-lineage mode is carried on the air, for the OTA test harness. Source of truth: **NinoTNC firmware v3/4.44 modulator table** (operator-supplied, 2026-07-28). Companion to [`mode-validation.md`](mode-validation.md).
 
 > **⚠️ Deviation vs channel spacing - do not confuse them.** "Wide" (25 kHz) and "narrow" (12.5 kHz) refer to **channel spacing**, *not* FM deviation. The **actual peak FM deviation** each mode must be transmitted at is the **Tgt Dev** column below (e.g. 3.0 kHz for AFSK 1200, not 12.5/25 kHz). When transmitting an FM mode on the rig, the audio drive **must be calibrated so the achieved peak deviation matches Tgt Dev** - and verified by measurement (FM-demodulate the RSP1 IQ and measure the peak frequency excursion, or a Bessel-null against a single tone). Getting this wrong (under- or over-deviating) degrades or breaks the decode and invalidates the SNR characterisation.

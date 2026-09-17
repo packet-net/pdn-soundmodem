@@ -1,6 +1,6 @@
 # 2G ALE - implementation plan
 
-**Status: plan only. No code exists.** Written 2026-07-26.
+Status: design record as of 2026-09-17. Describes a plan for a software 2G ALE implementation, written on 2026-07-26. No code exists, nothing is scheduled, and no part of it is in this repository or in a package; the phases and gates below are what would be built if it were taken up.
 
 **Charter.** Implement MIL-STD-188-141A Appendix A second-generation Automatic Link Establishment in software, so an MS110D station can find a working channel and a listening correspondent without an operator and without a vendor option board.
 
@@ -16,7 +16,7 @@
 
 **Primary source.** MIL-STD-188-141A Appendix A. The same 2G waveform is carried forward in 141B and 141C Appendix A, so a later revision is an acceptable primary as long as the revision is recorded. A public copy of **141C** is hosted at `hflink.com/standards/MIL_STD_188-141C.pdf`; everyspec carries the family. FED-STD-1045 is the federal equivalent and a useful cross-check on anything ambiguous.
 
-**Phase A0 is the transcription**, and nothing else starts until it is done. Tables go in `docs/ale/tables/` as CSV with a `README` recording page numbers, exactly as `docs/dev/ms110d/tables/` does.
+**Phase A0 is the transcription**, and nothing else starts until it is done. Tables go in `docs/dev/ale/tables/` as CSV with a `README` recording page numbers, in the shape `docs/dev/ms110d/tables/` uses.
 
 **Licence care.** Consulting a reference implementation is allowed and encouraged, but this repo is GPL-3.0-or-later: anything consulted must be GPL-compatible, and anything derived from it gets a comment naming the source file and function - the same rule that governs the QtSoundModem and Dire Wolf lineage in this codebase.
 
@@ -56,7 +56,7 @@ Three observations that shape the design:
 
 **It fits a narrow filter.** 750-2500 Hz sits comfortably inside even the TK-90's 2.2 kHz built-in filter. Whatever radio ends up carrying this, ALE will not be the part that suffers.
 
-**The sample rate wants care.** MS110D runs at 9600 Hz natively throughout this repo, and 8 ms at 9600 Hz is **76.8 samples** - not an integer, which makes symbol timing needlessly awkward. At **8000 Hz** a symbol is exactly 64 samples, and 750-2500 Hz sits well inside Nyquist. 9600 → 8000 is a clean 5/6 rational resample, and 48000 → 8000 is a simple ÷6 straight from a capture. **Recommend 8 kHz internally**, with resampling at the boundary rather than fractional symbol timing throughout.
+**The sample rate wants care.** MS110D runs at 9600 Hz natively throughout this repo, and 8 ms at 9600 Hz is **76.8 samples** - not an integer, which makes symbol timing needlessly awkward. At **8000 Hz** a symbol is 64 samples, and 750-2500 Hz sits well inside Nyquist. 9600 → 8000 is a clean 5/6 rational resample, and 48000 → 8000 is a simple ÷6 straight from a capture. **Recommend 8 kHz internally**, with resampling at the boundary rather than fractional symbol timing throughout.
 
 ---
 
@@ -71,12 +71,12 @@ src/Packet.SoundModem/Ale/          the library
   AleProtocol.cs                    call / response / acknowledge state machine
   AleStation.cs                     addresses, nets, scanning, sounding, LQA store
 tests/Packet.SoundModem.Tests/Ale/
-docs/ale/tables/                    transcribed from the standard (A0)
+docs/dev/ale/tables/                transcribed from the standard (A0)
 ```
 
 **Reuse rather than rebuild.** `M0LTE.Dsp` supplies `FilterDesign`, `FirFilter`, `Fft`, `Decimator` and the SSB demodulators. The OTA harness already has everything needed to test it on air: `LadderPass` renders, `StreamingSsbDemodulator` converts, `sm-ota monitor` watches live. The Watterson rig is already compiled into the OTA tool and gates MS110D - it should gate ALE too.
 
-**Golay(24,12) is new.** The repo's `Fec/` has CRC-16/X-25, Hamming(7,4) and Reed-Solomon GF(2⁸), but no Golay. It is a small, self-contained, exhaustively-testable piece of work: a 12×12 generator matrix, syndrome decoding to 3 errors, and a test that enumerates every correctable error pattern - which for this code is cheap enough to do exhaustively rather than statistically.
+**Golay(24,12) is new.** The station's FEC is the M0LTE.Fec package (CRC-16/X-25, Hamming(7,4), Reed-Solomon GF(2⁸)), which has no Golay; nor did the in-tree `Fec/` this sentence named before that code left the repository. It is a small, self-contained, exhaustively-testable piece of work: a 12×12 generator matrix, syndrome decoding to 3 errors, and a test that enumerates every correctable error pattern - which for this code is cheap enough to do exhaustively rather than statistically.
 
 ---
 
@@ -94,7 +94,7 @@ Obtain the primary source, record its identity the way `ms110d/design.md` record
 
 8-FSK modulator; noncoherent demodulator with symbol timing recovery.
 
-**Gate:** modulate → demodulate recovers symbols bit-exact on a clean channel. **And an absolute-frequency assertion**: a tone generated for symbol *n* must be measured at the frequency the standard specifies, not merely at "whatever the demodulator expects". This repo has already paid once for tests that synthesised their input with the same convention they decoded it with - both IQ converters carried the same sideband inversion, cancelled exactly, and recovered payloads bit-exact while both were wrong. Do not repeat it.
+**Gate:** modulate → demodulate recovers symbols bit-exact on a clean channel. **And an absolute-frequency assertion**: a tone generated for symbol *n* must be measured at the frequency the standard specifies, not merely at "whatever the demodulator expects". This repo has already paid once for tests that synthesised their input with the same convention they decoded it with - both IQ converters carried the same sideband inversion, cancelled each other out, and recovered payloads bit-exact while both were wrong. Do not repeat it.
 
 ### A2 - word layer
 
@@ -140,7 +140,7 @@ That makes the usual order of things invertible, and much better:
 
 **Do this in A1/A2, not in A6.** The phase list above puts interop last by convention; for the receive side it should come first. Concretely: `sm-ota monitor` already captures and converts; adding an ALE decoder to that path is the natural first deliverable, and it needs nothing this project does not already have.
 
-**LQA must be calibrated, not invented.** The whole point of doing ALE ourselves is that our link-quality metric can be the SNR and uncoded BER the scorer already measures. But a score is only useful if it predicts which MS110D waveform will work, and the gate table spans −6 dB (WN0) to +16 dB (WN8) - 22 dB. So A4's gate is not "LQA produces a number" but **"LQA predicts the highest waveform that will decode, and the prediction is measured against `BurstScore.UncodedBer`"**. That is a genuinely novel and useful thing this implementation could have and a vendor's cannot.
+**LQA must be calibrated, not invented.** The reason for doing ALE ourselves is that our link-quality metric can be the SNR and uncoded BER the scorer already measures. But a score is only useful if it predicts which MS110D waveform will work, and the gate table spans −6 dB (WN0) to +16 dB (WN8) - 22 dB. So A4's gate is not "LQA produces a number" but **"LQA predicts the highest waveform that will decode, and the prediction is measured against `BurstScore.UncodedBer`"**. That is a novel and useful thing this implementation could have and a vendor's cannot.
 
 ---
 
@@ -153,9 +153,9 @@ That makes the usual order of things invertible, and much better:
 | Interop framing variation between vendors | Decode off-air early and widely (§5). Kenwood documents that this variation exists. |
 | Scanning and traffic are mutually exclusive radio states | Inherent to ALE, not to our implementation - see the TK-90 evaluation. Design the handover explicitly rather than discovering it. |
 | Effort underestimated because the DSP looks easy | The DSP *is* easy. Layer 3 is the work. Budget accordingly. |
-| Distraction from MS110D | **This is the main risk.** MS110D Phase B is not closed and §E2 has never run on hardware. See below. |
+| Distraction from MS110D | **This is the main risk.** The MS110D programme has since closed in simulation; what is left of it is the hardware legs. See below. |
 
-**Sequencing against MS110D.** This plan is deliberately not scheduled. MS110D's Poor-channel gate is open, and the OTA campaign has not yet run a single ladder over the air. ALE is the right thing to build *after* those close, not instead of them - with one exception: **the off-air receive experiment in §5 is cheap, needs no hardware, and could be done in an afternoon** whenever a break from the modem is wanted. It would also settle whether the constants in §2 are right, which is A0's job done empirically.
+**Sequencing against MS110D (corrected 2026-09-17).** When this was written, MS110D's Poor-channel gate was open and the argument was to wait for it. It closed: Phase B closed on 2026-07-27, and the Poor-gate successor programme hard-gated all ten Poor points on 2026-08-20 ([ms110d/README.md](../ms110d/README.md), [mode-validation.md](../mode-validation.md)). What is left of MS110D is the hardware legs H1/H2 and an on-air ladder, which need a transmitter rather than more simulation, so the reason this plan was parked no longer holds. It is still not scheduled, and nothing below has been re-checked against a standard since it was written. The off-air receive experiment in §5 remains the cheap first move: it needs no hardware, and it would settle whether the constants in §2 are right, which is A0's job done empirically.
 
 ---
 

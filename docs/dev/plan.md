@@ -1,6 +1,7 @@
 # pdn-soundmodem - plan
 
-Living status document. Keep current in the same PR as the work (packet.net §18 discipline).
+Status: design record as of 2026-09-17. Describes the founding decisions of 2026-07-14 and the four build phases as they were worked through, with what each phase still owes. Decisions taken since are recorded here; the amendment log that used to run alongside it is closed at [archive/plan-amendment-log.md](archive/plan-amendment-log.md), and open work is tracked in [roadmap.md](roadmap.md), which is the one living roadmap.
+
 Founding research: [packet.net `docs/research/headless-soundmodem.md`](https://github.com/packet-net/packet.net/blob/main/docs/research/headless-soundmodem.md) -
 read it before substantive work; the decisions in its §Decisions bind this repo.
 
@@ -22,12 +23,18 @@ read it before substantive work; the decisions in its §Decisions bind this repo
 
 ## Phases
 
-### Phase 0 - feasibility bench ⬜
-Pi 4/5 DSP benchmark (the i7 numbers from the research need Pi confirmation); ALSA
-capture/playback soak on a CM108-class dongle (period size, xruns, TX-release latency);
-record the **WAV corpus** through the packet.net NinoTNC bench rig (every NinoTNC mode,
-clean + attenuated + noisy) - the decode-regression suite everything else is judged by.
-WA8LMF Track 2 for AFSK (redistribution terms TBC).
+### Phase 0 - feasibility bench 🟡
+- ✅ The Pi and the CM108 soak. radio1 is a Pi with a CM108 and a radio on a dummy load,
+  running the arm64 package; the capture-start work of PR #422 measured period size, buffer
+  size and start threshold on it, and the daemon reports them at start-up. The formal DSP
+  benchmark against the research's i7 numbers was never written down.
+- ✅ WA8LMF for AFSK, and it is a tool in the tree rather than a one-off:
+  `tools/Packet.SoundModem.TncTest` (sm-tnctest, [bench/tnc-test-cd.md](bench/tnc-test-cd.md))
+  scores a track through any catalogue mode. Corpus kept locally; redistribution terms TBC.
+- ⬜ The **per-mode WAV corpus** through the packet.net NinoTNC bench rig (every NinoTNC mode,
+  clean + attenuated + noisy) - the decode-regression suite Phase 1's exit gate is judged by.
+  The wired loop's decode counts exist ([bench/ninotnc-loop.md](bench/ninotnc-loop.md) § Results);
+  the recordings themselves are not committed.
 
 ### Phase 1 - frame codecs + offline RX 🟡 in progress
 - ✅ IL2P codec (spec v0.6 incl. IL2P+CRC): Type 0/1 headers, scrambler, RS(0x11D) FEC,
@@ -67,7 +74,8 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   was already small, confirming the interpolation win is concentrated at the coarse
   native 12 kHz rate.
 - ✅ **Ahead of the reference at BOTH rates** (2026-07-15, after the per-mode
-  discriminator clamp - see the §17 entry): **Track 2 @12 kHz 983 vs atest 970; @44.1 kHz
+  discriminator clamp - see the 2026-07-15 entry in the amendment log): **Track 2 @12 kHz 983
+  vs atest 970; @44.1 kHz
   987 vs atest 983**. This supersedes the conclusion recorded above that the residual
   44.1 kHz gap (955 vs 983) was "direwolf's multi-slicer margin, not timing" - it was
   neither. It was our own fixed ±1 discriminator clamp letting silence pin the slicer's
@@ -142,7 +150,7 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   the winning bank branch). Daemon `--waterfall PORT` / `--dial HZ` / `"waterfall"` config;
   `--wav-loop FILE` replays a recording as the live capture device for hardware-free demos.
   The decoded-frames panel lists this station's own transmissions too, marked **TX**, and
-  opens on the last 50 rows of the [`frameLog`](../../CONFIG.md#framelog) where the station keeps
+  opens on the last 50 rows of the [`frameLog`](../reference/config.md#framelog) where the station keeps
   one (2026-08-04).
 - ✅ AX.25 links pane (2026-09-02): the waterfall page reads every AX.25 frame it lists into
   packet.net's `Ax25LinkObserver` and shows the result as one card per pair of stations per
@@ -177,7 +185,7 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   classic G3RUH (NRZI→scramble TX order confirmed empirically; 4/4 their audio, 3/3 ours
   in atest) and IL2P (4/4 their audio via the new polarity-agnostic sync hunt; 3/3 ours
   in atest after the legacy-max-FEC discovery below).
-- 🔎 **Interop discovery (desk-found, exactly the class the research predicted):** the
+- 🔎 **Interop discovery (desk-found, the class the research predicted):** the
   v0.6-RESERVED header bit is still read by Dire Wolf (and the NinoTNC lineage) as the
   pre-v0.6 max-FEC selector - cleared, they parse payload blocks with the legacy
   2/4/6/8-parity plan and reject 16-parity frames (the spec's own example packets would
@@ -194,12 +202,15 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   (5), afsk1200 (6), afsk1200-il2p (7), bpsk300 (8), qpsk600 (9), bpsk1200 (10), qpsk2400
   (11), afsk300 (12), afsk300-il2p (13), afsk300-il2pc (14). DCD assert/release lags
   measured and CSMA-safe throughout.
-- ⬜ **C4FSK (modes 1/3) is the remaining coverage gap** - coherent 4-level FSK (19200 in
-  20 kHz OBW, 9600 in 10 kHz; 2079/1039 Hz outer deviation), new in firmware 3/4.42. A
-  genuinely new modem, not a reparameterisation of an existing one.
-- ⬜ PDN `IRigControl` PTT (packet.net side); over-air (RF) NinoTNC runs when a radio
-  pair is available - the wired loop already answers the baseband/phase-map/FEC-bit
-  questions.
+- ✅ **C4FSK (modes 1/3), the last NinoTNC coverage gap, closed 2026-07-16** - coherent
+  4-level FSK (19200 in 20 kHz OBW, 9600 in 10 kHz; 2079/1039 Hz outer deviation), new in
+  firmware 3/4.42, and a new modem rather than a reparameterisation of an existing one.
+  `C4fskModem` scored 8/8 ours-to-NinoTNC on the first live attempt on both modes, so all 15
+  DIP modes now have a counterpart here.
+- ⬜ PDN `IRigControl` PTT (packet.net side); an over-air (RF) NinoTNC run with a radio pair,
+  which the wired loop's answers on baseband, phase map and the FEC bit make a confirmation
+  rather than a question. Real off-air NinoTNC signals are decoded routinely now (bpsk300 from
+  GB7RDG, afsk300 live on 2026-08-24), but not as a controlled pair.
 
 ### Phase 4 - breadth 🟡
 - ✅ Multi-decoder offset bank (2026-07-15): `Afsk1200MultiModem` - 2·pairs+1 branches at
@@ -241,30 +252,26 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   public web receiver's iq48 and demodulates SSB from it in-process, so an ordinary band-plan
   config runs unchanged on somebody else's antenna. Receive only, and the channel says so
   once (`ReceiveOnlyReason`) rather than each host interface finding out separately. See the
-  amendment log entry below.
+  entry of that date in [archive/plan-amendment-log.md](archive/plan-amendment-log.md).
 - ✅ Public monitor over an UberSDR receiver (2026-09-03): `"ubersdr": { "onDemand": true }`
   holds a session on the receiver only while somebody has the waterfall open (held for a
   linger after the last leaves), and `"waterfall": { "public": true }` dresses the page for a
   visitor: a title, an about paragraph, a credit and link for the receiver, no KISS host
   badges. Built for https://m9psy-1-monitor.ukpacketradio.network; see
   [docs/dev/archive/40m-monitor-plan.md](archive/40m-monitor-plan.md).
-- ✅ Public monitor over many UberSDR receivers (2026-09-03): a `"monitor"` config section fronts the receivers the UberSDR directory lists, with a picker at `/`, each receiver's page at `/r/<slug>/`, and at most one session per receiver however many visitors are watching it. Same binary and same package as the single-station flavour, which is unchanged. Live at https://monitor.ukpacketradio.network from CT 146, which replaces the single-receiver site; an overnight soak and a word with the receivers' operators are still to come. See [docs/dev/archive/monitor-plan.md](archive/monitor-plan.md) and the amendment log entry below.
+- ✅ Public monitor over many UberSDR receivers (2026-09-03): a `"monitor"` config section fronts the receivers the UberSDR directory lists, with a picker at `/`, each receiver's page at `/r/<slug>/`, and at most one session per receiver however many visitors are watching it. Same binary and same package as the single-station flavour, which is unchanged. Live at https://monitor.ukpacketradio.network from CT 146, which replaces the single-receiver site; an overnight soak and a word with the receivers' operators are still to come. See [archive/monitor-plan.md](archive/monitor-plan.md) and the entry of that date in [archive/plan-amendment-log.md](archive/plan-amendment-log.md).
+- ✅ Multi-decoder banks for the PSK modes: `BpskMultiModem` (2026-07-18), `QpskMultiModem`
+  and the nine-branch differential bank (2026-08-21), `Afsk300MultiModem` (2026-08-02).
 - ⬜ DCD-over-KISS extension (awaiting an agreed NinoTNC-ecosystem format); Windows
-  audio backend (deferred 2026-07-15); extra decode-only listeners; multi-decoder banks
-  for the PSK modes.
+  audio backend (deferred 2026-07-15); extra decode-only listeners.
 
-## Blocked on Tom / hardware (updated 2026-07-15 later)
+## Blocked on Tom / hardware
 
-- ~~NuGet~~ **RESOLVED**: NUGET_API_KEY granted; 0.1.0 and 0.1.1 published (0.1.0
-  confirmed indexed on nuget.org).
-- ~~audio group~~ **RESOLVED**: `usermod -aG audio tf` run; both ALSA hardware smoke
-  tests now pass on this box's real sound card (via `sg audio` until re-login).
-- ~~soundcard on the NinoTNC bench rig~~ **RESOLVED** (2026-07-15): CM108 widget wired
-  to the NinoTNC per docs/dev/bench/ninotnc-loop.md; every supported mode validated bidirectionally
-  (see § Results there). The open wire questions are answered: NinoTNC's 9600 GFSK
-  matches the direwolf-validated baseband both ways, the spec QPSK phase map is
-  NinoTNC-compatible (no pairwise-negotiation divergence), and the legacy-max-FEC bit
-  default is confirmed right.
-- **Hardware still pending**: a Pi for the DSP benchmark and .deb trial; over-air (RF)
-  NinoTNC runs; per-mode WAV corpus recording off the rig (bench decode counts exist,
-  committed corpora don't yet).
+Everything this list opened with was resolved during Phase 1: NuGet publishing, the `audio`
+group on the dev box, and the CM108 widget wired to the NinoTNC bench rig, which answered the
+three open wire questions (NinoTNC's 9600 GFSK matches the direwolf-validated baseband both
+ways, the spec QPSK phase map is NinoTNC-compatible, and the legacy-max-FEC bit default is
+right; see § Results in [bench/ninotnc-loop.md](bench/ninotnc-loop.md)). The Pi arrived too:
+radio1 runs the arm64 package. What is still owed to hardware, here and in the phases above, is
+an over-air RF NinoTNC pair run and the per-mode WAV corpus off the rig. Everything else that
+needs Tom and a radio is listed in [roadmap.md](roadmap.md).

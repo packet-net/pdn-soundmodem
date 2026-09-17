@@ -1,6 +1,8 @@
 # ARDOP on-air acceptance bench (GB7RDG, 40 m slot 2)
 
-The procedure for the one rung of the ARDOP acceptance ladder that has never been climbed: a real ARDOP transmission from a real transmitter on a shared band segment. Written 2026-09-12, before the session, because [docs/roadmap.md](../roadmap.md) #6 and its "Needs Tom + a radio" item 3 both say to write it first.
+Status: reference as of 2026-09-17. Describes the acceptance procedure for the one ARDOP rung that needed a real transmitter on a shared band segment, and the state of the station it was written against. The session ran on 2026-09-12 and passed (PR #462); its results are recorded in [roadmap.md](../roadmap.md) and [mode-validation.md](../mode-validation.md) rather than in a Results section here. The protocol engine and the waveforms ship as the M0LTE.Ardop package; what is left in this repository is `src/Packet.SoundModem.Daemon/ArdopChannelBridge.cs` and `ArdopBusyDetector.cs`.
+
+The procedure for the one rung of the ARDOP acceptance ladder that had never been climbed when this was written: a real ARDOP transmission from a real transmitter on a shared band segment. Written 2026-09-12, before the session, because [docs/roadmap.md](../roadmap.md) #6 and its "Needs Tom + a radio" item 3 both say to write it first.
 
 Everything below is grounded in this repository, or in a read-only probe of the live station taken on 2026-09-12 and quoted as such. Where a number or a behaviour is not grounded it says **unverified**, and is not to be quoted as measured.
 
@@ -429,6 +431,6 @@ sm-ota ardop-monitor --raw <capture dir> --centre 1500 --quiet --csv "$EV/sessio
 2. **[docs/mode-validation.md](../mode-validation.md)**: a dated ledger entry. The standing rule in CLAUDE.md is explicit that a proven mode gets one, naming the transition and the PR or issue that did it. `ardop` has no matrix row (it is a daemon modem entry, not a `ModemCatalog` mode) and the 2026-08-02 entry sets the precedent for recording it anyway.
 3. **[docs/ardop/plan.md](../archive/ardop/plan.md)**: leg 2 of "Open legs" closed, with the exit criterion quoted and answered.
 4. **[docs/roadmap.md](../roadmap.md)**: #6 closed, and #11's dummy-load item closed if rung 0b ran.
-5. **[docs/plan.md](../plan.md) §17**: the amendment-log entry, which is authoritative where the three roadmap documents disagree.
+5. **[docs/dev/archive/plan-amendment-log.md](../archive/plan-amendment-log.md)**: an amendment-log entry. That log is closed now and [roadmap.md](../roadmap.md) is the one roadmap, so a disagreement between documents is settled there.
 
 **Honest negatives are recorded with their mechanism**, which is the campaign's own standing discipline. A session that did not connect, a ping that was never answered, a peer that behaved unlike ardopcf: all of those are results, and the one thing that must not happen is a ladder run whose failures go unwritten because the exit criterion was not reached.
