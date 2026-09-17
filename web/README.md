@@ -22,8 +22,10 @@ verify.sh   re-measures everything claimed below
 
 The JS-facing surface is the whole boundary between C# and JavaScript, and it is deliberately
 small: open a mode, push received audio, pull decoded AX.25 frames, read carrier sense,
-modulate a frame to audio. No waterfall, no config API, no KISS framing - there is no serial
-link here to frame anything for.
+modulate a frame to audio, render a test burst. No waterfall, no config API, no KISS framing -
+there is no serial link here to frame anything for. The two level controls do not cross the
+boundary at all: they are gain nodes in the Web Audio graph either side of the core, which is
+where a browser's mixer lives.
 
 `package/package.json` carries `0.0.0-dev`; the real version is stamped from the release tag,
 so the npm package, the NuGet package and the .debs all ship the same number from the same
@@ -41,6 +43,17 @@ Then open `http://localhost:8080/demo/`. It has to be https or localhost: the mi
 the keying device both need a secure context. Chrome, Edge or Opera on desktop, because
 neither Web Serial (RTS/DTR keying) nor WebHID (CM108 GPIO keying) exists in Firefox or
 Safari, and mobile Chromium ships with both switched off.
+
+The page carries the two controls a station is actually set up with: the RX and TX level
+sliders, with a meter beside the capture one, and the TX test - two tones for a linearity
+check, or one for a carrier level or an FM deviation check by Bessel null. They are the
+station page's Mixer and TX test groups with the daemon taken out of them, in the same units,
+against the same target band. `package/README.md` has the API behind them.
+
+The page and the package ship on separate schedules - the page deploys on a push to main, the
+package only on a release - so a control can exist here before the CDN has the code behind it.
+Anything in that state is disabled and says which version it wants, rather than moving and
+reaching nothing.
 
 Add `?local` to load the modem from this working tree instead, for developing the package and
 the page together - `./build.sh` first, so the WebAssembly bundle is there for it to load.
@@ -67,6 +80,11 @@ node test/decode.mjs decode ../samples/ninotnc/qpsk2400.wav qpsk2400
 node test/decode.mjs loopback bpsk300                # modulate, then demodulate it back
 cd test && npm install && node two-stations.mjs qpsk3600
 ```
+
+`verify.sh` also runs the demo page's own script in Node, twice: against this working tree, and
+against a package with the newest methods stripped off it, which is the CDN being a release
+behind. A mistyped element id or a handler on the wrong event is ordinary JavaScript and Node
+runs it exactly as a browser does; it is the only thing here that watches the page.
 
 `two-stations.mjs` runs two complete stations - real DSP, real AX.25 - over a simulated wire,
 and takes a connected-mode session all the way through: SABM(E), UA, I frames, the answer,
@@ -127,6 +145,8 @@ station picks T1 from the mode's throughput.
 Nothing here has been near a radio, and the one genuinely unknown thing is browser audio
 capture: `getUserMedia` is asked for `echoCancellation`, `noiseSuppression` and
 `autoGainControl` all off, but the OS mixer's own AGC sits outside the browser's reach. That
-wants a bench session, not more code. So does the PTT-to-audio alignment: the browser owns the
+wants a bench session, not more code. The RX slider gives it a trim either way, and the meter
+beside it says what the demodulator is being handed, which is the reading that bench session
+needs anyway. So does the PTT-to-audio alignment: the browser owns the
 output buffer, so `package/src/modem.js` pads the unkey with the reported `outputLatency`, and
 that padding should be checked on a scope rather than trusted.

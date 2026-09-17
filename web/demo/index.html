@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>pdn-soundmodem in the browser</title>
 <style>
-  :root { color-scheme: dark; --bg:#101418; --panel:#171d24; --line:#2a333d; --ink:#d6e0ea; --dim:#7d8a99; --on:#4ade80; --off:#374151; --hot:#f87171; }
+  :root { color-scheme: dark; --bg:#101418; --panel:#171d24; --line:#2a333d; --ink:#d6e0ea; --dim:#7d8a99; --on:#4ade80; --off:#374151; --hot:#f87171; --amber:#f59e0b; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
   header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:baseline; flex-wrap:wrap; }
@@ -33,6 +33,41 @@
   .frame.tx { color:#93c5fd; }
   .frame.sys { color:var(--dim); font-style:italic; }
   .frame.err { color:var(--hot); }
+
+  /* Levels. Two gain controls either side of the modem, in dB, doing on a browser station what
+     the Mixer group does on a station page: the capture level the demodulator is given, and the
+     level that drives the radio. A dB with nothing beside it is not a level anyone can act on,
+     so each carries its reading and the capture one carries a meter. */
+  .lev { display:flex; gap:8px; align-items:center; margin-top:6px; }
+  /* display and margin because the page's own label rule stacks them, and these sit in a row. */
+  .lev .side { width:20px; font-size:11px; color:var(--dim); flex:none;
+               display:inline-block; margin:0; }
+  .lev input[type=range] { flex:1; min-width:0; padding:0; accent-color:#60a5fa; }
+  .lev .db { width:70px; text-align:right; font-size:11px; color:var(--ink); flex:none;
+             font-variant-numeric:tabular-nums; }
+  /* The bar is scaled and banded from the same figures the station page uses, so an operator who
+     has aimed one meter has aimed both. */
+  .meter { position:relative; flex:1; min-width:60px; height:10px; background:#0b0f14;
+           border:1px solid var(--line); border-radius:2px; overflow:hidden; }
+  .meter .zone { position:absolute; top:0; bottom:0; background:rgba(74,222,128,.28); }
+  .meter .hotband { position:absolute; top:0; bottom:0; right:0; background:rgba(248,113,113,.28); }
+  .meter .bar { position:absolute; left:0; top:2px; bottom:2px; width:0; background:#7fd8a0; }
+  .meter .bar.quiet { background:#6f7d8c; }
+  .meter .bar.hot { background:var(--hot); }
+  /* The RMS as a hairline: a second bar would compete with the peak, a tick reads as context. */
+  .meter .rms { position:absolute; top:0; bottom:0; width:1px; background:rgba(255,255,255,.55); }
+  /* Latched for three seconds by its own timer: a clip is one block out of roughly fifty a
+     second and would blink past unseen, and it is the one reading on this meter that has to be
+     acted on rather than noticed. */
+  #clip { flex:none; width:30px; font-size:9px; letter-spacing:.06em; color:var(--hot);
+          visibility:hidden; }
+  #clip.lit { visibility:visible; }
+  .note { font-size:11px; color:var(--dim); margin-top:7px; line-height:1.4; }
+  .note.bad { color:#ff9a7a; }
+
+  /* TX test: the one control here that puts a signal on the air. Amber while it is on, because
+     an operator who has walked away from the keyboard should be able to tell from the doorway. */
+  #ttGo.on { background:var(--amber); border-color:var(--amber); color:#12141a; }
 </style>
 </head>
 <body>
@@ -64,6 +99,38 @@
       </div>
       <button id="start" class="go">Start modem</button>
     </section>
+    <section id="levels">
+      <h2>Levels</h2>
+      <!-- Receive gain, applied between the audio device and the modem. 0 dB is the device's
+           audio untouched; a browser hands over whatever the operating system's capture level
+           made of it, and this is the trim a station page would do on the card. -->
+      <div class="lev">
+        <label class="side" for="rxgain">RX</label>
+        <input type="range" id="rxgain" min="-20" max="30" step="0.5" value="0"
+               title="Receive gain in dB, applied before the demodulator and the meter">
+        <span class="db" id="rxgainRead">0.0 dB</span>
+      </div>
+      <div class="lev">
+        <span class="side"></span>
+        <div class="meter" id="meter" title="Level at the modem's input, after the receive gain">
+          <div class="zone" id="meterZone"></div><div class="hotband" id="meterHot"></div>
+          <div class="bar" id="meterBar"></div><div class="rms" id="meterRms"></div>
+        </div>
+        <span class="db" id="meterRead">-</span>
+        <span id="clip" title="The input reached full scale: turn RX gain down, or the sending station's transmit audio">CLIP</span>
+      </div>
+      <!-- Transmit gain, applied to everything the modem sends: frames and test tones alike, so
+           the test really does measure what a frame gets. 0 dB is the modulator's own output,
+           which peaks at 0.8, and down from there is the usual direction of travel because what
+           it is driving is a microphone or data input expecting millivolts. -->
+      <div class="lev">
+        <label class="side" for="txgain">TX</label>
+        <input type="range" id="txgain" min="-40" max="0" step="0.5" value="0"
+               title="Transmit gain in dB, applied to frames and test tones alike">
+        <span class="db" id="txgainRead">0.0 dB</span>
+      </div>
+      <div class="note" id="levelNote"></div>
+    </section>
     <section>
       <h2>Send</h2>
       <label for="beacon">UI frame to APRS-style unproto</label>
@@ -77,6 +144,23 @@
         <input id="peer" value="GB7RDG-1" spellcheck="false">
         <button id="connect" disabled style="width:auto;">C</button>
       </div>
+    </section>
+    <!-- TX test: two tones for a linearity check, or one tone for a carrier level or an FM
+         deviation check by Bessel null. It goes out through the ordinary transmit path - the
+         same PTT line, the same transmit gain - which is the point of it: a test that took a
+         different route to the air would measure that route. -->
+    <section>
+      <h2>TX test</h2>
+      <label for="ttKind">Tones</label>
+      <select id="ttKind" title="Two tones for a linearity check; one tone for a carrier level, or for an FM deviation check by Bessel null"></select>
+      <div class="row" style="margin-top:8px;">
+        <input id="ttHz" value="1248" spellcheck="false" inputmode="decimal" hidden
+               style="flex:0 0 40%;" title="Tone frequency in Hz">
+        <input id="ttSecs" value="5" spellcheck="false" inputmode="decimal"
+               style="flex:0 0 40%;" title="Seconds on air">
+        <button id="ttGo" disabled title="Key the radio and send the test through the normal transmit path at the transmit gain set above">Send</button>
+      </div>
+      <div class="note" id="ttWhat"></div>
     </section>
   </aside>
   <div id="log"></div>
@@ -92,7 +176,7 @@
 // Package specs are the single source of truth for the import URLs and for the version the
 // banner reports, so what is on screen cannot drift from what is loaded. Bump them here only.
 const PKG = {
-  soundmodem: '@packet-net/soundmodem@0.69.0',
+  soundmodem: '@packet-net/soundmodem@0.70.0',
   ax25: '@packet-net/ax25@0.17.0',
 }
 
@@ -137,6 +221,159 @@ $('mode').value = 'afsk1200'
 const version = local ? 'working tree' : PKG.soundmodem.slice(PKG.soundmodem.lastIndexOf('@') + 1)
 $('banner').textContent = `soundmodem ${version}, ${modem.modes.length} modes, ready`
 log('modem core loaded. pick a mode and an input, then Start.', 'sys')
+
+// The two features below need a soundmodem newer than the CDN may be serving. This page deploys
+// on a push to main and the package only on a release, so a control can exist here a fortnight
+// before the code behind it is published - the CM108 option above says the same thing for the
+// same reason. Disable and say which version is wanted, rather than leaving a slider that moves
+// and does nothing and a Send button that throws.
+const haveLevels = 'rxGainDb' in modem && 'inputLevel' in modem
+const haveTxTest = typeof modem.testTone === 'function'
+const tooOld = `needs a newer soundmodem than ${version}`
+
+// ---------------------------------------------------------------- levels
+// The meter's scale and its bands are the station page's (waterfall.html, the MIX_ constants,
+// which come from docs/dev/receive-levels.md): the zone sits above the earliest cliff any mode
+// has and below the strictest mode's headroom line, which is what a bar on an input that may be
+// carrying any of them has to be. Same figures here, so an operator who has aimed one meter has
+// aimed both.
+const METER_MIN = -60, TARGET_LOW = -18, TARGET_HIGH = -9, QUIET = -30, HOT = -6
+const meterPct = (db) => Math.max(0, Math.min(100, (db - METER_MIN) * 100 / (0 - METER_MIN)))
+$('meterZone').style.left = `${meterPct(TARGET_LOW)}%`
+$('meterZone').style.width = `${meterPct(TARGET_HIGH) - meterPct(TARGET_LOW)}%`
+$('meterHot').style.width = `${100 - meterPct(HOT)}%`
+
+if (haveLevels) {
+  // Live on the way in, not on release: a level is set by ear and by meter, and a slider that
+  // only takes effect when you let go of it cannot be aimed.
+  const trim = (slider, read, apply) => {
+    const show = () => {
+      const db = parseFloat(slider.value)
+      read.textContent = `${db > 0 ? '+' : ''}${db.toFixed(1)} dB`
+      apply(db)
+    }
+    slider.oninput = show
+    show()
+  }
+  // Set before Start as happily as after: the modem keeps the dB and applies it when the audio
+  // graph is built, so levels can be dialled in first and then the radio opened.
+  trim($('rxgain'), $('rxgainRead'), (db) => { modem.rxGainDb = db })
+  trim($('txgain'), $('txgainRead'), (db) => { modem.txGainDb = db })
+  $('levelNote').textContent =
+    `Aim received signals to peak in the green, ${TARGET_LOW} to ${TARGET_HIGH} dBFS, and never `
+    + `into the red; with nothing on channel the bar should sit below ${QUIET}. TX gain is what `
+    + 'drives the radio, and 0 dB is the modulator at full output: start low.'
+} else {
+  $('rxgain').disabled = $('txgain').disabled = true
+  $('levelNote').textContent = `Levels ${tooOld}.`
+  $('levelNote').classList.add('bad')
+}
+
+// A clip is one block out of roughly fifty a second and would blink past unseen, so it is
+// latched: it is the one reading on the meter that has to be acted on rather than noticed.
+let clipUntil = 0
+function paintMeter() {
+  if (!haveLevels) return
+  const { peak, rms, clip } = modem.inputLevel
+  const bar = $('meterBar')
+  bar.style.width = `${meterPct(peak)}%`
+  bar.classList.toggle('hot', clip || peak >= HOT)
+  bar.classList.toggle('quiet', !clip && peak < QUIET)
+  $('meterRms').style.left = `${meterPct(rms)}%`
+  // Below the bottom of the bar there is nothing to read: a silent input floors at -120 dBFS,
+  // which is a long number saying only that the card has stopped.
+  $('meterRead').textContent = peak <= METER_MIN ? `< ${METER_MIN} dBFS` : `${peak.toFixed(1)} dBFS`
+  $('meter').title = `peak ${peak.toFixed(1)} dBFS, rms ${rms.toFixed(1)} dBFS, at the modem's input`
+  if (clip) clipUntil = performance.now() + 3000
+  $('clip').classList.toggle('lit', performance.now() < clipUntil)
+}
+
+// ---------------------------------------------------------------- TX test
+// The one control on this page that puts a signal on the air on purpose. Nothing about it is
+// decided here: the tones and the presets are the core's own, the length is capped by the modem
+// rather than by this box, and what is shown is the sentence the modem hands back - the same
+// wording a station's journal carries for the same transmission.
+let testRunning = false
+const testSay = (text, bad) => {
+  $('ttWhat').textContent = text || ''
+  $('ttWhat').classList.toggle('bad', !!bad)
+}
+const chosenHz = () => $('ttKind').value === 'tone'
+  ? parseFloat($('ttHz').value)
+  : parseFloat($('ttKind').value.slice(5))
+
+if (haveTxTest) {
+  // Two tones for linearity, then one tone free, then the presets - each labelled with the FM
+  // deviation its Bessel null calibrates, so raising the transmit gain until the carrier
+  // disappears on a spectrum display sets a known deviation.
+  const [lowHz, highHz] = modem.twoTonePairHz
+  const kinds = [['two', `Two tone ${Math.round(lowHz)}+${Math.round(highHz)}`], ['tone', 'One tone']]
+  for (const preset of modem.besselNullPresets) {
+    kinds.push([`tone:${preset.toneHz}`,
+      `${Math.round(preset.toneHz)} Hz -> FM ${(preset.deviationHz / 1000).toFixed(1)} kHz dev`])
+  }
+  for (const [value, text] of kinds) {
+    const option = document.createElement('option')
+    option.value = value
+    option.textContent = text
+    $('ttKind').append(option)
+  }
+
+  // The frequency box belongs to the free tone only: the presets carry their own, and a box that
+  // could disagree with the label beside it would put the deviation reading out by that much.
+  const showKind = () => {
+    $('ttHz').hidden = $('ttKind').value !== 'tone'
+    if ($('ttKind').value === 'two') return testSay('')
+    const tone = chosenHz()
+    testSay(isFinite(tone) && tone > 0
+      ? `FM null at ${(modem.besselNullDeviationHz(tone) / 1000).toFixed(2)} kHz deviation`
+      : '')
+  }
+  $('ttKind').onchange = showKind
+  $('ttHz').oninput = showKind
+  showKind()
+
+  $('ttGo').onclick = async () => {
+    // Amber and reading Stop: the click ends the test rather than starting a second one. The
+    // modem fades what is on the air and withdraws what is still waiting for a clear channel.
+    if (testRunning) return transport.stopTestTone()
+
+    const asked = parseFloat($('ttSecs').value)
+    const request = {
+      twoTone: $('ttKind').value === 'two',
+      toneHz: chosenHz(),
+      seconds: isFinite(asked) && asked > 0 ? asked : undefined,
+    }
+    // Read first, so a tone the modem will not send is refused before anything is keyed.
+    let plan
+    try { plan = modem.describeTestTone(request) }
+    catch (refused) { return testSay(refused.message, true) }
+
+    testRunning = true
+    $('ttGo').classList.add('on')
+    $('ttGo').textContent = 'Stop'
+    testSay(plan.text)
+    log(`tx test: ${plan.text}`, 'tx')
+    try {
+      const done = await transport.testTone(request)
+      testSay(done.text)
+      log(`tx test: ${done.text}`, 'tx')
+    } catch (failed) {
+      testSay(failed.message, true)
+      log(`tx test: ${failed.message}`, 'err')
+    } finally {
+      testRunning = false
+      $('ttGo').classList.remove('on')
+      $('ttGo').textContent = 'Send'
+      // What the test did stays on screen. Re-running showKind here to put the deviation hint
+      // back wiped the outcome the moment it arrived, so a finished test read as though it had
+      // never happened - found by the page probe, which is the only thing that watches this line.
+    }
+  }
+} else {
+  $('ttKind').disabled = $('ttHz').disabled = $('ttSecs').disabled = true
+  testSay(`The TX test ${tooOld}.`, true)
+}
 
 // Device names only appear after the user has granted audio access, so ask first.
 navigator.mediaDevices.getUserMedia({ audio: true }).then(async (stream) => {
@@ -219,6 +456,9 @@ $('start').onclick = async () => {
     listener.onFrameTraced((event) => { if (event.direction === 'tx') describe(event.frame, 'tx') })
     await listener.start()
     $('send').disabled = $('connect').disabled = false
+    // The test keys the radio through the transport, so it waits for the transport like
+    // everything else that transmits.
+    $('ttGo').disabled = !haveTxTest
     setInterval(paint, 100)
   } catch (e) {
     log(`start failed: ${e.message}`, 'err')
@@ -275,6 +515,7 @@ function paint() {
   $('dcd').className = `dot ${modem.carrierDetect ? 'on' : ''}`
   $('busy').className = `dot ${modem.channelBusy() && !modem.transmitting ? 'on' : ''}`
   $('tx').className = `dot ${modem.transmitting ? 'tx' : ''}`
+  paintMeter()
 }
 
 // The monitor gets frames straight from the modem too, so a frame addressed to nobody here

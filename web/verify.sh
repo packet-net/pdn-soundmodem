@@ -39,6 +39,47 @@ for mode in afsk1200 bpsk300 qpsk2400 fsk9600; do
   [[ "$out" == *"all checks passed"* ]] || failures=$((failures + 1))
 done
 
+echo "== the transmitter test, rendered by the core rather than by the page =="
+# The waveform itself is TestTone's and is measured in C# (TestToneTests); what this checks is
+# that the browser gets it: the right length at the audio rate, the daemon's peak, and edges that
+# are shaped rather than hard-keyed - a test transmission whose own edges splatter is a poor
+# instrument for measuring a transmitter's cleanliness.
+tone=$( (cd package && node --input-type=module -e "
+  import { dotnet } from './_framework/dotnet.js'
+  const rt = await dotnet.withDiagnosticTracing(false).create()
+  const M = (await rt.getAssemblyExports(rt.getConfig().mainAssemblyName)).Modem
+  const pcm = new Float32Array(M.RenderTestTone([...M.TwoTonePairHz()], 0.8, 48000, 2).buffer)
+  let peak = 0
+  for (const s of pcm) peak = Math.max(peak, Math.abs(s))
+  const shaped = Math.abs(pcm[0]) < 0.01 && Math.abs(pcm[pcm.length - 1]) < 0.01
+  console.log(JSON.stringify({ n: pcm.length, peak: +peak.toFixed(3), shaped,
+    pair: [...M.TwoTonePairHz()], presets: [...M.BesselNullTonesHz()] }))
+" 2>/dev/null | tail -1) )
+if [[ "$tone" == '{"n":96000,"peak":0.8,"shaped":true,"pair":[700,1900],"presets":[500,999,1248,2079]}' ]]; then
+  echo "  two-tone 700+1900 Hz, 2 s at 48 kHz: 96000 samples, peak 0.800, edges shaped"
+  echo "  presets 500/999/1248/2079 Hz, as the daemon offers them"
+else
+  echo "  UNEXPECTED: $tone"; failures=$((failures + 1))
+fi
+
+echo "== the demo page's own script, run as a browser runs it =="
+# The page is the one part of this that no decode test can see: a mistyped element id or a handler
+# on the wrong event is ordinary JavaScript, and Node runs it exactly as a browser does. Twice -
+# once against this working tree, and once against a package with the newest methods taken off it,
+# because the page deploys on a push and the package only on a release, so it has to degrade
+# rather than throw when the CDN is a release behind.
+if [[ -d test/node_modules ]]; then
+  for flavour in "" old; do
+    if line=$( (cd test && node demo-page.mjs $flavour 2>&1) ); then
+      echo "  $line"
+    else
+      echo "  FAILED: $(tail -3 <<<"$line")"; failures=$((failures + 1))
+    fi
+  done
+else
+  echo "  skipped: run npm install in test/ first"
+fi
+
 echo "== the npm package, packed and loaded as a consumer would =="
 # The bundle's boot config names every asset it will fetch, and the loader treats a missing
 # one as fatal rather than optional. So the test is not "does the tarball look right", it is

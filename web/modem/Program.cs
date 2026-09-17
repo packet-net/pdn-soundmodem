@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.JavaScript;
 using M0LTE.Dsp;
+using Packet.SoundModem.Audio;
 using Packet.SoundModem.Modems;
 
 // The whole browser-facing surface of the modem. A page opens a mode, pushes the audio its
@@ -188,6 +189,54 @@ public static partial class Modem
 
         byte[] bytes = new byte[outgoing.Length * 4];
         MemoryMarshal.AsBytes(outgoing).CopyTo(bytes);
+        return bytes;
+    }
+
+    // ---- The transmitter test ------------------------------------------------------------
+    //
+    // The station page's TX test, with the daemon taken out of it: the same TestTone the
+    // daemon transmits, rendered here and handed to the page's own transmit path. It takes no
+    // handle, because a test tone is not modulation - there is no mode involved, nothing is
+    // decimated into a DSP rate, and the tones go out at the audio rate exactly as written.
+    // A page can therefore run one before it has opened a mode, which is the order an operator
+    // setting levels on a new interface actually works in.
+    //
+    // The three readers below exist so that the page's menu is built from the core's own
+    // numbers. A browser page hard-coding "700+1900" and the four Bessel tones would be a
+    // second copy of a measurement setting, and the deviation an operator reads off a null is
+    // wrong by exactly as much as that copy has drifted.
+
+    /// <summary>The standard two-tone pair, low then high, in Hz.</summary>
+    [JSExport]
+    public static double[] TwoTonePairHz() => [TestTone.TwoToneLowHz, TestTone.TwoToneHighHz];
+
+    /// <summary>The single-tone presets worth offering, in Hz, in the order they are shown.</summary>
+    [JSExport]
+    public static double[] BesselNullTonesHz() => [.. TestTone.BesselNullTonesHz];
+
+    /// <summary>The FM deviation a tone drives the carrier to its Bessel null at, in Hz.</summary>
+    [JSExport]
+    public static double BesselNullDeviationHz(double toneHz) =>
+        TestTone.BesselNullDeviationHz(toneHz);
+
+    /// <summary>
+    /// One test burst as little-endian float32 PCM at <paramref name="audioRate"/>: the tones
+    /// together, each given an equal share of <paramref name="peakAmplitude"/> so the sum peaks
+    /// where a single tone would, with the raised-cosine rise and fall that stops a hard-keyed
+    /// tone splattering. One tone for a carrier level or an FM deviation check, two for a
+    /// linearity check.
+    /// </summary>
+    /// <remarks>
+    /// Rendered whole rather than in blocks, as the daemon's single-keyup path renders it: the
+    /// caller is a Web Audio buffer source, which wants the whole burst anyway, and a test cut
+    /// short in the browser is faded by the graph rather than by re-rendering a shorter burst.
+    /// </remarks>
+    [JSExport]
+    public static byte[] RenderTestTone(double[] toneHz, double peakAmplitude, int audioRate, double seconds)
+    {
+        float[] burst = new TestTone(toneHz, peakAmplitude, audioRate, seconds).Render();
+        byte[] bytes = new byte[burst.Length * 4];
+        MemoryMarshal.AsBytes<float>(burst).CopyTo(bytes);
         return bytes;
     }
 }

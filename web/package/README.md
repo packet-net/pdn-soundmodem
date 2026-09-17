@@ -40,6 +40,53 @@ The decodes are bit for bit what the native build produces - the same demodulato
 the same measured tuning constants, checked frame by frame against the native build on every
 release.
 
+## Levels
+
+A browser station has no sound card mixer to reach, so the two levels a station trims on the
+card are trimmed in the graph instead: one gain either side of the modem, both in dB, both unity
+at 0.
+
+```js
+modem.rxGainDb = 6      // 0 dB is the device's audio untouched
+modem.txGainDb = -12    // 0 dB is the modulator's own output, which peaks at 0.8
+modem.inputLevel        // { peak, rms, clip } in dBFS, from the most recent block
+```
+
+Receive gain is applied before the demodulator, and `inputLevel` is measured on the same samples
+the demodulator is given - so the reading moves when the gain does, which is the one thing a
+meter beside a gain control exists to show. Transmit gain is applied to everything the modem
+sends, frames and test tones alike. Either can be set before `open()`; the modem keeps the dB and
+applies it when the graph is built. A level outside -60 to +30 dB is refused rather than clamped.
+
+## The transmitter test
+
+The station page's TX test, on a browser station: the classic two-tone pair for a linearity
+check, or one tone for a carrier level or an FM deviation check by Bessel null. It goes out
+through the ordinary transmit path - the same PTT line, the same transmit gain - which is the
+point of it. A test that took a different route to the air would measure that route.
+
+```js
+modem.twoTonePairHz          // [700, 1900]
+modem.besselNullPresets      // [{ toneHz: 500, deviationHz: 1202.5 }, ...]
+
+// Contends for the channel first, like anything else that keys, then keys and sends.
+const done = await transport.testTone({ twoTone: true, seconds: 5 })
+// { text: 'two-tone 700+1900 Hz, 5.0 s, peak level 0.80 - done, 5.0 s on air', onAir, stopped }
+
+transport.stopTestTone()     // withdraws it if queued; fades it out if it is on the air
+```
+
+`modem.describeTestTone(options)` reads a request without sending it, which is how a page shows
+what is about to go out - and how a tone it will not send gets refused before anything is keyed.
+The tones and the presets come from the core's own `TestTone`, so nothing here is a second copy
+of a measurement setting. A single tone must be at least 50 Hz and below Nyquist, and is refused
+rather than moved: the deviation read off a null is wrong by exactly as much as a tone that was
+quietly nudged. A test is capped at 30 seconds whatever is asked for, because a test
+transmission is a transmission.
+
+Raise the transmit gain until the carrier disappears on a spectrum display and the level at that
+point is the deviation the preset names.
+
 ## What it needs
 
 Chrome, Edge or Opera, on desktop. Web Serial and WebHID, which carry the PTT line between
