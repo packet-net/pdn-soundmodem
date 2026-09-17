@@ -1,8 +1,10 @@
 # ARDOP in pdn-soundmodem - design & scoping (task #6 groundwork)
 
-Status: design, pre-implementation. Target: `.NET 10`, pure-managed, **GPL-3.0-or-later**, matching pdn-soundmodem idioms. This is the ARDOP counterpart of [ofdm-design.md](archive/ofdm-design.md): source-grounded, honest about risks, written to be implementable without re-deriving anything.
+Status: design record as of 2026-09-17. Describes the ARDOP scoping and design work of July 2026, written before any of it existed, and kept because the waveform inventory, the timing budgets and the ardopcf citations are still the reference for anyone reading the code. The protocol engine, the waveforms and the host interface ship as the M0LTE.Ardop package (pinned in Directory.Packages.props); what is left in this repository is `src/Packet.SoundModem.Daemon/ArdopChannelBridge.cs`, which moves the TNC's fixed 1500 Hz 12 kHz audio onto the shared channel, and `ArdopBusyDetector.cs`.
 
-**Source provenance.** Every ardopcf citation below is to the shallow reference clone used during design - **ardopcf v1.0.4.1.3+, git `a7c92289b569afbe4259dc556d749405ebc008f5` (2025-05-27)**, `github.com/pflarue/ardop` - cited as `file:line` relative to the repo root (`src/common/` for the C, `docs/` for its documentation). The protocol spec is the in-repo **ARDOP Specification Rev 2.0, 2017-11-27** (`docs/refs/ARDOP_Specification_20171127.pdf`), cited as *spec §n* / *spec App. X*. pdn-soundmodem citations are relative to `src/Packet.SoundModem/`. Facts marked **[measured]** were verified on this box during scoping (2026-07-16); facts I could not ground are explicitly marked **[unverified]**.
+**Source provenance.** Every ardopcf citation below is to the shallow reference clone used during design - **ardopcf v1.0.4.1.3+, git `a7c92289b569afbe4259dc556d749405ebc008f5` (2025-05-27)**, `github.com/pflarue/ardop` - cited as `file:line` relative to the repo root (`src/common/` for the C, `docs/` for its documentation). The protocol spec is the in-repo **ARDOP Specification Rev 2.0, 2017-11-27** (transcribed at [docs/dev/refs/ardop-spec-rev2.md](refs/ardop-spec-rev2.md)), cited as *spec §n* / *spec App. X*. pdn-soundmodem citations are relative to `src/Packet.SoundModem/`. Facts marked **[measured]** were verified on this box during scoping (2026-07-16); facts I could not ground are explicitly marked **[unverified]**.
+
+**Where the shipped station departs from this design.** The dedicated-channel policy of §2.2 did not survive: an ARDOP modem shares the channel with the packet modems, and an ARQ session holds packet transmissions off air rather than excluding them from the config. Busy detection is off unless the modem entry sets `"busyDetect": true`, and the detector is a band-limited energy meter, so `BUSYDET` 1-10 is accepted and not honoured. A modem entry's `bandwidth` becomes the TNC's ARQBW at start-up. The current behaviour is in the guide and in `ArdopChannelBridge.cs`; this document is not maintained against it.
 
 ---
 
@@ -10,7 +12,7 @@ Status: design, pre-implementation. Target: `.NET 10`, pure-managed, **GPL-3.0-o
 
 ### 1.1 What ARDOP is
 
-Amateur Radio Digital Open Protocol (Rick Muething KN6KB): an HF/VHF sound-card ARQ + FEC data protocol in four bandwidth classes (200/500/1000/2000 Hz at the −26 dB points, spec §2.2), designed as a virtual TNC that host programs drive over TCP (spec §8). It is the open substitute for the closed VARA HF / PACTOR modes on the live Winlink network (`docs/dev/waveform-roadmap.md` §3, ardopcf `docs/Motivation.md:9`).
+Amateur Radio Digital Open Protocol (Rick Muething KN6KB): an HF/VHF sound-card ARQ + FEC data protocol in four bandwidth classes (200/500/1000/2000 Hz at the −26 dB points, spec §2.2), designed as a virtual TNC that host programs drive over TCP (spec §8). It is the open substitute for the closed VARA HF / PACTOR modes on the live Winlink network (`docs/dev/roadmap.md` "Cannot implement", ardopcf `docs/Motivation.md:9`).
 
 ### 1.2 Protocol version: there is exactly one interoperable ARDOP
 
@@ -366,14 +368,3 @@ The spec is protocol-grade, not implementation-grade: it has no leader-detection
 
 - CRC-16 described as CCITT 0x1021 (spec App. B) vs the 0x8810-constant LSB-injection formulation actually shipped (`ARDOPC.c:1673`) - code wins; record in PROVENANCE.
 - Spec App. B table's "RS FEC+CRC" column vs `FrameInfo`'s `intRSLen` (e.g. 4FSK.500.100: table "16+2", code RS=16 + CRC=2 separately) - consistent once decoded, but transcribe frame geometry from `FrameInfo`, not from the PDF table (which is an image in places).
-
----
-
-## 10. Open questions for Tom
-
-1. **Host protocol**: recommendation is byte-compatible ardopcf host interface, default ports 8515/8516, no pdn-native surface in v1 (§5.2). OK?
-2. **Dedicated-channel policy** (§2.2): acceptable for v1 that an ARDOP channel can't simultaneously run KISS packet modes?
-3. **Bench/gateway logistics for Rung 5**: which HF rig + antenna from the bench pool; your callsign for over-air ARQ (and a Winlink account for the Pat leg - password lives in Pat's config); preferred UK ARDOP gateways/bands to target; any RSGB/Ofcom constraints you want observed for unattended testing (the protocol's ID frame + optional CW ID covers legal ID, §4.5).
-4. **16QAM acceptance bar** (§7.1): is "decodes ardopcf's clean+moderate-SNR 16QAM, gears down earlier than ardopcf under stress" acceptable for first release, with parity tracked as an improvement item?
-5. **600 Bd FM modes** (`USE600MODES`): in scope at all? (VHF/UHF FM niche; cheap after Phase A but zero Winlink relevance.)
-6. **RXO monitor mode**: worth exposing (e.g. to the collector) as a cheap ARDOP-band sniffer?

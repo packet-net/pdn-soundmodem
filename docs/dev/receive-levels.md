@@ -1,5 +1,7 @@
 # Receive levels: what each demodulator actually wants
 
+Status: current as of 2026-09-17. Describes the measurements behind the per-frame `TOO LOUD` and `TOO QUIET` badges and the three threshold pairs they come from. The thresholds are `src/Packet.SoundModem/Audio/FrameLevelLimits.cs`, which cites this document as their derivation; section 6b is the rule PR #463 shipped, that the dBFS figure and the quiet verdict appear only on the modes whose slicer reads a level.
+
 **What this is.** The per-frame audio level badges shipped in v0.60.0 (`TOO LOUD`, `TOO QUIET`)
 were set from folklore: a NinoTNC bench loop's "GOOD" band, a CM108 interface design target, and
 one over-the-air capture somebody called comfortable. Tom, 2026-09-07: *"the two thresholds should

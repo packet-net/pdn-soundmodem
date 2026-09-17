@@ -1,6 +1,8 @@
 # Answering a station on its own frequency
 
-Most stations on an HF packet channel are not exactly on it. This is about measuring by how
+Status: current as of 2026-09-17. Describes why the station measures a correspondent's frequency error and transmits to suit it, and what stops two stations chasing each other. The estimator is `src/Packet.SoundModem/Station/StationFrequencyOffsets.cs` with `FrequencyMatchingPolicy.cs`; the shift is applied to the rendered burst in `SoundModemChannel`. The operator's half is [08-hf.md](../08-hf.md) and [reference/config.md](../reference/config.md#frequencymatching).
+
+Most stations on an HF packet channel are not quite on it. This is about measuring by how
 much, and transmitting to suit.
 
 ## The measurement
@@ -37,7 +39,7 @@ nominal channel `f` with audio centre `c` emits at `f + e_i + c`. Station `j` re
 converts it to audio `c + e_i - e_j`, so what `j` measures is `e_i - e_j`.
 
 For our signal to land on the audio centre `j`'s modem expects, we need
-`c + e_us - e_them + adj = c`, so `adj = e_them - e_us` - which is exactly the offset we
+`c + e_us - e_them + adj = c`, so `adj = e_them - e_us`, the offset we
 measured on their frames.
 
 **Our own reference error cancels.** It appears in the measurement and in the transmission with
@@ -48,8 +50,8 @@ them and answering them, which a TCXO does not.
 ## Why the benefit is theirs
 
 This station finds them regardless: the 300 baud modes run offset-diversity banks, and the BPSK
-carrier-offset estimator pulls in bursts from further still (a burst deliberately transmitted
-300 Hz off still decoded on the nominal centre in `TransmitTrimTests`). The station that cannot
+carrier-offset estimator pulls in bursts from further still (a burst transmitted
+300 Hz off on purpose still decoded on the nominal centre in `TransmitTrimTests`). The station that cannot
 hear **us** is the one running a fixed-centre modem with no such bank, which is the common case
 on the other end of an HF packet link. So the correction is transmit-only, and worth making
 precisely because the capability is asymmetric.
@@ -71,7 +73,7 @@ exchanges as each end applies a correction, sees the offset vanish, and withdraw
 
 Damping only ever fixes a feedback loop, and in the normal case **there is no loop**: our
 transmitter is not in the path by which we measure theirs, so correcting for a station that is
-not itself correcting is open-loop. Damping there stabilises nothing; it just leaves half the
+not itself correcting is open-loop. Damping there stabilises nothing; it leaves half the
 error uncorrected. Noise is already handled by averaging the window and gating on its spread, and
 a wild estimate is already bounded by `maxTrimHz`, so damping is a poor third attempt at two
 solved problems.
@@ -94,7 +96,7 @@ Damping alone therefore is not enough, so the chase is detected:
 
 If it moves by more than `chaseThresholdHz` after we begin correcting, the movement is theirs.
 
-**Backing off is not giving up.** A station that moves once has most likely just moved: a
+**Backing off is not giving up.** A station that moves once has most likely only moved: a
 knocked dial, a rig warming up, a new radio. It will sit perfectly happily at its new offset,
 and writing it off forever would mean never correcting for it again because of something it did
 one Tuesday. So a move costs a cooldown (`chaseCooldownSeconds`, 30 minutes by default), after
@@ -111,39 +113,18 @@ That cap, not the detector, is why this is safe to have on by default.
 
 ## Configuration
 
-```json
-"frequencyMatching": {
-  "enabled": true,
-  "minSamples": 3,
-  "maxSpreadHz": 20,
-  "maxTrimHz": 50,
-  "damping": 0.5,          // applied only to a station that has moved under a correction
-  "chaseThresholdHz": 10,
-  "chaseCooldownSeconds": 1800,
-  "maxChases": 3
-}
-```
+The keys, their defaults and what each one refuses are in [reference/config.md](../reference/config.md#frequencymatching). Measurement runs always; `enabled` governs only whether the transmitter moves.
 
-These are the defaults, and the section may be omitted entirely for them. Measurement runs
-always; `enabled` governs only whether the transmitter moves.
+Two of them carry reasoning that belongs here. `minSamples` is low on purpose: the correction only has to hold for the exchange it is used in, so a handful of recent frames is the right evidence, and a long run would average across drift and describe neither end of it. `maxSpreadHz` is what separates a rig that is merely off frequency from one that is wandering: on the table above it admits GB7WEM-7 and GB7OXF-2 and excludes GB7NOT.
 
-`minSamples` is deliberately low. The correction only has to hold for the exchange it is used
-in, so a handful of recent frames is the right evidence; a long run would average across drift
-and describe neither end of it. `maxSpreadHz` is what separates a rig that is merely off
-frequency from one that is wandering: on the table above it admits GB7WEM-7 and GB7OXF-2 and
-excludes GB7NOT.
-
-Beacons and IDs are never trimmed. Aiming at one correspondent's oscillator aims away from every
-other listener, and a broadcast has no one correspondent. In practice those destinations exclude
-themselves - no frames are ever received *from* `BEACON`, so no estimate for it can exist - but
-the exclusion is stated rather than left incidental.
+Beacons and IDs are never trimmed. Aiming at one correspondent's oscillator aims away from every other listener, and a broadcast has no one correspondent. In practice those destinations exclude themselves - no frames are ever received *from* `BEACON`, so no estimate for it can exist - but the exclusion is stated rather than left incidental.
 
 ## Where it is implemented
 
 The shift is applied to the rendered burst in `SoundModemChannel`, not inside a modem. The AFSK
 and PSK families carry a settable centre natively and generate their carrier at it, so they are
 never wrapped in `FrequencyShiftedModem` and there is no shift stage there to lean on - and
-those are exactly the modes talking to the stations this is for. Translating the finished burst
+those are the modes talking to the stations this is for. Translating the finished burst
 costs one Hilbert pass per transmission and works for every mode on one code path.
 
 ## Seeing it happen
@@ -161,11 +142,11 @@ only way to find out whether this helps is to be able to point at the frames it 
 - **Frame log**: a `tx_trim_hz` column, added by the same migration path as the others, so
   existing logs pick it up without losing their history.
 
-It is deliberately **not** written into `offset_hz`. That column holds a measurement of somebody
-else's transmitter; this is a command to our own, known exactly rather than estimated. Averaging
+It is **not** written into `offset_hz`. That column holds a measurement of somebody
+else's transmitter; this is a command to our own, known rather than estimated. Averaging
 the two together would mix what a station did with what we did about it, and the question this
 feature will eventually be judged on - did correcting for them improve their decode rate - is
-exactly the query that mixing would ruin.
+the query that mixing would ruin.
 
 ## On air
 

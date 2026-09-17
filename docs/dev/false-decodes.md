@@ -1,5 +1,7 @@
 # False decodes: what a row may claim about a frame
 
+Status: current as of 2026-09-17. Describes the three rules that decide what a decoded row may claim about a frame: when a corrupt destination stops a frame being attributed, when a reading nothing checked names nobody, and when a band SNR is not drawn beside one. The verdicts are `DecodeStanding` in `src/Packet.SoundModem/Modems/FrameQuality.cs`, read off `FrameQuality` and carried to the station page, the uplink and the backlog.
+
 What the station is allowed to say about a frame it decoded, and the measurement that decided it.
 
 ## The report

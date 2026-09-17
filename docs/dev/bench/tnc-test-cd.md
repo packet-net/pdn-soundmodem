@@ -1,5 +1,7 @@
 # sm-tnctest - the corpus benchmark, and the WA8LMF TNC Test CD
 
+Status: reference as of 2026-09-17. Describes `sm-tnctest`, the WA8LMF TNC Test CD corpus, the scoring convention and the standing scores of 2026-09-07. The tool is `tools/Packet.SoundModem.TncTest`, whose source cites this document for the corpus and the scores.
+
 `sm-decode` answers "decode this file as afsk1200". `pdn-decode` answers "what mode is this?".
 `sm-tnctest` answers the third question, the one that has decided arguments about TNCs since the
 1990s: **how many packets does this decoder get off this recording, and how many does yours?**
@@ -73,7 +75,7 @@ Two more things worth writing down because they will otherwise be rediscovered:
 - **The stations sit off a 1700 Hz centre, and which way depends on the emphasis.** On 01 the
   measured offset distribution is centred near -30 Hz and runs past -150; on 02, the same
   stations, it is centred on 0 and runs past +150. Both are the discriminator's DC level moving
-  with the twist rather than the transmitters moving, which is worth knowing before reading an
+  with the twist rather than the transmitters moving, which has to be read before taking an
   offset histogram as a statement about anybody's crystal.
 
 ## Scoring convention
@@ -122,7 +124,7 @@ from 972 to 1011, which puts the AFSK bank ahead of the reference on both. **Tha
 rests on the recorded `atest` numbers rather than on a re-run**: Dire Wolf is not built on the
 machine this was measured on, and a fresh A/B is what would settle it.
 
-**The resampling costs nothing, which is worth knowing because everything above depends on it.**
+**The resampling costs nothing, and everything above depends on that.**
 Run at the file's own 44100 Hz, with no resampler in the path at all, 01 scores **1006** against
 the resampled 12000 Hz run's 1007 - one frame in a thousand, from the same 845 distinct contents
 and the same 119 callsigns. So the polyphase conversion is not quietly buying or costing frames,

@@ -1303,8 +1303,9 @@ public sealed class DaemonConfig
     /// <summary>POCSAG paging endpoint; null = disabled.</summary>
     public PagingConfig? Paging { get; set; }
 
-    /// <summary>ARDOP virtual TNC; null = disabled. Exclusive with Modems/Paging
-    /// (the ARDOP channel is dedicated; docs/dev/ardop-design.md §2.2).</summary>
+    /// <summary>ARDOP virtual TNC with the channel to itself; null = disabled. Exclusive
+    /// with Modems/Paging. The other form is an `ardop` modem entry, which shares the channel
+    /// with the packet modems; docs/dev/ardop-design.md section 2.2 designed only this one.</summary>
     public ArdopConfig? Ardop { get; set; }
 
     /// <summary>Headless FlexRadio slice params (Device <c>flex:</c> with no <c>@station</c>);
