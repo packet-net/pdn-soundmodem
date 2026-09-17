@@ -180,20 +180,21 @@
     </section>
     <section>
       <h2>Send</h2>
+      <!-- Connected mode first: it is what the window below is for, and what an operator reaches
+           for. C and D, as a terminal has called them since packet began. No default callsign:
+           the station that used to be here is a real node and a page that arrives pointed at
+           somebody's BBS will eventually connect to it by accident. -->
+      <label for="peer">Connect to</label>
+      <div class="row">
+        <input id="peer" value="" placeholder="callsign" spellcheck="false">
+        <button id="connect" disabled style="width:auto;" title="Connect to the station named above">C</button>
+        <button id="disconnect" disabled style="width:auto;" title="Disconnect the established session">D</button>
+      </div>
       <label for="beacon">UI frame to APRS-style unproto</label>
       <input id="beacon" value="hello from a browser" spellcheck="false">
       <div class="row" style="margin-top:8px;">
         <input id="unproto" value="TEST" spellcheck="false" style="flex:0 0 40%;">
         <button id="send" disabled>Send UI</button>
-      </div>
-      <label for="peer">Connect to</label>
-      <!-- C and D, as a terminal has called them since packet began. No default callsign: the
-           station that used to be here is a real node and a page that arrives pointed at
-           somebody's BBS will eventually connect to it by accident. -->
-      <div class="row">
-        <input id="peer" value="" placeholder="callsign" spellcheck="false">
-        <button id="connect" disabled style="width:auto;" title="Connect to the station named above">C</button>
-        <button id="disconnect" disabled style="width:auto;" title="Disconnect the established session">D</button>
       </div>
     </section>
     <!-- TX test: two tones for a linearity check, or one tone for a carrier level or an FM
