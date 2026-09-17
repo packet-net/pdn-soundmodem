@@ -156,6 +156,16 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(async (stream) => {
 // The picker button follows the keying method: a serial port for RTS/DTR, a HID device for
 // CM108. Both have to be asked for from a click, which is why neither can happen at Start.
 const pttNeedsDevice = () => $('ptt').value !== 'none'
+
+// This page and the package it loads ship on separate schedules: the page deploys on a push to
+// main, the package only on a release, so a keying method can exist here a fortnight before the
+// CDN has the class that implements it. Say which version is wanted rather than letting the
+// button throw "Cannot read properties of undefined".
+if (!Cm108Ptt) {
+  const option = $('ptt').querySelector('option[value="cm108"]')
+  option.disabled = true
+  option.textContent += ` (needs a newer soundmodem than ${version})`
+}
 $('ptt').onchange = async () => {
   $('pick-ptt').disabled = !pttNeedsDevice()
   $('pick-ptt').textContent = $('ptt').value === 'cm108' ? 'Device...' : 'Port...'
