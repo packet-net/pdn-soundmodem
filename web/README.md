@@ -38,8 +38,9 @@ python3 -m http.server 8080           # any static server, from THIS directory
 ```
 
 Then open `http://localhost:8080/demo/`. It has to be https or localhost: the microphone and
-Web Serial both need a secure context. Chrome or Edge, because Web Serial does not exist in
-Firefox or Safari.
+the keying device both need a secure context. Chrome, Edge or Opera on desktop, because
+neither Web Serial (RTS/DTR keying) nor WebHID (CM108 GPIO keying) exists in Firefox or
+Safari, and mobile Chromium ships with both switched off.
 
 Add `?local` to load the modem from this working tree instead, for developing the package and
 the page together - `./build.sh` first, so the WebAssembly bundle is there for it to load.

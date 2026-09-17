@@ -45,6 +45,114 @@ export class SerialPtt {
   async close() { await this.unkey(); await this.port.close() }
 }
 
+/**
+ * PTT on the GPIO pin of a CM108/CM119-family USB audio dongle, over WebHID: a Digirig, a DRA
+ * board, an RB-USB RIM, the CM108 Radio Widget. The point of it is that one USB lead then
+ * carries receive audio, transmit audio and the keying, so a browser station is a single piece
+ * of hardware. Pick the same dongle in the input and output selectors and there is nothing
+ * else plugged in.
+ *
+ * The report is the one Hamlib's `cm108.c` quotes from the C-Media documentation and Dire
+ * Wolf's `cm108_write` sends: a write-GPIO command byte, the GPIO output values, the
+ * data-direction register (1 = output) and an SPDIF byte. A hidraw caller prepends a
+ * report-number byte; in WebHID that number is `sendReport`'s first argument instead, so the
+ * payload here is the remaining four. Data before mask - the orders are indistinguishable on
+ * a keyup and differ only on the release, which is how the native class carried them swapped
+ * for months (see Cm108Ptt.cs).
+ *
+ * Chrome should hand this device over, and the reasoning is worth writing down because the
+ * expectation is that it refuses. Its protected-usage check (`IsAlwaysProtected` in Chromium's
+ * services/device/public/cpp/hid/hid_report_utils.cc) covers the keyboard usage page and the
+ * Generic Desktop pointer, keypad and system ranges, and nothing else - not the consumer page
+ * a CM108's volume keys sit on, and not a vendor-defined one. C-Media is not on the HID
+ * blocklist either, which is a FIDO measure. What has NOT been confirmed against a real dongle
+ * is the report descriptor itself: if a device turned out to declare its collection on one of
+ * those protected pages, Chrome would hide it from the picker and there is no way round that.
+ * Nobody has had one in front of this yet; see docs/dev/roadmap.md.
+ *
+ * On Linux the browser still needs permission on the hidraw node, and the daemon's rule is the
+ * wrong shape for it - that one grants a service account through a group, where a browser runs
+ * as the logged-in user. Use uaccess instead:
+ *
+ *     KERNEL=="hidraw*", ATTRS{idVendor}=="0d8c", TAG+="uaccess"
+ */
+export class Cm108Ptt {
+  /** C-Media, which covers the great majority of these interfaces. */
+  static VENDOR_CMEDIA = 0x0d8c
+
+  /**
+   * Prompts for a device (must be called from a user gesture) and opens it.
+   *
+   * @param {{ gpio?: number, filters?: HIDDeviceFilter[], debug?: boolean | ((message: string) => void) }} [options]
+   *   `gpio` is the pin, 1 to 8, and 3 on every interface we have seen. `filters` narrows the
+   *   browser's picker; the default is C-Media's vendor ID, and `[]` shows every HID device on
+   *   the machine, which is what a clone that reports somebody else's ID needs. `debug` traces
+   *   every report to the console, or to a function of your own.
+   * @returns {Promise<Cm108Ptt>}
+   */
+  static async request({ gpio = 3, filters = [{ vendorId: Cm108Ptt.VENDOR_CMEDIA }], debug = false } = {}) {
+    if (!navigator.hid) throw new Error('this browser has no WebHID (Chrome, Edge or Opera on desktop required)')
+    const [device] = await navigator.hid.requestDevice({ filters })
+    // An empty list is the user closing the picker, not a failure of the device.
+    if (!device) throw new Error('no CM108 device chosen')
+    if (!device.opened) await device.open()
+    const ptt = new Cm108Ptt(device, gpio, debug)
+    await ptt.unkey()
+    return ptt
+  }
+
+  /**
+   * @param {HIDDevice} device an open WebHID device
+   * @param {number} [gpio] the GPIO pin, 1 to 8
+   * @param {boolean | ((message: string) => void)} [debug] trace every report
+   */
+  constructor(device, gpio = 3, debug = false) {
+    if (!Number.isInteger(gpio) || gpio < 1 || gpio > 8) throw new Error(`gpio must be 1 to 8, not ${gpio}`)
+    this.device = device
+    this.gpio = gpio
+    this.mask = 1 << (gpio - 1)
+    this.debug = debug === true ? (message) => console.debug(`cm108: ${message}`) : debug || null
+    // Best effort against the failure this hardware makes easy: the chip latches the pin, so a
+    // tab that goes away mid-transmission leaves the radio keyed until something writes to it
+    // again. A clean close, a navigation or the tab being hidden all reach this; a crash or a
+    // pulled lead cannot, which is the argument for a hardware timeout in the interface.
+    this.releaseOnHide = () => { this.#send(false).catch(() => {}) }
+    // Guarded because a station is not the only thing that imports this: a bundler or a test
+    // runner evaluating the module outside a document has no window to listen on.
+    if (typeof addEventListener === 'function') addEventListener('pagehide', this.releaseOnHide)
+    this.debug?.(`opened ${device.productName || 'device'} `
+      + `(${hex4(device.vendorId)}:${hex4(device.productId)}), keying GPIO${gpio} (mask 0x${hex2(this.mask)})`)
+  }
+
+  async #send(asserted) {
+    // { write GPIO, output values, data-direction register, SPDIF }, with the report number
+    // passed separately. The direction byte stays set either way: we drive the pin low to
+    // release, rather than turning it back into an input and letting it float.
+    const report = Uint8Array.of(0x00, asserted ? this.mask : 0x00, this.mask, 0x00)
+    this.debug?.(`${asserted ? 'key  ' : 'unkey'} -> report 0x00 [${[...report].map(hex2).join(' ')}]`)
+    try {
+      await this.device.sendReport(0x00, report)
+    } catch (e) {
+      // Worth naming the device: "Failed to write the report" alone does not say which of the
+      // two things plugged in stopped answering.
+      throw new Error(`cm108 ${this.device.productName || 'device'}: ${e.message}`)
+    }
+  }
+
+  key() { return this.#send(true) }
+  unkey() { return this.#send(false) }
+
+  async close() {
+    if (typeof removeEventListener === 'function') removeEventListener('pagehide', this.releaseOnHide)
+    await this.unkey()
+    await this.device.close()
+    this.debug?.('closed')
+  }
+}
+
+const hex2 = (n) => n.toString(16).padStart(2, '0')
+const hex4 = (n) => n.toString(16).padStart(4, '0')
+
 /** PTT that keys nothing - for a VOX interface, or for listening only. */
 export const NoPtt = { key: async () => {}, unkey: async () => {}, close: async () => {} }
 

@@ -1,8 +1,8 @@
 # @packet-net/soundmodem
 
 A sound card instead of a TNC. The [pdn-soundmodem](https://github.com/packet-net/pdn-soundmodem)
-DSP core compiled to WebAssembly, with a Web Audio graph and a serial PTT line either side of
-it, so a browser tab with a USB audio interface is a packet modem.
+DSP core compiled to WebAssembly, with a Web Audio graph and a PTT line either side of it, so
+a browser tab with a USB audio interface is a packet modem.
 
 It sits where a KISS TNC on a serial port sits: raw AX.25 frames in, raw AX.25 frames
 out, plus a carrier-sense reading. It depends on nothing, and it knows nothing about any
@@ -42,12 +42,36 @@ release.
 
 ## What it needs
 
-Chrome or Edge. Web Serial, which carries the PTT line, does not exist in Firefox or Safari;
-the modem itself runs anywhere, so receive-only or VOX use does not need it. A secure context
-(https, or `http://localhost`) for both the microphone and the serial port.
+Chrome, Edge or Opera, on desktop. Web Serial and WebHID, which carry the PTT line between
+them, exist in neither Firefox nor Safari and are switched off in mobile Chromium builds; the
+modem itself runs anywhere, so receive-only or VOX use does not need either. A secure context
+(https, or `http://localhost`) for the microphone and for the keying device.
 
-PTT is RTS or DTR on a serial port. A CM108-style dongle that keys over HID is not a serial
-port and will not work through Web Serial; use VOX, or a separate USB-serial lead.
+PTT is RTS or DTR on a serial port, or the GPIO pin of a CM108-family dongle over WebHID:
+
+```js
+import { Cm108Ptt } from '@packet-net/soundmodem'
+
+await modem.open({ mode: 'afsk1200', ptt: await Cm108Ptt.request({ debug: true }) })
+```
+
+which is worth having because it makes the whole station one USB lead: the dongle carries
+receive audio, transmit audio and the keying, so `inputDeviceId`, `outputDeviceId` and the PTT
+are all the same piece of hardware. `gpio` defaults to 3, which is what every interface we have
+seen wires PTT to, and `filters` defaults to C-Media's vendor ID - pass `filters: []` to see
+every HID device on the machine for a clone that reports somebody else's.
+
+On Linux the browser needs permission on the hidraw node, and it runs as you rather than as a
+service account, so `uaccess` is the rule to write rather than a group:
+
+```
+KERNEL=="hidraw*", ATTRS{idVendor}=="0d8c", TAG+="uaccess"
+```
+
+One thing to know before you key a radio from a tab: the chip latches the pin, so PTT survives
+the page going away. `Cm108Ptt` releases on `pagehide` and on `close()`, which covers a
+navigation or a closed tab, but nothing in the browser can cover a crash. An interface with a
+hardware transmit timeout is the belt to that braces.
 
 ## Licence
 
