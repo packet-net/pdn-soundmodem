@@ -20,7 +20,7 @@ Every file here opens, under its H1, with a status line: whether it is current, 
 | [false-decodes.md](false-decodes.md) | What a row may claim about a frame: the measurement behind withholding a callsign, and a band SNR, from a reading nothing checked. |
 | [frequency-matching.md](frequency-matching.md) | Measuring how far off frequency a heard station is, and transmitting to suit. |
 | [uplink-wire-format.md](uplink-wire-format.md) | The station-to-monitor uplink wire format, the normative description UplinkWire.cs cites. |
-| [documentation-plan.md](documentation-plan.md) | The plan for this documentation rewrite. It moves to the archive when the work is finished. |
+| [archive/documentation-plan.md](archive/documentation-plan.md) | The plan for the 2026-09 documentation rewrite, finished and archived. |
 | [bench/](bench/) | Bench rigs and benchmarks: the NinoTNC cable loop, the QtSoundModem virtual-cable loop, sm-tnctest against the WA8LMF TNC Test CD, and the ARDOP on-air acceptance procedure. |
 | [hardware/](hardware/) | Hardware notes: the TM8100 to CM108 interface reasoning, the CM108 widget netlist, and the TM8100 internal USB board. The wiring guide itself is a user document at [docs/hardware/tait-tm8100-cm108.md](../hardware/tait-tm8100-cm108.md). |
 | [ms110d/](ms110d/) | MIL-STD-188-110D Appendix D: the transcribed interop tables and their README, the waveform design, and the standard itself under spec/. |
