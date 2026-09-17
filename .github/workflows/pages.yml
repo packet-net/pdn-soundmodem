@@ -8,18 +8,28 @@ name: pages
 # of the page at deploy time to whatever version npm actually has published right now, so
 # the live site always matches the newest build without touching the checked-in file.
 #
-# Triggers: a published release (release.yml has just finished publishing a new build of
-# the npm package), a push to main that touches the demo itself, and workflow_dispatch for
-# a manual redeploy.
+# Triggers: a push to main that touches the demo itself, and workflow_dispatch - which is
+# both the manual redeploy and how a release reaches this workflow.
+#
+# It used to declare `release: types: [published]` as well, and the line above used to say
+# that was how a release got here. It was not. In eight runs that trigger never fired once,
+# because GitHub does not start a workflow run for an event raised with GITHUB_TOKEN, and
+# release.yml creates the Release with exactly that token - so the live page re-pinned only
+# when somebody pushed to web/demo or pressed the button, and sat on the previous release in
+# between. release.yml now dispatches this workflow itself once npm's registry is actually
+# serving the new version, and passes that version in, which is the `version` input below.
+# workflow_dispatch is the one documented exception to the GITHUB_TOKEN rule.
 
 on:
-  release:
-    types: [published]
   push:
     branches: [main]
     paths:
       - 'web/demo/**'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'soundmodem version to pin, e.g. 0.71.0 (default: whatever npm serves now)'
+        required: false
 
 concurrency:
   group: pages
@@ -55,11 +65,22 @@ jobs:
 
       - name: Resolve the published soundmodem version
         id: version
+        env:
+          # Empty on a push, where there are no inputs at all.
+          ASKED: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          version="$(npm view @packet-net/soundmodem version)"
-          [ -n "$version" ] || { echo "::error::npm view returned no version for @packet-net/soundmodem"; exit 1; }
-          echo "resolved @packet-net/soundmodem@$version"
+          if [ -n "$ASKED" ]; then
+            # release.yml has just published this and has already waited for the registry to
+            # serve it, so take its word rather than asking again and racing the index a second
+            # time - the race it lost would pin the page to the release before this one.
+            version="$ASKED"
+            echo "pinning to the version we were handed: $version"
+          else
+            version="$(npm view @packet-net/soundmodem version)"
+            echo "resolved @packet-net/soundmodem@$version"
+          fi
+          [ -n "$version" ] || { echo "::error::no version to pin for @packet-net/soundmodem"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Build the site
