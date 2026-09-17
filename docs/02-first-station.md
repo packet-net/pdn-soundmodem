@@ -69,7 +69,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 ## Write the config
 
-Open `/etc/pdn-soundmodem/soundmodem.json` as root (`sudo nano` on Raspberry Pi OS and Ubuntu, `sudo vi` on a minimal Debian) and replace what is there with six lines, using your card and your PTT block:
+Open `/etc/pdn-soundmodem/soundmodem.json` as root (`sudo nano` on Raspberry Pi OS and Ubuntu, `sudo vi` on a minimal Debian) and make it read like this, with your card and your PTT block in place of the seeded ones:
 
 ```json
 {
