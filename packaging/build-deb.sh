@@ -257,5 +257,7 @@ for s in postinst prerm postrm; do sh -n "$STAGE/root/DEBIAN/$s"; done
 
 mkdir -p "$OUTDIR"
 DEB="$OUTDIR/pdn-soundmodem_${VERSION}_${ARCH}.deb"
-dpkg-deb --build --root-owner-group "$STAGE/root" "$DEB"
+# -Zxz: pin xz - dpkg-deb's zstd default (dpkg >= 1.21.18) can't be unpacked by
+# Debian Bullseye's dpkg, so a zstd .deb refuses to install there.
+dpkg-deb --build --root-owner-group -Zxz "$STAGE/root" "$DEB"
 echo "built: $DEB"
