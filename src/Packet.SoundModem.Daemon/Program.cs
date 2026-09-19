@@ -30,6 +30,7 @@ using Packet.SoundModem.Ms110d;
 string device = "default";
 int captureRate = 48000;
 int kissPort = 8105;
+int kissMaxFrameBytes = KissDecoder.DefaultMaxFrame;
 string bindAddress = "127.0.0.1";
 string sideband = "usb";
 bool sidebandWasStated = false;
@@ -226,6 +227,7 @@ if (configPath is not null)
     device = config.Device;
     captureRate = config.CaptureRate;
     kissPort = config.KissPort;
+    kissMaxFrameBytes = config.KissMaxFrameBytes;
     bindAddress = config.Bind;
     sideband = config.Sideband;
     sidebandWasStated = config.SidebandWasStated;
@@ -1775,6 +1777,29 @@ void WatchClients(KissTcpServer server)
     server.AcceptFailed += why => Console.Error.WriteLine(
         $"kiss[{server.LocalPort}] accept failed: {why} - listening continues");
 
+    // A dropped oversize frame, said once per host per ten seconds. Said at all because a
+    // frame that vanishes with no word looks exactly like a bad link to the host that sent it,
+    // and that is how a 2 KiB cap went unnoticed through a whole throughput campaign; said no
+    // more often than this because a host that has decided to send 60 kB frames will send a lot
+    // of them and the journal should say so once, not once per frame.
+    var lastOversizeLog = new Dictionary<string, long>();
+    server.FrameOversize += e =>
+    {
+        string host = e.Remote?.ToString() ?? "(unknown host)";
+        long now = Environment.TickCount64;
+        lock (lastOversizeLog)
+        {
+            if (lastOversizeLog.TryGetValue(host, out long last) && now - last < 10_000)
+            {
+                return;
+            }
+
+            lastOversizeLog[host] = now;
+        }
+
+        Console.Error.WriteLine(ActivityLog.FrameOversize(server.LocalPort, e));
+    };
+
     // What a host changed with SETHW, or why it was refused - RAM-only state with no other
     // record, so the journal is where an operator learns which waveform their modem is on.
     server.HardwareCommand += e => Console.WriteLine(e.Applied
@@ -1793,7 +1818,8 @@ if (benchTxTest is null && modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
     string shown = Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString();
 
     // The shared port: every modem, addressed by nibble (the QtSoundModem multiplex model).
-    var shared = new KissTcpServer(channel, kissPort, listenAddress);
+    var shared = new KissTcpServer(
+        channel, kissPort, listenAddress, maxFrameBytes: kissMaxFrameBytes);
     shared.EmitQualityFrames = qualityFrames;
     WatchClients(shared);
     shared.Start();
@@ -1803,7 +1829,8 @@ if (benchTxTest is null && modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
         Console.WriteLine("rx-quality frames: on (KISS command 0x07, JSON payload)");
     }
 
-    Console.WriteLine($"kiss tcp: {shown}:{shared.LocalPort} (all modems, by sub-channel nibble)");
+    Console.WriteLine($"kiss tcp: {shown}:{shared.LocalPort} (all modems, by sub-channel nibble, "
+        + $"frames to {kissMaxFrameBytes} bytes)");
 
     // Plus a port to itself for any modem that asked for one, so a host that only speaks
     // KISS channel 0 can still reach a modem that is not sub-channel 0.
@@ -1812,7 +1839,8 @@ if (benchTxTest is null && modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
                  .Where(m => m.Port is not null && !DaemonConfig.IsArdop(m.Mode)))
     {
         var dedicated = new KissTcpServer(
-            channel, modemConfig.Port!.Value, listenAddress, subChannel: modemConfig.SubChannel);
+            channel, modemConfig.Port!.Value, listenAddress, subChannel: modemConfig.SubChannel,
+            maxFrameBytes: kissMaxFrameBytes);
         dedicated.EmitQualityFrames = qualityFrames;
         WatchClients(dedicated);
         dedicated.Start();

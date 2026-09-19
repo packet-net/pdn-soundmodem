@@ -31,6 +31,47 @@ public class KissCodecTests
     }
 
     [Fact]
+    public void A_Frame_Over_The_Cap_Is_Dropped_Said_Once_And_The_Next_Frame_Still_Decodes()
+    {
+        // The cap is a memory bound on what is buffered before a closing delimiter arrives, and
+        // a frame that hits it has to be REPORTED: to the host that sent it a vanished frame is
+        // indistinguishable from a bad link, which is how a 2 KiB cap went unnoticed through a
+        // throughput campaign that could not get a 4 kB frame through (issue 503).
+        var frames = new List<KissFrame>();
+        var oversize = new List<int>();
+        var decoder = new KissDecoder(frames.Add, maxFrame: 100, oversize.Add);
+
+        byte[] big = KissCodec.Encode(new KissFrame(0, KissCommand.Data, new byte[300]));
+        byte[] small = KissCodec.Encode(new KissFrame(0, KissCommand.Data, [1, 2, 3]));
+
+        decoder.Push(big[..150]);
+        decoder.Push(big[150..]);
+        decoder.Push(small);
+
+        oversize.Should().Equal([100], "once per dropped frame, naming the cap it hit");
+        frames.Should().ContainSingle().Which.Payload.Should().Equal([1, 2, 3]);
+    }
+
+    [Fact]
+    public void The_Default_Cap_Admits_The_Longest_Frame_A_Burst_Modem_Carries()
+    {
+        // 4095 bytes of payload is what the OFDM-FM burst header can describe, and a frame that
+        // long plus its AX.25 header has to pass this layer, or the modem's biggest throughput
+        // lever is capped somewhere it cannot be seen. The old default of 2048 failed this.
+        var frames = new List<KissFrame>();
+        var oversize = new List<int>();
+        var decoder = new KissDecoder(frames.Add, oversize: oversize.Add);
+        var payload = new byte[4095 + 16];
+        new Random(3).NextBytes(payload);
+
+        decoder.Push(KissCodec.Encode(new KissFrame(0, KissCommand.Data, payload)));
+
+        KissDecoder.DefaultMaxFrame.Should().BeGreaterThanOrEqualTo(payload.Length);
+        oversize.Should().BeEmpty();
+        frames.Should().ContainSingle().Which.Payload.Should().Equal(payload);
+    }
+
+    [Fact]
     public void Split_Delivery_Reassembles()
     {
         byte[] wire = KissCodec.Encode(new KissFrame(0, KissCommand.Data, [1, 2, 3, 4, 5]));

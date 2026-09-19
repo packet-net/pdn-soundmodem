@@ -94,19 +94,50 @@ public static class KissCodec
 /// <summary>Streaming KISS decoder: push received bytes, get frames. One per connection.</summary>
 public sealed class KissDecoder
 {
+    /// <summary>
+    /// The most bytes one frame may carry before it is dropped, unless the caller says otherwise.
+    /// </summary>
+    /// <remarks>
+    /// <para>It was 2048, which predates modems that carry more: an OFDM burst's fixed cost is
+    /// four symbols of sync, preamble, header and estimate before any payload, so its throughput
+    /// climbs with frame length for as long as the frame is allowed to grow, and its header
+    /// describes payloads to 4095 bytes. A cap on this layer capped the biggest lever that modem
+    /// has, and did it silently (issue 503).</para>
+    /// <para>The bound itself is right: a frame is buffered until its closing delimiter, and a
+    /// host that never sends one must not grow a buffer without limit. 8192 is comfortably above
+    /// anything a mode here can carry, small enough that a client sending garbage costs a few
+    /// kilobytes, and a station whose modem carries more can raise it in its configuration. A
+    /// frame a MODE cannot carry is still refused, by that mode, when it is asked to modulate it,
+    /// which is where the limit belongs.</para>
+    /// </remarks>
+    public const int DefaultMaxFrame = 8192;
+
     private readonly Action<KissFrame> _frameSink;
+    private readonly Action<int>? _oversize;
     private readonly List<byte> _buffer = [];
     private readonly int _maxFrame;
     private bool _escaped;
     private bool _inFrame;
 
     /// <summary>Creates a decoder delivering frames to <paramref name="frameSink"/>.</summary>
-    public KissDecoder(Action<KissFrame> frameSink, int maxFrame = 2048)
+    /// <param name="frameSink">Where complete frames go.</param>
+    /// <param name="maxFrame">The most bytes one frame may carry; a frame that reaches it is
+    /// dropped and the decoder resynchronises at the next delimiter.</param>
+    /// <param name="oversize">Told, once per dropped frame, the cap it hit. A frame that vanishes
+    /// with no word looks exactly like a bad link to the host that sent it, which is how the
+    /// cap went unnoticed for as long as it did; null to say nothing.</param>
+    public KissDecoder(
+        Action<KissFrame> frameSink, int maxFrame = DefaultMaxFrame, Action<int>? oversize = null)
     {
         ArgumentNullException.ThrowIfNull(frameSink);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxFrame, 1);
         _frameSink = frameSink;
         _maxFrame = maxFrame;
+        _oversize = oversize;
     }
+
+    /// <summary>The most bytes one frame may carry through this decoder.</summary>
+    public int MaxFrame => _maxFrame;
 
     /// <summary>Consumes received bytes.</summary>
     public void Push(ReadOnlySpan<byte> data)
@@ -155,8 +186,12 @@ public sealed class KissDecoder
 
             if (_buffer.Count >= _maxFrame)
             {
+                // Oversize: drop what was collected, say so, and resynchronise at the next FEND.
+                // Said once per frame - the bytes still arriving for it are skipped in silence by
+                // the !_inFrame branch above until its delimiter.
                 _buffer.Clear();
-                _inFrame = false; // oversize: resynchronise at the next FEND
+                _inFrame = false;
+                _oversize?.Invoke(_maxFrame);
                 continue;
             }
 

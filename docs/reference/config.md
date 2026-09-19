@@ -43,6 +43,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | `device` | string | `"default"` | The audio input and output: an ALSA name, `null`, `pipe:`, `flex:` or `ubersdr:`. |
 | `captureRate` | int | `48000` | ALSA capture and playback rate in Hz; the modem decimates to its DSP rate. |
 | `kissPort` | int | `8105` | The shared KISS TCP port carrying every packet modem by sub-channel nibble. |
+| `kissMaxFrameBytes` | int | `8192` | The most bytes one KISS frame from a host may carry, on every KISS port. A longer frame is dropped and the journal says so. |
 | `bind` | string | `"127.0.0.1"` | The address every listener binds to: KISS, per-modem ports, the station page, paging and ARDOP. `"*"` or `"0.0.0.0"` for all interfaces. |
 | `sideband` | string | `"usb"` | What kind of radio this is, `"usb"`, `"lsb"` or `"fm"`, for turning `rfFrequency` into audio. See [Band placement](#band-placement-sideband-dialfrequency-and-rffrequency). |
 | `dialFrequency` | number | chosen by the modem | Pins the dial in Hz instead of letting the band plan choose one. See [Band placement](#band-placement-sideband-dialfrequency-and-rffrequency). |
@@ -95,6 +96,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 - KISS has no authentication. Binding beyond loopback prints a `kiss: WARNING - listening beyond loopback` line at start-up; the text is under [Every listener](ports-and-endpoints.md#every-listener).
 - Two services asking for one TCP port are refused before anything opens: `<this> and <that> both want TCP port N. Give them different ports.` The claims are `"kissPort"`, `the "port" of modem N`, `the ARDOP data port of modem N` (its `port` plus one), `the waterfall`, `the paging endpoint`, `the ARDOP command port` and `the ARDOP data port`. With a top-level `ardop` section `"kissPort"` is not claimed, so a clash between it and the ARDOP ports fails when the listener binds rather than at validation; see [`ardop`](#ardop).
 - Channel access (TXDELAY, persistence, slot time, TXTAIL) has no key here; the host sets it over KISS at runtime.
+- `kissMaxFrameBytes` bounds what is buffered per host before a frame's closing delimiter arrives. It is a memory bound, not a statement about any mode: a frame too long for the mode it is addressed to is refused by that mode, and a `frame rejected` line says so. The default, 8192, is above anything a built-in mode carries; a plugin modem that carries more is the reason to raise it. Below 512 the file is refused: `"kissMaxFrameBytes": N is below 512.` A frame that hits the cap is dropped and `kiss[PORT] HOST sent a frame over N bytes; dropped.` goes to the journal, at most once per host per ten seconds. It used to be 2048 and silent, which capped the throughput of any burst modem whose frames could usefully be longer, and did so with nothing in any log.
 
 ## `modems`
 
