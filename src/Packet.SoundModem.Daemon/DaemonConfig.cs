@@ -1210,6 +1210,19 @@ public sealed class DaemonConfig
     public int KissPort { get; set; } = 8105;
 
     /// <summary>
+    /// The most bytes one KISS frame from a host may carry, on the shared port and the per-modem
+    /// ports alike. A frame that reaches it is dropped and the journal says so.
+    /// </summary>
+    /// <remarks>
+    /// The bound is on what is buffered per host before a frame's closing delimiter arrives, so
+    /// it is a memory bound and not a statement about any mode: a frame too long for the mode it
+    /// is addressed to is refused by that mode when it is asked to modulate it. The default is
+    /// above anything a mode here carries (see <see cref="Kiss.KissDecoder.DefaultMaxFrame"/>);
+    /// a station running a plugin modem that carries more raises it here.
+    /// </remarks>
+    public int KissMaxFrameBytes { get; set; } = Kiss.KissDecoder.DefaultMaxFrame;
+
+    /// <summary>
     /// Address every TCP listener binds to - KISS, the per-modem ports, the waterfall, paging
     /// and ARDOP alike; "*" or "0.0.0.0" for all interfaces. One setting rather than one per
     /// service: they are all on the same machine facing the same network.
@@ -1572,6 +1585,7 @@ public sealed class DaemonConfig
         config.WaterfallSidebandWasStated = StatesKey(path, "waterfall", "sideband");
         ValidateTxTest(config);
         ValidatePorts(config);
+        ValidateKissFrames(config);
         config.Warnings = CollectWarnings(config);
         return config;
     }
@@ -2391,6 +2405,22 @@ public sealed class DaemonConfig
     /// Rejects two services asking for the same TCP port. Left to the OS this surfaces as a
     /// bind failure from whichever listener happens to start second, naming neither setting.
     /// </summary>
+    /// <summary>
+    /// A frame cap below the smallest useful frame is a misconfiguration, not a preference: a
+    /// station whose host cannot get a 256-byte information field through has no packet radio.
+    /// </summary>
+    private static void ValidateKissFrames(DaemonConfig config)
+    {
+        const int Least = 512;
+        if (config.KissMaxFrameBytes < Least)
+        {
+            throw new InvalidDataException(
+                $"\"kissMaxFrameBytes\": {config.KissMaxFrameBytes} is below {Least}. It is the "
+                + "most bytes one KISS frame from a host may carry; leave it out for the default "
+                + $"of {Kiss.KissDecoder.DefaultMaxFrame}, or set it above what your modems carry.");
+        }
+    }
+
     private static void ValidatePorts(DaemonConfig config)
     {
         var claimed = new Dictionary<int, string>();

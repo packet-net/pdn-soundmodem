@@ -191,6 +191,11 @@ internal static class ActivityLog
         + (e.Reason is { Length: > 0 } why ? $": {why}" : "")
         + $" - {Clients(e.Clients)}{Serving(dedicatedSubChannel)}";
 
+    /// <summary>A host's frame was longer than the port allows and was dropped, with the fix.</summary>
+    internal static string FrameOversize(int port, KissOversizeEvent e) =>
+        $"kiss[{port}] {Host(e.Remote)} sent a frame over {e.MaxFrameBytes} bytes; dropped. "
+        + "Raise \"kissMaxFrameBytes\" in the config if the modem it is for can carry it.";
+
     private static string Host(System.Net.EndPoint? remote) => remote?.ToString() ?? "(unknown host)";
 
     private static string Clients(int count) => count == 1 ? "1 client" : $"{count} clients";

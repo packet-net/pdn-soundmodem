@@ -86,6 +86,35 @@ public class KissTcpServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_Frame_Over_The_Ports_Cap_Is_Dropped_And_Reported_With_The_Host_And_The_Cap()
+    {
+        // The report is the point: without it the host sees its frame vanish and reads a bad
+        // link, which is what the old silent 2 KiB cap did to a whole throughput campaign.
+        await using var server = new KissTcpServer(_channel, port: 0, maxFrameBytes: 100);
+        var reported = new List<KissOversizeEvent>();
+        server.FrameOversize += reported.Add;
+        server.Start();
+        using var client = new TcpClient();
+        await client.ConnectAsync("127.0.0.1", server.LocalPort);
+
+        await client.GetStream().WriteAsync(
+            KissCodec.Encode(new KissFrame(0, KissCommand.Data, new byte[300])));
+        await client.GetStream().FlushAsync();
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (reported.Count == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(20);
+        }
+
+        reported.Should().ContainSingle();
+        reported[0].MaxFrameBytes.Should().Be(100);
+        reported[0].Remote.Should().NotBeNull("the journal line names the host");
+        server.MaxFrameBytes.Should().Be(100);
+        client.Connected.Should().BeTrue("an oversize frame costs the frame, not the session");
+    }
+
+    [Fact]
     public async Task A_Kiss_Data_Frame_Is_Transmitted_As_Audio()
     {
         byte[] frame = SampleFrame();

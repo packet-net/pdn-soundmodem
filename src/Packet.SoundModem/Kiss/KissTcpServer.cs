@@ -57,13 +57,18 @@ public sealed class KissTcpServer : IAsyncDisposable
     /// server is multiplexed and the nibble selects the modem, as QtSoundModem does.
     /// </param>
     /// <param name="time">Wall clock; the system's when null.</param>
+    /// <param name="maxFrameBytes">The most bytes one KISS frame from a host may carry; see
+    /// <see cref="KissDecoder.DefaultMaxFrame"/> for why the default is what it is. A frame
+    /// that reaches it is dropped and <see cref="FrameOversize"/> is raised.</param>
     public KissTcpServer(
         SoundModemChannel channel, int port = 8105, IPAddress? bind = null, int? subChannel = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null, int maxFrameBytes = KissDecoder.DefaultMaxFrame)
     {
         ArgumentNullException.ThrowIfNull(channel);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxFrameBytes, 1);
         _channel = channel;
         _dedicatedSubChannel = subChannel;
+        MaxFrameBytes = maxFrameBytes;
         _time = time ?? TimeProvider.System;
         _listener = new TcpListener(bind ?? IPAddress.Loopback, port);
         _channel.FrameReceived += OnFrameReceived;
@@ -92,6 +97,16 @@ public sealed class KissTcpServer : IAsyncDisposable
 
     /// <summary>A host's KISS session ended, cleanly or otherwise.</summary>
     public event Action<KissClientEvent>? ClientDisconnected;
+
+    /// <summary>The most bytes one KISS frame from a host may carry on this port.</summary>
+    public int MaxFrameBytes { get; }
+
+    /// <summary>
+    /// A host sent a frame longer than <see cref="MaxFrameBytes"/>; it was dropped. Raised so
+    /// the operator's journal can say so, because to the host the frame simply never went out,
+    /// which is indistinguishable from a bad link.
+    /// </summary>
+    public event Action<KissOversizeEvent>? FrameOversize;
 
     /// <summary>An accept failed and the listener is carrying on (with the failure's
     /// message). Raised so the journal can say why a host's connect attempt went nowhere;
@@ -174,7 +189,10 @@ public sealed class KissTcpServer : IAsyncDisposable
     {
         string? reason = null;
         TcpClient client = session.Client;
-        var decoder = new KissDecoder(frame => OnClientFrame(session, frame));
+        var decoder = new KissDecoder(
+            frame => OnClientFrame(session, frame),
+            MaxFrameBytes,
+            cap => FrameOversize?.Invoke(new KissOversizeEvent(remote, cap)));
         var buffer = new byte[4096];
         try
         {
@@ -513,3 +531,9 @@ public readonly record struct KissHardwareEvent(int SubChannel, string Descripti
 /// </param>
 public readonly record struct KissClientEvent(
     System.Net.EndPoint? Remote, int Clients, string? Reason = null);
+
+/// <summary>A host sent a KISS frame longer than the port allows, and it was dropped.</summary>
+/// <param name="Remote">The host's address, or null if the socket was already gone.</param>
+/// <param name="MaxFrameBytes">The cap the frame hit; how long it really was is unknown,
+/// because nothing past the cap is kept.</param>
+public readonly record struct KissOversizeEvent(System.Net.EndPoint? Remote, int MaxFrameBytes);
