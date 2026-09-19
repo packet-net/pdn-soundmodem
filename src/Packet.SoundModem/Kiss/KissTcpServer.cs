@@ -10,8 +10,9 @@ namespace Packet.SoundModem.Kiss;
 /// Multi-client KISS-over-TCP server bound to one <see cref="SoundModemChannel"/>: the
 /// KISS port nibble addresses the channel's logical modems. Received frames broadcast to
 /// every client; data frames from any client queue for transmission; ACKMODE frames get
-/// their two-byte id echoed back to the originating client once the frame's audio has
-/// fully left the device (true TX-complete, not a timer guess). KISS parameter commands
+/// their two-byte id echoed back to the originating client once the frame's audio has been
+/// handed to the device, at most one card buffer ahead of the air (true TX-complete, not a
+/// timer guess; see <see cref="SoundModemChannel.RunTransmitterAsync"/>). KISS parameter commands
 /// (TXDELAY, P, SLOTTIME, TXTAIL) update the channel's CSMA settings - unlike
 /// QtSoundModem, which silently ignores them.
 /// </summary>

@@ -94,7 +94,7 @@ modem 0: SETHW ignored - the modem on port 0 has no hardware settings
 
 ### ACKMODE
 
-An ACKMODE frame's payload is `id_lo id_hi data...`. The data is transmitted as a data frame would be, and when its audio has fully left the device the two id bytes come back to the host that sent them, alone, in a command `12` frame under the port's own sub-channel (0 on a per-modem port). An id with no data is acknowledged at once. A frame the channel refuses gets no acknowledgement; the journal carries the `DROPPED` line.
+An ACKMODE frame's payload is `id_lo id_hi data...`. The data is transmitted as a data frame would be, and once its audio has been handed to the sound card (at most one card buffer, 120 ms, before it has finished playing; the keyup is still holding the channel) the two id bytes come back to the host that sent them, alone, in a command `12` frame under the port's own sub-channel (0 on a per-modem port). An id with no data is acknowledged at once. A frame the channel refuses gets no acknowledgement; the journal carries the `DROPPED` line.
 
 ### Quality frames
 
