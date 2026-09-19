@@ -298,7 +298,10 @@ public sealed class SoundModemChannel
     }
 
     /// <summary>Queues a frame for transmission on a sub-channel. The returned task
-    /// completes when the frame's audio has fully left the device (ACKMODE's answer).</summary>
+    /// completes when the frame's audio has been handed to the device, at most one card buffer
+    /// ahead of the air, with the keyup it belongs to still holding the channel behind it
+    /// (ACKMODE's answer). See <see cref="RunTransmitterAsync"/> for why that is not "played
+    /// out".</summary>
     public Task EnqueueTransmit(int subChannel, byte[] frame)
     {
         if (!_modems.TryGetValue(subChannel, out IModem? modem))
@@ -1131,7 +1134,26 @@ public sealed class SoundModemChannel
                         WriteStoppably(
                             output, samples, item.StopEarly, item.Written,
                             announce: mem => TransmittedAudio?.Invoke(mem));
-                        output.Drain();
+
+                        // Not drained here. A drain waits for the card to play everything it
+                        // holds, stops the stream and re-arms it, and ALSA pads the last period
+                        // with silence on the way; the next frame is then modulated, written and
+                        // the stream restarted only once all of that has happened. Done per frame,
+                        // that put 30 to 35 ms of carrier-up silence between every frame of a keyup
+                        // and the next (raw capture on radio2, 2026-09-19 17:36 UTC) - a hole in a
+                        // waveform the token preamble presumes is continuous, and airtime spent on
+                        // nothing. Written back to back the frames are one contiguous sample stream
+                        // on the card, and the one drain a keyup needs is the one after the tail,
+                        // which is what releasing PTT waits on.
+                        //
+                        // So Done means handed to the card, not played out: the frame is at most one
+                        // card buffer (120 ms on ALSA) short of having left the air, and this keyup
+                        // still holds the channel behind it. ACKMODE's answer and FrameTransmitted
+                        // follow it and document the same. Modulating the next frame now overlaps
+                        // that last buffer's playout; if it ever took longer the card would underrun,
+                        // which PcmTransfer recovers (prepare, then retry from the first frame not
+                        // yet written) rather than failing the keyup - a gap where the underrun was,
+                        // never a lost frame.
                         item.Done.TrySetResult();
                         inFlight = null;
                     }

@@ -67,7 +67,7 @@ The modem does not carry TXDELAY, persistence, slot time or TXTAIL in its config
 
 Every modem in the process shares one channel, so a value sent on any port applies to all of them. The values live in memory: a restart returns to the table above, or to whatever `--txdelay` said.
 
-Software that wants to know when a frame has left the radio can send it as ACKMODE, KISS command 12, with a two-byte id of its own on the front, the LinBPQ convention. The id comes back once that frame's audio has finished playing, rather than when it was queued. See [ACKMODE](reference/ports-and-endpoints.md#ackmode), and [Commands](reference/ports-and-endpoints.md#commands) for the rest of what your software may send.
+Software that wants to know when a frame has left the radio can send it as ACKMODE, KISS command 12, with a two-byte id of its own on the front, the LinBPQ convention. The id comes back once that frame's audio has been handed to the sound card, rather than when it was queued; that is at most one card buffer (120 ms) before the frame has finished playing, and the keyup it belongs to is still holding the channel behind it. The frames of one keyup are written to the card back to back, with no gap between them on the air. See [ACKMODE](reference/ports-and-endpoints.md#ackmode), and [Commands](reference/ports-and-endpoints.md#commands) for the rest of what your software may send.
 
 ## Who can reach these ports
 
