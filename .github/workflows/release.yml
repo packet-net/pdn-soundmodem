@@ -230,6 +230,10 @@ jobs:
             grep -q 'usr/share/pdn-soundmodem/soundmodem\.example\.json$' <<<"$listing"
             # Serial PTT dies with DllNotFoundException if this shim is missing.
             grep -q 'usr/lib/pdn-soundmodem/libSystem\.IO\.Ports\.Native\.so$' <<<"$listing"
+            # build-deb.sh reads the libc6 floor out of the published binary because .NET
+            # moves it per-RID without notice. An unversioned libc6 here means that came
+            # unstuck, and apt would install onto machines the loader cannot start it on.
+            dpkg-deb -f "$deb" Depends | grep -qE 'libc6 \(>= [0-9]+\.[0-9]+\)'
             echo "::endgroup::"
           done
 
