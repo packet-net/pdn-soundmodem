@@ -184,8 +184,9 @@ public class ReceiveLevelCliffTests
             {
                 mode.Should().Match(
                     m => m.StartsWith("freedv-", StringComparison.Ordinal)
-                        || m.StartsWith("ms110d-", StringComparison.Ordinal),
-                    "only the two native block waveforms cannot place their own frames");
+                        || m.StartsWith("ms110d-", StringComparison.Ordinal)
+                        || m.StartsWith("ofdm-fm-", StringComparison.Ordinal),
+                    "only the native block waveforms cannot place their own frames");
                 continue;
             }
 

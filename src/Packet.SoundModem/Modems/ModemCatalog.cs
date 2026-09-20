@@ -1,4 +1,5 @@
 using Packet.SoundModem.Fx25;
+using Packet.SoundModem.Modems.OfdmFm;
 using Packet.SoundModem.Ms110d;
 
 namespace Packet.SoundModem.Modems;
@@ -109,6 +110,30 @@ public static class ModemCatalog
         name, 48000, CentreSemantics.Shifted,
         DefaultCentreHz: centreHz, RunsIl2pCrc: true, NinoPskIdBeacon: false, factory);
 
+    /// <summary>
+    /// An OFDM-FM row. Baseband, because the waveform occupies the audio band from just above DC
+    /// upwards and there is no centre to move. No IL2P: the burst already supplies sync, a length,
+    /// a CRC and forward error correction, so a second framing layer would spend rate twice for
+    /// guarantees this waveform already holds, and its Reed-Solomon stage cannot use the soft
+    /// information the equalised constellation produces. The payload is one opaque AX.25 frame.
+    /// </summary>
+    /// <remarks>The layout comes from <see cref="OfdmFmPresets.ByMode"/> and the acquisition table
+    /// from <see cref="OfdmFmPresets.Table"/>, which is also what the docs and the tests read, so a
+    /// mode cannot drift from the geometry it is documented as having.</remarks>
+    private static ModeDescriptor OfdmFmMode(string name) => new(
+        name, 48000, CentreSemantics.Baseband,
+        DefaultCentreHz: null, RunsIl2pCrc: false, NinoPskIdBeacon: false,
+        b => new OfdmFmModem(
+            name,
+            OfdmFmPresets.ByMode[name],
+            b.FrameReceived,
+            // Carrier sense from outside the demodulator, if a host registered a source. Resolved
+            // per modem at construction, which is the contract ChannelBusySources documents.
+            channelBusySource: ChannelBusySources.Resolve(),
+            // One table shared by every preset, so a receiver on any of them decodes a burst sent
+            // on any other. Passing null here would silently reduce every mode to its own layout.
+            geometryTable: OfdmFmPresets.Table));
+
     private static readonly ModeDescriptor[] Modes =
     [
         new("afsk1200", 12000, CentreSemantics.Native, 1700, RunsIl2pCrc: false, NinoPskIdBeacon: false,
@@ -208,6 +233,19 @@ public static class ModemCatalog
 
         Ms110d(0), Ms110d(1), Ms110d(2), Ms110d(3), Ms110d(4),
         Ms110d(5), Ms110d(6), Ms110d(7), Ms110d(8), Ms110d(13),
+
+        // OFDM-FM. All eight share one geometry table, so a receiver on any of them can decode a
+        // burst sent on any other and a link can change bandwidth without a handshake.
+        // ofdm-fm-8k is the one to reach for, and the only one measured across the full range of
+        // payload sizes in both directions.
+        OfdmFmMode("ofdm-fm-narrow"),
+        OfdmFmMode("ofdm-fm-6k"),
+        OfdmFmMode("ofdm-fm-6k-fast"),
+        OfdmFmMode("ofdm-fm-8k"),
+        OfdmFmMode("ofdm-fm-8k-r56"),
+        OfdmFmMode("ofdm-fm-8k-r78"),
+        OfdmFmMode("ofdm-fm-8k-follow"),
+        OfdmFmMode("ofdm-fm-8k-adaptive"),
     ];
 
     private static readonly Dictionary<string, ModeDescriptor> ByName =
@@ -457,7 +495,7 @@ public static class ModemCatalog
     /// </summary>
     /// <remarks>
     /// The messages are word-for-word the built-in ones deliberately. An operator hitting the
-    /// centre-frequency rule on <c>ofdm-fm:nb</c> is hitting the same rule as on <c>fsk9600</c>,
+    /// centre-frequency rule on <c>sample:loopback</c> is hitting the same rule as on <c>fsk9600</c>,
     /// and a different wording would read as a different rule.
     /// </remarks>
     private static IModem CreateRegistered(

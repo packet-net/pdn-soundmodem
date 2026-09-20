@@ -12,12 +12,12 @@ namespace Packet.SoundModem.Modems;
 /// <para>Implementations are found by <c>ModemPluginLoader</c> and handed to
 /// <see cref="ModemPluginRegistry.Register"/>, after which their modes answer
 /// <see cref="ModemCatalog"/> questions like any other - prefixed with <see cref="Id"/>, so
-/// <c>ofdm-fm:nb</c> rather than <c>nb</c>.</para>
+/// <c>sample:loopback</c> rather than <c>loopback</c>.</para>
 /// </remarks>
 public interface IModemPlugin
 {
     /// <summary>
-    /// The mode family this plugin provides, e.g. <c>ofdm-fm</c>. Every mode it declares is
+    /// The mode family this plugin provides, e.g. <c>sample</c>. Every mode it declares is
     /// addressed as <c>Id:Name</c>, so this is the half of a mode string that says the mode was
     /// not built here. Must be non-empty and must not contain <c>:</c>.
     /// </summary>
@@ -33,7 +33,7 @@ public interface IModemPlugin
     /// Builds one of this plugin's modes.
     /// </summary>
     /// <param name="mode">The bare mode name, exactly as this plugin declared it in
-    /// <see cref="Modes"/> - <c>nb</c>, not <c>ofdm-fm:nb</c>. The catalogue strips its own prefix
+    /// <see cref="Modes"/> - <c>loopback</c>, not <c>sample:loopback</c>. The catalogue strips its own prefix
     /// before asking, so a plugin never has to know or reproduce the naming scheme.</param>
     /// <param name="dspRate">The channel DSP rate to run at, in Hz.</param>
     /// <param name="frameReceived">The decoded-frame sink.</param>

@@ -261,7 +261,7 @@ public sealed class IdentifyConfig
 /// what a station transmits. What this file says is what gets loaded, and the start-up log repeats
 /// it.</para>
 /// <para>See <c>docs/dev/modem-plugins.md</c>. The modes a plugin provides are named
-/// <c>pluginId:mode</c> - <c>ofdm-fm:nb</c> - so a mode string always says plainly whether it came
+/// <c>pluginId:mode</c> - <c>sample:loopback</c> - so a mode string always says plainly whether it came
 /// from this package.</para>
 /// </remarks>
 public sealed class ModemPluginConfig
@@ -1575,7 +1575,7 @@ public sealed class DaemonConfig
         {
             throw new InvalidDataException(
                 "a \"modemPlugins\" entry has no \"path\". Each entry names one assembly to load, "
-                + "as {\"path\": \"/opt/pdn/plugins/M0LTE.OfdmFm.dll\"} - there is no directory to "
+                + "as {\"path\": \"/opt/pdn/plugins/MyModem.dll\"} - there is no directory to "
                 + "scan and no default location, deliberately.");
         }
 

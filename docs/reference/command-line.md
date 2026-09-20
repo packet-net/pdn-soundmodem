@@ -224,7 +224,9 @@ Modes for --modem N:MODE:
   qpsk3600, fsk9600, fsk9600-il2p, fsk4800-il2p, c4fsk9600, c4fsk19200,
   freedv-datac0, freedv-datac1, freedv-datac3, freedv-datac4, freedv-datac13,
   freedv-datac14, ms110d-wn0, ms110d-wn1, ms110d-wn2, ms110d-wn3, ms110d-wn4,
-  ms110d-wn5, ms110d-wn6, ms110d-wn7, ms110d-wn8, ms110d-wn13
+  ms110d-wn5, ms110d-wn6, ms110d-wn7, ms110d-wn8, ms110d-wn13, ofdm-fm-narrow,
+  ofdm-fm-6k, ofdm-fm-6k-fast, ofdm-fm-8k, ofdm-fm-8k-r56, ofdm-fm-8k-r78,
+  ofdm-fm-8k-follow, ofdm-fm-8k-adaptive
   plus ardop, the ARDOP virtual TNC: host port 8515 unless the config file's
   modem entry sets "port".
 

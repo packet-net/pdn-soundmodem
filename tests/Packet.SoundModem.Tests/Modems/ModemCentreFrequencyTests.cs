@@ -104,7 +104,8 @@ public class ModemCentreFrequencyTests
         string[] undeclared = [.. ModemCatalog.KnownModes
             .Where(m => ModemCatalog.DefaultCentreFrequencyFor(m) is null)
             .Where(m => !m.StartsWith("fsk", StringComparison.Ordinal)
-                        && !m.StartsWith("c4fsk", StringComparison.Ordinal))];
+                        && !m.StartsWith("c4fsk", StringComparison.Ordinal)
+                        && !m.StartsWith("ofdm-fm", StringComparison.Ordinal))];
 
         undeclared.Should().BeEmpty(
             "a mode with a centre but no declaration cannot be placed on the band");

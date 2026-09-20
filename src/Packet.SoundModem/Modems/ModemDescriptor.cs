@@ -13,8 +13,8 @@ namespace Packet.SoundModem.Modems;
 /// the built-in catalogue's shape into the plugin ABI, so that adding a field for the built-ins
 /// would break every plugin in the world. This type is the smaller thing that actually has to
 /// cross the boundary; <see cref="ModemCatalog"/> adapts between them.</para>
-/// <para>Descriptor names are the mode's name <em>inside its plugin</em> - <c>nb</c>, not
-/// <c>ofdm-fm:nb</c>. The catalogue prefixes them with the plugin's
+/// <para>Descriptor names are the mode's name <em>inside its plugin</em> - <c>loopback</c>, not
+/// <c>sample:loopback</c>. The catalogue prefixes them with the plugin's
 /// <see cref="IModemPlugin.Id"/>, which is what stops a plugin shadowing a built-in mode, and a
 /// plugin is asked to build the same bare name it declared.</para>
 /// </remarks>

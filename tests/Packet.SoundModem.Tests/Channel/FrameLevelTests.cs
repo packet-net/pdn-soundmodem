@@ -750,9 +750,10 @@ public class FrameLevelTests
         undecoded.Should().BeEmpty("every mode decodes its own loopback");
         withoutLevel.Should().OnlyContain(
             mode => mode.StartsWith("freedv-", StringComparison.Ordinal)
-                    || mode.StartsWith("ms110d-", StringComparison.Ordinal),
-            "only the two native block waveforms cannot place their own frames");
-        withoutLevel.Should().NotBeEmpty("and those two are still in the catalogue");
+                    || mode.StartsWith("ms110d-", StringComparison.Ordinal)
+                    || mode.StartsWith("ofdm-fm-", StringComparison.Ordinal),
+            "only the native block waveforms cannot place their own frames");
+        withoutLevel.Should().NotBeEmpty("and those are still in the catalogue");
         withLevel.Should().Contain(
             ["afsk1200", "afsk1200-fx25", "afsk1200-multi", "afsk300-il2pc", "bpsk300",
              "bpsk300-multi", "qpsk3600", "fsk9600", "fsk9600-il2p", "c4fsk19200"],

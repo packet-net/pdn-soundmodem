@@ -300,7 +300,7 @@ A0-A3 are done and merged (#257, #258, #260, #261); evidence at
 `/home/tf/ardop-campaign-evidence/`. What follows is everything the campaign left undone, in
 recommended order, each with the evidence that motivates it and how to measure it - so a future
 leg starts from measurement rather than from memory. Priority moved elsewhere on 2026-08-08
-(Tom: the IP400 project's OFDM-AB mode), so nothing here is scheduled.
+(Tom: audio-band OFDM), so nothing here is scheduled.
 
 1. **Leader re-arm** (pick this first). The measured ~2 % single-shot ceiling is a receiver
    defect with an isolated mechanism: certain noise realisations false-trigger the leader

@@ -651,7 +651,7 @@ effort:
    arbitrarily clean**: full deviation on a low tone spreads sidebands past a narrow IF filter,
    and symmetric truncation comes back as odd-order distortion (third harmonic ~-25 dB on an
    8 kHz filter) - a ceiling any dense constellation meets before it meets noise, and the first
-   thing OFDM-AB's QAM-256 rung will run into.
+   thing any QAM-256 rung on this path will run into.
 
    Masks: five blocking FM rows plus the microphone-path negative in `WattersonMaskTests`, smoke
    tier still ~40 s. What this does not yet have is calibration against a real radio: the

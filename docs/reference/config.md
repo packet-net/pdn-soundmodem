@@ -174,7 +174,7 @@ Rules and refusals:
 ## `modemPlugins`
 
 ```json
-{ "modemPlugins": [ { "path": "/opt/pdn/plugins/M0LTE.OfdmFm.dll" } ] }
+{ "modemPlugins": [ { "path": "/opt/pdn/plugins/MyModem.dll" } ] }
 ```
 
 | Key | Type | Default | What it is |

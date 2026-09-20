@@ -18,7 +18,7 @@ mentioned in this repository's build graph at all - because a GPL work that requ
 non-distributable component in order to build is a work nobody else can build.
 
 At the same time the deployment reality is a single daemon on a station, and an operator wants
-`mode = ofdm-fm:nb` in a config file to work as `mode = fsk9600` does.
+`mode = sample:loopback` in a config file to work as `mode = fsk9600` does.
 
 So: **the modem must be discovered and loaded at run time, from an assembly this repository has
 never heard of, through a contract this repository defines.** No compile-time reference in either
@@ -37,7 +37,7 @@ builds one, the daemon streams audio into it, KISS carries frames out. A plugin 
 ```
 public interface IModemPlugin            // in Packet.SoundModem, public API
 {
-    string Id { get; }                   // "ofdm-fm", the family this plugin provides
+    string Id { get; }                   // "sample", the family this plugin provides
     IReadOnlyList<ModemDescriptor> Modes { get; }   // what it can build, for catalogue listing
     IModem Create(string mode, int dspRate, Action<byte[]> frameReceived, ModemOptions options);
 }
@@ -66,7 +66,7 @@ server or the config; it sees audio in and frames out, which is the whole point 
 A plugin is loaded because the operator asked for it, from a path the operator wrote down:
 
 ```json
-{ "modemPlugins": [ { "path": "/opt/pdn/plugins/M0LTE.OfdmFm.dll" } ] }
+{ "modemPlugins": [ { "path": "/opt/pdn/plugins/MyModem.dll" } ] }
 ```
 
 No scanning of a plugins directory, no probing next to the executable, no environment variable.
@@ -99,10 +99,10 @@ framework anyway.
 ### 4. Registration goes through the catalogue, with a namespace
 
 `ModemCatalog` grows a registration entry point that plugin modes arrive through, and plugin modes
-are **prefixed by their plugin id** (`ofdm-fm:nb`). Three reasons: a plugin can never shadow
+are **prefixed by their plugin id** (`sample:loopback`). Three reasons: a plugin can never shadow
 or redefine a built-in mode; a station log or a mode-validation entry always says plainly which
-modes were not built here; and an unloaded plugin gives a clean "unknown mode `ofdm-fm:nb`,
-no modem plugin registered for `ofdm-fm`" rather than a mysterious absence.
+modes were not built here; and an unloaded plugin gives a clean "unknown mode `sample:loopback`,
+no modem plugin registered for `sample`" rather than a mysterious absence.
 
 ## What this does not do
 

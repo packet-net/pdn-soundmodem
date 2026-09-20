@@ -28,6 +28,9 @@
 
   <ItemGroup>
     <!-- The frame log's store, for reading a written log back in FrameLogTests. -->
+    <!-- The FM link model the OFDM-FM ladder measures through. Same package the OTA tool
+         uses, so there is one definition of the channel and not two. -->
+    <PackageReference Include="M0LTE.FmChannel" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
   </ItemGroup>
 
