@@ -1910,6 +1910,10 @@ if (benchTxTest is null && ardopModem is not null)
 
     var ardopShift = ArdopChannelBridge.For(
         ardopModem.Frequency, M0LTE.Ardop.ArdopModulator.SampleRate, DspRate);
+
+    // A reply that cannot make its turnaround is taken back rather than keyed late: see
+    // ArdopReplyWindow for why a late ARQ frame is worse than a missing one.
+    var ardopReplies = new ArdopReplyWindow(TimeProvider.System);
     var ardopTnc = new M0LTE.Ardop.Host.ArdopHostTnc(captureDevice: device, playbackDevice: device)
     {
         // Awaited rather than fire-and-forget: the TNC's transmit worker does not survive an
@@ -1917,6 +1921,7 @@ if (benchTxTest is null && ardopModem is not null)
         // Catching turns "ARDOP silently stops working" into a line saying why.
         Transmitter = async audio =>
         {
+            CancellationToken turnaround = ardopReplies.Open();
             try
             {
                 await channel.EnqueueTransmit(
@@ -1937,11 +1942,28 @@ if (benchTxTest is null && ardopModem is not null)
                     // The shifter identifies the ARDOP transmitter, so its own consecutive bursts
                     // share a keyup and nothing else joins one: an ARQ turnaround must not be held
                     // up by a packet frame appended behind it, nor a packet frame by ARDOP.
-                    source: ardopShift).ConfigureAwait(false);
+                    source: ardopShift,
+                    // Taken back if the channel cannot carry it inside its turnaround. Withdrawal
+                    // is silent once the keyup is under way, which is the behaviour wanted: past
+                    // that point the burst is on the air and there is nothing to decide.
+                    withdraw: turnaround).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Not an error and not a failure to transmit - a reply this station declined to
+                // send late. Recorded here and reported by name below, where the frame is known.
+                // Swallowed rather than rethrown because the TNC's transmit worker does not
+                // survive an exception out of this delegate, least of all a cancellation: its
+                // own loop treats one as shutdown and stops reading the queue for good.
+                ardopReplies.NoteDropped();
             }
             catch (Exception refused) when (refused is InvalidOperationException or ArgumentException)
             {
                 Console.Error.WriteLine($"ardop: transmission dropped - {refused.Message}");
+            }
+            finally
+            {
+                ardopReplies.Close();
             }
         },
     };
@@ -1976,6 +1998,13 @@ if (benchTxTest is null && ardopModem is not null)
         double? ardopRfHz = ardopModem.RfFrequency;
         ardopTnc.FrameDecoded += frame =>
         {
+            // Before anything else, and whether or not it decoded: a burst on the channel is
+            // proof that the silence a queued reply belonged in is over, so that reply is taken
+            // back rather than transmitted into the exchange that has moved on without it. Raised
+            // ahead of the engine seeing the frame, so the fresh reply this may produce opens a
+            // window of its own and is unaffected.
+            ardopReplies.FarEndTransmitted();
+
             byte[] data = frame.Data ?? [];
             // Caller/Target are carried in clear by the connect handshake and ID frames; a data
             // frame in someone else's session carries neither, and is listed unattributed.
@@ -2037,6 +2066,16 @@ if (benchTxTest is null && ardopModem is not null)
         // does, and a logged transmission is still one that actually went on air.
         ardopTnc.FrameTransmitted += frame =>
         {
+            // The TNC raises this for every burst it hands the transmitter, and one it handed
+            // over was taken back before it reached the air. Written down as what it was and
+            // then dropped here: no journal transmission, no frame-log row and no burst on the
+            // waterfall, because a station that did not transmit must not be told it did.
+            if (ardopReplies.TakeDrop() is var why && why != ArdopReplyDrop.None)
+            {
+                stationJournal.Write(ActivityLog.ArdopReplyDropped(ardopSub, frame.Name, why));
+                return;
+            }
+
             byte[] data = frame.Data ?? [];
             // Ours to state rather than parse: ARDOP carries both callsigns in clear in the
             // connect handshake and in ID frames, and nothing else it sends carries one.

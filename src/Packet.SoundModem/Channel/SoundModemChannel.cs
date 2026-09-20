@@ -797,6 +797,21 @@ public sealed class SoundModemChannel
     {
         lock (_txGate)
         {
+            // Owning the channel's timing is a claim on the CHANNEL, not just an exemption from
+            // the hold, so it is answered before the round robin's turn order. Without this pass
+            // an ARDOP burst took its place in the queue behind a packet frame and then waited
+            // out that frame's carrier sense - on GB7RDG, carrier sense raised by the very
+            // station ARDOP was answering, whose 1000 Hz ConReq covers both packet modems'
+            // passbands. Measured there over four days: half of all inbound ARQ calls (14 of 28)
+            // were answered between 6 and 31 s late instead of the 1.05 s a clear channel takes,
+            // every one of them landing 1.2 s after a packet frame finished, by which time the
+            // caller had given up. The queued replies then went out back to back as a run of
+            // one-second transmissions, one per connect request the caller had made.
+            if (OwnsTimingSourceLocked() is { } owner)
+            {
+                return owner;
+            }
+
             foreach (object source in _txOrder)
             {
                 Queue<TxItem> queue = _txQueues[source];
@@ -807,6 +822,32 @@ public sealed class SoundModemChannel
             }
 
             return null;
+        }
+    }
+
+    /// <summary>
+    /// The first transmitter whose next frame owns the channel's timing, or null. Call under
+    /// <see cref="_txGate"/>.
+    /// </summary>
+    private object? OwnsTimingSourceLocked()
+    {
+        foreach (object source in _txOrder)
+        {
+            if (_txQueues[source] is { Count: > 0 } queue && queue.Peek().OwnsTiming)
+            {
+                return source;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The same question from outside the lock, for the channel-access wait.</summary>
+    private object? OwnsTimingSource()
+    {
+        lock (_txGate)
+        {
+            return OwnsTimingSourceLocked();
         }
     }
 
@@ -1008,6 +1049,17 @@ public sealed class SoundModemChannel
             // packet modem's passband and asserts that modem's busy detector.
             while (!(PeekFrom(source) is { OwnsTiming: true }))
             {
+                // A burst that owns the channel's timing may have been queued while we were
+                // waiting out carrier sense for this one. It is not allowed to wait on a roll,
+                // and this wait has no bound - a busy frequency can hold a packet frame here for
+                // tens of seconds - so hand it the channel now. The frame we were waiting for
+                // keeps its place and is picked up next time round.
+                if (OwnsTimingSource() is { } urgent)
+                {
+                    source = urgent;
+                    break;
+                }
+
                 if (ChannelBusy)
                 {
                     await Delay(Csma.SlotTimeMilliseconds, cancellation).ConfigureAwait(false);
