@@ -107,25 +107,46 @@ INSTALLED_SIZE="$(du -k -s --exclude=DEBIAN "$STAGE/root" | cut -f1)"
 # the dynamic loader with "version `GLIBC_2.33' not found". So derive the floor from the
 # ELF rather than asserting one here, and let apt refuse the install with a clear reason.
 #
-# .gnu.version_r is the authoritative record of which symbol versions of which libraries
-# the loader must satisfy. Read the highest of one family (GLIBC, GLIBCXX) out of it.
-# "GLIBC_" cannot match inside "GLIBCXX_", so the two families do not overlap.
-max_needed() {
-  readelf --version-info "$1" \
-    | awk '/Version needs section/,0' \
-    | grep -oE "$2_[0-9][0-9.]*" \
-    | sed "s/^$2_//" \
-    | sort -uV \
-    | tail -1
+# Every ELF the package ships, not just the executable. PublishSingleFile leaves the native
+# shims loose beside the binary and they are linked separately, so they do not share its
+# floor: libe_sqlite3.so needs glibc 2.34 on amd64 while the executable next to it needs
+# only 2.27. Reading the executable alone understated the package by seven glibc releases
+# and reintroduced this very bug, just deferred - the package installed, started, printed
+# its version, and would then have failed at the first frame written to the log, because
+# that is when .NET dlopens the shim. Detect ELF by its magic bytes rather than shelling
+# out to `file`, which is not Essential and need not be on a build host.
+elf_files() {
+  find "$STAGE/root" -type f -print | while IFS= read -r f; do
+    [ "$(od -An -tx1 -N4 "$f" 2>/dev/null | tr -d ' \n')" = "7f454c46" ] && printf '%s\n' "$f"
+  done
 }
 
-PUBLISHED_BIN="$STAGE/root$PKGDIR/pdn-soundmodem"
+# .gnu.version_r is the authoritative record of which symbol versions of which libraries
+# the loader must satisfy. Take the highest of one family (GLIBC, GLIBCXX) across the lot.
+# "GLIBC_" cannot match inside "GLIBCXX_", so the two families do not overlap.
+max_needed() {
+  local family="$1" max="" v f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    v="$(readelf --version-info "$f" 2>/dev/null \
+      | awk '/Version needs section/,0' \
+      | grep -oE "${family}_[0-9][0-9.]*" \
+      | sed "s/^${family}_//" \
+      | sort -uV \
+      | tail -1)"
+    [ -n "$v" ] && max="$(printf '%s\n%s\n' "$max" "$v" | sort -uV | tail -1)"
+  done <<EOF
+$(elf_files)
+EOF
+  printf '%s' "$max"
+}
+
 # A glibc symbol version is the glibc release that introduced it, and libc6's package
 # version is that same release, so this maps straight onto a Debian version constraint.
-GLIBC_MIN="$(max_needed "$PUBLISHED_BIN" GLIBC)"
-GLIBCXX_MIN="$(max_needed "$PUBLISHED_BIN" GLIBCXX)"
-[ -n "$GLIBC_MIN" ] || { echo "could not read a GLIBC floor from $PUBLISHED_BIN" >&2; exit 4; }
-[ -n "$GLIBCXX_MIN" ] || { echo "could not read a GLIBCXX floor from $PUBLISHED_BIN" >&2; exit 4; }
+GLIBC_MIN="$(max_needed GLIBC)"
+GLIBCXX_MIN="$(max_needed GLIBCXX)"
+[ -n "$GLIBC_MIN" ] || { echo "could not read a GLIBC floor from the staged package" >&2; exit 4; }
+[ -n "$GLIBCXX_MIN" ] || { echo "could not read a GLIBCXX floor from the staged package" >&2; exit 4; }
 
 # libstdc++ versions its symbols by C++ ABI, not by package version, so this needs a table.
 # Anchors measured against the distributions themselves: Debian 10 ships GCC 8 and tops out

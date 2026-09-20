@@ -10,7 +10,7 @@ A software TNC for Linux. It turns a sound card, a FlexRadio or a public web rec
 
 ## Install
 
-Debian, Ubuntu or Raspberry Pi OS, on amd64, arm64 or armhf. The package is self-contained, so there is no .NET runtime to install. amd64 and arm64 want glibc 2.27 or newer (Debian 10, Ubuntu 18.04); armhf wants glibc 2.34 or newer (Debian 12, Ubuntu 22.04), so 32-bit bullseye is below the line. See [docs/01-install.md](docs/01-install.md).
+Debian, Ubuntu or Raspberry Pi OS, on amd64, arm64 or armhf. The package is self-contained, so there is no .NET runtime to install. It needs glibc 2.34 or newer on every architecture, which means Debian 12 (bookworm), Ubuntu 22.04, Raspberry Pi OS bookworm or newer; Debian 11 (bullseye) is below the line. See [docs/01-install.md](docs/01-install.md).
 
 ```sh
 curl -fsSL https://packet-net.github.io/apt/pubkey.asc | sudo gpg --dearmor -o /usr/share/keyrings/packet-net.gpg
