@@ -28,6 +28,10 @@ esac
 
 # dpkg-deb ships in the Essential `dpkg` package, so this only trips on a non-Debian host.
 command -v dpkg-deb >/dev/null || { echo "dpkg-deb not found - this needs a Debian-family host" >&2; exit 3; }
+# readelf reads the library-version floors out of the published binary (see the Depends
+# section below). Refuse to build rather than fall back to an unversioned Depends: a
+# package that understates what it needs installs onto machines it cannot run on.
+command -v readelf >/dev/null || { echo "readelf not found - install binutils" >&2; exit 3; }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
@@ -94,13 +98,68 @@ chmod 0644 "$STAGE/root$DOCDIR/changelog.Debian.gz"
 
 INSTALLED_SIZE="$(du -k -s --exclude=DEBIAN "$STAGE/root" | cut -f1)"
 
+# --- library version floors, read from the binary we just published -----------
+# The executable is Microsoft's `singlefilehost` with our payload bundled into it, so its
+# symbol-version floor is whatever .NET's runtime pack for this RID was built against, not
+# anything this repo controls, and it moves without warning: .NET 10 raised linux-arm from
+# glibc 2.16 to 2.34, which is above Debian 11's 2.31. While Depends: said a bare `libc6`,
+# apt installed that armhf package onto bullseye quite happily and the binary then died in
+# the dynamic loader with "version `GLIBC_2.33' not found". So derive the floor from the
+# ELF rather than asserting one here, and let apt refuse the install with a clear reason.
+#
+# .gnu.version_r is the authoritative record of which symbol versions of which libraries
+# the loader must satisfy. Read the highest of one family (GLIBC, GLIBCXX) out of it.
+# "GLIBC_" cannot match inside "GLIBCXX_", so the two families do not overlap.
+max_needed() {
+  readelf --version-info "$1" \
+    | awk '/Version needs section/,0' \
+    | grep -oE "$2_[0-9][0-9.]*" \
+    | sed "s/^$2_//" \
+    | sort -uV \
+    | tail -1
+}
+
+PUBLISHED_BIN="$STAGE/root$PKGDIR/pdn-soundmodem"
+# A glibc symbol version is the glibc release that introduced it, and libc6's package
+# version is that same release, so this maps straight onto a Debian version constraint.
+GLIBC_MIN="$(max_needed "$PUBLISHED_BIN" GLIBC)"
+GLIBCXX_MIN="$(max_needed "$PUBLISHED_BIN" GLIBCXX)"
+[ -n "$GLIBC_MIN" ] || { echo "could not read a GLIBC floor from $PUBLISHED_BIN" >&2; exit 4; }
+[ -n "$GLIBCXX_MIN" ] || { echo "could not read a GLIBCXX floor from $PUBLISHED_BIN" >&2; exit 4; }
+
+# libstdc++ versions its symbols by C++ ABI, not by package version, so this needs a table.
+# Anchors measured against the distributions themselves: Debian 10 ships GCC 8 and tops out
+# at 3.4.25, Debian 11 / GCC 10 at 3.4.28, Debian 12 / GCC 12 at 3.4.30, Debian 13 / GCC 14
+# at 3.4.33. Unmeasured points round up to the next anchor, because the failure modes are
+# not symmetric: too high refuses an install that would have worked and says why, too low
+# ships the loader crash this whole block exists to prevent. An unknown value is a new GCC
+# ABI nobody has checked, so stop and make someone extend the table.
+case "$GLIBCXX_MIN" in
+  3.4|3.4.[0-9]|3.4.1[0-9]|3.4.2[01]) STDCXX_MIN=5 ;;
+  3.4.22)     STDCXX_MIN=6 ;;
+  3.4.23|3.4.24) STDCXX_MIN=7 ;;
+  3.4.25)     STDCXX_MIN=8 ;;
+  3.4.26)     STDCXX_MIN=9 ;;
+  3.4.27|3.4.28) STDCXX_MIN=10 ;;
+  3.4.29)     STDCXX_MIN=11 ;;
+  3.4.30)     STDCXX_MIN=12 ;;
+  3.4.31|3.4.32) STDCXX_MIN=13 ;;
+  3.4.33)     STDCXX_MIN=14 ;;
+  3.4.34)     STDCXX_MIN=15 ;;
+  *) echo "unknown GLIBCXX_$GLIBCXX_MIN - extend the table in $0" >&2; exit 4 ;;
+esac
+
+# libgcc-s1 is deliberately left unversioned: the binary asks it only for GCC_3.0 and
+# GCC_3.5, which every distribution in scope has carried for twenty years.
+echo "floors for $ARCH: libc6 >= $GLIBC_MIN, libstdc++6 >= $STDCXX_MIN (GLIBCXX_$GLIBCXX_MIN)"
+
 cat > "$STAGE/root/DEBIAN/control" <<EOF
 Package: pdn-soundmodem
 Version: $VERSION
 Architecture: $ARCH
 Maintainer: Tom Fanning M0LTE <tom@m0lte.uk>
 Installed-Size: $INSTALLED_SIZE
-Depends: libc6, libgcc-s1, libstdc++6, libasound2 | libasound2t64, adduser
+Depends: libc6 (>= $GLIBC_MIN), libgcc-s1, libstdc++6 (>= $STDCXX_MIN), libasound2 | libasound2t64, adduser
 Section: hamradio
 Priority: optional
 Homepage: https://github.com/packet-net/pdn-soundmodem

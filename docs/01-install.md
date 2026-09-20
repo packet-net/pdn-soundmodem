@@ -6,6 +6,18 @@ At the end of this page pdn-soundmodem is installed on your machine, the service
 
 A machine running Debian, Ubuntu or Raspberry Pi OS, on amd64, arm64 or armhf.
 
+How old that install may be depends on the architecture, because .NET sets a different floor for each one:
+
+| Architecture | Needs | Which means |
+| --- | --- | --- |
+| amd64, arm64 | glibc 2.27 | Debian 10, Ubuntu 18.04, Raspberry Pi OS (64-bit) or newer |
+| armhf (32-bit ARM) | glibc 2.34 | Debian 12, Ubuntu 22.04, Raspberry Pi OS (32-bit) bookworm or newer |
+
+The armhf floor is the awkward one: 32-bit Raspberry Pi OS bullseye ships glibc 2.31, so it is below the line and apt will tell you so rather than install. A 32-bit bullseye Pi has two ways forward, and if the board is a Pi 3, Zero 2 W, 4 or 5 the first is the better one anyway:
+
+- Reinstall with the 64-bit image and use the arm64 package, which runs on bullseye and newer.
+- Upgrade the existing 32-bit install to bookworm.
+
 Root, or an account with `sudo`.
 
 Nothing else. The package is self-contained, so there is no .NET runtime to install.
