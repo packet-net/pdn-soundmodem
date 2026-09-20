@@ -71,8 +71,18 @@ public sealed record StationRadio(
 
     internal static string? Find(string name)
     {
-        string? beside = Path.GetDirectoryName(typeof(StationRadio).Assembly.Location);
-        foreach (string? from in (ReadOnlySpan<string?>)[beside, AppContext.BaseDirectory])
+        // OFDMFM_STATION_FILE is what a packaged install wants: the binary lives under /usr/lib,
+        // which is no place for configuration, and walking up from there reaches /usr and the root.
+        // The assembly's own directory used to come first, which was right while this was a plugin
+        // loaded from wherever an operator put it; a single-file build reports no location at all.
+        string? named = Environment.GetEnvironmentVariable("OFDMFM_STATION_FILE");
+        if (!string.IsNullOrEmpty(named) && File.Exists(named))
+        {
+            return named;
+        }
+
+        foreach (string? from in
+            (ReadOnlySpan<string?>)[AppContext.BaseDirectory, Directory.GetCurrentDirectory()])
         {
             if (string.IsNullOrEmpty(from))
             {

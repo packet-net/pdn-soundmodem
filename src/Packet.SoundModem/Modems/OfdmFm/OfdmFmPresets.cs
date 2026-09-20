@@ -19,7 +19,9 @@ namespace Packet.SoundModem.Modems.OfdmFm;
 /// code rate.</para>
 /// <para><b>What to know about entry 0.</b> It carries the sync, preamble and header of every
 /// burst, whatever the payload's span, which makes it the least forgiving layout in the waveform.
-/// <see cref="Narrow"/> has not been keyed. What has been proved on air is cross-geometry decoding
+/// <see cref="Narrow"/> was keyed for the first time on 2026-09-20 and delivered every frame in
+/// both directions at 2.2 to 2.3 kbit/s, so entry 0 is no longer an untested layout. What was
+/// already proved on air is cross-geometry decoding
 /// itself: on 2026-09-19 a station configured for the narrowest layout in its table decoded every
 /// burst of a transmission sent on a span twice its width, on carriers its own preamble never
 /// occupied, and the reverse and the wider-than-the-receiver case both worked too. The mechanism
@@ -29,10 +31,10 @@ namespace Packet.SoundModem.Modems.OfdmFm;
 /// it.</para>
 /// <para><b>What has been on the air.</b> Everything on the 6 kHz and 8 kHz spans below has run
 /// between two Tait TM8110s on a 25 kHz channel, at the payload sizes and rates named in
-/// docs/dev/ofdm-fm/. <see cref="Narrow"/> has NOT: it is a layout of our own design, sized so the
-/// coded header still fits one symbol, and it is here because a radio with a voice-bandwidth audio
-/// path cannot run the wider ones at all. Treat its figures as arithmetic rather than measurement
-/// until somebody keys it.</para>
+/// docs/dev/ofdm-fm/. <see cref="Narrow"/> joined them on 2026-09-20: a layout of our own design,
+/// sized so the coded header still fits one symbol, and here because a radio with a voice-bandwidth
+/// audio path cannot run the wider ones at all. It measured 2.2 to 2.3 kbit/s with every frame
+/// delivered in both directions across a multi-hour soak.</para>
 /// </remarks>
 public static class OfdmFmPresets
 {
@@ -72,10 +74,10 @@ public static class OfdmFmPresets
     /// <summary>
     /// A voice-bandwidth layout, 211 Hz to 2.9 kHz, QPSK at rate 1/2: the most robust thing here
     /// and the only one a microphone-and-speaker path can carry.
-    /// <para><b>Designed, not measured.</b> 112 data carriers is comfortably above the 104 coded
-    /// bits the header needs to fit a single symbol, which is the one hard constraint on how
-    /// narrow a layout can go. Everything else about it is an extrapolation from the wider spans,
-    /// which are measured. Nobody has put it on the air.</para>
+    /// <para><b>Measured on air 2026-09-20</b>, 2.2 to 2.3 kbit/s with every frame delivered in
+    /// both directions. 112 data carriers is comfortably above the 104 coded bits the header needs
+    /// to fit a single symbol, which is the one hard constraint on how narrow a layout can go, and
+    /// the rendered-burst arithmetic predicts 2347 bit/s, which is what it does.</para>
     /// </summary>
     public static OfdmFmParameters Narrow { get; } = new(
         SampleRate: Rate, FftSize: Transform, CyclicPrefix: Guard, FirstCarrier: FirstCarrier,

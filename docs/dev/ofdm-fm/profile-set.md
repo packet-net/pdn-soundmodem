@@ -12,7 +12,7 @@ Coded payload rate is arithmetic: 22.727 symbols/s (44.0 ms, the 64-sample cycli
 
 | mode | what it is | coded | goodput at 1024 / 1900 / 3000 B | delivered |
 |---|---|---|---|---|
-| `ofdm-fm-narrow` | 211 Hz to 2.9 kHz, QPSK, K=7 rate 1/2: the floor | 2.5 | not measured | the only preset a voice-bandwidth path can carry, and nobody has keyed it |
+| `ofdm-fm-narrow` | 211 Hz to 2.9 kHz, QPSK, K=7 rate 1/2: the floor | 2.5 | 2.2 / 2.3 | every frame both directions, 2026-09-20; the only preset a voice-bandwidth path can carry |
 | `ofdm-fm-6k` | 6 kHz, QPSK, K=7 rate 1/2: the robust data-port fallback | 5.5 | not measured | simulation only |
 | `ofdm-fm-6k-fast` | 6 kHz, QAM-64 rate 2/3, contiguous bursts | 21.8 | 13.3 / 16.6 / 17.8 (see note) | every frame |
 | `ofdm-fm-8k` | 8 kHz, QAM-64 rate 2/3, full bursts: the default | 29.4 | 17.5 / 22.3 / 24.7 | every frame at 1024 and 1900, 19 of 20 at 3000, both directions |

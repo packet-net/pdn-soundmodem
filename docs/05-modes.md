@@ -79,11 +79,11 @@ OFDM across the audio path of an ordinary FM transceiver, so the radio emits sta
 
 The payload is **one AX.25 frame, opaque**, with no IL2P: the burst already supplies sync, a length, a CRC and forward error correction. These modes run at 48 kHz and occupy the audio band from just above DC, so they take no centre frequency.
 
-**All eight share one geometry table**, so a receiver on any of them decodes a burst sent on any other and a link can change bandwidth without a handshake. There are three carrier layouts: `ofdm-fm-narrow` is entry 0, the 6 kHz presets entry 1, the 8 kHz presets entry 2. Entry 0 carries the sync, preamble and header of every burst whatever its payload span, and `ofdm-fm-narrow` has not been keyed on air, so see [the design notes](dev/ofdm-fm/geometry-signalling.md) before relying on it. `ofdm-fm-8k` is the default and the only one measured across the full range of payload sizes in both directions. Goodput is what a KISS application moved end to end at 1024 / 1900 / 3000 byte frames, scored from both stations' frame logs.
+**All eight share one geometry table**, so a receiver on any of them decodes a burst sent on any other and a link can change bandwidth without a handshake. There are three carrier layouts: `ofdm-fm-narrow` is entry 0, the 6 kHz presets entry 1, the 8 kHz presets entry 2. Entry 0 carries the sync, preamble and header of every burst whatever its payload span, and `ofdm-fm-narrow` is entry 0, keyed and delivering every frame since 2026-09-20. `ofdm-fm-8k` is the default and the only one measured across the full range of payload sizes in both directions. Goodput is what a KISS application moved end to end at 1024 / 1900 / 3000 byte frames, scored from both stations' frame logs.
 
 | Mode | Coded rate | Span | Goodput | Verification |
 |---|---|---|---|---|
-| `ofdm-fm-narrow` | 2.5 kbit/s | 211 Hz to 2.9 kHz | not measured | **Designed, not measured** - the only preset a voice-bandwidth path can carry, and nobody has keyed it |
+| `ofdm-fm-narrow` | 2.5 kbit/s | 211 Hz to 2.9 kHz | 2.2 / 2.3 | **On-air** - every frame both directions; the only preset a voice-bandwidth path can carry |
 | `ofdm-fm-6k` | 5.5 kbit/s | 211 Hz to 6.0 kHz | not measured | **Sim only** - the robust data-port fallback |
 | `ofdm-fm-6k-fast` | 21.8 kbit/s | 211 Hz to 6.0 kHz | 13.3 / 16.6 / 17.8 | **On-air** - every frame delivered |
 | `ofdm-fm-8k` | 29.4 kbit/s | 211 Hz to 8.0 kHz | 17.5 / 22.3 / 24.7 | **On-air** - every frame at 1024 and 1900 both ways, 19 of 20 at 3000 |

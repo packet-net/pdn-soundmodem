@@ -487,17 +487,26 @@ public sealed record OfdmFmParameters(
     /// Beside this assembly first, then beside the host application, walking upward from each.
     /// </summary>
     /// <remarks>
-    /// <b>This assembly's own directory comes first, and that is the case that matters.</b> Loaded
-    /// as a plugin, <see cref="AppContext.BaseDirectory"/> is the daemon's install directory, which
-    /// is nowhere near where an operator put the plugin and its geometry - so searching only from
-    /// there finds nothing and the station silently comes up on the synthetic profile. An operator
-    /// drops the DLL and the JSON in one directory and expects that to be the whole of it.
+    /// <b>Three roots, in this order</b>: the <c>OFDMFM_GEOMETRY_FILE</c> environment variable if
+    /// it names a file, then the directory the daemon runs from, then the working directory, each
+    /// walked upward. The environment variable is what a packaged install wants, because the
+    /// binary lives under <c>/usr/lib</c> where an operator has no business putting configuration
+    /// and walking up from there reaches <c>/usr</c> and then the root.
+    /// <para>This used to probe the assembly's own directory first, which was right when the modem
+    /// was loaded as a plugin from wherever an operator had put it. Built into the daemon that
+    /// probe is dead: a single-file build reports no assembly location at all.</para>
     /// </remarks>
     private static string? FindLocalFile()
     {
         const string Name = "ofdm-fm.local.json";
-        string? beside = Path.GetDirectoryName(typeof(OfdmFmParameters).Assembly.Location);
-        foreach (string? from in (ReadOnlySpan<string?>)[beside, AppContext.BaseDirectory])
+        string? named = Environment.GetEnvironmentVariable("OFDMFM_GEOMETRY_FILE");
+        if (!string.IsNullOrEmpty(named) && File.Exists(named))
+        {
+            return named;
+        }
+
+        foreach (string? from in
+            (ReadOnlySpan<string?>)[AppContext.BaseDirectory, Directory.GetCurrentDirectory()])
         {
             if (string.IsNullOrEmpty(from))
             {
