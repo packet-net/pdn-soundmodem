@@ -6,17 +6,13 @@ At the end of this page pdn-soundmodem is installed on your machine, the service
 
 A machine running Debian, Ubuntu or Raspberry Pi OS, on amd64, arm64 or armhf.
 
-How old that install may be depends on the architecture, because .NET sets a different floor for each one:
+It needs glibc 2.34 or newer, on every architecture. That means **Debian 12 (bookworm), Ubuntu 22.04, Raspberry Pi OS bookworm, or newer**. Debian 11 (bullseye) ships glibc 2.31 and is below the line.
 
-| Architecture | Needs | Which means |
-| --- | --- | --- |
-| amd64, arm64 | glibc 2.27 | Debian 10, Ubuntu 18.04, Raspberry Pi OS (64-bit) or newer |
-| armhf (32-bit ARM) | glibc 2.34 | Debian 12, Ubuntu 22.04, Raspberry Pi OS (32-bit) bookworm or newer |
+Two separate things set that floor, which is why it applies everywhere rather than only to 32-bit machines. The SQLite library the frame log writes through is built against glibc 2.34 on all three architectures, and on armhf .NET 10's own 32-bit ARM runtime needs 2.34 as well.
 
-The armhf floor is the awkward one: 32-bit Raspberry Pi OS bullseye ships glibc 2.31, so it is below the line and apt will tell you so rather than install. A 32-bit bullseye Pi has two ways forward, and if the board is a Pi 3, Zero 2 W, 4 or 5 the first is the better one anyway:
+The package declares this, so apt on an older machine refuses the install and says which dependency it cannot satisfy. That is deliberate. An earlier version of the package did not declare it and installed anyway, which is worse: on bullseye the modem would start, print its version, look healthy, and then fail at the first frame it tried to write to the log.
 
-- Reinstall with the 64-bit image and use the arm64 package, which runs on bullseye and newer.
-- Upgrade the existing 32-bit install to bookworm.
+If you are on a bullseye machine, the ways forward are to upgrade it to bookworm, or on a Pi to reinstall from a bookworm image; the 64-bit image is the better choice on a Pi 3, Zero 2 W, 4 or 5.
 
 Root, or an account with `sudo`.
 
