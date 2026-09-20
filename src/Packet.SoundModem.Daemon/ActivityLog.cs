@@ -173,6 +173,25 @@ internal static class ActivityLog
         $"tx[{subChannel}] ardop {frameName} {ArdopAddresses(from, to)} {lengthBytes} bytes";
 
     /// <summary>
+    /// A reply this station chose not to transmit because the turnaround it belonged to had
+    /// closed before the channel was free.
+    /// </summary>
+    /// <remarks>
+    /// Written down as a decision, not as a transmission: it never reached the air, so it gets no
+    /// <see cref="ArdopTransmitted"/> line, no frame-log row and no burst on the waterfall. The
+    /// reason is carried because the two are diagnosed differently - a deadline says this station
+    /// could not get to the transmitter in time, and a far end that transmitted again says the
+    /// exchange had already moved on.
+    /// </remarks>
+    internal static string ArdopReplyDropped(int subChannel, string frameName, ArdopReplyDrop why) =>
+        $"tx[{subChannel}] ardop {frameName} NOT SENT: "
+        + (why == ArdopReplyDrop.FarEndTransmitted
+            ? "the far end transmitted again before the channel was free"
+            : $"could not reach the air within {ArdopReplyWindow.Deadline.TotalMilliseconds:F0} ms "
+              + "of its turnaround")
+        + " - left for the far end to treat as lost";
+
+    /// <summary>
     /// <c>SOURCE&gt;DEST</c> as ARDOP states it rather than parses it, or a marker that is
     /// honestly not a callsign where it named neither. ARDOP's connect handshake, Ping and ID
     /// frames carry both or one of the pair in clear; a data frame belonging to someone else's

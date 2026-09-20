@@ -135,21 +135,41 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
             _shift = ArdopChannelBridge.For(centreHz, SampleRate, channelRate);
             Tnc = new ArdopHostTnc(captureDevice: "bench", playbackDevice: "bench")
             {
-                // Program.cs's transmitter: ARDOP's own bursts bypass the inhibit they set.
-                Transmitter = audio => Channel.EnqueueTransmit(
-                    _ =>
+                // Program.cs's transmitter: ARDOP's own bursts bypass the inhibit they set, and
+                // carry the turnaround deadline that drops one rather than keying it late.
+                Transmitter = async audio =>
+                {
+                    CancellationToken turnaround = Replies.Open();
+                    try
                     {
-                        var floats = new float[audio.Length];
-                        for (int i = 0; i < audio.Length; i++)
-                        {
-                            floats[i] = audio[i] / 32768f;
-                        }
+                        await Channel.EnqueueTransmit(
+                            _ =>
+                            {
+                                var floats = new float[audio.Length];
+                                for (int i = 0; i < audio.Length; i++)
+                                {
+                                    floats[i] = audio[i] / 32768f;
+                                }
 
-                        return _shift.Transmit(floats);
-                    },
-                    rejected: null,
-                    ownsChannelTiming: true),
+                                return _shift.Transmit(floats);
+                            },
+                            rejected: null,
+                            ownsChannelTiming: true,
+                            source: _shift,
+                            withdraw: turnaround).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        Replies.NoteDropped();
+                        Interlocked.Increment(ref _dropped);
+                    }
+                    finally
+                    {
+                        Replies.Close();
+                    }
+                },
             };
+            Tnc.FrameDecoded += _ => Replies.FarEndTransmitted();
             Channel.AddReceiveTap(samples => Tnc.ProcessReceive(_shift.Receive(samples)));
             Channel.TransmitInhibit = () => Tnc.Engine.IsConnected || Tnc.Engine.IsPending;
 
@@ -177,6 +197,12 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
         }
 
         public string Call { get; }
+
+        /// <summary>The turnaround deadline the daemon arms, so a session here meets it too.</summary>
+        public ArdopReplyWindow Replies { get; } = new(TimeProvider.System);
+
+        /// <summary>Replies this station declined to send late.</summary>
+        public int DroppedReplies => Volatile.Read(ref _dropped);
 
         public SoundModemChannel Channel { get; }
 
@@ -246,6 +272,8 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
                 return PacketFrames[0];
             }
         }
+
+        private int _dropped;
 
         public string Transcript()
         {
@@ -488,6 +516,8 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
             + $"connected at {sessionBandwidth} Hz, "
             + $"{outbound.Length} bytes out and {inbound.Length} back, both byte-exact; a packet frame "
             + "offered mid-session waited the session out and was decoded at the far station after it; "
-            + "orderly disconnect.");
+            + "orderly disconnect. "
+            + $"replies dropped for missing their turnaround: caller {bench.Caller.DroppedReplies}, "
+            + $"listener {bench.Listener.DroppedReplies}.");
     }
 }
