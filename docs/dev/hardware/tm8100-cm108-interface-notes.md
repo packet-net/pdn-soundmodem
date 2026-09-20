@@ -106,7 +106,7 @@ between T5 and the modulator, and none of it is between T13 and the modulator.
 
 ### What T13 means for the modem, and it is not only wiring
 
-**The transmit path is flat.** No 300 Hz high pass, so a waveform with carriers near 305 Hz is not
+**The transmit path is flat.** No 300 Hz high pass, so a waveform with carriers down there is not
 sitting on a filter corner. No pre-emphasis, so no tilt to undo. No 3 kHz low pass, so the audio
 bandwidth is bounded by the modulator and the channel rather than by a voice filter.
 
@@ -355,7 +355,7 @@ netlist changes four of this note's stock-dongle assumptions. The build values i
   input capacitor against the bias network, an 80 Hz corner on a flat tap, does not exist here
   either: the same 1 uF sees MICIN's high input impedance instead.
 - **The line out is already AC-coupled**, 1 uF on board, left channel only. Against the transmit
-  divider's 4k load that is a 40 Hz corner, 0.13 dB at a 305 Hz carrier.
+  divider's 4k load that is a 40 Hz corner, 0.13 dB at the lowest carrier.
 - **The PTT transistor is already on the board**: an open-drain BSS138 on GPIO3, which is exactly
   the stage the PTT section below asks for. Wire it straight to pin 12 and add nothing; a second
   open-collector stage would invert the logic. The gate has no pull-down, so it floats briefly
