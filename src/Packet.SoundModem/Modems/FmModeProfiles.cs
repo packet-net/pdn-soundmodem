@@ -88,7 +88,14 @@ public static class FmModeProfiles
     /// </remarks>
     public static IReadOnlyDictionary<string, FmModeProfile> Profiles => _profiles;
 
-    /// <summary>The profile for a mode, or null if it is not an FM-native mode.</summary>
+    /// <summary>
+    /// The published figures for a mode, or null if there are none.
+    /// </summary>
+    /// <remarks>
+    /// Null does NOT mean "not an FM mode": see <see cref="FmModesWithoutDeviationTarget"/>, whose
+    /// members are frequency modulation and have nothing to put in a row here. Ask
+    /// <see cref="IsFmMode"/> for the modulation and this for the numbers.
+    /// </remarks>
     public static FmModeProfile? For(string? mode)
     {
         if (mode is null)
@@ -114,6 +121,74 @@ public static class FmModeProfiles
         return null;
     }
 
-    /// <summary>Whether a mode reaches the air as frequency modulation.</summary>
-    public static bool IsFmMode(string? mode) => For(mode) is not null;
+    /// <summary>
+    /// FM-native modes that have no deviation target to publish, because theirs is a drive
+    /// decision rather than a property of the waveform.
+    /// </summary>
+    /// <remarks>
+    /// <para>Prefix-matched on a dash, exactly as <see cref="For"/> matches the framing variants,
+    /// so <c>ofdm-fm-8k</c> and every other preset resolve from the one entry.</para>
+    /// <para><b>Why OFDM-FM cannot have a row above.</b> Every figure in that table is a peak
+    /// deviation a NinoTNC modulator is set to, and a tuning tone that sets it. OFDM-FM has
+    /// neither. Its peak is a property of the CONSTELLATION and not of the drive: at one bench
+    /// drive, QPSK and QAM-64 bursts differ by 4.6 dB of peak, which is the whole of the headroom
+    /// between "inside the class limit" and "over it"
+    /// (<c>docs/dev/ofdm-fm/geometry-signalling.md</c> section 5.2). So the number an operator
+    /// sets depends on the densest constellation the station will ever send, and writing a single
+    /// target here would be inventing one. The same page measures this bench at 4.12 kHz peak on
+    /// one station and 4.04 on the other, 82 % of the 5 kHz class, which is a measurement of two
+    /// radios rather than a recommendation to anybody.</para>
+    /// </remarks>
+    private static readonly string[] _fmWithoutDeviationTarget = ["ofdm-fm"];
+
+    /// <summary>
+    /// Whether a mode reaches the air as frequency modulation.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>This is not the same question as "does this mode have a deviation figure", and
+    /// keying one off the other was a real defect.</b> The table above is Nino's published
+    /// modulator figures, so it answers the second question; <c>ofdm-fm</c> is frequency
+    /// modulation by construction, has no such figure, and therefore used to report that it was
+    /// not an FM mode at all. Anything selecting carrier-sense behaviour on "is this FM" would
+    /// have excluded precisely the mode family that proved the FM carrier-sense argument
+    /// (packet-net/pdn-soundmodem#522).</para>
+    /// <para><b>Nor is it "what can arrive through an FM receiver"</b>, which is a third question
+    /// and the one a decoder sweep asks. The shaped-PSK modes ride an FM link perfectly well and
+    /// are correctly absent here; <c>Sweep.PacketModes</c> in the multi-decode tool records the
+    /// corpus that settled it.</para>
+    /// <para>Ask <see cref="HasDeviationTarget"/> when what is wanted is a number to set a
+    /// transmitter to.</para>
+    /// </remarks>
+    public static bool IsFmMode(string? mode) =>
+        For(mode) is not null || HasNoDeviationTarget(mode);
+
+    /// <summary>
+    /// Whether a published peak deviation exists for this mode, which is what a transmitter
+    /// calibration or an FM test ladder needs. A subset of <see cref="IsFmMode"/>.
+    /// </summary>
+    public static bool HasDeviationTarget(string? mode) => For(mode) is not null;
+
+    /// <summary>The FM modes whose deviation is a drive decision; see
+    /// <see cref="_fmWithoutDeviationTarget"/> for why they have no row.</summary>
+    public static IReadOnlyCollection<string> FmModesWithoutDeviationTarget =>
+        _fmWithoutDeviationTarget;
+
+    private static bool HasNoDeviationTarget(string? mode)
+    {
+        if (mode is null)
+        {
+            return false;
+        }
+
+        foreach (string name in _fmWithoutDeviationTarget)
+        {
+            if (mode.StartsWith(name, StringComparison.Ordinal)
+                && (mode.Length == name.Length || mode[name.Length] == '-'))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
