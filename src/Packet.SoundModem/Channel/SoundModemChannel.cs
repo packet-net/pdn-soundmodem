@@ -77,6 +77,14 @@ public sealed class SoundModemChannel
         /// withdrawn, so a long-lived token does not accumulate registrations for finished work.
         /// </summary>
         public CancellationTokenRegistration Withdrawal { get; set; }
+
+        /// <summary>
+        /// Fires once, <see cref="TransmitInhibitTimeout"/> after this item was handed over, and
+        /// gives it a definite answer if another service is still holding the channel then.
+        /// Null on a channel with no <see cref="TransmitInhibit"/> and on a transmission that owns
+        /// the channel's timing, neither of which can be held.
+        /// </summary>
+        public ITimer? HeldTooLong { get; set; }
     }
 
     // A queue PER TRANSMITTER rather than one for the channel. With a single queue a deferred
@@ -713,17 +721,20 @@ public sealed class SoundModemChannel
         }
 
         // Stamped here rather than in EnqueueNow, so that the wait a caller is told about is the
-        // whole wait it actually had: TransmitInhibit can hold a frame for tens of seconds before
-        // it ever reaches a queue, and a figure that started counting afterwards would report the
-        // channel as clear for the one case where it most obviously was not.
+        // whole wait it actually had, including any time another service held the channel.
         long queuedAt = _time.GetTimestamp();
         object identity = source ?? new object();
-        return !ownsChannelTiming && TransmitInhibit is not null
-            ? EnqueueWhenPermittedAsync(
-                modulate, rejected, identity, quietAfter, withdraw, stopEarly, written, queuedAt, started)
-            : EnqueueNow(
-                modulate, rejected, ownsChannelTiming, identity, quietAfter, withdraw, stopEarly, written,
-                queuedAt, started);
+
+        // Queued here, from this call, whatever the channel is doing. Nothing between this call
+        // and the queue may await, because the queue's order is the order frames go on the air
+        // and anything awaited puts the scheduler in charge of it. TransmitInhibit used to be
+        // waited out HERE, one poll per frame, so several frames of one link could be queued in
+        // the order their polls happened to wake rather than the order the host wrote them - on
+        // AX.25 that is I-frames on the air with N(S) out of sequence. The hold is now waited out
+        // by the transmitter, which has one queue to draw from and cannot reorder it.
+        return EnqueueNow(
+            modulate, rejected, ownsChannelTiming, identity, quietAfter, withdraw, stopEarly, written,
+            queuedAt, started);
     }
 
     /// <summary>
@@ -834,11 +845,18 @@ public sealed class SoundModemChannel
     public event Action<Exception>? PttFailed;
 
     /// <summary>
-    /// Consulted before a shared transmission is queued; while it returns true the transmission
-    /// waits. Set by a host that has to keep a stretch of the channel clear - an ARDOP ARQ
-    /// session, whose timing an AX.25 frame landing mid-turnaround would break. Null (the
-    /// default) means nothing is holding the channel and every transmission queues immediately.
+    /// Consulted before a shared transmission is put on the air; while it returns true those
+    /// transmissions wait. Set by a host that has to keep a stretch of the channel clear - an
+    /// ARDOP ARQ session, whose timing an AX.25 frame landing mid-turnaround would break. Null
+    /// (the default) means nothing is holding the channel.
     /// </summary>
+    /// <remarks>
+    /// A held frame waits IN ITS TRANSMITTER'S QUEUE rather than in front of it: it is queued by
+    /// the call that handed it over, in that call's order, and the transmitter is what waits.
+    /// That is what keeps a link's frames in sequence across a hold - see
+    /// <see cref="InhibitHolds"/> for what the other arrangement cost. A transmission that owns
+    /// the channel's timing is never held, since the holder is usually the one making it.
+    /// </remarks>
     public Func<bool>? TransmitInhibit { get; set; }
 
     /// <summary>
@@ -847,41 +865,45 @@ public sealed class SoundModemChannel
     /// ARQ session ends, so a definite answer beats a transmission that eventually escapes
     /// minutes late as a duplicate.
     /// </summary>
+    /// <remarks>
+    /// Measured from the moment the frame was handed over and armed per frame at that moment
+    /// (<see cref="ExpireHeldTransmission"/>), so the answer is a property of the frame and does
+    /// not depend on which transmitter the round robin is looking at, or on a transmitter running
+    /// at all. The enqueue task faults with the same exception it always did and
+    /// <c>TransmitRejected</c> is raised with it, so an ACKMODE host is told the frame is gone
+    /// rather than left waiting.
+    /// </remarks>
     public TimeSpan TransmitInhibitTimeout { get; set; } = TimeSpan.FromSeconds(30);
-
-    private async Task EnqueueWhenPermittedAsync(
-        Func<int, float[]> modulate, Action<Exception>? rejected, object source, TimeSpan? quietAfter,
-        CancellationToken withdraw, Func<bool>? stopEarly, Action<int>? written,
-        long queuedAt, Action<TimeSpan>? started)
-    {
-        // The injected clock, per the repo's wall-clock discipline - this was the library's
-        // one Stopwatch and its one bare Task.Delay, which no test could virtualise.
-        long waitedFrom = queuedAt;
-        while (TransmitInhibit?.Invoke() == true)
-        {
-            // Withdrawn before it was ever queued, which is the cheapest place for it to happen.
-            withdraw.ThrowIfCancellationRequested();
-
-            if (_time.GetElapsedTime(waitedFrom) > TransmitInhibitTimeout)
-            {
-                var refusal = new InvalidOperationException(
-                    $"another service is holding the channel (waited {TransmitInhibitTimeout.TotalSeconds:F0}s); "
-                    + "transmission dropped");
-                rejected?.Invoke(refusal);
-                throw refusal;
-            }
-
-            await Task.Delay(InhibitPollInterval, _time).ConfigureAwait(false);
-        }
-
-        await EnqueueNow(
-                modulate, rejected, ownsChannelTiming: false, source, quietAfter, withdraw, stopEarly,
-                written, queuedAt, started)
-            .ConfigureAwait(false);
-    }
 
     /// <summary>Coarse on purpose: this gates against sessions lasting minutes.</summary>
     private static readonly TimeSpan InhibitPollInterval = TimeSpan.FromMilliseconds(50);
+
+    /// <summary>
+    /// Whether another service is holding the channel against this transmitter's next frame.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Asked here rather than at the enqueue, and that is the whole point.</b> Each frame
+    /// used to wait out <see cref="TransmitInhibit"/> on a poll of its own before it was queued,
+    /// so when the hold lifted the frames of one link were queued in whatever order their polls
+    /// happened to wake: ordering by the thread pool. For AX.25 that is I-frames on the air with
+    /// N(S) out of sequence, which costs the peer a REJ or SREJ recovery and can drop the link.
+    /// Asked once, by the one loop that transmits, there is nothing to reorder - the frames are
+    /// already in the queue in the order the host wrote them, and the queue is the only thing
+    /// that decides what goes out next.</para>
+    /// <para>A frame that owns the channel's timing is never held. ARDOP is the usual holder, and
+    /// holding its own bursts behind its own hold would deadlock an ARQ session.</para>
+    /// </remarks>
+    private bool InhibitHolds(object source)
+    {
+        if (TransmitInhibit?.Invoke() != true)
+        {
+            return false;
+        }
+
+        // Nothing queued for this transmitter is nothing to hold, and a transmission that owns
+        // the channel's timing is never held.
+        return PeekFrom(source) is { OwnsTiming: false };
+    }
 
     private Task EnqueueNow(
         Func<int, float[]> modulate, Action<Exception>? rejected, bool ownsChannelTiming, object source,
@@ -913,6 +935,17 @@ public sealed class SoundModemChannel
             item.Withdrawal = withdraw.Register(() => Withdraw(item));
         }
 
+        if (!ownsChannelTiming && TransmitInhibit is not null)
+        {
+            // Armed here, per frame, from the moment the host handed it over. It used to be the
+            // elapsed check inside each frame's own inhibit poll, and it has to keep working the
+            // same way: a channel whose transmitter is not running still owes an ACKMODE host an
+            // answer, and the answer must not depend on where the round robin happens to be. Also
+            // registered after the enqueue, for the same reason as the withdrawal above.
+            item.HeldTooLong = _time.CreateTimer(
+                _ => ExpireHeldTransmission(item), null, TransmitInhibitTimeout, Timeout.InfiniteTimeSpan);
+        }
+
         return done.Task;
     }
 
@@ -932,31 +965,107 @@ public sealed class SoundModemChannel
     /// </remarks>
     private void Withdraw(TxItem item)
     {
-        bool removed = false;
+        bool removed;
         lock (_txGate)
         {
-            if (_txQueues.TryGetValue(item.Source, out Queue<TxItem>? queue) && queue.Contains(item))
-            {
-                // Rebuilt without it rather than dequeued: the item may be behind others of the
-                // same source, and their order is the order they will go out in.
-                var kept = new Queue<TxItem>(queue.Where(queued => !ReferenceEquals(queued, item)));
-                removed = true;
-                if (kept.Count == 0)
-                {
-                    _txQueues.Remove(item.Source);
-                    _txOrder.Remove(item.Source);
-                }
-                else
-                {
-                    _txQueues[item.Source] = kept;
-                }
-            }
+            removed = RemoveLocked(item);
         }
 
         if (removed)
         {
+            Finish(item);
             item.Done.TrySetCanceled();
         }
+    }
+
+    /// <summary>
+    /// Takes one item out of its transmitter's queue wherever it sits in it, and says whether it
+    /// was still there. Call under <see cref="_txGate"/>.
+    /// </summary>
+    /// <remarks>
+    /// Rebuilt without it rather than dequeued: the item may be behind others of the same source,
+    /// and their order is the order they will go out in. Taking one out of the middle is the only
+    /// thing allowed to disturb a queue, and it disturbs nothing - what is left is still in the
+    /// order the host handed it over.
+    /// </remarks>
+    private bool RemoveLocked(TxItem item)
+    {
+        if (!_txQueues.TryGetValue(item.Source, out Queue<TxItem>? queue) || !queue.Contains(item))
+        {
+            return false;
+        }
+
+        var kept = new Queue<TxItem>(queue.Where(queued => !ReferenceEquals(queued, item)));
+        if (kept.Count == 0)
+        {
+            _txQueues.Remove(item.Source);
+            _txOrder.Remove(item.Source);
+        }
+        else
+        {
+            _txQueues[item.Source] = kept;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Refuses one transmission that another service has held past
+    /// <see cref="TransmitInhibitTimeout"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>A held frame cannot wait indefinitely: an AX.25 host will have retried long before an
+    /// ARQ session ends, so a definite answer beats a transmission that eventually escapes minutes
+    /// late as a duplicate. The answer is the same exception the enqueue used to throw, on the
+    /// same two paths, so nothing downstream can tell the difference.</para>
+    /// <para>Nothing happens if the hold has lifted by the time this fires: the frame is about to
+    /// go out, and refusing it because it was held EARLIER would drop a transmission that is
+    /// already on its way. Nothing happens either if it has already gone, which is the ordinary
+    /// case for every frame on a station that has an inhibit source at all.</para>
+    /// </remarks>
+    private void ExpireHeldTransmission(TxItem item)
+    {
+        if (TransmitInhibit?.Invoke() != true)
+        {
+            return;
+        }
+
+        bool removed;
+        lock (_txGate)
+        {
+            removed = RemoveLocked(item);
+        }
+
+        if (!removed)
+        {
+            return;
+        }
+
+        Finish(item);
+        var refusal = new InvalidOperationException(
+            $"another service is holding the channel (waited {TransmitInhibitTimeout.TotalSeconds:F0}s); "
+            + "transmission dropped");
+        // Announced BEFORE the task faults, which is the order the wait this replaces used, and it
+        // is load-bearing: a caller awaiting the task is released the instant it faults, and if
+        // the announcement came second that caller could look for the rejection and not find it
+        // yet. TransmitInhibitTests catches exactly that, on a loaded box.
+        item.Rejected?.Invoke(refusal);
+        item.Done.TrySetException(refusal);
+    }
+
+    /// <summary>
+    /// Releases what an item held while it was queued, once it has left the queue for good.
+    /// </summary>
+    /// <remarks>
+    /// Never under <see cref="_txGate"/>. Disposing a timer can wait on its own clock's lock, and
+    /// the callback on the other side of that lock takes _txGate, which is a deadlock waiting for
+    /// a slow enough box. Same family of hazard as the unregister-never-dispose rule in
+    /// <see cref="TakeFrom"/>, and the same answer: do it where no lock is held.
+    /// </remarks>
+    private static void Finish(TxItem item)
+    {
+        item.HeldTooLong?.Dispose();
+        item.HeldTooLong = null;
     }
 
     /// <summary>
@@ -1226,6 +1335,7 @@ public sealed class SoundModemChannel
 
         foreach (TxItem item in queued)
         {
+            Finish(item);
             item.Done.TrySetException(reason);
             item.Rejected?.Invoke(reason);
         }
@@ -1276,6 +1386,17 @@ public sealed class SoundModemChannel
                     // the length of every hold. The channel-access roll below still uses the
                     // operator's slot time, because there it IS the channel-access parameter.
                     await Delay(RemainingHold(), cancellation).ConfigureAwait(false);
+                    continue;
+                }
+
+                // Another service is running the channel - an ARDOP ARQ session, whose timing an
+                // AX.25 frame landing mid-turnaround would break. Everything that shares the
+                // channel waits here, IN THE QUEUE the host put it in, rather than each frame
+                // waiting on a poll of its own before it is queued. See InhibitHolds.
+                if (InhibitHolds(source))
+                {
+                    source = null;
+                    await Delay(InhibitPollInterval, cancellation).ConfigureAwait(false);
                 }
             }
 
@@ -1385,6 +1506,7 @@ public sealed class SoundModemChannel
                     while (TakeFrom(source) is { } item)
                     {
                         inFlight = item;
+                        Finish(item);
                         // Subsequent frames in one keyup need only a token preamble.
                         int txDelay = keyupSource is null ? Csma.TxDelayMilliseconds : 30;
                         // How long the channel held this frame, measured here: the wait ends when
