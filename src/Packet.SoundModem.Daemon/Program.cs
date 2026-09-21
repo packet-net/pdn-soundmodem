@@ -677,7 +677,7 @@ else if (carrierSenseFromAudio)
     Console.WriteLine(
         "carrier sense: no radio to ask, so from the shape of the received audio. That suits an "
         + "open-squelch FM receiver and nothing else; on any other path it reports no opinion and "
-        + "the modems' own energy detectors decide, as before.");
+        + "the energy detectors decide, each frame waiting on the modems that share its passband.");
 }
 
 var channel = new SoundModemChannel(
