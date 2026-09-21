@@ -134,6 +134,55 @@ public class FmShapeBusyDetectorTests
     }
 
     /// <summary>
+    /// A caller with a better instrument for additive paths can ask this one to stand down on
+    /// them sooner, and it must actually do so.
+    /// </summary>
+    /// <remarks>
+    /// <b>Why anyone would want that.</b> <c>C4fskModem</c> gates its bit path on this ored with
+    /// its own energy detector, and where BOTH are right the energy one has to win: the gate's
+    /// rising edge is also what arms a 32-symbol envelope acquisition, and this detector sees a
+    /// band-limited signal about 26 ms before an energy detector sees the level clear its
+    /// threshold, so an early open spends the whole acquisition on the noise in front of the
+    /// burst. Measured on the sim ladder at 20 dB that cost 3 of 40 seeds their sync word. On FM
+    /// the level falls rather than rises, so standing down on a rise costs nothing there.
+    /// </remarks>
+    [Theory]
+    [InlineData(3.0, 6.0, false)]
+    [InlineData(3.0, 1.0, true)]
+    [InlineData(12.0, 6.0, true)]
+    public void It_Stands_Down_On_A_Rise_The_Caller_Says_Is_Too_Big(
+        double standDownAboveDb, double riseDb, bool expectAnOpinion)
+    {
+        float[] quiet = OpenSquelchFmReceiver.Idle(6.0, seed: 707);
+        float[] louder = OpenSquelchFmReceiver.Keyed(2.0, seed: 708);
+        float gain = (float)Math.Pow(10, riseDb / 20.0);
+
+        // The keyed spectrum, lifted to sit riseDb ABOVE the idle channel rather than below it,
+        // which is what an additive path does.
+        double lift = OpenSquelchFmReceiver.IdleInBandDbfs - OpenSquelchFmReceiver.KeyedInBandDbfs;
+        gain *= (float)Math.Pow(10, lift / 20.0);
+        for (int i = 0; i < louder.Length; i++)
+        {
+            louder[i] *= gain;
+        }
+
+        var audio = new float[quiet.Length + louder.Length];
+        quiet.CopyTo(audio, 0);
+        louder.CopyTo(audio, quiet.Length);
+
+        var detector = new FmShapeBusyDetector(Rate, loudInputAboveReferenceDb: standDownAboveDb);
+        Feed(detector, audio, Rate);
+
+        (detector.Busy is not null).Should().Be(
+            expectAnOpinion,
+            "a {0:0} dB rise against a detector told to stand down above {1:0} dB",
+            riseDb,
+            standDownAboveDb);
+    }
+
+    /// <summary>
+    /// The known limitation, pinned so nobody switches it on where it does not work.
+    /// </summary>    /// <summary>
     /// The known limitation, pinned so nobody switches it on where it does not work.
     /// </summary>
     /// <remarks>

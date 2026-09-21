@@ -85,8 +85,13 @@ public sealed class FmShapeBusyDetector : IChannelBusySource
     /// Audio this far ABOVE the station's own idle level is an additive path, not a quieting one.
     /// </summary>
     /// <remarks>
-    /// An SSB receiver or a wired loop gains 40 dB when a signal arrives. Open-squelch FM does the
-    /// opposite, and the most a real idle channel rose over 620 s is 1.2 dB.
+    /// <para>An SSB receiver or a wired loop gains 40 dB when a signal arrives. Open-squelch FM
+    /// does the opposite, and the most a real idle channel rose over 620 s is 1.2 dB.</para>
+    /// <para><b>12 dB is generous, deliberately, for a station</b>, whose alternative when this
+    /// declines is an energy detector that is anti-correlated on the path it is most likely to be
+    /// on. A caller with a good instrument for additive paths and a preference for using it there
+    /// - a demodulator whose own energy gate is correct on a wired loop - wants a much tighter
+    /// figure, so that this only answers where the other cannot.</para>
     /// </remarks>
     public const double LoudInputAboveReferenceDb = 12.0;
 
@@ -134,6 +139,7 @@ public sealed class FmShapeBusyDetector : IChannelBusySource
     private readonly int _lowFrom;
     private readonly int _lowTo;
     private readonly int _highTo;
+    private readonly double _loudAboveDb;
     private readonly int _holdBlocks;
     private readonly int _warmUpBlocks;
     private readonly int _maxBusyBlocks;
@@ -164,11 +170,16 @@ public sealed class FmShapeBusyDetector : IChannelBusySource
     /// <see cref="WarmUpSeconds"/>. Shorter trades a reference seeded from less evidence for
     /// hearing a burst sooner after start-up, which is the right trade for a demodulator and the
     /// wrong one for a transmitter's carrier sense.</param>
+    /// <param name="loudInputAboveReferenceDb">How far the level may rise above the station's own
+    /// idle before this declines. Null takes <see cref="LoudInputAboveReferenceDb"/>. A caller
+    /// that has a better instrument for additive paths and only wants an answer where that
+    /// instrument fails should pass a tighter figure; see the remarks on that constant.</param>
     public FmShapeBusyDetector(
         int sampleRate,
         int holdMilliseconds = 100,
         double? splitHz = null,
-        double? warmUpSeconds = null)
+        double? warmUpSeconds = null,
+        double? loudInputAboveReferenceDb = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(sampleRate, 0);
 
@@ -205,6 +216,7 @@ public sealed class FmShapeBusyDetector : IChannelBusySource
         _warmUpBlocks = Math.Max(1, (int)Math.Round((warmUpSeconds ?? WarmUpSeconds) / blockSeconds));
         _maxBusyBlocks = Math.Max(1, (int)Math.Round(MaxBusySeconds / blockSeconds));
         _referenceStepDb = ReferenceStepDbPerSecond * blockSeconds;
+        _loudAboveDb = loudInputAboveReferenceDb ?? LoudInputAboveReferenceDb;
     }
 
     /// <inheritdoc/>
@@ -327,7 +339,7 @@ public sealed class FmShapeBusyDetector : IChannelBusySource
         // card, a closed squelch, our own receive audio gated while we transmit, and an additive
         // path all sit outside it, and on none of them does a shape test mean anything.
         if (LevelDb < _levelReferenceDb - DeadInputBelowReferenceDb
-            || LevelDb > _levelReferenceDb + LoudInputAboveReferenceDb)
+            || LevelDb > _levelReferenceDb + _loudAboveDb)
         {
             Decline();
             _busyBlocks = 0;
