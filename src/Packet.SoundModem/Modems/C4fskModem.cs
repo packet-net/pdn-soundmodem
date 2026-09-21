@@ -689,10 +689,24 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
 
     /// <summary>
     /// What a mode transmitting at 100 % of its channel's deviation puts out, as a fraction of
-    /// full scale. Short of 1.0 so the pulse shaper's overshoot has somewhere to go; 0.8 is what
-    /// both modes used before this was made per-mode, and is known not to clip.
+    /// full scale. Short of 1.0 so the pulse shaper's overshoot has somewhere to go.
+    /// <para><b>0.8 did not cover it, and had not since this modem was written.</b> The shaper
+    /// overshoots the symbol amplitude by up to 32 %, so 0.8 emits a peak of 1.056: measured on
+    /// a 200-byte frame behind 250 ms of TXDELAY, c4fsk9600 put 1265 of 21608 samples past full
+    /// scale (5.9 %) and c4fsk19200 26 of 16828 (0.2 %). That matters more here than anywhere
+    /// else in the tree, for two reasons that compound. Clipping compresses the outer levels
+    /// into the inner ones and no envelope tracker downstream can undo it, which is why this
+    /// mode declares <see cref="FrameLevelLimits.ClipSensitive"/>. And it is invisible to the
+    /// operator: <c>Pcm16.FromFloat</c> clamps at full scale BEFORE the ALSA mixer attenuates,
+    /// so the clipping is identical at every mixer setting and winding the transmit level down
+    /// changes nothing about it. On the bench that showed up as a transmit-level sweep from 0 to
+    /// -12 dB delivering zero frames at every step.</para>
+    /// <para>0.75 covers the measured overshoot with about 1 % to spare: the worst peak over
+    /// five frame sizes, five TXDELAYs and three payloads is 0.9902 at c4fsk9600 and 0.9672 at
+    /// c4fsk19200 (<c>C4fskTransmitLevelTests</c>). It costs 0.56 dB of transmit level, which
+    /// the station's own audio gain sets anyway.</para>
     /// </summary>
-    private const double HeadroomFraction = 0.8;
+    private const double HeadroomFraction = 0.75;
 
     /// <inheritdoc />
     public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds)
