@@ -66,11 +66,11 @@ public class TransmitWaitsTests
     }
 
     /// <summary>A UI frame: nothing expects an answer, so no turnaround hold confuses the sums.</summary>
-    private static byte[] Broadcast()
+    private static byte[] Broadcast(byte marker = 0x41)
     {
         byte[] frame = Convert.FromHexString("8E846E9EB08CE48E846EA4888E6551");
         frame[14] = 0x03;
-        return [.. frame, (byte)0xF0, (byte)0x41];
+        return [.. frame, (byte)0xF0, marker];
     }
 
     /// <summary>An RR poll: an answer is owed, so the turnaround hold runs after it.</summary>
@@ -148,8 +148,8 @@ public class TransmitWaitsTests
         radio.Busy = true;
         DateTimeOffset queued = time.GetUtcNow();
         Task a = channel.EnqueueTransmit(Bpsk2150, Broadcast());
-        Task b = channel.EnqueueTransmit(Bpsk2150, Broadcast());
-        Task c = channel.EnqueueTransmit(Bpsk2150, Broadcast());
+        Task b = channel.EnqueueTransmit(Bpsk2150, Broadcast(0x42));
+        Task c = channel.EnqueueTransmit(Bpsk2150, Broadcast(0x43));
         Task transmitter = await StartAsync(channel, time, cancellation.Token);
 
         await VirtualAir.AdvanceToAsync(time, queued + TimeSpan.FromMilliseconds(800));
