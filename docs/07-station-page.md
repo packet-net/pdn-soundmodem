@@ -91,7 +91,7 @@ The second line is the sub-channel and mode, then whichever of these the frame c
 | `TOO LOUD` | The card ran out of codes during this frame, or came close enough that a slightly louder station would clip. Turn the capture gain down. |
 | `TOO QUIET` | The frame peaked below the level this mode starts losing link margin at. Advice rather than a fault. |
 | `SHIFTED` | One of yours, transmitted off the channel centre to land where the station you are answering is listening. |
-| `HELD 3m48s` | One of yours that waited for the channel before it went out, for long enough to matter. Usually carrier sense; also the turnaround hold, a transmit inhibit, or this station's own earlier frames. Shown past 0.3 s; the frame log keeps the figure for every transmission either way. |
+| `HELD 8.3s busy ch2` | One of yours that waited for the channel before it went out, for long enough to matter, and what took most of the wait: `busy chN` (carrier sense on that sub-channel), `busy` (your radio said so), `our tx` (your own earlier transmissions), `other link`, `backoff`, `turnaround` or `inhibit`. No word where no single cause took half of it. Shown past 0.3 s; the frame log keeps the figure, the split and the cause for every transmission either way. |
 
 Which modes show the dBFS figure and the two level badges is in [04-levels.md](04-levels.md#read-the-frame-badges). Every mode's measurement still reaches the frame log and the monitor.
 
@@ -105,7 +105,7 @@ UI frames adds cards for unconnected traffic, which is beacons, idents and every
 
 Press `transcript` on a card to save its feed as a markdown file, oldest line first, with the classic monitor decode beside each line. The file is named for the two stations, the modem and the time.
 
-A line of your own carries a `HELD` tag when that frame waited for the channel before it went out. It is worth looking for on a card full of `POLL` and `AGAIN`: the node that queued those frames cannot see the wait, because a KISS write returns as soon as the socket takes it, so it keeps its retry timers running and queues another poll. When the channel finally opens they all go out in one keyup, and the station is deaf for the length of it - so the earlier polls in the run could not have been answered whatever the far end did. A run of `HELD` tags on repeated polls is a channel-access problem at this end, not a link failing at the other.
+A line of your own carries a `HELD` tag when that frame waited for the channel before it went out, with the same word for what took most of the wait. `HELD 8.3s busy ch2` is somebody else using the frequency; `HELD 8.3s our tx` is the same delay caused by your own window going out in front of the frame, which is your station working normally. It is worth looking for on a card full of `POLL` and `AGAIN`: the node that queued those frames cannot see the wait, because a KISS write returns as soon as the socket takes it, so it keeps its retry timers running and queues another poll. When the channel finally opens they all go out in one keyup, and the station is deaf for the length of it - so the earlier polls in the run could not have been answered whatever the far end did. A run of `HELD` tags on repeated polls is a channel-access problem at this end, not a link failing at the other.
 
 ## A public page
 

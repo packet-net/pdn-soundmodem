@@ -50,8 +50,25 @@ One row goes into the `frames` table per frame heard and per frame sent.
 | `tx_trim_hz` | On a `tx` row, how far the burst was shifted to suit the station it was addressed to |
 | `quality`, `ardop_sn_db` | ARDOP's own 0 to 100 constellation quality and its 3 kHz-referenced SNR, null on every other mode |
 | `held_ms` | On a `tx` row, how long the frame waited between being handed to the channel and reaching the air, in milliseconds |
+| `held_cause` | Which one thing took at least half of that wait: `busy`, `ourtx`, `slot`, `turnaround`, `inhibit`, `queue`, or `mixed` where none did |
+| `held_busy_ms`, `held_ourtx_ms`, `held_slot_ms`, `held_turnaround_ms`, `held_inhibit_ms`, `held_queue_ms` | The same wait split by cause, in milliseconds: carrier sense, this station's own transmissions, the p-persistence roll, the turnaround hold, a transmit inhibit, and waiting behind another of this station's links |
+| `held_busy_ch`, `held_busy_by` | Which sub-channel asserted carrier sense for most of the wait, and all of the ones that did: `2`, `0,2`, `radio` where the station's control cable answered for the whole station, or `radio,0` where both did |
 
-`held_ms` is written for every transmission this station makes, including the ones that went out immediately, so that "how much of my traffic waits, and for how long" is a query rather than a guess. It is null on a received frame, where the wait belonged to the other station's channel access, and null on a transmission relayed from somewhere else. It covers the whole wait: carrier sense, the p-persistence roll, the turnaround hold, any transmit inhibit, and time spent behind this station's own earlier frames in the same keyup. From a host's side those are one wait and it cannot tell them apart, which is why the journal line says "waiting for the channel" rather than naming a cause. The figure is worth having because the host cannot measure it at all: a KISS write returns as soon as the socket takes the frame, so a node whose UA sat behind a busy channel for four minutes sees exactly what one that sent it instantly sees, and runs its retry timers accordingly.
+`held_ms` is written for every transmission this station makes, including the ones that went out immediately, so that "how much of my traffic waits, and for how long" is a query rather than a guess. It is null on a received frame, where the wait belonged to the other station's channel access, and null on a transmission relayed from somewhere else. It covers the whole wait: carrier sense, the p-persistence roll, the turnaround hold, any transmit inhibit, and time spent behind this station's own earlier frames in the same keyup. The figure is worth having because the host cannot measure it at all: a KISS write returns as soon as the socket takes the frame, so a node whose UA sat behind a busy channel for four minutes sees exactly what one that sent it instantly sees, and runs its retry timers accordingly.
+
+**The `held_*` columns say where that wait went, and they add up to `held_ms`.** The total on its own cannot tell you the one thing you need from it. A frame held 8 s because somebody else was using the frequency and a frame held 8 s because it was the third frame of a MAXFRAME=3 window, queued behind two of your own bursts, are the same number and opposite situations: the first is a frequency you cannot work on, the second is your station working normally. So the channel writes down which it was, and the journal line names it: `held 8.3s (8.1s channel busy on ch0)` against `held 8.3s (6.8s behind our own transmissions)`.
+
+A frame queued behind another of yours inherits whatever was holding the one in front of it, so a window of three that waited out a minute of carrier sense reports a minute of carrier sense on all three rather than blaming your own queue for two of them: the channel was occupied and none of them was going anywhere. What is filed as your own traffic is the time the transmitter actually spent keyed up, which is `held_ourtx_ms`.
+
+Where your station's airtime goes is then one query:
+
+```sql
+SELECT held_cause, COUNT(*), SUM(held_ms) / 1000 AS seconds_waiting
+FROM frames WHERE direction = 'tx'
+GROUP BY held_cause ORDER BY seconds_waiting DESC;
+```
+
+and which sub-channel is holding you up is the same query over `held_busy_ch`. All of these are null on a received frame, on a relayed transmission, and on rows written by a build from before they existed.
 
 A `tx` row leaves the receive measurements null, because nothing measured your own transmission, and old rows carry null in columns that did not exist when they were written. Everything that keys the radio is a row: a KISS frame, an ARDOP burst, a transmitter test, a Morse ident and a POCSAG page. The last three have no callsigns, so `source` and `destination` are null, `payload` holds a sentence saying what went out, and `mode` reads `tx-test`, `cw-ident` or `pocsag` and the paging baud.
 

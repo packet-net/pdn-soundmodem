@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Audio;
+using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
 using Packet.SoundModem.Modems;
 
@@ -320,6 +321,74 @@ public class FrameLogTests : IDisposable
         log.RecentWithPayload(10)[0].Frame.Clipped.Should().BeFalse();
         log.RecentWithPayload(10)[0].Frame.Level.Should().Be(FrameLevel.Ok);
         log.RecentWithPayload(10)[0].Frame.PeakWorthShowing.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Where a transmission's wait went is a column per cause, so "where does this station's
+    /// airtime go" is one query over thousands of rows.
+    /// </summary>
+    /// <remarks>
+    /// The total alone cannot answer it. A frame held 8 s because the frequency was occupied and
+    /// one held 8 s because it was the third of a window are the same figure and opposite
+    /// diagnoses, and a station cannot be tuned on a number that means either. Read here with SQL
+    /// rather than through <see cref="Packet.SoundModem.Waterfall.LoggedFrame"/>, because being
+    /// queryable is the whole point of the columns.
+    /// </remarks>
+    [Fact]
+    public async Task A_Transmission_Records_Where_Its_Wait_Went()
+    {
+        await using (FrameLog log = FrameLog.Open(DbPath, _time))
+        {
+            log.RecordTransmitted(
+                0, Frame(from: "GB7RDG", to: "EI0RSI"), "bpsk300-il2pc", 2150, 7_051_600,
+                txTrimHz: null, heldMs: 8281,
+                waits: new TransmitWaits
+                {
+                    Total = TimeSpan.FromMilliseconds(8281),
+                    ChannelBusy = TimeSpan.FromMilliseconds(1476),
+                    OurTransmission = TimeSpan.FromMilliseconds(6805),
+                    BusySubChannels = 1 << 2,
+                    BusiestSubChannel = 2,
+                });
+            log.RecordTransmitted(
+                0, Frame(from: "GB7RDG", to: "EI0RSI"), "bpsk300-il2pc", 2150, 7_051_600,
+                txTrimHz: null, heldMs: 8100,
+                waits: new TransmitWaits
+                {
+                    Total = TimeSpan.FromMilliseconds(8100),
+                    ChannelBusy = TimeSpan.FromMilliseconds(8000),
+                    BusySubChannels = TransmitWaits.RadioBit,
+                });
+
+            for (int i = 0; i < 100 && log.Recent(10).Count < 2; i++)
+            {
+                await Task.Delay(20);
+            }
+        }
+
+        using var reader = new SqliteConnection($"Data Source={DbPath}");
+        reader.Open();
+        using SqliteCommand query = reader.CreateCommand();
+        query.CommandText =
+            "SELECT held_cause, held_busy_ms, held_ourtx_ms, held_busy_ch, held_busy_by "
+            + "FROM frames ORDER BY id";
+        using SqliteDataReader row = query.ExecuteReader();
+
+        row.Read().Should().BeTrue();
+        row.GetString(0).Should().Be("ourtx",
+            "two thirds of that wait was this station's own window going out in front of it, and "
+            + "a station is not congested by its own MAXFRAME");
+        row.GetInt64(1).Should().Be(1476);
+        row.GetInt64(2).Should().Be(6805);
+        row.GetInt32(3).Should().Be(2);
+        row.GetString(4).Should().Be("2");
+
+        row.Read().Should().BeTrue();
+        row.GetString(0).Should().Be("busy");
+        row.IsDBNull(3).Should().BeTrue(
+            "the radio answers for the whole station, and filing that under a sub-channel would "
+            + "invent a culprit");
+        row.GetString(4).Should().Be("radio");
     }
 
     /// <summary>

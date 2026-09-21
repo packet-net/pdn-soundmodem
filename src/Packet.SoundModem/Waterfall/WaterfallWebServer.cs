@@ -279,6 +279,24 @@ public sealed record LoggedFrame(
     long? HeldMs = null)
 {
     /// <summary>
+    /// Which cause accounted for most of <see cref="HeldMs"/>, as the frame log spells it
+    /// ("busy", "ourtx", "slot", "turnaround", "inhibit", "queue", "mixed"), or null on a row
+    /// logged before the column existed.
+    /// </summary>
+    /// <remarks>
+    /// Init properties rather than two more positional parameters. This record already ends in a
+    /// run of same-typed optionals, which is the shape that takes two arguments transposed without
+    /// complaining, and a caller who wants these can name them.
+    /// </remarks>
+    public string? HeldCause { get; init; }
+
+    /// <summary>
+    /// The sub-channel that asserted carrier sense for most of the wait, or null when the radio
+    /// answered for the whole station, when nothing asserted it, or on an older row.
+    /// </summary>
+    public int? HeldBusySubChannel { get; init; }
+
+    /// <summary>
     /// Whether the callsigns this row was logged with may be presented as a station
     /// (<see cref="Modems.DecodeStanding.CallsignWorthShowing"/>).
     /// </summary>
@@ -1589,6 +1607,45 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// </remarks>
     internal static readonly TimeSpan HeldWorthShowing = TimeSpan.FromMilliseconds(300);
 
+    /// <summary>
+    /// What held a transmission, in the two or three words a badge can carry, or null where no
+    /// single cause accounts for half the wait.
+    /// </summary>
+    /// <remarks>
+    /// <para>The row already says how long. What it could not say was which of two opposite things
+    /// the figure meant: a channel somebody else is occupying, or this station's own window going
+    /// out in front of the frame. Those are the same number and they are acted on differently, so
+    /// the badge carries the short form and the tooltip the sentence.</para>
+    /// <para>Composed here rather than on the page, and from the same words the frame log stores,
+    /// so a live row and a row replayed out of the log after a reload say the same thing.</para>
+    /// </remarks>
+    internal static string? HeldCause(TransmitWaits waits) => waits.Dominant switch
+    {
+        TransmitWaitCause.ChannelBusy => waits.BusiestSubChannel is int sub
+            ? $"busy ch{sub.ToString(CultureInfo.InvariantCulture)}"
+            : "busy",
+        TransmitWaitCause.OurTransmission => "our tx",
+        TransmitWaitCause.OurTurn => "other link",
+        TransmitWaitCause.Backoff => "backoff",
+        TransmitWaitCause.TurnaroundHold => "turnaround",
+        TransmitWaitCause.TransmitInhibit => "inhibit",
+        _ => null,
+    };
+
+    /// <summary>The same badge text from a logged row's two columns.</summary>
+    internal static string? HeldCause(string? cause, int? busySubChannel) => cause switch
+    {
+        "busy" => busySubChannel is int sub
+            ? $"busy ch{sub.ToString(CultureInfo.InvariantCulture)}"
+            : "busy",
+        "ourtx" => "our tx",
+        "queue" => "other link",
+        "slot" => "backoff",
+        "turnaround" => "turnaround",
+        "inhibit" => "inhibit",
+        _ => null,
+    };
+
     private void OnFrameTransmitted(int subChannel, byte[] frame, Channel.TransmitReport report)
     {
         if (_source is null)
@@ -1618,11 +1675,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // Only where it is worth a note. A frame that went straight out carries nothing,
             // so an ordinary row draws exactly as it did before this existed.
             heldMs: report.HeldFor >= HeldWorthShowing ? (long)report.HeldFor.TotalMilliseconds : null,
-            raw: frame);
+            raw: frame,
+            heldCause: report.HeldFor >= HeldWorthShowing ? HeldCause(report.Waits) : null);
 
         ObserveLink(
             subChannel, frame, transmitted: true,
-            heldMs: report.HeldFor >= HeldWorthShowing ? (long)report.HeldFor.TotalMilliseconds : null);
+            heldMs: report.HeldFor >= HeldWorthShowing ? (long)report.HeldFor.TotalMilliseconds : null,
+            heldCause: report.HeldFor >= HeldWorthShowing ? HeldCause(report.Waits) : null);
     }
 
     /// <summary>
@@ -1631,7 +1690,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// are not AX.25: the flat panel already lists those, and there is no link for them to be
     /// part of.
     /// </summary>
-    private void ObserveLink(int subChannel, byte[] frame, bool transmitted, long? heldMs = null)
+    private void ObserveLink(
+        int subChannel, byte[] frame, bool transmitted, long? heldMs = null, string? heldCause = null)
     {
         lock (_stateLock)
         {
@@ -1646,7 +1706,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             {
                 type = "link",
                 link = LinkJson(link, withRecent: false),
-                @event = LinkEventJson(evt, heldMs),
+                @event = LinkEventJson(evt, heldMs, heldCause),
             }, Json));
         }
     }
@@ -1737,7 +1797,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// One frame on a link, as one line of its card's feed. Or the observer giving up on a call
     /// nothing answered, which is a line with no frame behind it: <c>kind</c> is null then.
     /// </summary>
-    private static object LinkEventJson(Ax25LinkEvent evt, long? heldMs = null) => new
+    private static object LinkEventJson(
+        Ax25LinkEvent evt, long? heldMs = null, string? heldCause = null) => new
     {
         at = evt.At.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
         from = evt.From.ToString(),
@@ -1763,6 +1824,10 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         // sender thought they did. Absent on a replayed line - Ax25LinkEvent does not carry it,
         // so a card rebuilt from Recent shows the tag only on lines seen live.
         heldMs,
+        // And what most of that wait was, in two or three words. A card of unanswered polls that
+        // says "busy ch2" is a frequency somebody else is using; the same card saying "our tx" is
+        // this station talking over its own turnaround, and they are fixed differently.
+        heldCause,
     };
 
     private static string LinkStateName(Ax25LinkState state) => state switch
@@ -2003,7 +2068,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         double? peakDbFs = null, bool? clipped = null, Audio.FrameLevel? level = null,
         bool? peakWorthShowing = null, bool? snrWorthShowing = null,
         int? trailerNearBits = null, int? chasedBits = null, byte[]? raw = null,
-        int? quality = null, long? heldMs = null)
+        int? quality = null, long? heldMs = null, string? heldCause = null)
     {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -2039,6 +2104,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // and null on a transmission that went straight out, which is most of them on a
             // quiet channel. The page draws the note only where there is one.
             heldMs,
+            // Which cause took most of that wait, in the two or three words the badge shows.
+            // Null where no single cause took half of it, and the badge then says only how long.
+            heldCause,
             // Only on a frame whose addresses would not read: why, which IL2P encapsulation
             // carried it, and the bytes themselves.
             why = note,
@@ -3278,6 +3346,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 heldMs = f.HeldMs is { } held && held >= HeldWorthShowing.TotalMilliseconds
                     ? held
                     : (long?)null,
+                // And what held it, read back out of the log rather than worked out again, so a
+                // replayed transmission says what the live row said. Null on a row logged before
+                // the columns existed, which draws the note with no cause on it as it always did.
+                heldCause = f.HeldMs >= HeldWorthShowing.TotalMilliseconds
+                    ? HeldCause(f.HeldCause, f.HeldBusySubChannel)
+                    : null,
                 hist = true,
             }),
         }, Json);
