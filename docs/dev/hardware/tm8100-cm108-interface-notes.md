@@ -1,6 +1,6 @@
 # TM8100 to CM108: extended notes
 
-Status: reference as of 2026-09-17. Describes the levels, dividers and timing behind wiring a TM8100/TM8200 to a CM108-class sound card, with the bench measurements that confirmed them. The interface is hardware, not code; the wiring instructions a builder follows are the user page at [docs/hardware/tait-tm8100-cm108.md](../../hardware/tait-tm8100-cm108.md), and `InputLevelMeter.cs` and `FrameLevelLimits.cs` cite this file for the -12 dBFS design target.
+Status: reference as of 2026-09-21. Describes the levels, dividers and timing behind wiring a TM8100/TM8200 to a CM108-class sound card, with the bench measurements that confirmed them. The transmit tap changed on 2026-09-18: **T12, not T13**, is now what to build, because T12's level follows the channel spacing and T13's does not. See [Which tap points](#which-tap-points) and [If you work more than one channel spacing](#if-you-work-more-than-one-channel-spacing). The interface is hardware, not code; the wiring instructions a builder follows are the user page at [docs/hardware/tait-tm8100-cm108.md](../../hardware/tait-tm8100-cm108.md), and `InputLevelMeter.cs` and `FrameLevelLimits.cs` cite this file for the -12 dBFS design target.
 
 The reasoning, provenance and arithmetic behind the audio interface between a TM8100/TM8200 mobile
 and a CM108-class USB sound card, for headless packet operation with `pdn-soundmodem`. The build
@@ -25,6 +25,17 @@ than discovery, and everything Tait now says about PTT, carrier detect and turna
 been folded in. The note has since split: the wiring instructions for the board actually deployed,
 with values recomputed against that board's KiCad schematic, are in
 [tait-tm8100-cm108.md](../../hardware/tait-tm8100-cm108.md), and this document keeps the reasoning.
+
+**What changed again, on 2026-09-18, and it is the tap rather than the arithmetic.** The transmit
+divider here was sized so that a full-scale sample lands on 2.5 kHz, which is 100% of class on a
+**12.5 kHz** channel. This note said so and then never drew the consequence: **T13's level does not
+follow the channel spacing**, so the same assembly on a 25 kHz channel delivers 49% of class and no
+mixer setting recovers it. Two of these are in service on 25 kHz radios, which is how it was found.
+Measured on air the same day, a variant B assembly on a TM8110 gave **1.800 kHz peak deviation**
+against a forward prediction of **1.80 kHz** from this note's own figures, so the CM108 really is
+1.00 Vrms, the divider model is right and T13's 0.29 Vp-p/kHz is right. Nothing here was wrong
+except which channel spacing it was applied to. The build page now defaults to **T12**, whose level
+the radio scales to match the spacing, and keeps T13 as the documented existing build.
 
 ## Provenance
 
@@ -53,12 +64,19 @@ radio body.
 
 ## Which tap points
 
-**R1 on receive and T13 on transmit.** That is the deployment, the rest of this note assumes it, and
-it is also what Tait themselves specify for an external modem on this connector (`MMA-00011-01`
-Table 5.1, p.111, reproduced under [Programming](#programming) below). Agreeing with the
-manufacturer was not the plan; the note reached R1 and T13 from the block diagram before the 3DK
+**R1 on receive, and T12 on transmit unless the radio is narrowband-only.** T13 was the original
+answer and is still what the first two assemblies use; everything below about the transmit chain is
+written for T13 and holds unchanged at T12, because the two taps differ in exactly one block. The
+whole of that difference is in [If you work more than one channel
+spacing](#if-you-work-more-than-one-channel-spacing), and it is the reason the recommendation moved.
+
+R1 and T13 are also what Tait themselves specify for an external modem on this connector
+(`MMA-00011-01` Table 5.1, p.111, reproduced under [Programming](#programming) below). Agreeing with
+the manufacturer was not the plan; the note reached R1 and T13 from the block diagram before the 3DK
 manual was in the set, and finding Tait had written the same answer down is a good sign about the
-reasoning rather than a reason to stop reading it.
+reasoning rather than a reason to stop reading it. Tait qualify their own recommendation on the next
+page, though, and that qualification is the correction of 2026-09-18: T13 is their answer for one
+fixed channel spacing, and they name T12 for anything else (p.112).
 
 The full chain, from `MMA-00011-01` Figure 3.14, p.93:
 
@@ -75,9 +93,13 @@ The full chain, from `MMA-00011-01` Figure 3.14, p.93:
 scaling, no 0.3 to 3 kHz bandpass and no de-emphasis. It is limited only by the IF filter, 7.8 kHz
 total 3 dB on a 12.5 kHz channel (`MMA-00005-05` p.73, Table 3.1), so roughly 3.9 kHz of audio.
 
-**Transmit: T13, the last tap before the modulator.** Everything the transmit chain does to audio is
-upstream of it: the 300 Hz high pass, pre-emphasis, the limiter, the 3 kHz low pass and the
-peak-system-deviation scaler. **An injected signal there meets none of them.**
+**Transmit: T12 or T13, the last two taps before the modulator.** Everything the transmit chain does
+to audio is upstream of both: the 300 Hz high pass, pre-emphasis, the limiter and the 3 kHz low
+pass. **An injected signal at either meets none of them.** The one block that sits between them is
+the peak-system-deviation scaler, which is downstream of T12 and upstream of T13, and that single
+difference decides whether the assembly is correct on one channel spacing or on all of them. It
+scales, it does not limit, so it takes nothing away from the paragraphs below about there being no
+ceiling in the radio.
 
 A documentation note, because it will confuse anyone who goes looking. **The two Tait numbering
 schemes are different**, and only one of them is the radio's. `MMA-00005-05` p.124 lists the CCTM
@@ -104,7 +126,12 @@ absolute delay from each tap to the antenna: **T13 and T12 are 1.8 ms, T9 is 6.6
 T5 is 11.6 ms, T4 and T3 are 11.7 ms.** Nearly ten milliseconds of filtering and limiting sits
 between T5 and the modulator, and none of it is between T13 and the modulator.
 
-### What T13 means for the modem, and it is not only wiring
+### What T12 or T13 means for the modem, and it is not only wiring
+
+Everything in this section was written for T13 and **all of it holds at T12 unchanged**, with one
+exception stated at the end: the taps share a group delay, a PTT-to-valid-modulation time and a
+position past every filter and the limiter, so the flatness, the absence of protection and the
+peak-to-average argument are properties of both.
 
 **The transmit path is flat.** No 300 Hz high pass, so a waveform with carriers down there is not
 sitting on a filter corner. No pre-emphasis, so no tilt to undo. No 3 kHz low pass, so the audio
@@ -135,6 +162,14 @@ removing one unusually peaky symbol was worth about 3 dB of sensitivity measured
 nothing measurable at all when re-measured with a limiter in circuit. Both are honest answers; T13
 is the first question. `M0LTE.FmChannel`'s default drive mode models this, and its
 `LimitAtDeviationHz` models the other, for anyone who ends up at T5 or on the microphone.
+
+**The one thing that is not the same at T12: the radio scales your drive with the channel spacing.**
+At T13 a given voltage is a given number of kilohertz, whatever the channel is set to. At T12 the
+same voltage is a given **percentage of class**, because the deviation scaler is still downstream.
+Neither is a ceiling and neither protects anything; the difference is only what a fixed divider
+means when the channel spacing changes under it. For a modem that is the useful direction, since the
+thing worth holding constant across channels is the fraction of the legal limit, not the absolute
+deviation.
 
 ## The radio side
 
@@ -237,7 +272,18 @@ All **TAIT**, from `MMA-00011-01` Table 2.6 (p.21), Table 2.7 (p.22) and p.91-92
 
 **DERIVED, and it is the number the transmit divider hangs on.** 0.87 Vp-p for 3 kHz is
 **0.29 Vp-p per kHz**, so 100% of narrowband class deviation, 2.5 kHz, wants **0.725 Vp-p** at the
-pin, and the 2.0 Vp-p full scale corresponds to 6.9 kHz.
+pin, and the 2.0 Vp-p full scale corresponds to 6.9 kHz. That is T13, and every one of those figures
+is in kilohertz, which is the whole problem with it: they are the same voltages whatever the channel
+spacing is set to, so they are 100% of class on 12.5 kHz and half of it on 25 kHz.
+
+**DERIVED, the same arithmetic at T12, and it comes out in percent rather than kilohertz.** Tait
+give T12 as 0.69 Vp-p at **60% of rated system deviation**, so 100% of class wants
+**1.15 Vp-p** at the pin **on either spacing**, and the 2.0 Vp-p full scale is 174% of class on
+either. Expressed per kilohertz to compare with T13, that is **0.46 Vp-p per kHz on a 12.5 kHz
+channel and 0.23 on a 25 kHz one** - the figure moves with the channel and the percentage does not,
+which is exactly the property being bought. **TAIT** for the 0.69, **DERIVED** for the rest. Note
+that T12 wants 1.6 times the voltage T13 does on a narrowband channel, so the divider is a different
+one and not a tweak of the same one.
 
 **Preserve the bias.** Tait are explicit (p.92): "to avoid asymmetrical clipping and reduced dynamic
 range, it is important that the input bias voltage is preserved when driving the input. This can be
@@ -265,11 +311,50 @@ automatically scaled to match the channel spacing, i.e. 3kHz deviation on a 25kH
 (`MMA-00011-01` p.112).
 
 T12 and R2 sit on the far side of the deviation scaler and normaliser from T13 and R1 and are
-otherwise identical, same 1.8 ms group delay, same absence of filtering. **So the choice is: R1/T13
-for one fixed spacing and a level you set yourself, or R2/T12 for a level that follows the channel
-at the cost of the radio deciding your drive.** For a fixed 12.5 kHz packet channel, R1 and T13 are
-right. For a radio that roams between 12.5 and 25 kHz channels, R2 and T12 will save you a divider
-per bandwidth.
+otherwise identical, same 1.8 ms group delay, same absence of filtering. Verified against the
+manual rather than assumed: T12 and T13 share the 1.8 ms group delay, the 14.8 +/- 0.5 ms from
+EPTT to valid modulation, the modulation delay and a single group-delay-distortion plot
+(`MMA-00011-01` Table 2.7 p.22 and Table 5.2 p.113). Injecting at T12 bypasses the 3 kHz low pass,
+the limiter and pre-emphasis exactly as T13 does.
+
+**This stopped being hypothetical on 2026-09-18.** The earlier version of this section framed it as
+a choice for a radio that roams, and the build page was written for a fixed 12.5 kHz channel, which
+is a reasonable pair of statements that together produced two assemblies in service on 25 kHz radios
+at **49% of class**. Nothing warns you: the transmitter is legal, the modem works, and the link is
+simply 6 dB worse than it should be in a way that reads as a propagation or antenna problem. Post
+detection signal to noise goes as deviation squared, so half the deviation is not a detail.
+
+**So the recommendation is now T12, and the reason is that it cannot be got wrong this way.** A T12
+assembly sits just under 100% of class on 12.5 and on 25 kHz alike, one build, nothing to remember
+when the codeplug changes. A T13 assembly is correct on exactly one spacing and silently half-right on the other. That
+is Tait's own advice for exactly this reason, quoted above. T13 remains documented because two
+assemblies exist and because it is what this page used to say; the build page carries both as
+variant A and variant B with their resistor values.
+
+**The receive side has the same asymmetry and it is cheaper to live with.** R1's level is in
+kilohertz too, so the receive figures here are 6 dB hot on a 25 kHz channel for the same reason. The
+difference is that the receive divider is followed by a capture gain control, so the 6 dB comes back
+in the mixer rather than in a resistor - the receive table below already has a column per spacing,
+and the build page holds Rs and adjusts the gain instead. R2 would remove even that, and is the strictly consistent
+choice; it has not been taken, because a per-spacing mixer setting is a config field and a
+per-spacing receive divider is a soldering iron. **Do not take the 6 dB back blindly, though**: with
+the squelch open and no carrier, the receiver's own noise is the loudest thing the card ever sees,
+and measured on a 25 kHz channel with this assembly it peaks at **-6.3 dBFS** with the capture gain
+at 0.00 dB. Check band noise against the ceiling before trusting any row here, because a card
+clipping on band noise is clipping the whole time it is listening.
+
+**Retrofitting a T13 assembly to T12.** The divider ratio is what has to change, and the codeplug
+Tap In field with it. Rb cannot be raised by paralleling, so an exact variant A pair needs Rb
+replaced, which on this build means unpicking the DE-9 solder cups under heatshrink. The ratio can
+instead be reached by paralleling **Rt** alone and leaving Rb at 1k: the build page tabulates the
+options, and 2k7 across the fitted 3k3 reaches 98% of class with one resistor per tail. The
+Thevenin impedance falls as you do it, which is the safe direction for the connector's 10 nF.
+
+**Flagged unverified, deliberately.** T12's volts per kilohertz is Tait's specification and has not
+been confirmed on a bench here; only T13's has, and that one now agrees with an on-air measurement
+to better than 0.1 dB. `tait-codeplug`'s tap-in encoding for node 12 follows the documented
+`0x20 | (node << 1)` scheme but has only ever been pinned against a CPS save of T13. **Measure the
+null after changing the tap**, which settles both at once.
 
 ## If the board is yours
 
@@ -334,6 +419,11 @@ All **CM108**, and all worth confirming on your actual dongle, which is the one 
   the mixer setting.
 - Mono microphone input, biased through roughly 2.2 kohm, with a software-selectable +20 dB boost
   and a capture gain control. **Turn the boost off.**
+- **The capture gain control has no attenuation, whatever it advertises.** `Mic` reports a -12.00 to
+  +23.00 dB range and measured on this board type **nothing below 0.00 dB does anything at all**:
+  -12, -6 and 0 give identical levels. So 0 dB is the floor, a configured `captureGainDb` of -12
+  silently becomes 0, and the only way further down is a larger Rs. Worth confirming per dongle
+  model, since it is a property of the part rather than of Tait.
 - Four GPIO pins, 3.3 V CMOS, weak drive. The de-facto convention for PTT is GPIO3.
 
 **Use a line input if your board has one.** On the flat R1 tap the microphone path's low-frequency
@@ -466,6 +556,32 @@ comes from your dongle's output full scale**, the one quantity here nobody publi
 E24 values, each the nearest that lands **under** the ceiling rather than over it. **DERIVED.** The
 old 2k2/220R in this diagram was chosen for its impedance before any level figure existed, and at
 -20.8 dB it would have driven a 1 Vrms dongle to about 0.9 kHz, a third of what the channel allows.
+
+**The same divider for T12, which is the one to build.** The target is the only thing that changes:
+**1.15 Vp-p for 100% of class**, on any channel spacing, from Tait's 0.69 Vp-p at 60%. T12 wants
+1.6 times T13's narrowband voltage, so the divider is a different one rather than an adjustment of
+the same one, and **Rb goes to 1k5**, where the E24 grid falls more kindly on this target than it
+does at 1k:
+
+| CM108 output full scale **MEASURE** | Rt | Rb | Divider | At the pin | % of class, either spacing |
+|---|---|---|---|---|---|
+| 0.5 Vrms | 360R | 1k5 | -1.9 dB | 1.14 Vp-p | 99.2% |
+| 0.7 Vrms | 1k1 | 1k5 | -4.8 dB | 1.14 Vp-p | 99.3% |
+| **1.0 Vrms** | **2k2** | **1k5** | **-7.8 dB** | **1.15 Vp-p** | **99.7%** |
+| 1.4 Vrms | 3k9 | 1k5 | -11.1 dB | 1.10 Vp-p | 95.6% |
+| 2.0 Vrms | 6k2 | 1k5 | -14.2 dB | 1.10 Vp-p | 95.8% |
+
+**DERIVED**, same rule as the T13 table: the nearest E24 that lands under the ceiling rather than
+over it, which is why the bottom two rows give away a few percent. The 1.0 Vrms row is the assembly
+the build page calls variant A. Read the percentages against Tait's own +/-10% spread on the tap
+level, which is +/-0.9 dB and swamps the last percent of any of them; the build page quotes 98% for
+that row on a slightly more conservative full-scale figure, and a percent either way is well inside
+a number you are told to confirm with a null anyway.
+
+**Thevenin impedance is 2k2 || 1k5 = 892 ohm DERIVED** on the deployed row, a pole with the radio's
+10 nF at 17.8 kHz, so the same reasoning as the T13 divider holds and the audio band is clear. The
+higher-full-scale rows go a little over the 1 kohm guideline, to 1k2 at worst, which still leaves
+the pole above 13 kHz.
 
 **Then check it on the radio in front of you, because the spread is wider than the divider.** Tait's
 T13 level is 0.78 / 0.87 / 0.96 Vp-p, which is **+/-0.9 dB** of radio-to-radio spread on the one
@@ -764,10 +880,16 @@ plug layer and no software volume; `Speaker` 37/37 = 0.00 dB; `Mic` playback mut
 
 ### Sizing Rt and Rs from a measurement
 
-Given a measured full scale, with Rb = Rp = 1k:
+Given a measured full scale, with Rp = 1k, and Rb as noted:
 
-    Rt: pick the nearest E24 that keeps  FS_pp x 1000/(Rt+1000)  under 0.725 Vp-p
+    Rt at T12, Rb = 1k5:  nearest E24 keeping  FS_pp x 1500/(Rt+1500)  under 1.15  Vp-p
+    Rt at T13, Rb = 1k0:  nearest E24 keeping  FS_pp x 1000/(Rt+1000)  under 0.725 Vp-p
     Rs = 844.3/FS - 1600        (FS in volts)
+
+`FS_pp` is the measured full scale in volts peak to peak, which is the RMS figure times 2.828. The
+T12 ceiling is a percentage of class on any spacing; the T13 one is 2.5 kHz absolute, and therefore
+100% of class only on a 12.5 kHz channel. The Rs formula is the 12.5 kHz column; take 6 dB off the
+level, or use the 25 kHz column of the receive table, on a wide channel.
 
 The 1600 is Rp plus the tap's **600R source impedance, which is in series with Rs**. Omitting it
 inflates Rs by about 600R and quietly picks the wrong value. With it, the formula reproduces the
@@ -825,6 +947,29 @@ Each of these produced a confident wrong number rather than an obvious error:
   joint would, having touched nothing; it returned to normal by itself and has not recurred. Treat
   one session's absolute figure as provisional until a second agrees. The ladder's linearity is
   what tells you which readings to trust.
+
+### Measuring deviation in software, and three ways that number lies too
+
+`sm-ota fm-deviation` will give a deviation figure straight off an I/Q capture, which is quicker than
+a null and gives a number rather than a yes or no. It takes the instantaneous frequency sample by
+sample, and that is the source of all three traps.
+
+- **Analyse a narrow band.** Every hertz of analysis bandwidth kept beyond the signal adds noise to
+  the answer, and the noise does not average out because the measurement is not linear in amplitude.
+  Filter to a little more than the Carson bandwidth, about 4 kHz either side at these deviations.
+  Measured on one real capture, a 25 kHz window read the rms **4% high at full drive and 61% high at
+  16 dB down**, which reads convincingly as transmitter compression and is nothing of the kind. At
+  4 kHz the same ladder is linear to **0.21 dB over 16 dB**.
+- **Use the rms, not the peak.** The peak figure printed is a sample-by-sample maximum, so it is
+  badly noise-inflated: on that capture it printed **8.476 kHz where the true peak was 1.80 kHz**.
+  The rms alongside it is sound, and for a sine the peak is the rms times the square root of two.
+- **The capture must not clip.** Clipping corrupts the phase, which is the quantity being measured.
+  Short of that, deviation is completely indifferent to receive gain, AGC included, because it is a
+  frequency measurement and not an amplitude one - which is what makes it worth doing at all.
+
+A ladder is worth more than a single reading here, for the same reason as on the bench: the
+linearity tells you which readings to trust, and a ladder that stops following level says the radio
+is limiting and the tap is not programmed to T12 or T13.
 
 ### While you are there: two more useful sweeps
 
