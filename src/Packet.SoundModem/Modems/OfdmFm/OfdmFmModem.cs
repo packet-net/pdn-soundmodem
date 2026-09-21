@@ -1,3 +1,5 @@
+using Packet.SoundModem.CarrierSense;
+
 namespace Packet.SoundModem.Modems.OfdmFm;
 
 /// <summary>

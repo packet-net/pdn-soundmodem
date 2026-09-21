@@ -1,4 +1,4 @@
-namespace Packet.SoundModem.Modems.OfdmFm;
+namespace Packet.SoundModem.CarrierSense;
 
 /// <summary>
 /// Where a modem gets carrier sense from, and the seam a host uses to supply it.

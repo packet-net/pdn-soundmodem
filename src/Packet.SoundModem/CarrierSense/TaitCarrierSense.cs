@@ -1,6 +1,6 @@
 using Packet.Radio.Tait;
 
-namespace Packet.SoundModem.Modems.OfdmFm;
+namespace Packet.SoundModem.CarrierSense;
 
 /// <summary>
 /// The standalone path to radio carrier sense: opens the station's own Tait on its serial port and

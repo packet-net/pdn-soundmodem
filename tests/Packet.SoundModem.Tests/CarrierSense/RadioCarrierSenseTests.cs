@@ -1,5 +1,6 @@
 using Packet.SoundModem.Modems.OfdmFm;
-namespace Packet.SoundModem.Tests.Modems.OfdmFm;
+using Packet.SoundModem.CarrierSense;
+namespace Packet.SoundModem.Tests.CarrierSense;
 
 using Packet.Radio;
 

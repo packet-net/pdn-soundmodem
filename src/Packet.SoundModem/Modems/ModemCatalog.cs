@@ -1,3 +1,4 @@
+using Packet.SoundModem.CarrierSense;
 using Packet.SoundModem.Fx25;
 using Packet.SoundModem.Modems.OfdmFm;
 using Packet.SoundModem.Ms110d;

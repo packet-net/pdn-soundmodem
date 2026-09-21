@@ -1,5 +1,5 @@
-using Packet.SoundModem.Modems.OfdmFm;
-namespace Packet.SoundModem.Tests.Modems.OfdmFm;
+using Packet.SoundModem.CarrierSense;
+namespace Packet.SoundModem.Tests.CarrierSense;
 
 /// <summary>
 /// Carrier sense on an FM path, where a signal makes the receiver quieter rather than louder.
