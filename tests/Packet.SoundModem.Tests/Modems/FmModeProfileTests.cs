@@ -109,15 +109,69 @@ public class FmModeProfileTests
     }
 
     [Fact]
-    public void Every_Fm_Catalogue_Mode_Has_A_Profile()
+    public void Every_Fm_Catalogue_Mode_Either_Has_A_Deviation_Or_Says_Why_Not()
     {
         // The ladder takes its mode list from the catalogue now rather than from a hand-written
         // list, so a new FM mode joins by existing. This is what stops it joining silently without
-        // a deviation.
+        // a deviation: a mode may be FM and have no published figure, but only by being named as
+        // such on purpose.
         foreach (string mode in ModemCatalog.KnownModes.Where(FmModeProfiles.IsFmMode))
         {
-            FmModeProfiles.For(mode).Should().NotBeNull(
-                "{0} is an FM mode and must say what deviation it wants", mode);
+            if (FmModeProfiles.HasDeviationTarget(mode))
+            {
+                continue;
+            }
+
+            FmModeProfiles.FmModesWithoutDeviationTarget.Should().Contain(
+                name => mode.StartsWith(name, StringComparison.Ordinal),
+                "{0} is an FM mode with no deviation figure, which has to be a decision rather "
+                + "than an omission", mode);
+        }
+    }
+
+    [Fact]
+    public void Ofdm_Fm_Is_An_Fm_Mode_Even_Though_Nino_Publishes_No_Figure_For_It()
+    {
+        // The defect this splits apart. IsFmMode was "does the table have a row", the table is
+        // Nino's published modulator figures, and ofdm-fm has none - so the one mode family that
+        // proved the FM carrier-sense argument reported that it was not an FM mode at all
+        // (packet-net/pdn-soundmodem#522). Anything choosing carrier sense on "is this FM" would
+        // have excluded exactly the wrong thing.
+        foreach (string mode in ModemCatalog.KnownModes.Where(
+            m => m.StartsWith("ofdm-fm", StringComparison.Ordinal)))
+        {
+            FmModeProfiles.IsFmMode(mode).Should().BeTrue(
+                "{0} reaches the air as frequency modulation", mode);
+            FmModeProfiles.HasDeviationTarget(mode).Should().BeFalse(
+                "{0}'s peak deviation is a property of the constellation, not a published "
+                + "figure, so inventing one here would be a fiction", mode);
+        }
+
+        // And the mode family must actually be in the catalogue, or the loop above passes by
+        // being empty.
+        ModemCatalog.KnownModes.Should().Contain(
+            m => m.StartsWith("ofdm-fm", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void The_Two_Questions_Stay_Separate_For_Everything_Nino_Publishes()
+    {
+        // The other direction: nothing with a published figure may fall out of IsFmMode, and no
+        // SSB mode may sneak into either.
+        foreach (string mode in ModemCatalog.KnownModes)
+        {
+            if (FmModeProfiles.HasDeviationTarget(mode))
+            {
+                FmModeProfiles.IsFmMode(mode).Should().BeTrue(
+                    "{0} has a published FM deviation, so it is an FM mode", mode);
+            }
+        }
+
+        foreach (string ssb in new[] { "bpsk300", "bpsk1200", "qpsk600", "qpsk2400", "afsk300" })
+        {
+            FmModeProfiles.IsFmMode(ssb).Should().BeFalse(
+                "{0} is a shaped-PSK or SSB mode; an FM radio carries it, which is a different "
+                + "question again", ssb);
         }
     }
 }

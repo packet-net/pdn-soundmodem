@@ -13,8 +13,16 @@ namespace Packet.SoundModem.Ota;
 /// </remarks>
 internal static class FmModeCatalog
 {
-    /// <summary>Whether a mode is carried over FM (and so belongs to the FM ladder, not the SSB one).</summary>
-    public static bool IsFmMode(string? mode) => FmModeProfiles.IsFmMode(mode);
+    /// <summary>Whether a mode belongs to the FM ladder rather than the SSB one.</summary>
+    /// <remarks>
+    /// <b>Not <see cref="FmModeProfiles.IsFmMode"/>, deliberately.</b> This ladder frequency-modulates
+    /// every burst at the mode's target deviation, so what it needs is not "is this FM" but "is
+    /// there a published deviation to drive it to". The two used to be the same predicate and are
+    /// not the same question: <c>ofdm-fm</c> is frequency modulation whose peak is a property of
+    /// the constellation rather than a figure anyone publishes, so it is an FM mode with nothing
+    /// for <see cref="TargetDeviationHz"/> to return.
+    /// </remarks>
+    public static bool IsFmMode(string? mode) => FmModeProfiles.HasDeviationTarget(mode);
 
     /// <summary>The mode's target peak FM deviation in Hz.</summary>
     /// <exception cref="ArgumentException">The mode is not an FM-native mode.</exception>
@@ -30,7 +38,7 @@ internal static class FmModeCatalog
     /// joins the ladder by existing rather than by being remembered.
     /// </remarks>
     public static IReadOnlyCollection<string> Modes =>
-        [.. ModemCatalog.KnownModes.Where(FmModeProfiles.IsFmMode)];
+        [.. ModemCatalog.KnownModes.Where(FmModeProfiles.HasDeviationTarget)];
 }
 
 /// <summary>One point of an FM §E2 ladder: a burst to transmit through a stated channel at a stated
