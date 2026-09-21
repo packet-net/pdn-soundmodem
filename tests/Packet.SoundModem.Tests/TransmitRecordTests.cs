@@ -101,6 +101,23 @@ public class TransmitRecordTests
             + "own frame log (issue #473)");
     }
 
+    [Theory]
+    [InlineData("Task")]
+    [InlineData("Task<bool>")]
+    public void Queue_Method_Declarations_Are_Not_Calls_But_Their_Bodies_Are_Scanned(string returnType)
+    {
+        string source = $$"""
+            private {{returnType}} EnqueueTransmitCore(Func<int, float[]> modulate)
+            {
+                return EnqueueTransmitCore(modulate, source: this);
+            }
+            """;
+
+        var call = CallsIn(source).Should().ContainSingle().Which;
+        call.Line.Should().Be(3);
+        call.Code.Should().Contain("source: this");
+    }
+
     [Fact]
     public void The_Allowlist_Describes_Call_Sites_That_Still_Exist()
     {
@@ -228,7 +245,8 @@ public class TransmitRecordTests
             // themselves: none of them transmits anything.
             if (before.Contains("//", StringComparison.Ordinal)
                 || before.TrimStart().StartsWith('*')
-                || before.TrimEnd().EndsWith("Task", StringComparison.Ordinal))
+                || before.TrimEnd().EndsWith("Task", StringComparison.Ordinal)
+                || before.TrimEnd().EndsWith("Task<bool>", StringComparison.Ordinal))
             {
                 continue;
             }

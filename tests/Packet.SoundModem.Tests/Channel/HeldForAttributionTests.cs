@@ -55,11 +55,11 @@ public class HeldForAttributionTests
     }
 
     /// <summary>A UI frame: nothing expects an answer, so no turnaround hold confuses the sums.</summary>
-    private static byte[] Broadcast()
+    private static byte[] Broadcast(byte marker = 0x41)
     {
         byte[] frame = Convert.FromHexString("8E846E9EB08CE48E846EA4888E6551");
         frame[14] = 0x03;
-        return [.. frame, (byte)0xF0, (byte)0x41];
+        return [.. frame, (byte)0xF0, marker];
     }
 
     /// <summary>
@@ -129,7 +129,7 @@ public class HeldForAttributionTests
         // behind the first frame and it will share the first frame's keyup.
         await VirtualAir.AdvanceToAsync(time, firstQueued + TimeSpan.FromSeconds(1));
         DateTimeOffset secondQueued = time.GetUtcNow();
-        Task second = channel.EnqueueTransmit(2, Broadcast());
+        Task second = channel.EnqueueTransmit(2, Broadcast(0x42));
 
         // Two seconds after the first was queued, the channel opens.
         await VirtualAir.AdvanceToAsync(time, firstQueued + TimeSpan.FromSeconds(2));
@@ -211,8 +211,8 @@ public class HeldForAttributionTests
         busy.Busy = true;
         DateTimeOffset queued = time.GetUtcNow();
         Task a = channel.EnqueueTransmit(2, Broadcast());
-        Task b = channel.EnqueueTransmit(2, Broadcast());
-        Task c = channel.EnqueueTransmit(2, Broadcast());
+        Task b = channel.EnqueueTransmit(2, Broadcast(0x42));
+        Task c = channel.EnqueueTransmit(2, Broadcast(0x43));
         (Task transmitter, VirtualAir.PacedSink sink) = await StartAsync(channel, time, cancellation.Token);
 
         await VirtualAir.AdvanceToAsync(time, queued + TimeSpan.FromMilliseconds(800));
@@ -222,7 +222,7 @@ public class HeldForAttributionTests
 
         held.Should().HaveCount(3);
         TimeSpan opening = Burst(Broadcast(), channel.Csma.TxDelayMilliseconds);
-        TimeSpan follower = Burst(Broadcast(), TokenPreambleMs);
+        TimeSpan follower = Burst(Broadcast(0x42), TokenPreambleMs);
         TimeSpan shut = opened - queued;
 
         held[0].Should().BeCloseTo(shut, Tolerance,

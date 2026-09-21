@@ -62,7 +62,7 @@ public sealed class SoundModemChannel
     /// <summary>One queued transmission, with the identity that decides whose keyup it is.</summary>
     private sealed record TxItem(
         Func<int, float[]> Modulate,
-        TaskCompletionSource Done,
+        TaskCompletionSource<bool> Done,
         Action<Exception>? Rejected,
         bool OwnsTiming,
         object Source,
@@ -119,6 +119,8 @@ public sealed class SoundModemChannel
         /// station's journal, frame log and page all read it from.
         /// </summary>
         public Action<TimeSpan, TransmitWaits>? Noted { get; set; }
+
+        public byte[]? Frame { get; init; }
     }
 
     // Where a waiting transmission's time goes. One slot per cause, then one per sub-channel for
@@ -606,8 +608,9 @@ public sealed class SoundModemChannel
     /// <summary>Queues a frame for transmission on a sub-channel. The returned task
     /// completes when the frame's audio has been handed to the device, at most one card buffer
     /// ahead of the air, with the keyup it belongs to still holding the channel behind it
-    /// (ACKMODE's answer). See <see cref="RunTransmitterAsync"/> for why that is not "played
-    /// out".</summary>
+    /// (ACKMODE's answer). Redundant queued frames complete with the frame that represents them,
+    /// without raising transmission events of their own. See <see cref="RunTransmitterAsync"/>
+    /// for why that is not "played out".</summary>
     public Task EnqueueTransmit(int subChannel, byte[] frame)
     {
         if (!_modems.TryGetValue(subChannel, out IModem? modem))
@@ -707,10 +710,11 @@ public sealed class SoundModemChannel
 
     private async Task SendAndAnnounceAsync(int subChannel, byte[] frame, IModem modem)
     {
+        frame = (byte[])frame.Clone();
         double applied = 0;
         TimeSpan heldFor = TimeSpan.Zero;
         TransmitWaits waits = default;
-        await EnqueueTransmitCore(
+        bool transmitted = await EnqueueTransmitCore(
                 // Inside the modulate callback, so the trim is chosen when the burst is actually
                 // rendered rather than when it was queued - a frame can wait behind CSMA for
                 // seconds, and the estimate may have moved on by then.
@@ -733,8 +737,14 @@ public sealed class SoundModemChannel
                 {
                     heldFor = held;
                     waits = where;
-                })
+                },
+                frame: frame)
             .ConfigureAwait(false);
+
+        if (!transmitted)
+        {
+            return;
+        }
 
         FrameTransmitted?.Invoke(subChannel, frame);
         FrameTransmittedWithTrim?.Invoke(subChannel, frame, applied);
@@ -861,18 +871,18 @@ public sealed class SoundModemChannel
     /// <see cref="FrameTransmittedWithReport"/>, which is where its journal, frame log and page
     /// read everything else about a transmission from.
     /// </remarks>
-    private Task EnqueueTransmitCore(
+    private Task<bool> EnqueueTransmitCore(
         Func<int, float[]> modulate, Action<Exception>? rejected, bool ownsChannelTiming,
         object? source, TimeSpan? quietAfter, CancellationToken withdraw,
         Func<bool>? stopEarly, Action<int>? written, Action<TimeSpan>? started,
-        Action<TimeSpan, TransmitWaits>? noted)
+        Action<TimeSpan, TransmitWaits>? noted, byte[]? frame = null)
     {
         ArgumentNullException.ThrowIfNull(modulate);
         if (ReceiveOnlyReason is string receiveOnly)
         {
             var refusal = new InvalidOperationException(receiveOnly);
             rejected?.Invoke(refusal);
-            Task faulted = Task.FromException(refusal);
+            Task<bool> faulted = Task.FromException<bool>(refusal);
             _ = faulted.Exception; // observed here: a fire-and-forget caller cannot, and on a
                                    // receive-only channel this happens to every frame.
             return faulted;
@@ -892,7 +902,7 @@ public sealed class SoundModemChannel
         // by the transmitter, which has one queue to draw from and cannot reorder it.
         return EnqueueNow(
             modulate, rejected, ownsChannelTiming, identity, quietAfter, withdraw, stopEarly, written,
-            queuedAt, started, noted);
+            queuedAt, started, noted, frame);
     }
 
     /// <summary>
@@ -1063,17 +1073,18 @@ public sealed class SoundModemChannel
         return PeekFrom(source) is { OwnsTiming: false };
     }
 
-    private Task EnqueueNow(
+    private Task<bool> EnqueueNow(
         Func<int, float[]> modulate, Action<Exception>? rejected, bool ownsChannelTiming, object source,
         TimeSpan? quietAfter, CancellationToken withdraw, Func<bool>? stopEarly, Action<int>? written,
-        long queuedAt, Action<TimeSpan>? started, Action<TimeSpan, TransmitWaits>? noted)
+        long queuedAt, Action<TimeSpan>? started, Action<TimeSpan, TransmitWaits>? noted, byte[]? frame)
     {
-        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var item = new TxItem(
             modulate, done, rejected, ownsChannelTiming, source, quietAfter, stopEarly, written,
             queuedAt, started)
         {
             Noted = noted,
+            Frame = frame,
         };
         lock (_txGate)
         {
@@ -1116,6 +1127,17 @@ public sealed class SoundModemChannel
             // registered after the enqueue, for the same reason as the withdrawal above.
             item.HeldTooLong = _time.CreateTimer(
                 _ => ExpireHeldTransmission(item), null, TransmitInhibitTimeout, Timeout.InfiniteTimeSpan);
+            bool stillQueued;
+            lock (_txGate)
+            {
+                stillQueued = _txQueues.TryGetValue(source, out Queue<TxItem>? queue)
+                    && queue.Contains(item);
+            }
+
+            if (!stillQueued)
+            {
+                Finish(item);
+            }
         }
 
         return done.Task;
@@ -1623,6 +1645,70 @@ public sealed class SoundModemChannel
         }
     }
 
+    private void OptimizeTransmitQueue(object source)
+    {
+        List<(TxItem Item, Task<bool> Survivor)> removed = [];
+        lock (_txGate)
+        {
+            if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue) || queue.Count < 2)
+            {
+                return;
+            }
+
+            TxItem[] items = queue.ToArray();
+            int[] survivors = Ax25TransmitOptimization.FindSurvivors(
+                items.Select(item => item.Frame).ToArray());
+            queue.Clear();
+            for (int i = 0; i < items.Length; i++)
+            {
+                if (survivors[i] == i)
+                {
+                    queue.Enqueue(items[i]);
+                }
+                else
+                {
+                    items[i].Withdrawal.Unregister();
+                    removed.Add((items[i], items[survivors[i]].Done.Task));
+                }
+            }
+        }
+
+        foreach ((TxItem item, Task<bool> survivor) in removed)
+        {
+            Finish(item);
+            _ = CompleteSupersededAsync(item, survivor);
+        }
+    }
+
+    private static async Task CompleteSupersededAsync(TxItem item, Task<bool> survivor)
+    {
+        try
+        {
+            await survivor.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            item.Done.TrySetCanceled();
+            return;
+        }
+        catch (Exception failure)
+        {
+            try
+            {
+                item.Rejected?.Invoke(failure);
+            }
+            finally
+            {
+                item.Done.TrySetException(failure);
+            }
+
+            return;
+        }
+
+        // ACKMODE still owes every host request an answer, but only the survivor went on air.
+        item.Done.TrySetResult(false);
+    }
+
     /// <summary>Starts, renews or clears the turnaround hold after a keyup.</summary>
     private void SetHold(object? keyupSource, TimeSpan? quietAfter)
     {
@@ -1786,6 +1872,8 @@ public sealed class SoundModemChannel
                 await Delay(Csma.SlotTimeMilliseconds, cancellation).ConfigureAwait(false);
             }
 
+            OptimizeTransmitQueue(source);
+
             // Withdrawn while we waited for the channel. Nothing is left to send for this
             // source, so there is nothing to key for: a transmission taken back must not leave
             // the radio keying up on an empty burst, which is the whole point of being able to
@@ -1935,7 +2023,7 @@ public sealed class SoundModemChannel
                         // which PcmTransfer recovers (prepare, then retry from the first frame not
                         // yet written) rather than failing the keyup - a gap where the underrun was,
                         // never a lost frame.
-                        item.Done.TrySetResult();
+                        item.Done.TrySetResult(true);
                         inFlight = null;
                     }
 
