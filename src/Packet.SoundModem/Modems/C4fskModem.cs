@@ -1,4 +1,5 @@
 using M0LTE.Dsp;
+using Packet.SoundModem.CarrierSense;
 using M0LTE.Il2p;
 using Packet.SoundModem.Audio;
 
@@ -47,6 +48,7 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
     private readonly FrameDeduper _deduper;
     private readonly PacketDcd _packetDcd = new();
     private readonly EnergyBusyDetector _energyBusy;
+    private readonly FmShapeBusyDetector _shapeBusy;
     private readonly int _upsample;
     private readonly double _clockIncrement;
     private readonly double _pointsPerSymbol;
@@ -76,7 +78,7 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
 
     private double _clockPhase;
     private int _lastSign;
-    private bool _previousEnergyBusy;
+    private bool _gateOpen;
     private float _peakHigh;
     private float _peakLow;
     private float _previousFiltered;
@@ -261,6 +263,31 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
         //     channel is judged by.
         _energyBusy = new EnergyBusyDetector(sampleRate, blockMilliseconds: 20);
 
+        // The other half of the gate, and the half that works on an FM radio. The energy detector
+        // answers "has the level risen", which is right on a wired loop and backwards on an
+        // open-squelch FM receiver, where a signal makes the audio QUIETER: over the NinoTNC
+        // reference capture, 45 s holding 15 real C4FSK 19k2 transmissions, the energy gate opened
+        // exactly zero times (issue #518). This one answers "has the energy become band-limited",
+        // which is true of a C4FSK signal on any path by construction and false of both FM hiss
+        // and broadband noise.
+        //
+        // Split at the symbol rate. Measured on that capture with idle and burst blocks classified
+        // strictly, the worst-case margin between the loudest idle block and the quietest burst
+        // block is 18.3 dB there, against 12.2 dB at the 1.5x corner of _rxFilter below and 7.6 dB
+        // at half of it: too low and the split eats the signal's own occupancy, too high and it
+        // stops excluding the hiss. The symbol rate is the mode's own defining number rather than
+        // a constant fitted to one recording, which matters because that recording is one mode
+        // sending one frame fifteen times.
+        //
+        // A shorter warm-up than a station's, and the trade runs the other way here. A station
+        // that waits two seconds before it will believe the channel is busy has lost nothing; a
+        // demodulator that waits two seconds has not heard the first burst after start-up, or
+        // after every one of its own transmissions if it reset. 0.4 s is 19 of the detector's own
+        // blocks, which is enough to seed a reference from, and it still refuses to assert on
+        // 30 s of silence, of open-squelch hiss or of broadband noise (C4fskOnAirTests).
+        _shapeBusy = new FmShapeBusyDetector(
+            sampleRate, splitHz: symbolRate, warmUpSeconds: 0.4);
+
         // One deframer per timing phase: the phases decide the same symbols at slightly
         // different instants and run their deframers in lockstep, so a frame that any of them
         // reads is delivered once, the first copy to arrive winning (usually every phase that
@@ -410,6 +437,10 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
             float filtered = _rxFilter.Next(sample);
             _energyBusy.Process(filtered);
 
+            // Unfiltered, deliberately: the whole statistic is how much energy sits ABOVE this
+            // mode's band, and _rxFilter is what removes it.
+            _shapeBusy.Process(new ReadOnlySpan<float>(in sample));
+
             // No signal, no bits. On silence this slicer saturates to the outer levels
             // (the envelope collapses and the normalised value rails), producing 1-heavy
             // garbage - and the Mode-2 sync is 18/24 ones, so the deframer false-locks
@@ -419,13 +450,19 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
             // rarely matches a balanced sync - but here the bit stream must simply stop
             // when the channel is idle. The energy detector's hold keeps bits flowing
             // through the tail of a burst, so nothing real is lost.
-            if (!_energyBusy.Busy)
+            // Either detector opens it. They are right on different paths and neither is right on
+            // both: energy on a wired loop or a virtual cable, where silence really is silence and
+            // a signal really does raise the level; shape on an open-squelch FM receiver, where it
+            // does the opposite. Ored rather than chosen, because a modem does not know which kind
+            // of path it is on and the cost of guessing wrong is a receiver that hears nothing at
+            // all. Neither fires on idle FM hiss, and neither fires on broadband noise.
+            if (!_energyBusy.Busy && _shapeBusy.Busy != true)
             {
                 // Reset the deframer on the energy-gate falling edge: if it was
                 // mid-collection when the carrier stopped, abandon the phantom frame so
                 // the next burst's sync word is not consumed as payload. The equalizer
                 // resets with it - its taps model the burst that just ended.
-                if (_previousEnergyBusy)
+                if (_gateOpen)
                 {
                     foreach (Il2pReceiver deframer in _deframers)
                     {
@@ -436,16 +473,16 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
                     ResetFfe();
                 }
 
-                _previousEnergyBusy = false;
+                _gateOpen = false;
                 continue;
             }
 
-            if (!_previousEnergyBusy)
+            if (!_gateOpen)
             {
                 _symbolsSinceGate = 0;
             }
 
-            _previousEnergyBusy = true;
+            _gateOpen = true;
 
             for (int point = 1; point <= _upsample; point++)
             {
@@ -794,6 +831,7 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
     {
         _packetDcd.Reset();
         _energyBusy.Reset();
+        _shapeBusy.Reset();
         _peakHigh = 0;
         _peakLow = 0;
         _previousFiltered = 0;

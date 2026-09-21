@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text;
 using M0LTE.Dsp;
 using Packet.SoundModem.Audio;
+using Packet.SoundModem.CarrierSense;
 using Packet.SoundModem.Modems;
 
 // sm-c4fskprobe: a bench instrument, not a decoder. It drives a real C4fskModem over a WAV
@@ -218,10 +219,19 @@ if (receivers is not null)
 }
 
 // ---- the run ----------------------------------------------------------------------------
-// A replica of the modem's own front end, built from the same two lines of its constructor,
-// so the energy gate can be reported with timestamps. The modem keeps no public view of it.
+// A replica of the modem's own front end, built from the same lines of its constructor, so the
+// gate can be reported with timestamps. The modem keeps no public view of it.
+//
+// BOTH halves, because either opens it: the energy detector on a wired loop or a virtual cable,
+// and the spectral shape detector on an open-squelch FM receiver, where a signal makes the audio
+// QUIETER and the energy detector therefore never fires at all. Reporting the energy half alone
+// was this instrument's own bug for a while, and it reads as "the gate never opened" on a file
+// the modem is decoding perfectly well.
 var replicaFilter = new FirFilter(FilterDesign.LowPass(1.5 * symbolRate, sampleRate, 48 * sampleRate / 48000));
 var replicaGate = new EnergyBusyDetector(sampleRate, blockMilliseconds: 20);
+var replicaShape = new FmShapeBusyDetector(sampleRate, splitHz: symbolRate, warmUpSeconds: 0.4);
+long energyOnlySamples = 0;
+long shapeOnlySamples = 0;
 
 float[] one = new float[1];
 bool previousBusy = false;
@@ -236,7 +246,20 @@ for (int i = 0; i < fed.Length; i++)
 {
     currentSample = i;
     replicaGate.Process(replicaFilter.Next(fed[i]));
-    bool busy = replicaGate.Busy;
+    one[0] = fed[i];
+    replicaShape.Process(one);
+    bool energy = replicaGate.Busy;
+    bool shape = replicaShape.Busy == true;
+    bool busy = energy || shape;
+    if (energy && !shape)
+    {
+        energyOnlySamples++;
+    }
+    else if (shape && !energy)
+    {
+        shapeOnlySamples++;
+    }
+
     if (busy && !previousBusy)
     {
         riseAt = i;
@@ -300,10 +323,16 @@ output.AppendLine($"  modem      : {modem.Mode}");
 output.AppendLine();
 
 // 1. ENERGY GATE
-output.AppendLine("1. ENERGY GATE (the hard gate on this modem's bit path)");
+output.AppendLine("1. SIGNAL-PRESENT GATE (the hard gate on this modem's bit path)");
 output.AppendLine($"   busy for {Dur(busySamplesInWindow)} s of the {windowSeconds.ToString("F4", CultureInfo.InvariantCulture)} s window = {Percent(busySamplesInWindow, windowSamples)}");
 output.AppendLine($"   busy for {Dur(busySamples)} s of the {fed.Length} samples fed (lead-in + window + flush tail)");
 output.AppendLine($"   gate opened {gateSegments.Count} time(s)");
+output.AppendLine(
+    "   which half: "
+    + $"{((double)energyOnlySamples / sampleRate).ToString("F4", CultureInfo.InvariantCulture)} s "
+    + "on the energy detector alone (a wired loop or a virtual cable), "
+    + $"{((double)shapeOnlySamples / sampleRate).ToString("F4", CultureInfo.InvariantCulture)} s "
+    + "on the spectral shape alone (an open-squelch FM receiver)");
 if (gateSegments.Count == 0)
 {
     output.AppendLine("   NOTHING ELSE MATTERS: the gate never opened, so no bits ever flowed.");
