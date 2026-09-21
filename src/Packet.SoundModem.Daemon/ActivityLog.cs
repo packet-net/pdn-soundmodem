@@ -102,9 +102,37 @@ internal static class ActivityLog
     /// cheaper than the question.
     /// </param>
     internal static string Transmitted(
-        int subChannel, string mode, ReadOnlySpan<byte> frame, double trimHz = 0) =>
+        int subChannel, string mode, ReadOnlySpan<byte> frame, double trimHz = 0,
+        TimeSpan heldFor = default) =>
         $"tx[{subChannel}] {mode} {Addresses(frame)} {frame.Length} bytes"
-        + (trimHz == 0 ? "" : $"  shifted {trimHz:+0.0;-0.0} Hz to suit them");
+        + (trimHz == 0 ? "" : $"  shifted {trimHz:+0.0;-0.0} Hz to suit them")
+        + HeldNote(heldFor);
+
+    /// <summary>
+    /// How long carrier sense held this frame, on the lines where that is worth reading.
+    /// </summary>
+    /// <remarks>
+    /// <para>Quiet below <see cref="HeldWorthSaying"/>. On a clear channel a frame goes out in a
+    /// slot time or two and "held 0.0s" on every line is a column of noise that trains the reader
+    /// to skip the end of the line - which is exactly where the interesting case appears. The
+    /// frame log keeps the figure for every frame regardless; this is the line an operator reads.</para>
+    /// <para>The threshold is one TXDELAY's worth of waiting, which is the point at which the
+    /// wait has cost more than sending the frame would have.</para>
+    /// </remarks>
+    private static string HeldNote(TimeSpan heldFor) =>
+        heldFor < HeldWorthSaying ? "" : $"  held {Duration(heldFor)} by carrier sense";
+
+    /// <summary>Below this a wait is ordinary channel access and not worth a column.</summary>
+    internal static readonly TimeSpan HeldWorthSaying = TimeSpan.FromMilliseconds(300);
+
+    /// <summary>
+    /// A duration an operator can read at a glance: seconds under a minute, minutes and seconds
+    /// above it. ASCII only, because this goes to the journal and a pager under a C locale.
+    /// </summary>
+    internal static string Duration(TimeSpan span) =>
+        span < TimeSpan.FromMinutes(1)
+            ? $"{span.TotalSeconds:0.0}s"
+            : $"{(int)span.TotalMinutes}m{span.Seconds:00}s";
 
     /// <summary>A frame that never went out, and why.</summary>
     internal static string Dropped(int subChannel, ReadOnlySpan<byte> frame, Exception reason) =>

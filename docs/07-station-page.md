@@ -91,6 +91,7 @@ The second line is the sub-channel and mode, then whichever of these the frame c
 | `TOO LOUD` | The card ran out of codes during this frame, or came close enough that a slightly louder station would clip. Turn the capture gain down. |
 | `TOO QUIET` | The frame peaked below the level this mode starts losing link margin at. Advice rather than a fault. |
 | `SHIFTED` | One of yours, transmitted off the channel centre to land where the station you are answering is listening. |
+| `HELD 3m48s` | One of yours that carrier sense sat on before sending, for long enough to matter. Shown past 0.3 s; the frame log keeps the figure for every transmission either way. |
 
 Which modes show the dBFS figure and the two level badges is in [04-levels.md](04-levels.md#read-the-frame-badges). Every mode's measurement still reaches the frame log and the monitor.
 
@@ -103,6 +104,8 @@ Press `L`. The pane opens over the waterfall with one card per pair of stations 
 UI frames adds cards for unconnected traffic, which is beacons, idents and everything else that never makes a link. Mine narrows the pane to links this station is one end of. The grip at the top resizes the pane, Detach opens it in a window of its own with no waterfall behind it, and Close or `Escape` puts it away.
 
 Press `transcript` on a card to save its feed as a markdown file, oldest line first, with the classic monitor decode beside each line. The file is named for the two stations, the modem and the time.
+
+A line of your own carries a `HELD` tag when this station's carrier sense held that frame back before it went out. It is worth looking for on a card full of `POLL` and `AGAIN`: the node that queued those frames cannot see the wait, because a KISS write returns as soon as the socket takes it, so it keeps its retry timers running and queues another poll. When the channel finally opens they all go out in one keyup, and the station is deaf for the length of it - so the earlier polls in the run could not have been answered whatever the far end did. A run of `HELD` tags on repeated polls is a channel-access problem at this end, not a link failing at the other.
 
 ## A public page
 

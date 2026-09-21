@@ -323,6 +323,50 @@ public class FrameLogTests : IDisposable
     }
 
     /// <summary>
+    /// How long carrier sense held a transmission is written for every transmission, and read
+    /// back with it.
+    /// </summary>
+    /// <remarks>
+    /// Kept for every frame rather than only the slow ones, unlike the journal line and the
+    /// panel row. Those two are read by a person and a note on every line would hide the one
+    /// that matters; this column is what a question gets asked of afterwards, and "how much of
+    /// this station's traffic waits, and for how long" cannot be answered out of rows that only
+    /// exist above a threshold. Null on a receive, where the wait belongs to somebody else's
+    /// channel access and this station cannot know it.
+    /// </remarks>
+    [Fact]
+    public async Task A_Transmission_Records_How_Long_The_Channel_Held_It()
+    {
+        await using FrameLog log = FrameLog.Open(DbPath, _time);
+        log.RecordTransmitted(
+            0, Frame(from: "GB7RDG", to: "GB7LOX"), "bpsk300-il2pc", 2150, 7_051_600,
+            txTrimHz: null, heldMs: 228_000);
+        log.RecordTransmitted(
+            0, Frame(from: "GB7RDG", to: "GB7LOX"), "bpsk300-il2pc", 2150, 7_051_600,
+            txTrimHz: null, heldMs: 12);
+        log.Record(
+            0, Frame(from: "GB7LOX", to: "GB7RDG"),
+            new FrameQuality("bpsk300-il2pc", FrameBytes: 20, CorrectedBytes: 0, CrcValid: true),
+            audioHz: 2150, rfHz: 7_051_600);
+
+        for (int i = 0; i < 100 && log.Recent(10).Count < 3; i++)
+        {
+            await Task.Delay(20);
+        }
+
+        IReadOnlyList<Packet.SoundModem.Waterfall.LoggedFrame> recent = log.Recent(10);
+        recent.Should().HaveCount(3);
+        recent[0].HeldMs.Should().Be(228_000,
+            "the wait GB7RDG-2 actually had on 2026-09-21, and the figure nothing used to keep");
+        recent[1].HeldMs.Should().Be(12,
+            "a frame that went straight out is still written down - the column answers how often "
+                + "as well as how badly");
+        recent[2].HeldMs.Should().BeNull(
+            "a received frame waited on somebody else's channel access, which this station has "
+                + "no way to measure");
+    }
+
+    /// <summary>
     /// ARDOP's own quality and signal-to-noise figures go into their own columns, distinct from
     /// <c>snr_db</c>: that column is the packet modems' band-tracker reading, referenced to the
     /// modem's own occupied bandwidth, and ARDOP's figure is referenced to a fixed 3 kHz - the two
@@ -1066,3 +1110,4 @@ public class FrameLogTests : IDisposable
             "queueing a thousand frames must not cost a thousand disk writes");
     }
 }
+

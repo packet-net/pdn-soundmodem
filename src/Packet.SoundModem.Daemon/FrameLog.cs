@@ -183,6 +183,7 @@ internal sealed class FrameLog : IAsyncDisposable
                      ("peak_shown", "INTEGER"),
                      ("quality", "INTEGER"),
                      ("ardop_sn_db", "REAL"),
+                     ("held_ms", "INTEGER"),
                  })
         {
             using SqliteCommand columns = connection.CreateCommand();
@@ -303,6 +304,13 @@ internal sealed class FrameLog : IAsyncDisposable
     /// measurement of somebody else's transmitter, and averaging the two together would mix what
     /// a station did with what we did about it.
     /// </param>
+    /// <param name="heldMs">
+    /// How long carrier sense held this frame before it went out, in milliseconds. Written for
+    /// every transmission, including the ones that went straight out: the column is what a later
+    /// question about how much airtime this station is losing to deferral gets asked of, and a
+    /// column that only exists above a threshold cannot answer "how often" - only "how bad".
+    /// Null on a relayed transmission, where the figure belongs to the other station's channel.
+    /// </param>
     /// <param name="at">
     /// When it went out, for a transmission made somewhere else: a relayed station's own clock.
     /// Null is this process's own, which is every frame this process sent itself.
@@ -315,7 +323,8 @@ internal sealed class FrameLog : IAsyncDisposable
     /// </param>
     internal void RecordTransmitted(
         int subChannel, byte[] frame, string mode, double? audioHz, double? rfHz,
-        double? txTrimHz = null, DateTimeOffset? at = null, string? modeName = null)
+        double? txTrimHz = null, long? heldMs = null, DateTimeOffset? at = null,
+        string? modeName = null)
     {
         if (Backlogged())
         {
@@ -347,7 +356,8 @@ internal sealed class FrameLog : IAsyncDisposable
             audioHz,
             rfHz,
             frame,
-            txTrimHz));
+            txTrimHz,
+            HeldMs: heldMs));
     }
 
     /// <summary>
@@ -401,7 +411,7 @@ internal sealed class FrameLog : IAsyncDisposable
                 SELECT heard_at, sub_channel, mode, source, destination,
                        length, corrected, crc_valid, offset_hz, direction, tx_trim_hz,
                        monitor_only, plain_il2p, peak_dbfs, clipped, level, peak_shown,
-                       trailer_near_bits, chased_bits, quality, ardop_sn_db
+                       trailer_near_bits, chased_bits, quality, ardop_sn_db, held_ms
                 FROM frames ORDER BY id DESC LIMIT $count
                 """;
             query.Parameters.AddWithValue("$count", count);
@@ -451,7 +461,11 @@ internal sealed class FrameLog : IAsyncDisposable
                     // ARDOP's own two figures. Null on every row that is not ARDOP, and on an
                     // ARDOP row from before the columns existed (#479).
                     row.IsDBNull(19) ? null : row.GetInt32(19),
-                    row.IsDBNull(20) ? null : row.GetDouble(20)));
+                    row.IsDBNull(20) ? null : row.GetDouble(20),
+                    // How long the channel held it. Only ever set on a transmission, and null on
+                    // a transmission from before the column: a backlog row that says nothing is
+                    // drawn without the note rather than as an instant one.
+                    row.IsDBNull(21) ? null : row.GetInt64(21)));
             }
         }
         catch (Exception e) when (e is SqliteException or IOException or FormatException)
@@ -544,12 +558,13 @@ internal sealed class FrameLog : IAsyncDisposable
               (heard_at, direction, sub_channel, mode, mode_name, source, destination,
                length, corrected, crc_valid, trailer_near_bits, monitor_only, plain_il2p,
                erased_bytes, chased_bits, snr_db, offset_hz, audio_hz, rf_hz, payload,
-               tx_trim_hz, peak_dbfs, clipped, level, peak_shown, quality, ardop_sn_db)
+               tx_trim_hz, peak_dbfs, clipped, level, peak_shown, quality, ardop_sn_db,
+               held_ms)
             VALUES
               ($heard_at, $direction, $sub, $mode, $mode_name, $source, $destination,
                $length, $corrected, $crc, $trailer, $monitor, $plain, $erased, $chased, $snr,
                $offset, $audio, $rf, $payload, $tx_trim, $peak, $clipped, $level, $peak_shown,
-               $quality, $ardop_sn_db)
+               $quality, $ardop_sn_db, $held_ms)
             """;
         foreach (string name in new[]
                  {
@@ -557,7 +572,7 @@ internal sealed class FrameLog : IAsyncDisposable
                      "$destination", "$length", "$corrected", "$crc", "$trailer", "$monitor",
                      "$plain", "$erased", "$chased", "$snr", "$offset", "$audio", "$rf", "$payload",
                      "$tx_trim", "$peak", "$clipped", "$level", "$peak_shown", "$quality",
-                     "$ardop_sn_db",
+                     "$ardop_sn_db", "$held_ms",
                  })
         {
             insert.Parameters.Add(new SqliteParameter(name, DBNull.Value));
@@ -592,6 +607,7 @@ internal sealed class FrameLog : IAsyncDisposable
                     entry.PeakWorthShowing is bool shown ? shown ? 1 : 0 : DBNull.Value;
                 insert.Parameters["$quality"].Value = (object?)entry.Quality ?? DBNull.Value;
                 insert.Parameters["$ardop_sn_db"].Value = (object?)entry.ArdopSnDb ?? DBNull.Value;
+                insert.Parameters["$held_ms"].Value = (object?)entry.HeldMs ?? DBNull.Value;
                 insert.Parameters["$offset"].Value = (object?)entry.OffsetHz ?? DBNull.Value;
             insert.Parameters["$tx_trim"].Value = (object?)entry.TxTrimHz ?? DBNull.Value;
                 insert.Parameters["$audio"].Value = (object?)entry.AudioHz ?? DBNull.Value;
@@ -669,5 +685,6 @@ internal sealed class FrameLog : IAsyncDisposable
         double? TxTrimHz = null,
         bool? PeakWorthShowing = null,
         int? Quality = null,
-        double? ArdopSnDb = null);
+        double? ArdopSnDb = null,
+        long? HeldMs = null);
 }
