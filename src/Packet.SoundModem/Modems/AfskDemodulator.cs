@@ -78,6 +78,7 @@ public sealed class AfskDemodulator
     // one that does not.
     private readonly Action<int> _bitSink;
     private readonly Action<int, int>? _phaseBitSink;
+    private readonly Action<int, float, int>? _softPhaseBitSink;
     private readonly double _samplesPerBit;
     private readonly float[] _ring;
     private readonly int _ringLead;
@@ -118,11 +119,17 @@ public sealed class AfskDemodulator
     /// <see cref="TimingPhaseCount"/> minus one and 0 being the clock's own instant - the
     /// same level <paramref name="bitSink"/> gets. A caller that wires this runs one deframer
     /// per phase and delivers whichever copy passes, once (see <see cref="Afsk300Modem"/>).</param>
+    /// <param name="softPhaseBitSink">Optional soft-decision sink, called once per bit per timing
+    /// phase with (level, soft magnitude, phase index): the distance of the interpolated slicer
+    /// input from the decision threshold at that phase's decision instant, in discriminator
+    /// units. A deframer that keeps these per bit can order its repair attempts by confidence
+    /// (chase decoding, as the IL2P receiver's does against its CRC).</param>
     public AfskDemodulator(
         int sampleRate, Action<int> bitSink, double centerFrequency = 1700, int baud = 1200,
         double bandPassHalfWidth = 700, double lowPassCutoff = 650,
         int bandPassTaps = 256, int lowPassTaps = 128, double toneShift = 500,
-        Action<int, int>? phaseBitSink = null)
+        Action<int, int>? phaseBitSink = null,
+        Action<int, float, int>? softPhaseBitSink = null)
     {
         ArgumentNullException.ThrowIfNull(bitSink);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
@@ -136,6 +143,7 @@ public sealed class AfskDemodulator
         _rotateSin = Math.Sin(step);
         _bitSink = bitSink;
         _phaseBitSink = phaseBitSink;
+        _softPhaseBitSink = softPhaseBitSink;
         _samplesPerBit = (double)sampleRate / baud;
         // The latest phase reads up to ceil(reach) samples past the instant, plus one for the
         // interpolation's upper neighbour; the ring spans both sides of the instant with room.
@@ -398,6 +406,7 @@ public sealed class AfskDemodulator
             }
 
             _phaseBitSink?.Invoke(level, phase);
+            _softPhaseBitSink?.Invoke(level, Math.Abs(value), phase);
         }
     }
 }

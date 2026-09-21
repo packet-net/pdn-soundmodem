@@ -27,6 +27,13 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
     private readonly Action<byte[]> _frameReceived;
     private readonly FrameDeduper _deduper;
     private readonly int _dedupeChunk;
+
+    /// <summary>Suppresses repaired copies of bursts another branch decoded cleanly - see
+    /// <see cref="RepairEchoGate"/>. Repaired candidates are held until this long after their
+    /// burst ended so any clean copy of the same burst (branches deliver within ~100 ms of
+    /// each other) has been seen and recorded first.</summary>
+    private readonly RepairEchoGate _echoGate;
+    private readonly long _echoHoldSamples;
     private readonly List<Candidate> _candidates = [];
     /// <summary>
     /// Where the frame just delivered was in the receive audio, from the branch that decoded it,
@@ -60,10 +67,14 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
     /// be compared. <paramref name="ResidualHz"/> is that branch's demodulator's own
     /// measurement of how far the signal sat from <em>its</em> centre, so branch + residual
     /// is the station's offset from the bank's centre however far out the branch that copied
-    /// it happened to be (the issue #202 model, as in <see cref="Afsk300MultiModem"/>).</summary>
+    /// it happened to be (the issue #202 model, as in <see cref="Afsk300MultiModem"/>).
+    /// <paramref name="Repaired"/> marks a copy the deframer's chase engine recovered from a
+    /// failed FCS or a bit slip rather than decoded outright, with
+    /// <paramref name="EditedBits"/> the number of bit edits it took (see
+    /// <see cref="Hdlc.HdlcRepairPolicy"/>).</summary>
     private readonly record struct Candidate(
         byte[] Frame, double BranchOffsetHz, double ResidualHz, int EmphasisDb,
-        long SpanFrom, long SpanTo);
+        long SpanFrom, long SpanTo, bool Repaired, int EditedBits);
 
     /// <summary>Creates the bank.</summary>
     /// <param name="sampleRate">Channel DSP rate.</param>
@@ -105,6 +116,8 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
         // re-acquires a carrier (see Process): a burst that arrives after the carrier
         // dropped is a new transmission whatever the clock says.
         _deduper = new FrameDeduper(2L * _dedupeChunk);
+        _echoGate = new RepairEchoGate(sampleRate);
+        _echoHoldSamples = (long)(RepairEchoGate.WindowFraction * sampleRate);
         _modulator = new AfskModulator(
             sampleRate, 1200, centerFrequency - Bell202ToneShift, centerFrequency + Bell202ToneShift);
 
@@ -134,7 +147,10 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
                 nrzi[phase] = new NrziDecoder();
                 int reading = (branch * phases) + phase;
                 deframers[phase] = new HdlcDeframer(
-                    frame => OnFrame(frame, offset, emphasisDb, branch, reading));
+                    frame => OnFrame(frame, offset, emphasisDb, branch, reading),
+                    repair: HdlcRepairPolicy.Corpus);
+                deframers[phase].FrameRepaired =
+                    (frame, editedBits) => OnFrame(frame, offset, emphasisDb, branch, reading, editedBits);
                 deframers[phase].FrameOpened =
                     () => _syncAt[reading] = _demodulators[branch].InputSamplePosition;
             }
@@ -143,7 +159,12 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
                 sampleRate,
                 static _ => { },
                 centerFrequency + step * offsetHz,
-                phaseBitSink: (level, phase) => deframers[phase].PushBit(nrzi[phase].Decode(level)));
+                // The measured Bell 202 filter lengths - see Afsk1200Modem's construction
+                // for the corpus figures behind them.
+                bandPassTaps: 512,
+                lowPassTaps: 256,
+                softPhaseBitSink: (level, soft, phase) =>
+                    deframers[phase].PushBit(nrzi[phase].Decode(level), soft));
             _preFilters[i] = new EmphasisFilter(i / frequencyCount);
         }
     }
@@ -247,6 +268,7 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
     /// <inheritdoc />
     public void ResetCarrierState()
     {
+        _echoGate.Clear();
         foreach (AfskDemodulator demodulator in _demodulators)
         {
             demodulator.ResetCarrierState();
@@ -289,8 +311,9 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
 
     // Several branches usually decode the same transmission within a frame-time of each
     // other, which is well inside one chunk. Hold them all and let the chunk end decide,
-    // rather than emitting whichever finished first.
-    private void OnFrame(byte[] frame, double offsetHz, int emphasisDb, int branch, int reading)
+    // rather than emitting whichever finished first. A non-negative editedBits marks a copy
+    // the deframer's repair engine recovered rather than decoded outright.
+    private void OnFrame(byte[] frame, double offsetHz, int emphasisDb, int branch, int reading, int editedBits = -1)
     {
         // The branch's marks go into the candidate rather than being read at the emit below: by
         // then the chunk has moved on, and it is the branch that decoded this copy that knows
@@ -301,12 +324,14 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
         long ended = _demodulators[branch].InputSamplePosition;
         _candidates.Add(new Candidate(
             frame, offsetHz, _demodulators[branch].CarrierOffsetHz, emphasisDb,
-            syncAt < 0 ? 0 : syncAt, syncAt < 0 ? 0 : ended));
+            syncAt < 0 ? 0 : syncAt, syncAt < 0 ? 0 : ended,
+            editedBits >= 0, Math.Max(0, editedBits)));
     }
 
     /// <summary>
     /// Emits one frame per distinct transmission seen this chunk, from the branch that was
-    /// actually tuned closest to it.
+    /// actually tuned closest to it. Repaired copies wait out their echo hold first - see
+    /// <see cref="RepairEchoGate"/>.
     /// </summary>
     /// <remarks>
     /// The first branch to finish is the wrong one to report: branches are fed in ascending
@@ -325,17 +350,25 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
     /// actually matched. So flat outranks emphasised, and the residual decides among
     /// equals. Measured matched-branch honesty is ~±12 Hz at 1200 baud (the envelope
     /// midpoint carries a small mark-duty bias Bell 202's 87.5 %-mark flags produce)
-    /// against the ±60-90 Hz comb-position lie this replaces. The cost is a frame waiting
-    /// for the end of its chunk: at most 100 ms.
+    /// against the ±60-90 Hz comb-position lie this replaces. A repaired copy never
+    /// outranks a clean one however well centred its branch was: the clean copy's bytes
+    /// needed no search to find. The cost is a frame waiting for the end of its chunk: at
+    /// most 100 ms - plus the echo hold on repaired copies alone.
     /// </remarks>
     private void EmitBestOfChunk()
     {
-        while (_candidates.Count > 0)
+        while (true)
         {
-            Candidate best = _candidates[0];
-            for (int i = 1; i < _candidates.Count; i++)
+            int first = FirstDeliverable();
+            if (first < 0)
             {
-                if (IsSameFrame(_candidates[i].Frame, best.Frame) && IsBetter(_candidates[i], best))
+                return;
+            }
+
+            Candidate best = _candidates[first];
+            for (int i = 0; i < _candidates.Count; i++)
+            {
+                if (i != first && IsSameFrame(_candidates[i].Frame, best.Frame) && IsBetter(_candidates[i], best))
                 {
                     best = _candidates[i];
                 }
@@ -349,11 +382,23 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
                 }
             }
 
+            // A repaired copy within burst-time of a clean delivery is the same transmission
+            // read badly, not a second frame - and the clean copy is the one that is right.
+            if (best.Repaired && _echoGate.IsEcho(best.Frame, best.SpanTo))
+            {
+                continue;
+            }
+
             // Still deduped across chunks: a transmission straddling a chunk boundary
             // reaches here twice, and the window is what stops the second copy going out.
             if (!_deduper.ShouldEmit(best.Frame, _samplesProcessed))
             {
                 continue;
+            }
+
+            if (!best.Repaired)
+            {
+                _echoGate.RecordClean(best.Frame, best.SpanTo);
             }
 
             _frameReceived(best.Frame);
@@ -366,14 +411,35 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
             FrameDecoded?.Invoke(best.Frame, new FrameQuality(
                 "afsk1200", best.Frame.Length, CorrectedBytes: null, CrcValid: null,
                 FrequencyOffsetHz: best.BranchOffsetHz + best.ResidualHz,
-                EmphasisDb: best.EmphasisDb));
+                EmphasisDb: best.EmphasisDb,
+                ChasedBits: best.Repaired ? best.EditedBits : null));
         }
     }
 
+    /// <summary>The first candidate deliverable now: any clean copy, or a repaired copy whose
+    /// echo hold has expired. Held repaired candidates do not block the clean ones behind
+    /// them.</summary>
+    private int FirstDeliverable()
+    {
+        for (int i = 0; i < _candidates.Count; i++)
+        {
+            if (!_candidates[i].Repaired || _samplesProcessed >= _candidates[i].SpanTo + _echoHoldSamples)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
     private static bool IsBetter(in Candidate candidate, in Candidate best) =>
-        candidate.EmphasisDb != best.EmphasisDb
-            ? candidate.EmphasisDb < best.EmphasisDb
-            : Math.Abs(candidate.ResidualHz) < Math.Abs(best.ResidualHz);
+        candidate.Repaired != best.Repaired
+            ? !candidate.Repaired
+            : candidate.EditedBits != best.EditedBits
+                ? candidate.EditedBits < best.EditedBits
+                : candidate.EmphasisDb != best.EmphasisDb
+                    ? candidate.EmphasisDb < best.EmphasisDb
+                    : Math.Abs(candidate.ResidualHz) < Math.Abs(best.ResidualHz);
 
     private static bool IsSameFrame(byte[] a, byte[] b) => a.AsSpan().SequenceEqual(b);
 }
