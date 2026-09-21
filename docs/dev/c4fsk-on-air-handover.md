@@ -126,6 +126,34 @@ forced open, `peakHigh` went +0.23 -> +0.08 -> -3.1 -> -43 -> -33173 and the hal
 negative, about 4 s into an 8 s burst. It is a consequence of a bad eye rather than a cause of
 one, but it turns a degraded burst into an unrecoverable one.
 
+## Fault 4: the modulator emits above full scale, and #516 did not change the two modes' ratio
+
+Both C4FSK modes clip in the modulator, on `main` today, before any station setting is applied.
+Measured straight out of `C4fskModem.Modulate` at 48 kHz with a 200-byte frame and 250 ms of
+TXDELAY:
+
+| mode | peak | samples over full scale |
+|---|---|---|
+| `c4fsk9600` | 1.0562 | 1265 of 21608 (5.9 %) |
+| `c4fsk19200` | 1.0261 | 26 of 16828 (0.2 %) |
+
+`HeadroomFraction` is 0.8 and the pulse shaper overshoots the symbol amplitude by up to 32 %, so
+0.8 is not enough headroom; 0.75 would be. As an eye this costs little here (clipping the real
+modulator output at full scale moved the measurement from 0.032 to 0.033), but this is the one
+amplitude-coded mode in the tree, `FrameLevels` is `ClipSensitive`, and the code comment beside
+the scaler says in terms that clipping compresses the outer levels into the inner ones and no
+envelope tracker downstream can undo it.
+
+**Separately, #516's per-mode deviation scaling is a no-op for these two modes.** It computes
+`HeadroomFraction * PeakDeviationHz / FullDeviationHz(ChannelSpacingHz)` from the mode's own
+profile, and both C4FSK modes sit at exactly 100 % of the channel class they declare:
+`c4fsk9600` is 2500 Hz in `Narrow` (full deviation 2500) and `c4fsk19200` is 5000 Hz in `Wide`
+(full deviation 5000). Both therefore come out at 0.800, which is where they were before, and the
+1:2 ratio the change set out to create is still 1:1. The handover's own measurements are the
+symptom and they still hold: on one 25 kHz channel, `c4fsk9600` measured 6.92 kHz peak deviation
+and `c4fsk19200` 6.73 kHz, which is to say the same. Normalising each mode against its own nominal
+channel cancels out; the divisor has to be a single reference the station actually transmits on.
+
 ## The binary control: fsk9600 now works on air
 
 `fsk9600` had never been proven on air. It is now, on this rig, 20 frames per rung, scored from
@@ -190,11 +218,9 @@ Keep a "delay only" control column permanently: if it is ever not full marks, th
 
 **Wind the transmit level down and the eye does not change, because the clipping is upstream of
 the volume control.** `Pcm16.FromFloat` clamps at full scale before ALSA's mixer attenuates, so a
-modulator that emits above 1.0 clips identically at every mixer setting. The deployed build
-(0.73.0, `ofdmfm.51932aa`) emits `c4fsk9600` with its outer level at 1.035 of full scale and peaks
-at 1.056, so 2.3 % of its samples are clipped; #516 takes that to 0.4 and fixes it. Measured as an
-eye, the clipping costs little here, but it is exactly the thing `FrameLevelLimits.ClipSensitive`
-exists to prevent and the stations need updating.
+modulator that emits above 1.0 clips identically at every mixer setting, and no amount of turning
+the transmit volume down will show you it is happening. See fault 4 below, which is where that
+observation led.
 
 **The RSP1 heard nothing at IFGR 40 to 45 with RFGR 0** in this session, peak |x| 0.011 across a
 25 s capture with a transmitter a few metres away. Whatever it was doing for the first pass it was
@@ -230,7 +256,8 @@ flat continuum off air against four spikes on a clean transmission.
    give `fsk9600` back its long frames), or the receiver grows DC restoration with more reach than
    a one-tap loop, or the mode is documented as needing a DC-coupled 9600 socket. `c4fsk19200`
    tolerates 100 Hz and is the one to try first on the rig as it stands.
-4. **Update the stations.** They are on a build that predates #516 and transmits above full scale.
+4. **Give the modulator real headroom and make #516's ratio actually apply** (fault 4). Both are
+   in `C4fskModem.Modulate` and neither needs a radio to verify.
 
 ## Leave the rig as you found it
 
