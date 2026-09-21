@@ -63,7 +63,11 @@ internal static class StationCarrierSense
             return legacy;
         }
 
-        if (config.Radio.Equals("none", StringComparison.OrdinalIgnoreCase))
+        // Null-safe on purpose, although DaemonConfig.Load refuses a null "radio" before anything
+        // gets here: this is also reachable from a CarrierSenseConfig built in code, and the cost
+        // of being wrong is a daemon that will not start.
+        if (config.Radio is null
+            || config.Radio.Equals("none", StringComparison.OrdinalIgnoreCase))
         {
             say("carrier sense: \"radio\": \"none\", so no serial port is opened");
             return null;

@@ -1875,14 +1875,22 @@ public sealed class DaemonConfig
             return;
         }
 
-        if (sense.Radio.Equals("tait", StringComparison.OrdinalIgnoreCase)
-            || sense.Radio.Equals("none", StringComparison.OrdinalIgnoreCase))
+        // Null is a real possibility and not a nullable-annotation nicety: System.Text.Json does
+        // not enforce C#'s annotations, so an explicit "radio": null lands on this non-nullable
+        // property as a null and would take an unguarded Equals with it. Several siblings in the
+        // same section genuinely are nullable, so writing it is a reasonable mistake. Refused in
+        // words, exactly as "sideband" already refuses one.
+        if (sense.Radio is { } radio
+            && (radio.Equals("tait", StringComparison.OrdinalIgnoreCase)
+                || radio.Equals("none", StringComparison.OrdinalIgnoreCase)))
         {
             return;
         }
 
         throw new InvalidDataException(
-            $"\"carrierSense\".\"radio\": \"{sense.Radio}\" is not a radio this build can read "
+            "\"carrierSense\".\"radio\": "
+            + (sense.Radio is null ? "null" : $"\"{sense.Radio}\"")
+            + " is not a radio this build can read "
             + "carrier sense from. Use \"tait\" (a TM8100 or TM9100 series set with its data "
             + "port in command mode), or \"none\" to switch the section off without deleting "
             + "it.");
@@ -2428,6 +2436,7 @@ public sealed class DaemonConfig
         Unknown("rawCapture", config.RawCapture?.UnknownSettings);
         Unknown("deadFeed", config.DeadFeed?.UnknownSettings);
         Unknown("ptt", config.Ptt?.UnknownSettings);
+        Unknown("carrierSense", config.CarrierSense?.UnknownSettings);
         Unknown("txTest", config.TxTest.UnknownSettings);
         Unknown("paging", config.Paging?.UnknownSettings);
         Unknown("ardop", config.Ardop?.UnknownSettings);
