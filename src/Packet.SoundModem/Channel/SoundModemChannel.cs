@@ -106,10 +106,14 @@ public sealed class SoundModemChannel
     /// <param name="randomSeed">Seed for the p-persistence roll (tests); null = random.</param>
     /// <param name="channelBusySource">Something outside the audio path that knows whether the
     /// channel is occupied - a radio's squelch and signal-strength meter, read over its control
-    /// link. Null falls back to <see cref="ChannelBusySources.Host"/>, which is the static a host
-    /// registers its own already-open radio through; null from both leaves the station on the
-    /// audio-derived answer it has always had. See <see cref="CarrierSenseRule"/> for what
-    /// difference having one makes, and why.</param>
+    /// link. Null leaves the station on the audio-derived answer it has always had. See
+    /// <see cref="CarrierSenseRule"/> for what difference having one makes, and why.
+    /// <para><b>Passed in, never read from a static.</b> A host that registered a radio with
+    /// <see cref="ChannelBusySources.Host"/> hands <see cref="ChannelBusySources.Resolve"/> in
+    /// here. Reading the static from this constructor was tried and taken back out: a channel is
+    /// built in a dozen places, several of them concurrently in one process, and a mutable global
+    /// that silently changes what a station will transmit over is the wrong thing for any of them
+    /// to depend on by accident.</para></param>
     /// <param name="audioFallback">Whether, with no source of its own, this channel should read
     /// carrier sense off the shape of the received audio (<see cref="FmShapeBusyDetector"/>).
     /// For a station on an open-squelch FM radio with no control cable. Off by default here
@@ -138,9 +142,9 @@ public sealed class SoundModemChannel
         _burstSnr = new BurstSnrMonitor(sampleRate);
         _frameLevel = new FrameLevelMonitor(sampleRate);
         _constellationSink = constellationSink;
-        // Read once, here, and never again: a host registers its radio before it builds a channel,
-        // and a station's receive path does not change under it while it runs.
-        _busySource = channelBusySource ?? ChannelBusySources.Host;
+        // Read once, here, and never again: a station's receive path does not change under it
+        // while it runs.
+        _busySource = channelBusySource;
 
         // Only where there is nothing better to ask, and only where it is measured to work. It
         // decides for itself whether the path is one it understands and answers null on anything

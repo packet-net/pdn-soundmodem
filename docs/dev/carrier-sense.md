@@ -93,7 +93,14 @@ This costs a hard dependency: a radio with its data port programmed for command 
 
 A station switches it on with a `carrierSense` section in `soundmodem.json`; see [the configuration reference](../reference/config.md#carriersense).
 
-The in-process case is what the `Host` static exists for. Run inside a host that already owns the serial link, opening it a second time from in here would at best fail and at worst fight the owner for the port. The host registers its own already-open radio before it builds the channel and the same deciding runs over it.
+The in-process case is what the `Host` static exists for. Run inside a host that already owns the serial link, opening it a second time from in here would at best fail and at worst fight the owner for the port. The host registers its own already-open radio and then hands it to the channel:
+
+```csharp
+ChannelBusySources.Host = new RadioBusySource(myRadio, busyAboveDbm: -110);
+var channel = new SoundModemChannel(rate, channelBusySource: ChannelBusySources.Resolve());
+```
+
+**`SoundModemChannel` does not read that static itself**, and having it do so was tried and taken back out. A channel is built in a dozen places, several of them concurrently in one process, and a mutable global that silently decides what a station will transmit over is the wrong thing for any of them to depend on by accident.
 
 ## It fails open, deliberately
 
