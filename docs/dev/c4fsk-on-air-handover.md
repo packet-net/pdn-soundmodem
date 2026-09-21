@@ -75,11 +75,20 @@ Completely level-independent, so it is not deviation, not the IF filter and not 
 **What the path actually does.** End-to-end audio response, radio2 transmit through RF to radio1
 receive, stepped tone through `POST /api/txtest`, read off radio1's `rawCapture`:
 
-| Hz | 50 | 70 | 100 | 140 | 200 | 280 | 400 | 560 | 800 | 1130 | 1600 | 2260 | 3200 | 4500 | 6400 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| dB | -6.9 | -3.2 | -1.7 | -0.9 | -0.4 | -0.1 | +0.1 | +0.1 | +0.1 | 0.0 | -0.1 | -0.3 | -0.8 | -0.9 | -3.7 |
+| Hz | 50 | 70 | 100 | 140 | 200 | 280 | 400 | 560 | 800 | 1130 | 1600 | 2260 | 3200 | 4500 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| dB | -6.9 | -3.2 | -1.7 | -0.9 | -0.4 | -0.1 | +0.1 | +0.1 | +0.1 | 0.0 | -0.1 | -0.3 | -0.8 | -0.9 |
 
-Flat from 280 Hz to 4.5 kHz, and high-passing below that, 3 dB down at about 70 Hz. That is the
+| Hz | 6400 | 7500 | 8500 | 9600 | 11000 | 12500 | 14000 |
+|---|---|---|---|---|---|---|---|
+| dB | -3.4 | -6.7 | -10.8 | -16.2 | -28.0 | -49.5 | -58.3 |
+
+The top half agrees closely with an independent measurement of the same rig two days earlier
+through the OFDM-FM carriers (-3 dB at 6.3 kHz, -6 at 7.4, -8 at 8, -18.7 at 10 kHz), so both
+instruments are sound.
+
+Flat from 280 Hz to 4.5 kHz, high-passing below that, 3 dB down at about 70 Hz, and 3 dB down
+again at 6.4 kHz. That is the
 coupling network: the interface has a 1 uF in the transmit tail (the hardware page puts its corner
 at 43 to 64 Hz), a 1 uF at each end on the CM108 board itself, and 4u7 in the receive tail.
 
@@ -98,6 +107,14 @@ fsk9600           60 |    40    40    40    40    40    40    40    40    39    
 twice the symbol rate, so it has half the low-frequency content and tolerates twice the corner,
 which is a prediction of the mechanism and it came out right. The binary control tolerates four to
 six times as much, because a 2-level eye has three times the margin.
+
+**`c4fsk19200` is not the way out, though, and I was wrong to suggest it might be.** It tolerates
+a 70 Hz corner and the rig is AT 70, so it has nothing in hand at the bottom, and unlike
+`c4fsk9600` it is also squeezed at the top: at 9600 sym/s its band reaches to 9.6 kHz, where this
+path is 16 dB down, and it is already 11 dB down at 8.5 kHz. Measured on air today, with the gate
+forced open on a real `c4fsk19200` burst, the eye is 0.186, no better than `c4fsk9600`'s 0.193,
+and nothing decodes. So the top-of-band rolloff the first pass reached for is real and does matter
+- just for the 19200 mode, which was not the mode it was measuring.
 
 Through a filter fitted to the fifteen measured points above, `c4fsk9600` and `c4fsk19200` both
 deliver 0 of 40. Split the fit in two: the LOW end on its own delivers 0 of 40 and the TOP end on
@@ -251,11 +268,13 @@ flat continuum off air against four spikes on a clean transmission.
 1. **Fix the gate** (fault 1). It is the blocker, it is a real defect on every FM station, and
    nothing else can be tested until it is done.
 2. **Guard the envelope tracker** (fault 3). Small and clearly right.
-3. **Decide what `c4fsk9600` is for.** Through this interface it cannot work: it needs a corner
-   below 30 Hz and the interface gives 70. Either the coupling capacitors go up (which would also
-   give `fsk9600` back its long frames), or the receiver grows DC restoration with more reach than
-   a one-tap loop, or the mode is documented as needing a DC-coupled 9600 socket. `c4fsk19200`
-   tolerates 100 Hz and is the one to try first on the rig as it stands.
+3. **Accept that neither C4FSK mode can work through this interface as built**, and decide which
+   way out to take. `c4fsk9600` needs a corner below 30 Hz against the 70 it gets; `c4fsk19200`
+   has nothing in hand at either end and measured no better on air. Either the coupling corners
+   come down (which would also give `fsk9600` back its long frames, so it pays for itself), or the
+   receiver grows DC restoration with more reach than a one-tap loop, or these modes are
+   documented as needing a properly DC-coupled 9600 baud socket. Fixing the gate is still worth
+   doing first, because until it is fixed nothing downstream of it can be tested at all.
 4. **Give the modulator real headroom and make #516's ratio actually apply** (fault 4). Both are
    in `C4fskModem.Modulate` and neither needs a radio to verify.
 
