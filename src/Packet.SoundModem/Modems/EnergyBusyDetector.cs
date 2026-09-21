@@ -5,9 +5,25 @@ namespace Packet.SoundModem.Modems;
 /// a slowly-adapting noise-floor estimate, with assert/release hysteresis and a hold time.
 /// This is the deliberately display-decoupled replacement for QtSoundModem's spectral busy
 /// detector (which lives in its waterfall paint path and never runs headless). It flags
-/// non-packet energy - a carrier, voice, another mode - that the packet DCD cannot see;
-/// channel busy for carrier-sense purposes is the OR of both.
+/// non-packet energy - a carrier, voice, another mode - that the packet DCD cannot see.
 /// </summary>
+/// <remarks>
+/// <para><b>It assumes a signal ADDS power, and on FM that is the wrong way round.</b> An FM
+/// receiver with the squelch open, which is how every packet FM station runs, is loud when the
+/// channel is idle and quiet when a carrier arrives: the carrier captures the discriminator and
+/// replaces band noise with modulation. Measured through a modem's own receive filter on this
+/// bench, a transmission reads 2.9 dB BELOW the idle channel, and the idle channel's block-to-block
+/// scatter straddles it completely. So on that path this is not merely deaf, it is
+/// anti-correlated - it fires at the END of a transmission, when the noise returns - and no value
+/// of <c>assertDb</c> changes that. See <c>docs/dev/carrier-sense.md</c>.</para>
+/// <para><b>Which is a statement about the path and not about this class.</b> On a genuinely
+/// additive path - SSB, a wired loop, a squelched receiver - it does exactly what it says, and
+/// <c>OpenSquelchFmCarrierSenseTests</c> keeps a control run proving it. What changed in
+/// packet-net/pdn-soundmodem#522 is which source a station consults:
+/// <see cref="Channel.SoundModemChannel.ChannelBusy"/> drops every modem's energy detect the
+/// moment the station has a radio to ask instead. Where there is no such source, this is still
+/// what a station's CSMA reads, ored with the packet DCD.</para>
+/// </remarks>
 public sealed class EnergyBusyDetector
 {
     private readonly int _blockSize;

@@ -217,6 +217,7 @@ Rules and refusals:
 | `baud` | int | `28800` | Port speed, set by the radio's own data-port programming. |
 | `busyAboveDbm` | number | absent: carrier detect alone | Also call the channel busy when the radio's RSSI reads above this many dBm. |
 | `pollMilliseconds` | int | `100` | How often to read RSSI. Ignored without `busyAboveDbm`. |
+| `audioFallback` | bool | `true` | With no radio to ask, read carrier sense off the SHAPE of the received audio instead. Ignored on a station that has a radio, and on a 12 kHz channel. |
 
 **On FM this is not an optimisation, it is the difference between working and not.** An FM receiver with the squelch open, which is how every packet FM station runs, is LOUDER when the channel is idle than when somebody is transmitting: the arriving carrier captures the discriminator and replaces band noise with modulation. Measured on the bench, a transmission reads 2.9 dB BELOW the idle channel in band. Every audio busy detector here asserts on a rise, so without this section an FM station's carrier sense is not merely deaf, it is pointing the wrong way. With a source configured, the station's answer becomes the radio's, ored with any modem's packet carrier detect, and the audio energy detectors stop contributing at all.
 
@@ -226,6 +227,17 @@ Rules and refusals:
 - **The daemon holds the port while it runs**, and a serial port cannot be opened twice. A programming tool or a separate signal probe on the same radio has to wait, or this section comes out and the daemon restarts.
 - Refused at load: a `radio` that is not `tait` or `none`.
 - The radio needs its data port programmed for command mode. See [the Tait TM8100 wiring guide](../hardware/tait-tm8100-cm108.md).
+
+### No control cable: `audioFallback`
+
+A station with no serial link to its radio, or one that is not a Tait, reads carrier sense off the shape of the received spectrum instead. It compares the ratio of power below 8 kHz to power above it against the ratio the station's own idle channel was showing a few seconds ago; **nothing in the decision is an absolute level**, which is what made an earlier attempt at this unsafe.
+
+- **It is on by default, because off is not a neutral choice.** Without it an FM station consults an in-band energy detector, and on open-squelch FM that detector is anti-correlated: it reads clear through the whole of every transmission and then asserts for about ten seconds afterwards, on the return of the noise. Measured on the bench, a station two seconds after hearing one burst took 9.9 s to get a frame to air, against 0.5 s on a quiet channel.
+- **Measured** against real captures: 15 of 15 and 11 of 11 transmissions found, a median 26 ms after the carrier arrives, with no false busy in 620 s of idle channel.
+- **It answers "no opinion" on any path it does not recognise**, which includes a squelched receiver, a dead or muted card, the station's own receive audio while it transmits, and any SSB or wired path where a signal makes the audio LOUDER. On those the modems' own energy detectors decide, as they always have, which is right for them.
+- **It needs a 48 kHz channel**, which a station gets by running any 48 kHz mode. At 12 kHz the band split would land inside a wideband mode's own occupancy and the statistic stops separating; it is not used there and the journal says so.
+- A station that has a radio to ask never uses this, whatever the setting says: a measurement beats an inference.
+
 
 ## `txTest`
 

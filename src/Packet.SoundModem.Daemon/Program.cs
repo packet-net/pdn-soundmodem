@@ -656,10 +656,32 @@ string pageSideband =
 // so whether the channel is occupied is a fact about that receiver and not about any waveform.
 // Fails open - see StationCarrierSense.
 IChannelBusySource? carrierSense = StationCarrierSense.Open(
-    carrierSenseConfig, Console.WriteLine, out IDisposable? carrierSenseOwned);
+    carrierSenseConfig, Console.WriteLine, out IDisposable? carrierSenseOwned,
+    out bool carrierSenseFromAudio);
 using IDisposable? carrierSenseLifetime = carrierSenseOwned;
 
-var channel = new SoundModemChannel(DspRate, channelBusySource: carrierSense);
+// Said once, here, because this decides what the station will and will not transmit over and an
+// operator should not have to infer it from the absence of a line.
+if (carrierSenseFromAudio && DspRate < FmShapeBusyDetector.MinimumSampleRate)
+{
+    Console.WriteLine(
+        $"carrier sense: this channel runs at {DspRate} Hz, and reading carrier sense off the "
+        + "shape of the audio is measured not to work below "
+        + $"{FmShapeBusyDetector.MinimumSampleRate} Hz. Falling back to the in-band energy "
+        + "detector, which on an open-squelch FM radio reads clear through every transmission "
+        + "and busy for about ten seconds after it. A control cable to the radio is the fix.");
+    carrierSenseFromAudio = false;
+}
+else if (carrierSenseFromAudio)
+{
+    Console.WriteLine(
+        "carrier sense: no radio to ask, so from the shape of the received audio. That suits an "
+        + "open-squelch FM receiver and nothing else; on any other path it reports no opinion and "
+        + "the modems' own energy detectors decide, as before.");
+}
+
+var channel = new SoundModemChannel(
+    DspRate, channelBusySource: carrierSense, audioFallback: carrierSenseFromAudio);
 if (deviceIsUberSdr)
 {
     // Said once, here, so every path that could put something on the air - KISS, paging, ARDOP -

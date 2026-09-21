@@ -27,7 +27,7 @@ Almost everything here was measured on one bench, two Tait TM8110s on CM108 inte
 
 | | |
 |---|---|
-| [carrier-sense.md](carrier-sense.md) | Why audio cannot answer "is the channel busy" on an FM path, in two separate ways, and what does. Also the best defect of the campaign: an unused modem on the same channel holding the transmitter shut. |
+| [../carrier-sense.md](../carrier-sense.md) | Why audio cannot answer "is the channel busy" on an FM path, in two separate ways, and what does. Also the best defect of the campaign: an unused modem on the same channel holding the transmitter shut. **It lives a directory up now**: the defect is in the model of what a busy channel looks like, so it belongs to every mode a station runs on an FM radio, not to this one. |
 | [geometry-signalling.md](geometry-signalling.md) | Signalling the carrier layout in the burst header, proved on air. The machinery is in the code; no shipped preset uses it, and this page says why. |
 | [missing-frames-under-load.md](missing-frames-under-load.md) | Frames a station logs as transmitted that the far end never hears, and two wrong diagnoses before the right one. |
 

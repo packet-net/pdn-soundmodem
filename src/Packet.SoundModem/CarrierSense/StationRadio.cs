@@ -7,13 +7,17 @@ namespace Packet.SoundModem.CarrierSense;
 /// an untracked file beside the daemon.
 /// </summary>
 /// <remarks>
-/// <para><b>Why a file and not <c>ModemOptions</c>.</b> A modem is deliberately blind:
-/// "a modem sees audio in and frames out, and nothing else. It does not see the daemon, the KISS
-/// server, the config or the radio". <c>ModemOptions</c> is a fixed record with no room for a
-/// modem's own settings, so the only channel this modem has is a file it reads itself, which is
-/// already how the waveform geometry arrives.</para>
-/// <para>Absent file, absent section or absent port all mean the same thing: the feature is off and
-/// nothing opens a serial port. A station opts in by writing the file.</para>
+/// <para><b>This is the legacy path, kept working on purpose.</b> The settings belong in the
+/// daemon's own <c>carrierSense</c> section now, which is where an operator looks and which sits
+/// beside <c>ptt</c>, its nearest relative. They arrived here first because the feature was built
+/// for one modem and a modem is deliberately blind: "a modem sees audio in and frames out, and
+/// nothing else. It does not see the daemon, the KISS server, the config or the radio". So the
+/// only channel it had was a file it read itself, the same one the waveform geometry arrives
+/// through. The bench stations were set up that way, and upgrading a station must not silently
+/// take its carrier sense away, so this still works and the daemon says at start-up that it
+/// should be moved.</para>
+/// <para>Absent file, absent section or absent port all mean the same thing: nothing opens a
+/// serial port.</para>
 /// </remarks>
 /// <param name="TaitPort">The radio's CCDI serial port, for example <c>/dev/ttyUSB0</c>. Null
 /// leaves the feature off.</param>

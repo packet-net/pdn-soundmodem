@@ -19,8 +19,10 @@ public class StationCarrierSenseTests : IDisposable
 
     public void Dispose() => ChannelBusySources.Host = null;
 
+    private bool _audioFallback;
+
     private IChannelBusySource? Open(CarrierSenseConfig? config, out IDisposable? owned) =>
-        StationCarrierSense.Open(config, _said.Add, out owned);
+        StationCarrierSense.Open(config, _said.Add, out owned, out _audioFallback);
 
     [Fact]
     public void No_Section_And_No_Station_File_Opens_Nothing_And_Says_Nothing()
@@ -108,6 +110,40 @@ public class StationCarrierSenseTests : IDisposable
         owned?.Dispose();
 
         _said.Should().Contain(line => line.Contains("busyAboveDbm"));
+    }
+
+    [Fact]
+    public void A_Station_With_A_Radio_Does_Not_Also_Read_The_Audio()
+    {
+        // A measurement beats an inference, and running both would only give the inference a way
+        // to overrule the measurement.
+        var config = new CarrierSenseConfig
+        {
+            Port = $"/dev/nonexistent-{Guid.NewGuid():N}",
+            BusyAboveDbm = -75,
+        };
+
+        Open(config, out IDisposable? owned);
+        owned?.Dispose();
+
+        _audioFallback.Should().BeFalse();
+    }
+
+    [Fact]
+    public void A_Station_With_No_Radio_Reads_The_Audio_Unless_Told_Not_To()
+    {
+        // On by default, because the alternative is not neutral: without it an FM station
+        // consults an energy detector that reads clear through every transmission and busy for
+        // about ten seconds after it. Measured on this bench, 9.9 s to air against 0.5 s on a
+        // quiet channel.
+        Open(null, out _);
+        _audioFallback.Should().BeTrue("no section at all still means an FM station gets it");
+
+        Open(new CarrierSenseConfig(), out _);
+        _audioFallback.Should().BeTrue("a section with no port has no radio either");
+
+        Open(new CarrierSenseConfig { AudioFallback = false }, out _);
+        _audioFallback.Should().BeFalse("and an operator can still say no");
     }
 
     private sealed class StubSource(bool? busy) : IChannelBusySource

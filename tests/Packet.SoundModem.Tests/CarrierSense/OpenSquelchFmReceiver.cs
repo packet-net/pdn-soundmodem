@@ -1,4 +1,4 @@
-using M0LTE.Dsp;
+using Packet.SoundModem.Modems.OfdmFm;
 
 namespace Packet.SoundModem.Tests.CarrierSense;
 
@@ -18,27 +18,29 @@ namespace Packet.SoundModem.Tests.CarrierSense;
 /// whole detection bandwidth. An arriving carrier captures the discriminator and replaces that
 /// noise with the modulation, so the received level FALLS, and it falls hardest well above the
 /// signal's own band where the modulation puts nothing back.</para>
-/// <para><b>The numbers are measured, on radio1, 2026-09-21</b>, from a 48 kHz capture of a
-/// NinoTNC transmitting C4FSK 19k2 against a real idle channel
-/// (<c>/home/tf/fm-carrier-sense-evidence/README.md</c>). In the energy detector's own 20 ms
-/// blocks, through the c4fsk19200 receive filter:</para>
-/// <list type="table">
-/// <item><term>idle, in band</term><description>-16.0 dBFS</description></item>
-/// <item><term>keyed, in band</term><description>-18.9 dBFS, so <b>2.9 dB below idle</b></description></item>
-/// </list>
-/// <para>and the hiss above the signal's band collapses much harder than the signal band moves,
-/// which is the one thing the audio has going for it: the in-band-to-hiss ratio reads 21.5 dB idle
-/// against 36.7 dB keyed.</para>
-/// <para><b>The hiss figures here are a ratio, not an absolute.</b> The in-band levels were
-/// measured directly and are trustworthy as levels; the hiss band's own level is set from that
-/// measured RATIO, because an absolute figure for it was never taken. That distinction matters:
-/// two nominally identical stations on this bench measured 22 dB apart in absolute terms, which is
-/// precisely why no detector may key a decision off an absolute dBFS threshold.</para>
-/// <para><b>The spectral shape above the band is this rig's, not FM theory's.</b> Textbook FM
-/// detection noise RISES with frequency; what this station measures is a receive path that rolls
-/// off above about 10 kHz, so the hiss band sits well below the signal band even when idle.
-/// Anything relying on the shape rather than on the collapse should be measured on a second
-/// station before it is believed.</para>
+/// <para><b>It is one measured table and nothing else.</b> The 24 rows below are the per-kilohertz
+/// spectrum of <c>ninorx.wav</c>, a 48 kHz capture off radio1's discriminator of a NinoTNC
+/// transmitting C4FSK 19k2 against a real idle channel, averaged over 1985 idle blocks and 94
+/// whole-burst blocks of 1024 samples. <b>Everything anybody quotes about this channel falls out
+/// of it</b>, which is why it is stored as a spectrum rather than as a handful of derived numbers:
+/// in-band 0 to 14 kHz reads -15.90 dBFS idle against -18.88 keyed, a 2.98 dB drop; the hiss from
+/// 16 to 23.5 kHz collapses by 18.3 dB; and the ratio of power below 8 kHz to power above it,
+/// which is what <see cref="Packet.SoundModem.CarrierSense.FmShapeBusyDetector"/> keys off, rises
+/// from 7.55 dB to 30.57 dB.</para>
+/// <para><b>The shape is the interesting part and a two-band model cannot carry it.</b> Quieting
+/// is not uniform: it is -1.1 dB in the bottom kilohertz, where the modulation replaces what the
+/// carrier removed, and 27.9 dB at 9 to 10 kHz, just above what a 9600 symbol per second signal
+/// occupies. Idle hiss FALLS across the band here, by 37 dB from the bottom to the top, which is
+/// this receive path's own response rather than FM theory: textbook post-detection noise rises.
+/// That is exactly the station-dependent property that makes an absolute threshold on any band
+/// ratio unsafe, and it is why the detector under test compares against the station's own idle.
+/// </para>
+/// <para><b>What this fixture is not.</b> The burst is band-shaped noise and not a real waveform,
+/// so nothing here decodes and nothing here should be used to measure decode performance. Keyups
+/// are instantaneous, so assert LATENCY has to be measured against a recording
+/// (<see cref="FmShapeBusyDetectorRecordingTests"/>), not against this. What this is for is the
+/// steady-state question of which way round the levels and the shape are, which is what every
+/// other fixture in the suite gets wrong.</para>
 /// </remarks>
 internal static class OpenSquelchFmReceiver
 {
@@ -56,43 +58,73 @@ internal static class OpenSquelchFmReceiver
     /// anti-alias corner.</summary>
     public const double HissToHz = 23500;
 
-    /// <summary>In-band level with nobody transmitting.</summary>
-    public const double IdleInBandDbfs = -16.0;
+    /// <summary>What the table gives for 0 to 14 kHz with nobody transmitting.</summary>
+    public const double IdleInBandDbfs = -15.90;
 
-    /// <summary>In-band level with a far end transmitting. Below <see cref="IdleInBandDbfs"/>,
-    /// which is the whole point.</summary>
-    public const double KeyedInBandDbfs = -18.9;
+    /// <summary>The same band with a far end transmitting. BELOW idle, which is the whole
+    /// point.</summary>
+    public const double KeyedInBandDbfs = -18.88;
 
-    /// <summary>How far the hiss band sits below the signal band with nobody transmitting.</summary>
-    public const double IdleInBandOverHissDb = 21.5;
+    /// <summary>Measured power per kilohertz band with nobody transmitting, dB, 0 to 24 kHz.</summary>
+    private static readonly double[] IdleBandDb =
+    [
+        -24.55, -24.67, -24.84, -25.19, -25.79, -26.05, -26.77, -27.96,
+        -29.02, -30.37, -32.20, -33.73, -35.65, -38.08, -40.19, -42.43,
+        -44.66, -46.30, -48.00, -50.12, -52.05, -54.66, -58.23, -61.66,
+    ];
 
-    /// <summary>The same ratio with a far end transmitting: the hiss has collapsed and the ratio
-    /// has opened up by 15.2 dB.</summary>
-    public const double KeyedInBandOverHissDb = 36.7;
+    /// <summary>The same bands with a far end transmitting.</summary>
+    private static readonly double[] KeyedBandDb =
+    [
+        -23.47, -24.68, -26.08, -28.36, -31.53, -35.47, -40.38, -47.90,
+        -54.93, -58.27, -59.60, -59.66, -60.01, -60.82, -61.65, -62.73,
+        -64.41, -65.40, -66.01, -67.32, -68.76, -69.82, -73.13, -76.38,
+    ];
 
-    private const int Taps = 257;
+    private const double BandWidthHz = 1000;
 
     /// <summary>Open-squelch idle hiss: the LOUD state.</summary>
-    public static float[] Idle(double seconds, int seed) =>
-        Render(seconds, seed, IdleInBandDbfs, IdleInBandDbfs - IdleInBandOverHissDb);
+    public static float[] Idle(double seconds, int seed, int rate = SampleRate) =>
+        Render(seconds, seed, IdleBandDb, rate);
 
     /// <summary>A far end transmitting: quieter in band, and much quieter above it.</summary>
-    public static float[] Keyed(double seconds, int seed) =>
-        Render(seconds, seed, KeyedInBandDbfs, KeyedInBandDbfs - KeyedInBandOverHissDb);
+    public static float[] Keyed(double seconds, int seed, int rate = SampleRate) =>
+        Render(seconds, seed, KeyedBandDb, rate);
+
+    /// <summary>
+    /// The same channel through a different station's audio path: a one-pole low pass, which is
+    /// what a sound card's own response looks like, applied to idle and keyed alike.
+    /// </summary>
+    /// <remarks>
+    /// <b>The regression for the failure that silenced a bench station.</b> Two nominally
+    /// identical stations measured 22 dB apart in absolute terms, and the threshold set from one
+    /// stopped the other transmitting. A detector whose decision is a ratio against the station's
+    /// own idle should not care about any of this; one with an absolute threshold in it will.
+    /// </remarks>
+    public static float[] IdleThrough(double seconds, int seed, double cornerHz) =>
+        Render(seconds, seed, RolledOff(IdleBandDb, cornerHz), SampleRate);
+
+    /// <inheritdoc cref="IdleThrough"/>
+    public static float[] KeyedThrough(double seconds, int seed, double cornerHz) =>
+        Render(seconds, seed, RolledOff(KeyedBandDb, cornerHz), SampleRate);
+
+    private static double[] RolledOff(double[] bandDb, double cornerHz)
+    {
+        var shaped = new double[bandDb.Length];
+        for (int b = 0; b < bandDb.Length; b++)
+        {
+            double centre = (b + 0.5) * BandWidthHz;
+            shaped[b] = bandDb[b] - (10 * Math.Log10(1 + ((centre / cornerHz) * (centre / cornerHz))));
+        }
+
+        return shaped;
+    }
 
     /// <summary>
     /// Idle, then a transmission, then idle again: what a station hears across somebody else's
     /// whole over.
     /// </summary>
-    /// <remarks>
-    /// The three stretches are rendered independently and concatenated, so the keyup and the
-    /// unkey are instantaneous. A real one is not, and a detector's assert latency has to be
-    /// measured against a real recording rather than against this; what this is for is the
-    /// STEADY-STATE question of which way round the levels are, which is what every other fixture
-    /// in the suite gets wrong.
-    /// </remarks>
-    public static float[] IdleThenKeyedThenIdle(
-        double idleSeconds, double keyedSeconds, int seed)
+    public static float[] IdleThenKeyedThenIdle(double idleSeconds, double keyedSeconds, int seed)
     {
         float[] before = Idle(idleSeconds, seed);
         float[] during = Keyed(keyedSeconds, seed + 1);
@@ -111,89 +143,107 @@ internal static class OpenSquelchFmReceiver
     public static double BandPowerDbfs(
         ReadOnlySpan<float> samples, double fromHz, double toHz, int from, int to)
     {
-        var filter = new FirFilter(FilterDesign.BandPass(fromHz, toHz, SampleRate, Taps));
-        double sum = 0;
-        int counted = 0;
-        for (int i = 0; i < samples.Length; i++)
+        int n = 1024;
+        var window = new double[n];
+        double windowPower = 0;
+        for (int i = 0; i < n; i++)
         {
-            float y = filter.Next(samples[i]);
-            if (i < from || i >= to)
+            window[i] = 0.5 - (0.5 * Math.Cos(2 * Math.PI * i / n));
+            windowPower += window[i] * window[i];
+        }
+
+        windowPower /= n;
+        double binHz = (double)SampleRate / n;
+        int k0 = Math.Max(1, (int)Math.Ceiling(fromHz / binHz));
+        int k1 = Math.Min((n / 2) - 1, (int)Math.Floor(toHz / binHz));
+
+        var re = new double[n];
+        var im = new double[n];
+        double total = 0;
+        int blocks = 0;
+        for (int at = from; at + n <= to && at + n <= samples.Length; at += n)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                re[i] = samples[at + i] * window[i];
+                im[i] = 0;
+            }
+
+            RealFft.Forward(re, im);
+            double acc = 0;
+            for (int k = k0; k <= k1; k++)
+            {
+                acc += 2 * ((re[k] * re[k]) + (im[k] * im[k]));
+            }
+
+            total += acc / ((double)n * n * windowPower);
+            blocks++;
+        }
+
+        return 10 * Math.Log10(Math.Max(total / Math.Max(blocks, 1), 1e-30));
+    }
+
+    /// <summary>
+    /// Synthesises noise with the given per-kilohertz spectrum, by building the spectrum directly
+    /// and transforming it.
+    /// </summary>
+    /// <remarks>
+    /// Each bin gets an independent complex Gaussian, so the result is genuine Gaussian noise
+    /// rather than a sum of tones with random phase, and each band's realised power lands on the
+    /// figure it was given: at these lengths a band holds thousands of bins, so the chi-square
+    /// scatter on its total is a small fraction of a decibel. Done in the frequency domain because
+    /// the alternative, 24 band-pass filters over every sample, is both slower and less exact
+    /// about what it produced.
+    /// </remarks>
+    private static float[] Render(double seconds, int seed, double[] bandDb, int rate)
+    {
+        int count = (int)(seconds * rate);
+        int n = 1;
+        while (n < count)
+        {
+            n <<= 1;
+        }
+
+        double binHz = (double)rate / n;
+        var random = new Random(seed);
+        var re = new double[n];
+        var im = new double[n];
+
+        for (int k = 1; k < n / 2; k++)
+        {
+            int band = (int)(k * binHz / BandWidthHz);
+            if (band >= bandDb.Length)
             {
                 continue;
             }
 
-            sum += (double)y * y;
-            counted++;
+            // Band power P is spread over the bins inside it. For a real signal built from bins
+            // 1..n/2-1 with an inverse transform scaled by 1/n, Parseval gives
+            // mean square = (2 / n^2) * sum |c_k|^2, so a band of m bins wants |c_k|^2 = P n^2/2m.
+            double binsInBand = BandWidthHz / binHz;
+            double power = Math.Pow(10, bandDb[band] / 10);
+            double sigma = Math.Sqrt(power * (double)n * n / (2 * binsInBand));
+
+            double u1 = 1.0 - random.NextDouble();
+            double u2 = random.NextDouble();
+            double magnitude = Math.Sqrt(-2.0 * Math.Log(u1));
+            double real = magnitude * Math.Cos(2 * Math.PI * u2) / Math.Sqrt(2);
+            double imaginary = magnitude * Math.Sin(2 * Math.PI * u2) / Math.Sqrt(2);
+
+            re[k] = sigma * real;
+            im[k] = sigma * imaginary;
+            re[n - k] = re[k];
+            im[n - k] = -im[k];
         }
 
-        return 10 * Math.Log10(Math.Max(sum / Math.Max(counted, 1), 1e-20));
-    }
+        RealFft.Inverse(re, im);
 
-    private static float[] Render(double seconds, int seed, double inBandDbfs, double hissDbfs)
-    {
-        int count = (int)(seconds * SampleRate);
-        // Two independent noises rather than one shaped one: the signal band and the hiss band
-        // move independently here, which is the fixture's whole subject.
-        float[] band = Filtered(White(count, seed), FilterDesign.LowPass(SignalTopHz, SampleRate, Taps));
-        float[] hiss = Filtered(
-            White(count, seed + 7919), FilterDesign.BandPass(HissFromHz, HissToHz, SampleRate, Taps));
-
-        // Scaled after filtering, from what the filtered noise actually measured, so a change of
-        // filter order cannot quietly move the level the fixture claims to produce.
-        Scale(band, inBandDbfs);
-        Scale(hiss, hissDbfs);
-
-        var mixed = new float[count];
-        for (int i = 0; i < count; i++)
-        {
-            mixed[i] = band[i] + hiss[i];
-        }
-
-        return mixed;
-    }
-
-    private static float[] White(int count, int seed)
-    {
-        var random = new Random(seed);
         var samples = new float[count];
         for (int i = 0; i < count; i++)
         {
-            double u1 = 1.0 - random.NextDouble();
-            double u2 = random.NextDouble();
-            samples[i] = (float)(Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2));
+            samples[i] = (float)re[i];
         }
 
         return samples;
-    }
-
-    private static float[] Filtered(float[] input, float[] taps)
-    {
-        var filter = new FirFilter(taps);
-        var output = new float[input.Length];
-        for (int i = 0; i < input.Length; i++)
-        {
-            output[i] = filter.Next(input[i]);
-        }
-
-        return output;
-    }
-
-    private static void Scale(float[] samples, double targetDbfs)
-    {
-        // The filter's own transient is excluded from the measurement but not from the output:
-        // a station's audio does not start at a filter's cold history, and leaving the ramp in
-        // and measuring past it is the closer model of both.
-        double sum = 0;
-        for (int i = Taps; i < samples.Length; i++)
-        {
-            sum += (double)samples[i] * samples[i];
-        }
-
-        double rms = Math.Sqrt(sum / Math.Max(samples.Length - Taps, 1));
-        float gain = (float)(Math.Pow(10, targetDbfs / 20.0) / Math.Max(rms, 1e-12));
-        for (int i = 0; i < samples.Length; i++)
-        {
-            samples[i] *= gain;
-        }
     }
 }
