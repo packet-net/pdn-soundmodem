@@ -153,6 +153,23 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
     /// </summary>
     private const float MaximumEnvelopeReading = 3f;
 
+    /// <summary>
+    /// How far the received level may rise above this station's own idle channel before the shape
+    /// half of the gate stands down and leaves the energy half to it.
+    /// </summary>
+    /// <remarks>
+    /// The two halves are right on different paths, and where BOTH are right the energy one has to
+    /// win, because the gate's rising edge is also what arms the envelope acquisition. The shape
+    /// detector sees a band-limited signal arrive about 26 ms before an energy detector sees the
+    /// level clear its threshold, and the max-hold has only AcquireSymbols (32) to learn the eye
+    /// from, so an early open spends all of them on the noise in front of the burst. Measured on
+    /// the sim ladder at 20 dB it cost 3 of 40 seeds their sync word. On an open-squelch FM
+    /// receiver the level FALLS when a burst arrives and a real idle channel rose at most 1.2 dB
+    /// over 620 s, so standing down on any rise worth noticing costs nothing there and hands
+    /// every additive path back to the detector that is correct on it.
+    /// </remarks>
+    private const double ShapeStandsDownAboveDb = 3.0;
+
     /// <summary>Dedupe window across the timing phases' deframers, in symbols: shorter than the
     /// shortest IL2P frame (a 15-byte header alone is 60 symbols at 2 bits a symbol), longer
     /// than the trailer a held plain reading waits for (32 bits, 16 symbols).</summary>
@@ -286,7 +303,10 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
         // blocks, which is enough to seed a reference from, and it still refuses to assert on
         // 30 s of silence, of open-squelch hiss or of broadband noise (C4fskOnAirTests).
         _shapeBusy = new FmShapeBusyDetector(
-            sampleRate, splitHz: symbolRate, warmUpSeconds: 0.4);
+            sampleRate,
+            splitHz: symbolRate,
+            warmUpSeconds: 0.4,
+            loudInputAboveReferenceDb: ShapeStandsDownAboveDb);
 
         // One deframer per timing phase: the phases decide the same symbols at slightly
         // different instants and run their deframers in lockstep, so a frame that any of them
@@ -456,7 +476,10 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
             // does the opposite. Ored rather than chosen, because a modem does not know which kind
             // of path it is on and the cost of guessing wrong is a receiver that hears nothing at
             // all. Neither fires on idle FM hiss, and neither fires on broadband noise.
-            if (!_energyBusy.Busy && _shapeBusy.Busy != true)
+            bool energyBusy = _energyBusy.Busy;
+            bool shapeBusy = _shapeBusy.Busy == true;
+
+            if (!energyBusy && !shapeBusy)
             {
                 // Reset the deframer on the energy-gate falling edge: if it was
                 // mid-collection when the carrier stopped, abandon the phantom frame so
