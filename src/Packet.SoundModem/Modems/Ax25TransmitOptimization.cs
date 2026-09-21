@@ -9,11 +9,26 @@ internal static class Ax25TransmitOptimization
 
     private sealed record Candidate(byte[] Bytes, int AddressLength, Kind Kind);
 
+    private sealed class FrameComparer : IEqualityComparer<byte[]>
+    {
+        internal static readonly FrameComparer Instance = new();
+
+        public bool Equals(byte[]? x, byte[]? y) =>
+            ReferenceEquals(x, y) || (x is not null && y is not null && x.AsSpan().SequenceEqual(y));
+
+        public int GetHashCode(byte[] bytes)
+        {
+            var hash = new HashCode();
+            hash.AddBytes(bytes);
+            return hash.ToHashCode();
+        }
+    }
+
     internal static int[] FindSurvivors(IReadOnlyList<byte[]?> frames)
     {
         var survivors = new int[frames.Count];
         Candidate? previous = null;
-        var duplicates = new Dictionary<string, int>(StringComparer.Ordinal);
+        var duplicates = new Dictionary<byte[], int>(FrameComparer.Instance);
         int runStart = 0;
 
         for (int i = 0; i < frames.Count; i++)
@@ -38,10 +53,9 @@ internal static class Ax25TransmitOptimization
             }
             else if (current is not null)
             {
-                string key = Convert.ToHexString(current.Bytes);
-                if (!duplicates.TryAdd(key, i))
+                if (!duplicates.TryAdd(current.Bytes, i))
                 {
-                    survivors[i] = duplicates[key];
+                    survivors[i] = duplicates[current.Bytes];
                 }
             }
 
