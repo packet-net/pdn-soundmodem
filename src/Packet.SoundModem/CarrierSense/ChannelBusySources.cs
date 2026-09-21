@@ -52,7 +52,7 @@ public static class ChannelBusySources
             // be able to stop a modem being built, because a modem that cannot be built is a
             // daemon that will not start.
             Console.Error.WriteLine(
-                $"ofdm-fm: carrier sense could not be set up ({e.Message}). "
+                $"carrier sense could not be set up ({e.Message}). "
                 + "Carrying on without it.");
             return null;
         }

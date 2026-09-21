@@ -33,6 +33,53 @@ public class DaemonConfigTests : IDisposable
         error.Should().NotContain("   at ", "a stack trace is not an explanation");
     }
 
+    [Theory]
+    [InlineData("tait")]
+    [InlineData("TAIT")]
+    [InlineData("none")]
+    public void A_Carrier_Sense_Radio_This_Build_Knows_Loads(string radio)
+    {
+        string path = WriteConfig(
+            "{\"device\":\"null\",\"carrierSense\":{\"radio\":\"" + radio
+            + "\",\"port\":\"/dev/ttyUSB0\"}}");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config!.CarrierSense!.Port.Should().Be("/dev/ttyUSB0");
+        config.CarrierSense.Baud.Should().Be(28800, "the bench radios' data ports are set to it");
+    }
+
+    [Fact]
+    public void A_Carrier_Sense_Radio_This_Build_Does_Not_Know_Is_Refused()
+    {
+        // Taken quietly it would be the worst kind of failure: the station starts, opens no port,
+        // says nothing, and runs on the audio-derived carrier sense the operator wrote the
+        // section to get away from.
+        string path = WriteConfig(
+            """{"device":"null","carrierSense":{"radio":"yaesu","port":"/dev/ttyUSB0"}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("yaesu").And.Contain("tait").And.Contain("none");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void A_Carrier_Sense_Key_This_Build_Does_Not_Know_Is_Reported()
+    {
+        // The extension-data bucket, which is why the section has one: a misspelt key would
+        // otherwise be dropped by the deserialiser and the setting silently ignored.
+        string path = WriteConfig(
+            """{"device":"null","carrierSense":{"port":"/dev/ttyUSB0","busyAbove":-75}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config!.CarrierSense!.UnknownSettings.Should().ContainKey("busyAbove");
+    }
+
     [Fact]
     public void A_Valid_File_Loads_And_Reports_No_Error()
     {

@@ -62,7 +62,8 @@ public sealed record StationRadio(
         {
             // A malformed station file must not take the daemon down on a feature nobody has to
             // use. Say so and carry on without it.
-            Console.Error.WriteLine($"ofdm-fm: {FileName} is not valid JSON, ignoring it: {e.Message}");
+            Console.Error.WriteLine(
+                $"carrier sense: {FileName} is not valid JSON, ignoring it: {e.Message}");
             return null;
         }
     }

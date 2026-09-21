@@ -46,7 +46,7 @@ public sealed class TaitCarrierSense : IChannelBusySource, IDisposable
             // A station that cannot reach its radio still has to work. Say so once, then answer
             // null for ever after, which leaves the station where it was without this.
             Console.Error.WriteLine(
-                $"ofdm-fm: carrier sense: cannot open {config.TaitPort}: {e.Message}. "
+                $"carrier sense: cannot open {config.TaitPort}: {e.Message}. "
                 + "Running without radio carrier sense.");
             return;
         }
@@ -56,7 +56,7 @@ public sealed class TaitCarrierSense : IChannelBusySource, IDisposable
             _radio, config.BusyAboveDbm, TimeSpan.FromMilliseconds(config.PollMilliseconds));
 
         Console.Error.WriteLine(
-            $"ofdm-fm: carrier sense from the radio on {config.TaitPort} at {config.TaitBaud} baud"
+            $"carrier sense from the radio on {config.TaitPort} at {config.TaitBaud} baud"
             + (config.BusyAboveDbm is { } dbm
                 ? $", DCD plus RSSI above {dbm:F0} dBm every {config.PollMilliseconds} ms"
                 : ", DCD only"));
@@ -114,7 +114,7 @@ public sealed class TaitCarrierSense : IChannelBusySource, IDisposable
         catch (Exception e)
         {
             Console.Error.WriteLine(
-                $"ofdm-fm: carrier sense: the radio would not enable PROGRESS messages "
+                $"carrier sense: the radio would not enable PROGRESS messages "
                 + $"({e.Message}). DCD will not report; an RSSI threshold still would.");
         }
     }
