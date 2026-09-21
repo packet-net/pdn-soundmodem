@@ -10,12 +10,17 @@ namespace Packet.SoundModem.Tests.Channel;
 /// Carrier sense answers for one sub-channel, not for the whole station.
 /// </summary>
 /// <remarks>
-/// <para>The station modelled here is GB7RDG's, which is where this was measured: three afsk300
-/// modems at 850, 987 and 1120 Hz and a bpsk300 modem at 2150 Hz, all inside one Flex slice but
-/// on four different RF frequencies. On 2026-09-21 it could not answer a connect request for
-/// 3 minutes 48 seconds, because the transmit gate was the OR across every modem: the bpsk300
-/// modem carrying the traffic was busy 81.1 % of those 228 s and the union across the four was
-/// busy 96.4 %, one usable gap against fourteen. See packet-net/pdn-soundmodem#526.</para>
+/// <para>The station modelled here is GB7RDG's as it stood on 2026-09-21, which is where this was
+/// measured: three afsk300 modems at 850, 987 and 1120 Hz and a bpsk300 modem at 2150 Hz, all
+/// inside one Flex slice but on four different RF frequencies. It could not answer a connect
+/// request for 3 minutes 48 seconds that day, because the transmit gate was the OR across every
+/// modem: the bpsk300 modem carrying the traffic was busy 81.1 % of those 228 s and the union
+/// across the four was busy 96.4 %, one usable gap against fourteen. See
+/// packet-net/pdn-soundmodem#526.</para>
+/// <para>The station has since been cut to afsk300-il2pc at 850 Hz, ardop at 1500 Hz and bpsk300
+/// at 2150 Hz. That live pair is pinned by the geometry test below; the four-modem station is
+/// kept for the behaviour tests, because three busy non-overlapping modems is the harder case and
+/// is the one that actually failed.</para>
 /// <para>Every modem here is a real one, wrapped so its busy detector can be held down by hand:
 /// what decides whether two sub-channels defer to each other is their measured occupied
 /// bandwidth, so a test double with an invented passband would prove nothing about the station
@@ -335,18 +340,50 @@ public class PerSubChannelCarrierSenseTests
         afsk1120.HighHz.Should().BeInRange(1220, 1360);
         bpsk2150.LowHz.Should().BeInRange(1900, 2060);
 
+        // What the station runs now: afsk300-il2pc on 7050.3 and bpsk300 on 7051.6 MHz, 960 Hz
+        // of clear air between their measured edges against the 100 Hz two guards spend.
+        bpsk2150.Overlaps(afsk850).Should().BeFalse(
+            "these are the two modems in the live gate, and they cannot collide");
+        (bpsk2150.LowHz - afsk850.HighHz).Should().BeGreaterThan(
+            2 * ModemPassband.GuardHz,
+            "the separation the change recovers has to survive the guard with room to spare");
+
+        // And the property the guard must not break, from the configuration this station ran
+        // until 2026-09-21: modems a hundred-odd Hz apart share a passband outright.
         afsk850.Overlaps(afsk987).Should().BeTrue("137 Hz apart, and they overlap with no guard at all");
         afsk987.Overlaps(afsk1120).Should().BeTrue("133 Hz apart");
         afsk850.Overlaps(afsk1120).Should().BeTrue("270 Hz apart, still inside one passband");
 
-        bpsk2150.Overlaps(afsk1120).Should().BeFalse(
-            "691 Hz of measured clear air between them, which is 191 Hz more than the guard "
-            + "spends from both sides");
+        bpsk2150.Overlaps(afsk1120).Should().BeFalse("691 Hz of measured clear air between them");
         bpsk2150.Overlaps(afsk987).Should().BeFalse();
-        bpsk2150.Overlaps(afsk850).Should().BeFalse();
 
         // Symmetric, because "would transmitting here collide with that" has to be.
         afsk1120.Overlaps(bpsk2150).Should().Be(bpsk2150.Overlaps(afsk1120));
+    }
+
+    /// <summary>
+    /// The guard is 50 Hz, and it is sized from measured frequency error rather than from a
+    /// receive filter's width.
+    /// </summary>
+    /// <remarks>
+    /// <para>GB7RDG's frame log, every received frame carrying an offset since 2026-09-01,
+    /// n = 28,839: |offset| p50 3.1 Hz, p90 18.6 Hz, p99 115.7 Hz, max 265.9 Hz, with 96.97 %
+    /// inside 25 Hz and <b>98.52 % inside 50 Hz</b>. By mode, BPSK300 IL2Pc (25,948 frames, 90 %
+    /// of the traffic) has p99 21.5 Hz and max 72.0 Hz; the tail past 100 Hz is a couple of
+    /// badly off-tune AFSK stations in a few hundred frames.</para>
+    /// <para>An earlier draft took 250 Hz from the diversity banks' +/-250 Hz branch filters.
+    /// That is the receiver's search range and not the error it meets, and it spends most of the
+    /// separation this whole change exists to recover. The asymmetry that settles the direction:
+    /// the guard only ever widens a busy decision, so undersizing it can only make two very
+    /// nearly adjacent sub-channels fail to defer to each other, while oversizing it puts the
+    /// station-wide deferral back across every pair. Decoding never consults it either way.</para>
+    /// <para>A test rather than a comment because the number is the whole argument: moving it has
+    /// to argue with that distribution.</para>
+    /// </remarks>
+    [Fact]
+    public void The_Guard_Is_Fifty_Hz()
+    {
+        ModemPassband.GuardHz.Should().Be(50);
     }
 
     /// <summary>

@@ -15,39 +15,50 @@ namespace Packet.SoundModem.CarrierSense;
 internal readonly record struct ModemPassband(double LowHz, double HighHz)
 {
     /// <summary>
-    /// How much wider than its own emission a modem is assumed to listen, each side, in Hz.
+    /// How far outside its own emission a modem is assumed to hear a station it would work, each
+    /// side, in Hz.
     /// </summary>
     /// <remarks>
-    /// <para>The edges below are measured off what a modem <em>transmits</em>, and a modem listens
-    /// wider than it transmits for two reasons that are worth naming because both are real on the
-    /// shipped modes.</para>
-    /// <para><b>A station we would work can be off frequency.</b> ardopcf pads its own busy
-    /// window by its 100 Hz <c>TuningRange</c> for exactly this, and the daemon's
-    /// <c>ArdopBusyDetector</c> copies it: a caller a tuning range off is still one we want to
-    /// hear, so a detector watching only our own emission would transmit over them.</para>
-    /// <para><b>The diversity banks ladder their branches either side of centre.</b>
-    /// <see cref="Afsk300MultiModem"/> runs 11 branches 35 Hz apart, so its outermost branch is
-    /// 175 Hz off the bank's centre, and each branch's receive filter is +/-250 Hz against a
-    /// measured 99 % occupied bandwidth of +/-170 Hz. That bank therefore listens about 255 Hz
-    /// beyond the edges measured here. <see cref="BpskMultiModem"/>'s ladder is far narrower
-    /// (baud/40, so +/-30 Hz at 300 baud).</para>
-    /// <para><b>250 Hz is the figure, and what it costs is nothing on the geometry this was
-    /// written for.</b> Measured at 12 kHz on GB7RDG's own modems: afsk300 at 850, 987 and
-    /// 1120 Hz occupy 680-1020, 820-1148 and 961-1289 Hz, so that cluster overlaps with no guard
-    /// at all and keeps deferring to itself; bpsk300 at 2150 Hz occupies 1980-2320 Hz, which is
-    /// 691 Hz clear of the nearest AFSK edge and still 191 Hz clear with 250 Hz added to each
-    /// side. That separation is the whole point of the change: over the 228 s that station could
-    /// not answer a connect request, its bpsk300 modem was busy 81.1 % of the time and the OR
-    /// across the four modems gating the transmitter was busy 96.4 %, one usable gap against
-    /// fourteen (packet-net/pdn-soundmodem#526).</para>
-    /// <para>Erring wide is the safe direction: a guard that is too large only makes a station
-    /// defer where it need not, which is where every station was before this.</para>
+    /// <para><b>What the guard is actually for is frequency error.</b> The edges below are
+    /// measured off what a modem <em>transmits</em>, and a station calling us can be off tune, so
+    /// a passband that stops at our own emission would treat a caller sitting just outside it as
+    /// somebody else's business. That is measurable, and it has been measured rather than
+    /// inferred.</para>
+    /// <para><b>Measured on GB7RDG's frame log</b>, every received frame carrying an offset
+    /// since 2026-09-01, n = 28,839. Absolute offset from the sub-channel's own centre:</para>
+    /// <para>p50 3.1 Hz, p75 6.5 Hz, p90 18.6 Hz, p95 20.2 Hz, p99 115.7 Hz, max 265.9 Hz.
+    /// Within 25 Hz: 96.97 %. Within 50 Hz: 98.52 %. Within 100 Hz: 98.84 %.</para>
+    /// <para>By mode, which is where the distribution comes from: BPSK300 IL2Pc n = 25,948,
+    /// p99 21.5 Hz, max 72.0 Hz; AFSK300 IL2Pc n = 2,318, p99 83.1 Hz, max 265.9 Hz; AFSK300
+    /// n = 391, p99 232.9 Hz, max 244.5 Hz. <b>50 Hz covers 98.5 % of all of it and sits at
+    /// 2.3x the p99 of BPSK300, the mode carrying 90 % of the traffic.</b> The long tail is a
+    /// couple of badly off-tune AFSK stations in a few hundred frames, and sizing the guard to
+    /// cover those is how an earlier draft of this reached 250 Hz.</para>
+    /// <para><b>Not from the receive filters, which was the earlier mistake.</b> A diversity
+    /// bank's branch filter is +/-250 Hz and its branch ladder spans +/-175 Hz
+    /// (<see cref="Afsk300MultiModem"/>), but those numbers are the receiver's SEARCH RANGE, not
+    /// the error it meets: the bank ladders branches precisely so that an off-tune signal is
+    /// caught, which is a different quantity from how far off tune signals actually are. Sizing
+    /// the guard from the filter makes it as wide as the search and throws away most of the
+    /// separation the change is trying to recover. ardopcf's 100 Hz <c>TuningRange</c>, which the
+    /// daemon's <c>ArdopBusyDetector</c> copies, is the same kind of figure.</para>
+    /// <para><b>Which way to err, and why it is this way.</b> The guard only ever widens a busy
+    /// decision. An undersized one means two very nearly adjacent sub-channels might fail to
+    /// defer to each other; it cannot affect decoding, which never consults this. An oversized
+    /// one puts back exactly the deferral this change exists to remove, across the whole station.
+    /// That asymmetry is why the right size is a measured p99 rather than a worst case.</para>
+    /// <para><b>What it costs on the geometry it was sized for: nothing.</b> GB7RDG runs
+    /// afsk300-il2pc at 850 Hz audio and bpsk300 at 2150 Hz, occupying 680-1020 and 1980-2320 Hz
+    /// measured at 12 kHz. That is 960 Hz of clear air between the edges, against the 100 Hz two
+    /// 50 Hz guards spend. Two afsk300 modems 133 Hz apart, which that station ran until
+    /// 2026-09-21, overlap outright with no guard at all and keep deferring to each
+    /// other.</para>
     /// </remarks>
-    internal const double GuardHz = 250;
+    internal const double GuardHz = 50;
 
     /// <summary>
     /// Whether transmitting in this band would land inside <paramref name="other"/>'s, with
-    /// <see cref="GuardHz"/> allowed on each side of each.
+    /// <see cref="GuardHz"/> of frequency error allowed on each side of each.
     /// </summary>
     internal bool Overlaps(ModemPassband other) =>
         LowHz - GuardHz < other.HighHz + GuardHz
