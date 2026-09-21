@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>sm-c4fskprobe</AssemblyName>
+    <RootNamespace>Packet.SoundModem.C4fskProbe</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
+  </ItemGroup>
+
+</Project>
