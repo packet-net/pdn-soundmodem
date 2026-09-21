@@ -57,7 +57,6 @@ public class KissQualityFrameTests : IAsyncLifetime
     {
         Start(acceptPlainIl2p: false);
         using TcpClient client = await ConnectAsync();
-        await Task.Delay(100);
 
         // The neighbour's plain frame first, then an ordinary IL2P+CRC one. The second is what
         // makes this a real assertion rather than a wait for nothing to happen: whatever the
@@ -79,7 +78,6 @@ public class KissQualityFrameTests : IAsyncLifetime
     {
         Start(acceptPlainIl2p: true);
         using TcpClient client = await ConnectAsync();
-        await Task.Delay(100);
 
         _channel.ProcessReceive(Transmission(PlainMode));
 
@@ -96,9 +94,29 @@ public class KissQualityFrameTests : IAsyncLifetime
 
     private async Task<TcpClient> ConnectAsync()
     {
-        var client = new TcpClient();
-        await client.ConnectAsync("127.0.0.1", _server.LocalPort);
-        return client;
+        // A completed TCP handshake does NOT mean the server has registered the client: accept
+        // runs on its own loop, so a frame injected in the gap reaches nobody and the read below
+        // starves until its token trips, surfacing as a cancelled socket read. That gap used to be
+        // covered by a Task.Delay(100), which is a guess about how busy the machine is, and on a
+        // loaded CI runner 100ms is not always enough.
+        //
+        // Wait for the server's own ClientConnected event instead, which fires after the session
+        // is in _clients. Subscribing BEFORE the connect means the signal cannot be missed. The
+        // timeout only bounds a hang; it is not what decides the test.
+        var registered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnConnected(KissClientEvent _) => registered.TrySetResult();
+        _server.ClientConnected += OnConnected;
+        try
+        {
+            var client = new TcpClient();
+            await client.ConnectAsync("127.0.0.1", _server.LocalPort);
+            await registered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            return client;
+        }
+        finally
+        {
+            _server.ClientConnected -= OnConnected;
+        }
     }
 
     private static async Task<List<KissFrame>> ReadFramesAsync(
