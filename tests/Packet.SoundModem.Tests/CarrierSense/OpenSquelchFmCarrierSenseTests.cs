@@ -38,9 +38,11 @@ public class OpenSquelchFmCarrierSenseTests
         double idleHiss = HissDbfs(idle);
         double keyedHiss = HissDbfs(keyed);
 
+        idleBand.Should().BeApproximately(OpenSquelchFmReceiver.IdleInBandDbfs, 0.5);
+        keyedBand.Should().BeApproximately(OpenSquelchFmReceiver.KeyedInBandDbfs, 0.5);
         (idleBand - keyedBand).Should().BeApproximately(
             OpenSquelchFmReceiver.IdleInBandDbfs - OpenSquelchFmReceiver.KeyedInBandDbfs, 0.5,
-            "the measured in-band drop on radio1 is 2.9 dB and the sign is the whole point");
+            "the measured in-band drop on radio1 is 2.98 dB and the sign is the whole point");
 
         keyedBand.Should().BeLessThan(idleBand,
             "an arriving carrier captures the discriminator and REMOVES noise power");

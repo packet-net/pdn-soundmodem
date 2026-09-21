@@ -337,6 +337,30 @@ public sealed class CarrierSenseConfig
     /// <see cref="BusyAboveDbm"/>.</summary>
     public int PollMilliseconds { get; set; } = 100;
 
+    /// <summary>
+    /// With no radio to ask, whether to read carrier sense off the SHAPE of the received audio
+    /// instead. On by default, and ignored entirely on a station that has a radio.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>On by default because the alternative is not neutral.</b> A station without this
+    /// consults an in-band energy detector, and on open-squelch FM that detector is
+    /// anti-correlated: it reads clear for the whole of every transmission and then asserts for
+    /// about ten seconds after it, on the return of the noise. Measured on this bench, a station
+    /// two seconds after hearing one burst took 9.9 s to get a frame to air against 0.5 s on a
+    /// quiet channel. So "off" is not a safe default, it is a measured ten-second hangover.</para>
+    /// <para><b>What it does instead</b> is compare the shape of the received spectrum with the
+    /// shape the station's own idle channel was showing a few seconds ago; nothing in the decision
+    /// is an absolute level, which is what made the previous attempt at this unsafe. Measured
+    /// against real captures it finds 15 of 15 and 11 of 11 transmissions, a median 26 ms after
+    /// the carrier arrives, with no false busy in 620 s of idle channel. It answers "no opinion"
+    /// on any path it does not recognise, including a squelched receiver, a dead or muted card,
+    /// and an SSB or wired path where a signal makes the audio louder rather than quieter.</para>
+    /// <para><b>It needs a 48 kHz channel</b>, which is what a station running any 48 kHz mode
+    /// gets. On a 12 kHz channel the measurement says plainly that it does not work and it is not
+    /// used; the journal says so at start-up.</para>
+    /// </remarks>
+    public bool AudioFallback { get; set; } = true;
+
     /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }

@@ -15,6 +15,7 @@ Every file here opens, under its H1, with a status line: whether it is current, 
 | [mode-validation.md](mode-validation.md) | The validation ledger: how each mode string in the catalogue has been proven, with a dated append-only record. |
 | [ardop-design.md](ardop-design.md) | ARDOP design and scoping, written before the implementation. The implementation is the M0LTE.Ardop package; the bridge onto the shared channel is still here. |
 | [modem-plugins.md](modem-plugins.md) | How the daemon loads a modem it does not contain: the plugin contract, registry and loader. |
+| [carrier-sense.md](carrier-sense.md) | Why audio cannot answer "is this channel busy" on an FM path, in two separate ways, what does, and what a station with no control cable to its radio is still left with. |
 | [mode-modulation-reference.md](mode-modulation-reference.md) | How each NinoTNC-lineage mode is carried on air, FM or SSB, and the FM deviation targets. |
 | [receive-levels.md](receive-levels.md) | The measurements behind the TOO LOUD and TOO QUIET thresholds, modem by modem. |
 | [false-decodes.md](false-decodes.md) | What a row may claim about a frame: the measurement behind withholding a callsign, and a band SNR, from a reading nothing checked. |
@@ -24,7 +25,7 @@ Every file here opens, under its H1, with a status line: whether it is current, 
 | [bench/](bench/) | Bench rigs and benchmarks: the NinoTNC cable loop, the QtSoundModem virtual-cable loop, sm-tnctest against the WA8LMF TNC Test CD, and the ARDOP on-air acceptance procedure. |
 | [hardware/](hardware/) | Hardware notes: the TM8100 to CM108 interface reasoning, the CM108 widget netlist, and the TM8100 internal USB board. The wiring guide itself is a user document at [docs/hardware/tait-tm8100-cm108.md](../hardware/tait-tm8100-cm108.md). |
 | [ms110d/](ms110d/) | MIL-STD-188-110D Appendix D: the transcribed interop tables and their README, the waveform design, and the standard itself under spec/. |
-| [ofdm-fm/](ofdm-fm/) | OFDM-FM design notes: the shipped preset set, how the 8 kHz preset was measured on air, the receive-path findings including what was reverted, carrier sense on an FM path, and the geometry-signalling work. |
+| [ofdm-fm/](ofdm-fm/) | OFDM-FM design notes: the shipped preset set, how the 8 kHz preset was measured on air, the receive-path findings including what was reverted, and the geometry-signalling work. Carrier sense moved out to [carrier-sense.md](carrier-sense.md), because it turned out not to be about this mode family at all. |
 | [refs/](refs/) | Verbatim transcriptions of other people's specifications. Never edited. |
 | [plans/](plans/) | Plans for work not started: 2G ALE. |
 | [archive/](archive/) | Frozen records of closed work: plans, campaign evidence, handovers and closeouts. Its [README](archive/README.md) states the rules. |

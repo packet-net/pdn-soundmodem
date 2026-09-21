@@ -208,7 +208,7 @@ public sealed class OfdmFmModem : IModem
         // would want it. Nothing reads it.
         _energy = new EnergyBusyDetector(parameters.SampleRate);
 
-        // Built, tested, and NOT consulted: see docs/dev/ofdm-fm/carrier-sense.md. It reads a far end's
+        // Built, tested, and NOT consulted: see docs/dev/carrier-sense.md. It reads a far end's
         // carrier correctly, including the silent lead-in nothing else can see, and it stopped one
         // of the two bench stations transmitting at all, because its thresholds are absolute dBFS
         // and the two stations' levels are not the same.

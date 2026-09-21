@@ -92,6 +92,7 @@ public sealed class SoundModemChannel
     private readonly FrameLevelMonitor _frameLevel;
     private readonly Action<int, ReadOnlyMemory<byte>>? _constellationSink;
     private readonly IChannelBusySource? _busySource;
+    private readonly FmShapeBusyDetector? _audioFallback;
     private volatile bool _transmitting;
 
     /// <summary>Creates a channel.</summary>
@@ -109,13 +110,22 @@ public sealed class SoundModemChannel
     /// registers its own already-open radio through; null from both leaves the station on the
     /// audio-derived answer it has always had. See <see cref="CarrierSenseRule"/> for what
     /// difference having one makes, and why.</param>
+    /// <param name="audioFallback">Whether, with no source of its own, this channel should read
+    /// carrier sense off the shape of the received audio (<see cref="FmShapeBusyDetector"/>).
+    /// For a station on an open-squelch FM radio with no control cable. Off by default here
+    /// because it is a station's policy rather than a library's: the daemon turns it on unless
+    /// the operator says otherwise, and a consumer that knows it is on SSB or a wired loop should
+    /// leave it off. It is ignored below
+    /// <see cref="FmShapeBusyDetector.MinimumSampleRate"/>, where it is measured not to work, and
+    /// it is ignored entirely when a real source is supplied.</param>
     public SoundModemChannel(
         int sampleRate,
         TimeProvider? time = null,
         Action<ReadOnlyMemory<byte>>? spectrumSink = null,
         Action<int, ReadOnlyMemory<byte>>? constellationSink = null,
         int? randomSeed = null,
-        IChannelBusySource? channelBusySource = null)
+        IChannelBusySource? channelBusySource = null,
+        bool audioFallback = false)
     {
         SampleRate = sampleRate;
         _time = time ?? TimeProvider.System;
@@ -131,6 +141,15 @@ public sealed class SoundModemChannel
         // Read once, here, and never again: a host registers its radio before it builds a channel,
         // and a station's receive path does not change under it while it runs.
         _busySource = channelBusySource ?? ChannelBusySources.Host;
+
+        // Only where there is nothing better to ask, and only where it is measured to work. It
+        // decides for itself whether the path is one it understands and answers null on anything
+        // else, so a station on SSB or a wired loop keeps the energy detector either way.
+        if (_busySource is null && audioFallback && sampleRate >= FmShapeBusyDetector.MinimumSampleRate)
+        {
+            _audioFallback = new FmShapeBusyDetector(sampleRate);
+            _busySource = _audioFallback;
+        }
     }
 
     /// <summary>The channel's DSP sample rate.</summary>
@@ -321,9 +340,12 @@ public sealed class SoundModemChannel
         }
 
         // Below the half-duplex gate on purpose: our own transmission is not a signal we
-        // heard, and feeding it here would attribute a huge SNR to whatever decodes next.
+        // heard, and feeding it here would attribute a huge SNR to whatever decodes next. The
+        // audio carrier sense is here for the same reason, and it makes its own gated-input
+        // check belt and braces rather than load-bearing.
         _burstSnr.Process(samples);
         _frameLevel.Process(samples);
+        _audioFallback?.Process(samples);
         foreach (IModem modem in _modems.Values)
         {
             modem.Process(samples);

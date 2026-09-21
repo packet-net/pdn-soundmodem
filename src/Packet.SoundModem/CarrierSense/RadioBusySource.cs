@@ -7,7 +7,7 @@ namespace Packet.SoundModem.CarrierSense;
 /// </summary>
 /// <remarks>
 /// <para><b>Why the radio and not the audio.</b> Two audio detectors were built and measured here
-/// and both are wrong on an FM path; see <c>docs/carrier-sense-on-fm.md</c>. The short version is
+/// and both are wrong on an FM path; see <c>docs/dev/carrier-sense.md</c>. The short version is
 /// that an FM receiver goes QUIET when a carrier arrives, so a detector waiting for audio to rise
 /// asserts at the END of every burst instead of the start, and a detector that correctly watches
 /// for the quieting needs absolute levels that differ by 22 dB between two nominally identical

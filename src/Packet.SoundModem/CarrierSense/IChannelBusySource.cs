@@ -8,7 +8,7 @@ namespace Packet.SoundModem.CarrierSense;
 /// channel - a squelch and a calibrated signal-strength meter, read over a control cable - rather
 /// than being inferred from the audio a receiver produces. On an FM path that inference is harder
 /// than it looks, and both attempts at it here are wrong in opposite directions: see
-/// <c>docs/dev/ofdm-fm/carrier-sense.md</c>.</para>
+/// <c>docs/dev/carrier-sense.md</c>.</para>
 /// <para><b>Why the audio cannot settle it, measured rather than assumed.</b> An FM receiver goes
 /// QUIET when a carrier arrives, so an energy detector waiting for audio to RISE asserts at the
 /// END of every burst rather than at its start. A detector that correctly watches for the

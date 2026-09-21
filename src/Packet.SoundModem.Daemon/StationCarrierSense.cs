@@ -24,10 +24,17 @@ internal static class StationCarrierSense
     /// <param name="owned">What this call opened and the caller must dispose. Null when the
     /// source came from somewhere that owns it already, which must not be disposed from here.
     /// </param>
+    /// <param name="audioFallback">Whether the channel should read carrier sense off the shape
+    /// of the received audio for want of anything better. False whenever a radio answered, since
+    /// a measurement beats an inference.</param>
     public static IChannelBusySource? Open(
-        CarrierSenseConfig? config, Action<string> say, out IDisposable? owned)
+        CarrierSenseConfig? config,
+        Action<string> say,
+        out IDisposable? owned,
+        out bool audioFallback)
     {
         owned = null;
+        audioFallback = config?.AudioFallback ?? true;
 
         // An in-process host owns its radio and registered it before building anything. It wins
         // over the file, because opening the same serial port a second time would at best fail
@@ -35,6 +42,7 @@ internal static class StationCarrierSense
         if (ChannelBusySources.Host is { } host)
         {
             say("carrier sense: using the radio the host registered");
+            audioFallback = false;
             return host;
         }
 
@@ -49,6 +57,7 @@ internal static class StationCarrierSense
                 say($"carrier sense: from {StationRadio.FileName}. Move it into the "
                     + "\"carrierSense\" section of this station's config file.");
                 owned = legacy as IDisposable;
+                audioFallback = false;
             }
 
             return legacy;
@@ -56,7 +65,7 @@ internal static class StationCarrierSense
 
         if (config.Radio.Equals("none", StringComparison.OrdinalIgnoreCase))
         {
-            say("carrier sense: \"radio\": \"none\", so the station reads the audio as before");
+            say("carrier sense: \"radio\": \"none\", so no serial port is opened");
             return null;
         }
 
@@ -65,7 +74,7 @@ internal static class StationCarrierSense
             // Said rather than passed over: an operator who wrote the section meant to get this,
             // and a section with no port does nothing at all.
             say("carrier sense: the \"carrierSense\" section has no \"port\", so no radio is "
-                + "opened and the station reads the audio as before");
+                + "opened");
             return null;
         }
 
@@ -75,6 +84,7 @@ internal static class StationCarrierSense
         // Every message about what it found, and every failure, comes from the source itself.
         TaitCarrierSense? sense = TaitCarrierSense.ForStation(station);
         owned = sense;
+        audioFallback = false;
 
         if (config.BusyAboveDbm is null)
         {

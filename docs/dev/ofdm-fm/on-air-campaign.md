@@ -122,7 +122,7 @@ Both stations ran, and both were left this way. The modem was a plugin then; it 
 
 The previous afsk1200-only config is kept beside it as `soundmodem.json.afsk-backup`.
 
-**`afsk1200` is deliberately still configured, on sub-channel 1.** It costs nothing, it runs on the same audio at the same DSP rate, and it means every null has a control available in the same minute over the same coax: if afsk1200 crosses the path and OFDM-FM does not, the fault is ours, and if neither crosses it is the rig. The pre-flight's whole "what a null looks like" section gets cheaper with a known-good mode one sub-channel away. (It also, a day later, turned out to be the thing silencing a station in connected mode. See [carrier-sense.md](carrier-sense.md).)
+**`afsk1200` is deliberately still configured, on sub-channel 1.** It costs nothing, it runs on the same audio at the same DSP rate, and it means every null has a control available in the same minute over the same coax: if afsk1200 crosses the path and OFDM-FM does not, the fault is ours, and if neither crosses it is the rig. The pre-flight's whole "what a null looks like" section gets cheaper with a known-good mode one sub-channel away. (It also, a day later, turned out to be the thing silencing a station in connected mode. See [carrier-sense.md](../carrier-sense.md).)
 
 The channel runs at 48 kHz, which is worth understanding because there is **no config key for it**: `StationFactory` derives the DSP rate from the configured modes, taking 48000 if any configured mode declares it and 12000 otherwise. OFDM-FM declares 48000, so configuring one of its modes is what moves the channel. `captureRate` is the card rate and is a different number.
 
@@ -374,7 +374,7 @@ So on this path carrier sense rests entirely on the sync detector, which is blin
 
 **It also gives the TXDELAY result a second and better reason.** Walking TXDELAY from 300 ms to 40 ms cost nothing in delivery, which is worth having for its own sake; it also removes 260 ms of collision exposure from every transmission on a channel with more than one station on it. The first argument is about throughput and the second is about whether a shared channel works at all.
 
-Raised as packet-net/pdn-soundmodem#502 with the timestamps and both fixes. Solved the following day; see [carrier-sense.md](carrier-sense.md).
+Raised as packet-net/pdn-soundmodem#502 with the timestamps and both fixes. Solved the following day; see [carrier-sense.md](../carrier-sense.md).
 
 *Exit: a clean connect and data one way, so partly met. Data BOTH ways, and a clean disconnect, want the carrier-sense fix first, because what failed is not something a retry will get past.*
 

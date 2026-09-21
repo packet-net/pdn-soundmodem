@@ -185,7 +185,7 @@ Anyone measuring this will meet these.
 
 ## 11. What this depends on that was still broken
 
-Geometry signalling is a shared-channel feature, and this bench could not run a shared channel properly while the proposal was written. **Carrier sense was broken on FM in two ways** (packet-net/pdn-soundmodem#502): nothing saw a far end's silent TXDELAY, so stations keyed into each other's lead-in, and the energy detector asserted busy for ten seconds or more after every burst it heard because an FM receiver gets QUIETER under a carrier and the return of the noise reads as a signal. Both are measured in [carrier-sense.md](carrier-sense.md), which also records how it was solved: by asking the radio rather than the audio.
+Geometry signalling is a shared-channel feature, and this bench could not run a shared channel properly while the proposal was written. **Carrier sense was broken on FM in two ways** (packet-net/pdn-soundmodem#502): nothing saw a far end's silent TXDELAY, so stations keyed into each other's lead-in, and the energy detector asserted busy for ten seconds or more after every burst it heard because an FM receiver gets QUIETER under a carrier and the return of the noise reads as a signal. Both are measured in [carrier-sense.md](../carrier-sense.md), which also records how it was solved: by asking the radio rather than the audio.
 
 That never blocked implementing geometry signalling, but it did mean the benefit in section 8, which is mostly about shared channels, could not be demonstrated until carrier sense worked.
 
