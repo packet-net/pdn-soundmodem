@@ -134,51 +134,79 @@ low-frequency content, is mangled. That rules out noise, jitter, level and clipp
 measurement, and it is why the received signal can look healthy on a spectrum display and carry
 nothing.
 
-## Where the damage happens: the transmit side, measured
+## Where the damage happens: both halves, measured against a reference TNC
 
-Late in the session the RSP1 started working (it needed IFGR 20, not the 40 to 45 the first pass's
-recipe uses), which made it possible to measure the signal **as radiated**, before it has been
-anywhere near the receiving station. One `c4fsk9600` transmission, demodulated from the SDR with a
-40 kHz filter so the Tait's own 12.6 kHz IF is not in the path, scored on the same instrument at
-every stage of the chain:
+**This section replaces two earlier attempts in this document's history, both of which were
+wrong.** The measurement that settles it is a NinoTNC in C4FSK 19k2 (mode 1) put on radio2 in
+place of its CM108 on 2026-09-21, transmitting through the same Tait, captured on the same SDR
+and received by the same station. A reference implementation through the same radio is the
+control that my own transmissions could never be.
 
-| stage | within-cluster rms as a fraction of the half-swing |
+One instrument throughout: the symbol-instant values fitted to four levels by k-means, scored as
+the within-cluster rms as a fraction of the half-swing. 0.02 is a healthy eye; the inner and outer
+levels are 1/3 of the half-swing apart, so the decision margin is about 0.11; 0.19 is shut.
+
+| | eye |
 |---|---|
-| the daemon's own transmit audio, clipped at full scale exactly as the card would | **0.021** |
-| as radiated, demodulated through a 40 kHz IF | **0.176** |
-| as radiated, demodulated through a simulated 12.6 kHz Tait IF | **0.169** |
-| as received at the far station, through the real Tait and its CM108 | **0.19** |
+| our modulator's own float samples, clipped at full scale as the card would | **0.021** |
+| **our station as radiated** (`c4fsk9600`) | **0.191** |
+| **NinoTNC as radiated** (`c4fsk19200`) | **0.080** |
+| NinoTNC as received by radio1 | **0.151** |
+| our station as received by radio1 | **0.19** |
 
-Read that top to bottom. **Essentially all of the damage has already happened by the time the
-signal leaves the antenna.** The receiving station's IF, discriminator, interface and sound card
-add almost nothing to it. The instrument is the four-level k-means fit described below, and the
-0.021 on the first row is what a healthy eye reads.
+Two separate defects, both ours, and the reference separates them:
 
-That is the opposite end of the link from where the first pass was looking, and from where I was
-looking for most of this session. The span that does the damage is: the CM108's DAC and its output
-coupling capacitor, the interface's transmit tail (Rt, Rb and C4), and the Tait's own T12 input.
-Three components and one radio input, none of which anybody has put a scope on.
+1. **Our transmit chain wrecks the signal before it reaches the antenna.** A reference TNC through
+   the same radio radiates 0.080 with textbook levels (-1.000, -0.305, +0.334, +1.000) and even
+   occupancy (26/24/25/26 %). We radiate 0.191 from samples that measure 0.021 when they leave the
+   modem, with skewed levels (-1.000, -0.371, +0.259, +1.000) and occupancy (17/26/35/22 %). The
+   only things in that span are the CM108's DAC and its output coupling capacitor, the interface's
+   transmit tail (Rt, Rb, C4) and the Tait's T12 input.
+2. **Our receive chain then roughly doubles the spread again**, taking the NinoTNC's clean 0.080
+   to 0.151. That is why radio1 decoded **0 of 15** of the NinoTNC's frames, and why it still read
+   nothing when the energy gate was forced open in a probe. Fixing the gate alone would not have
+   read a reference transmitter.
 
-Undoing a single first-order high pass at about 90 Hz on the radiated signal recovers part of it,
-eye 0.188 to 0.164 and sync correlation 0.779 to 0.854, which is consistent with C4 (the build page
-puts its corner at 43 to 64 Hz) cascaded with the 1 uF the CM108 board has on its own output. Most
-of the gap between 0.021 and 0.164 is still unaccounted for.
+So the modes are not failing for one reason. The gate stops anything at all being attempted; the
+transmit chain radiates an eye a reference TNC does not; and the receive chain cannot read a clean
+one when it gets it.
 
-**Deviation as radiated is 6.55 kHz at the 99.9th percentile and 5.86 kHz at the 99th**, against
-this mode's published 2.5 kHz, measured with the discriminator low-passed at 7.2 kHz before
-decimation. That confirms fault 4 independently and on the air: the modulator's level is about 2.6
-times what the mode asks for, and #516 did not change it.
+**What the reference also tells us about acquisition.** The NinoTNC's bursts are 131 ms end to end
+for a 272-byte frame, and the preamble alternation occupies about one 5 ms block at the front. So
+a real peer acquires from roughly 5 ms of run-in, which is the figure our receiver has to live
+with, and it is far below the 20 ms floor `Modulate` imposes on our own transmissions.
 
-**The next instrument is a scope on the CM108's output pin at the radio**, comparing the analogue
-waveform against the float samples the daemon wrote, and then the same at the far end of the
-interface tail. That splits the three remaining suspects and needs no radio time.
+**Deviation as radiated**, with the discriminator low-passed before decimation: the NinoTNC at its
+pot's midpoint measures **4.85 and 4.89 kHz** peak (99.9th percentile) across two bursts against
+the 5.0 kHz `c4fsk19200` is specified at, so a correct station is within 3 % of the published
+figure. Ours measures about 6.8 kHz against `c4fsk9600`'s published 2.5 kHz, which is fault 4 seen
+from the air.
+
+## Two instrument bugs of mine, because they nearly cost the diagnosis
+
+Both were in my SDR demodulation, and both made the radiated eye look worse than it was:
+
+- **No anti-alias filter before decimation.** A 1 Msps discriminator output subsampled to audio
+  rate folds 20 kHz of noise into the band. Low-pass the discriminator output at the modem's own
+  receive bandwidth first.
+- **1 Msps decimated by 20 is 50 kHz, not 48.** I wrote 48000 into the WAV header, which stretched
+  the time base by 4.2 %, put the preamble tone at 2303 Hz instead of 2400, and smeared the eye by
+  a whole symbol every 25. The give-away is that the preamble is a tone at exactly half the symbol
+  rate: if it does not read 2400 Hz (or 4800 for the 19200 mode), the time base is wrong and
+  nothing downstream means anything.
+
+Between them these produced a confident "the damage is all on the transmit side" reading, then a
+retraction, then the reference TNC showing that the transmit side really is the worse half after
+all. **Measure the preamble tone frequency first, every time, as the instrument's own check.**
 
 ## What is still not explained, and I would rather you knew
 
-The wander is the mechanism, in the sense that the measured response on its own takes both C4FSK
-modes from 40 of 40 to 0 of 40 in the probe, and undoing it on real off-air audio is a real
-improvement. But it does not account for all of the measured damage, and the part it does not
-account for is not linear. Three measurements say so, and they are the loose end:
+The reference TNC above says WHERE the damage happens. It does not say what mechanism does it, and
+the low-frequency coupling loss is only part of the answer. It is a real part: the measured
+response on its own takes both C4FSK modes from 40 of 40 to 0 of 40 in the probe, and undoing it
+on real off-air audio is a real improvement. But it does not account for all of the measured
+damage, and the part it does not account for is not linear. Three measurements say so, and they
+are the loose end:
 
 - **Undoing the measured low-frequency loss on real audio recovers about a third of it.** A cascade
   inverse (two first-order sections at 50 Hz was the best of the shapes tried) lifts the eye from
@@ -208,11 +236,15 @@ occur is upstream of the mixer so the sweep could not have moved it), not noise 
 all-outer preamble arrives with a 1.6 % spread and 0.75 % of a symbol of jitter), not the symbol
 rate (swept plus or minus 600 ppm, flat), and not the top of the band for `c4fsk9600`.
 
-Whoever picks this up: the instrument that settles it is a swept-tone measurement of the two halves
-of the path SEPARATELY, and a two-tone intermodulation measurement at a few points across the band.
-Both need the transmit side characterised against an SDR rather than against the far receiver, and
-the RSP1 on radio1 was not hearing the transmitter at all in this session, which is its own problem
-to solve first.
+Whoever picks this up: the reference TNC has done the hard half of the separation already, so the
+remaining instrument is a scope. Compare the CM108's analogue output against the float samples the
+daemon wrote, then the same at the far end of the interface tail, then at the Tait's T12 pin. That
+splits the transmit half's three suspects and needs no radio time. For the receive half, repeat the
+NinoTNC transmission and take radio1's audio at the discriminator directly rather than through its
+interface.
+
+A two-tone intermodulation measurement at a few points across the band would also help, and is now
+easy: the daemon's own `POST /api/txtest` does a two-tone burst, and the SDR reads it.
 
 ## Fault 3, minor: the envelope tracker can run away
 
@@ -353,14 +385,17 @@ flat continuum off air against four spikes on a clean transmission.
 1. **Fix the gate** (fault 1). It is the blocker, it is a real defect on every FM station, and
    nothing else can be tested until it is done.
 2. **Guard the envelope tracker** (fault 3). Small and clearly right.
-3. **Accept that neither C4FSK mode can work through this interface as built**, and decide which
+3. **Fix the transmit chain first, because the reference TNC says it is the worse half.** A scope
+   on three points splits it, and it needs no radio time. Then re-measure the receive half against
+   a NinoTNC transmission, which is now a repeatable reference.
+4. **Accept that neither C4FSK mode can work through this interface as built**, and decide which
    way out to take. `c4fsk9600` needs a corner below 30 Hz against the 70 it gets; `c4fsk19200`
    has nothing in hand at either end and measured no better on air. Either the coupling corners
    come down (which would also give `fsk9600` back its long frames, so it pays for itself), or the
    receiver grows DC restoration with more reach than a one-tap loop, or these modes are
    documented as needing a properly DC-coupled 9600 baud socket. Fixing the gate is still worth
    doing first, because until it is fixed nothing downstream of it can be tested at all.
-4. **Give the modulator real headroom and make #516's ratio actually apply** (fault 4). Both are
+5. **Give the modulator real headroom and make #516's ratio actually apply** (fault 4). Both are
    in `C4fskModem.Modulate` and neither needs a radio to verify.
 
 ## Leave the rig as you found it
