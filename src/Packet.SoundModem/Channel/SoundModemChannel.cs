@@ -32,7 +32,7 @@ public delegate void ReceiveTap(ReadOnlySpan<float> samples);
 /// One audio channel hosting up to 16 logical modems (the QtSoundModem multiplex model,
 /// addressed by KISS sub-channel): fans received audio into every modem plus the spectrum
 /// source, aggregates carrier sense, and runs the transmit side - classic AX.25 §6
-/// p-persistent CSMA gated on the aggregated <see cref="ChannelBusy"/>, PTT keying, and
+/// p-persistent CSMA gated on <see cref="ChannelBusyFor(int)"/>, PTT keying, and
 /// device-paced audio with a drain before unkey (sample-domain TX-complete).
 /// </summary>
 /// <remarks>
@@ -52,6 +52,12 @@ public sealed class SoundModemChannel
 {
     private readonly Dictionary<int, IModem> _modems = [];
     private readonly List<ReceiveTap> _receiveTaps = [];
+
+    // Where each modem sits in the audio band, measured once as it is added, so that carrier
+    // sense can be answered for one sub-channel rather than for the whole station. Keyed on the
+    // modem instance because that is the identity a queued transmission carries. A null value is
+    // a modem that would not say (see ModemPassband.Measure), and defers to everything.
+    private readonly Dictionary<object, ModemPassband?> _passbands = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>One queued transmission, with the identity that decides whose keyup it is.</summary>
     private sealed record TxItem(
@@ -205,6 +211,11 @@ public sealed class SoundModemChannel
     /// <para><b>Our own transmission always counts</b>, first and unconditionally. It is not a
     /// measurement of the channel and no source is asked about it: a station's receiver is muted
     /// while it transmits, so nothing outside can see it.</para>
+    /// <para><b>This is no longer what gates a transmission</b>, and has not been since
+    /// packet-net/pdn-soundmodem#526: a frame is gated on
+    /// <see cref="ChannelBusyFor(int)"/>, the same question asked about its own sub-channel.
+    /// What stays here is the station-wide answer - is anything at all going on out there - which
+    /// is what the waterfall, the station page and the diagnostics are asking.</para>
     /// </remarks>
     public bool ChannelBusy =>
         _transmitting
@@ -212,6 +223,95 @@ public sealed class SoundModemChannel
             _busySource?.Busy,
             anyCarrierDetect: _modems.Values.Any(m => m.CarrierDetect),
             anyAudioBusy: _modems.Values.Any(m => m.ChannelBusy));
+
+    /// <summary>
+    /// True while the channel is occupied <em>as far as one sub-channel is concerned</em>: we are
+    /// transmitting, the station's radio says the channel is busy, or a modem sharing this one's
+    /// passband hears something. This is what the CSMA below will not transmit over.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Why it is not <see cref="ChannelBusy"/>.</b> Whether we can hear is a fact about
+    /// the station's one receiver. Whether transmitting would collide is a fact about one
+    /// sub-channel's passband, and the two used to share an answer. On a station whose modems sit
+    /// on different RF frequencies inside one slice, that meant a frame for 7051.6 kHz was held
+    /// because something was active on 7050.3 kHz, 1.3 kHz away, which it could not have
+    /// interfered with.</para>
+    /// <para><b>What that cost, measured.</b> On 2026-09-21 GB7RDG-2 could not answer a connect
+    /// request for 3 minutes 48 seconds. It ran four modems then, and replaying the off-air
+    /// capture of those 228 s through this repo's own <see cref="Modems.EnergyBusyDetector"/>
+    /// they were busy 36.1, 81.1, 35.2 and 35.2 % of the time and the OR across them was busy
+    /// 96.4 %. That left 8.2 s of clear air and exactly one gap long enough to start a 15 byte
+    /// frame, where the modem with the traffic, busy 81.1 % on its own, had fourteen. It is
+    /// arithmetic rather than a broken detector: four roughly independent channels at those
+    /// rates union to 94.9 % by pure probability, against 96.4 % measured, so every modem added
+    /// to a station multiplies the deferral whether or not its channel has anything to do with
+    /// the traffic (packet-net/pdn-soundmodem#526).</para>
+    /// <para><b>Overlap, not sub-channel equality.</b> Two afsk300 modems 133 Hz apart really do
+    /// share a passband and must still defer to each other; the test is each modem's measured
+    /// occupied band, widened by a guard sized from how far off tune the stations we actually
+    /// work sit. See <see cref="ModemPassband"/>, which has the distribution that sized it.</para>
+    /// <para><b>What did not become per-sub-channel.</b> The <see cref="BusySource"/> is a report
+    /// on the receiver rather than on a waveform, so when it has an opinion it still decides for
+    /// the whole station, exactly as before - the narrowing is to the audio fallback only, and
+    /// <see cref="CarrierSenseRule.Occupied"/> is untouched. Our own transmission is still
+    /// absolute, because the station is half duplex and keying makes every receiver on it deaf.
+    /// So is the turnaround hold, which is a different mechanism and already per-source.</para>
+    /// <para>A sub-channel with no modem on it gets the station-wide answer; there is no passband
+    /// to narrow to.</para>
+    /// </remarks>
+    public bool ChannelBusyFor(int subChannel) =>
+        _modems.TryGetValue(subChannel, out IModem? modem) ? ChannelBusyFor(modem) : ChannelBusy;
+
+    /// <summary>
+    /// The same question for whoever queued a transmission, which is how the transmitter asks it.
+    /// </summary>
+    /// <remarks>
+    /// A source that is not a modem - POCSAG paging, the CW ident, the operator's test
+    /// transmission - gets the station-wide answer. Nothing here knows what part of the band such
+    /// a transmitter occupies, and the conservative choice for an unknown passband is the one
+    /// every transmitter had before this existed.
+    /// </remarks>
+    private bool ChannelBusyFor(object? source) =>
+        _transmitting
+        || CarrierSenseRule.Occupied(
+            _busySource?.Busy,
+            anyCarrierDetect: _modems.Values.Any(m => m.CarrierDetect),
+            anyAudioBusy: AnyAudioBusyFor(source));
+
+    /// <summary>
+    /// Whether any modem sharing <paramref name="source"/>'s passband hears something.
+    /// </summary>
+    /// <remarks>
+    /// A modem always shares its own passband, so a transmission still defers to its own
+    /// sub-channel's detector. An unmeasured passband, at either end of the comparison, could be
+    /// anywhere and so counts as overlapping: carrier sense that does not know must defer.
+    /// </remarks>
+    private bool AnyAudioBusyFor(object? source)
+    {
+        if (source is not IModem asking
+            || !_passbands.TryGetValue(asking, out ModemPassband? measured)
+            || measured is not ModemPassband mine)
+        {
+            return _modems.Values.Any(m => m.ChannelBusy);
+        }
+
+        foreach (IModem other in _modems.Values)
+        {
+            if (!other.ChannelBusy)
+            {
+                continue;
+            }
+
+            if (!_passbands.TryGetValue(other, out ModemPassband? band)
+                || band is not ModemPassband theirs
+                || mine.Overlaps(theirs))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Where this channel's carrier sense comes from, or null if it has nothing but the audio.
@@ -288,6 +388,12 @@ public sealed class SoundModemChannel
 
         _burstSnr.AddModem(subChannel, modem);
         _modems.Add(subChannel, modem);
+
+        // Measured here, and only here: a modem has just been built, nothing is feeding it audio
+        // and nothing is asking it to modulate, which is the one moment its own transmit path is
+        // certainly free. The alternative, measuring lazily on the first transmission, would put
+        // a probe frame through a live modem from the transmitter loop. See ChannelBusyFor.
+        _passbands[modem] = ModemPassband.Measure(modem, SampleRate);
     }
 
     /// <summary>
@@ -1193,7 +1299,11 @@ public sealed class SoundModemChannel
                     break;
                 }
 
-                if (ChannelBusy)
+                // Asked ABOUT THIS TRANSMITTER, not about the station. A modem defers to its own
+                // detector and to any modem sharing its passband, and not to one 1.3 kHz away
+                // that it could not collide with - see ChannelBusyFor, which has what the
+                // station-wide answer cost GB7RDG.
+                if (ChannelBusyFor(source))
                 {
                     await Delay(Csma.SlotTimeMilliseconds, cancellation).ConfigureAwait(false);
                     continue;

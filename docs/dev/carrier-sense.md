@@ -1,6 +1,6 @@
 # Carrier sense on an FM path
 
-**Status: solved by asking the radio instead of the audio, verified on air 2026-09-19 for `ofdm-fm` and made station-wide for every mode on 2026-09-21 (packet-net/pdn-soundmodem#522), with an audio-only fallback for a station that has no control cable.**
+**Status: solved by asking the radio instead of the audio, verified on air 2026-09-19 for `ofdm-fm` and made station-wide for every mode on 2026-09-21 (packet-net/pdn-soundmodem#522), with an audio-only fallback for a station that has no control cable. The audio answer became a question per sub-channel rather than one answer for the station on 2026-09-21 (packet-net/pdn-soundmodem#526); see [who the answer is for](#what-526-changed-who-the-answer-is-for).**
 
 The short version, for anyone who does not need the history: audio cannot answer "is this channel busy" on an FM path, for reasons measured below. The radio can, over its control serial link, and does it well: carrier present reads 60 dB above the noise floor, it releases the instant the carrier stops, and a station does not see its own transmission. The rest of this page is why the obvious approaches do not work, which is worth keeping because both of them looked right.
 
@@ -8,7 +8,7 @@ This started as an `ofdm-fm` problem and is not one. The defect is in the model 
 
 ## What carrier sense is made of here
 
-`SoundModemChannel.ChannelBusy` is what the station's CSMA will not transmit over. Three things can make it true:
+`SoundModemChannel.ChannelBusyFor(subChannel)` is what the station's CSMA will not transmit over, and `SoundModemChannel.ChannelBusy` is the same question asked about the station as a whole, which is what the waterfall and the diagnostics read. Three things can make either true:
 
 * **we are transmitting** - not a measurement of the channel and nothing is asked about it, because a station's receiver is muted while it keys;
 * **the station's `IChannelBusySource`**, if it has one: the radio's own squelch and RSSI read over its control cable, or failing that the shape of the received audio (`FmShapeBusyDetector`);
@@ -17,9 +17,11 @@ This started as an `ofdm-fm` problem and is not one. The defect is in the model 
 The rule that combines them is `CarrierSenseRule.Occupied`, in one place:
 
 * with a source that has an opinion, that opinion decides, ored with any modem's **carrier detect**. Every modem's **energy detect** is dropped entirely.
-* with no source, or a source that answers null, it is the OR across every modem's own answer, which is what this has always been.
+* with no source, or a source that answers null, it is the OR across the modems' own answers.
 
 **Null is a real answer and means "I do not know".** It is never treated as busy.
+
+**Which modems that OR runs over depends on who is asking.** For a frame queued on a sub-channel it is the modems whose passband overlaps that sub-channel's; for the station-wide question it is all of them. See [who the answer is for](#what-526-changed-who-the-answer-is-for).
 
 ## Defect one: the sync detect cannot see a lead-in, so stations collide
 
@@ -204,6 +206,90 @@ Everything above was built for `ofdm-fm` and scoped to it: the whole stack lived
 3. `carrierSense` became a section of `soundmodem.json`, beside `ptt`, which is its nearest relative. The untracked `ofdm-fm.station.json` still works and says at start-up that it should be moved.
 4. `FmModeProfiles.IsFmMode` stopped meaning "does Nino publish a deviation figure for this mode". It did, so every `ofdm-fm-*` preset reported that it was not an FM mode: the one family that proved this whole argument, excluded by the predicate anything would key the argument off.
 5. `OpenSquelchFmReceiver` gave the suite a channel model in which a transmission makes the receiver quieter. **Every other audio fixture here puts the noise below the signal** - the loopback has digital silence between bursts, the AWGN and Watterson ladders inject their lead-in noise at the burst's own signal-to-noise ratio. That is why an inverted assumption survived the whole suite and was only found on air. The energy detector's behaviour on it is pinned rather than fixed, with a control run proving the harness fires on an additive path.
+
+## What #526 changed: who the answer is for
+
+Everything above is about *where the answer comes from*. This is about *who it is for*, and it is a separate defect that #522 did not touch: `ChannelBusy` was one answer for the whole station, and the transmitter tested it before keying whichever sub-channel the queued frame belonged to.
+
+On a station whose modems sit on **different RF frequencies** inside one slice, that is wrong. The comment on `ChannelBusy` was right that the station has one receiver, so occupancy is a fact about that receiver - but that is a fact about *whether we can hear*. Whether transmitting would collide is a question about one sub-channel's passband, and the two were sharing an answer.
+
+### What it cost on GB7RDG, measured
+
+The figures in this section are the incident, and the station's configuration has moved on since: it was cut to three sub-channels (`afsk300-il2pc` at 7050.3, `ardop` at 7050.95, `bpsk300` at 7051.6 MHz) at 14:33 UTC on 2026-09-21. Read the rest of this section as history.
+
+On 2026-09-21 GB7RDG-2 could not answer a connect request from GB7LOX-2 for **3 minutes 48 seconds**. Replaying the raw off-air capture of those 228 s through this repo's own `EnergyBusyDetector`, ported exactly (40 ms blocks, +6 dB assert, +3 dB release, 100 ms hold, min-tracking floor):
+
+| listening | busy |
+|---|---|
+| ch0 afsk300, 850 Hz | 36.1% |
+| ch1 ardop, 1500 Hz | 47.0% |
+| **ch2 bpsk300, 2150 Hz** (the modem with the traffic) | **81.1%** |
+| ch3 afsk300, 1120 Hz | 35.2% |
+| ch4 afsk300, 987 Hz | 35.2% |
+| OR across all five, as replayed | 96.8% |
+| **OR across the four that gated TX** (ch1 is not one of them, below) | **96.4%** |
+
+The gate left **8.2 s of clear air in 228 s and exactly one gap long enough to start a 15 byte frame**, at 0.72 s. ch2 alone had **43.1 s in fourteen such gaps**, the longest 2.76 s. The station had fourteen chances to transmit and took none.
+
+One correction to the replay, which does not change anything it is arguing. **The ch1 ARDOP row was never part of the live transmit gate.** An `ardop` entry is not an `IModem`: `StationFactory.TryAddModems` skips it and the caller wires it as a receive tap plus a priority transmitter, so it is not in `SoundModemChannel.Modems` and could not contribute to `ChannelBusy`. The replay simulated five detectors; the gate was the OR across the other four, which measures 96.4 % rather than 96.8 %, against 94.9 % predicted by independence. Four multipliers instead of five, and still 8.2 s of clear air and a single usable gap in 228 s, so the conclusion stands unaltered.
+
+**It is arithmetic, not a broken detector.** Five roughly independent channels busy 36/47/81/35/35% union to 97.3% by pure probability, against 96.8% measured; the four that gated predict 94.9% and measure 96.4%. Every modem added to a station multiplies the deferral whether or not its channel has anything to do with the traffic. Removing sub-channels helps only by removing multipliers.
+
+(Flex slice AGC pumping was suspected first and measured: an empty 3.2-5.2 kHz region is 5.8 dB *louder* during a burst, not quieter, so there is no gain suppression to blame.)
+
+**A host cannot defend itself against this**, even a correctly configured one. GB7RDG runs `KISSOPTIONS=ACKMODE` and it is genuinely in use, but LinBPQ's `kiss.c` restarts the link timer when the ack arrives and does nothing to suspend it while the frame is queued, so with `FRACK=7000` any hold longer than seven seconds expires T1 and the retry queues behind the frame it is retrying. (`KISSHF.c` parks the timer at a minute on queueing; `kiss.c` has no equivalent, and `TYPE=ASYNC PROTOCOL=KISS` is `kiss.c`.) No sane FRACK survives a 228 second deferral. The hold is ours to not create, and the duplicate frames that follow it are not a node bug.
+
+### The rule
+
+A frame queued for sub-channel N defers to N's own detector plus any modem whose passband genuinely **overlaps** N's. `SoundModemChannel.ChannelBusyFor(subChannel)` answers that; `ChannelBusy` still answers the station-wide question and is what the waterfall, the station page and the diagnostics read.
+
+Overlap, not sub-channel equality: two afsk300 modems 133 Hz apart do share a passband and must still defer to each other. Each modem's band comes from `ModemBandProbe`, the same 99 % occupied-bandwidth measurement the waterfall draws its band chips from and the RF band planner fits a passband with, so nothing here is a second opinion about how wide a mode is and no modem had to expose anything new. A modem that will not render the probe frame gets a null band, and a null band overlaps everything: carrier sense that does not know has to defer.
+
+### Sizing the guard: 50 Hz, from measured frequency error
+
+Each band is widened by a **50 Hz guard on each side**. What the guard is for is the fact that a station calling us can be off tune: a passband stopping at our own emission would treat a caller sitting just outside it as somebody else's business. That is a measurable quantity, and it has been measured rather than inferred.
+
+GB7RDG's frame log, every received frame carrying an offset since 2026-09-01, n = 28,839. Absolute offset from the sub-channel's own centre:
+
+| p50 | p75 | p90 | p95 | p99 | max |
+|---|---|---|---|---|---|
+| 3.1 Hz | 6.5 Hz | 18.6 Hz | 20.2 Hz | 115.7 Hz | 265.9 Hz |
+
+Within 25 Hz: **96.97 %**. Within 50 Hz: **98.52 %**. Within 100 Hz: 98.84 %.
+
+Where the distribution comes from, by mode:
+
+| mode | n | p99 | max |
+|---|---|---|---|
+| BPSK300 IL2Pc | 25,948 | 21.5 Hz | 72.0 Hz |
+| AFSK300 IL2Pc | 2,318 | 83.1 Hz | 265.9 Hz |
+| AFSK300 | 391 | 232.9 Hz | 244.5 Hz |
+
+50 Hz covers 98.5 % of all of it and sits at 2.3x the p99 of BPSK300, the mode carrying 90 % of the traffic. The long tail is a couple of badly off-tune AFSK stations in a few hundred frames. (The ident ghosts, 182 frames at up to 186.6 Hz, are a receive tap rather than a modem and are not in the gate at all.)
+
+**The receive filters are the wrong thing to size it from**, and an earlier draft of this sized it from them and reached 250 Hz. A diversity bank's branch filter is +/-250 Hz and its branch ladder spans +/-175 Hz, but those are the receiver's *search range*, not the error it meets: the bank ladders branches precisely so that an off-tune signal is caught, which is a different quantity from how far off tune signals actually are. Sizing the guard from the filter makes it as wide as the search and throws away most of the separation this change is trying to recover. ardopcf's 100 Hz `TuningRange`, which `ArdopBusyDetector` copies, is the same kind of figure.
+
+**Which way to err, and why it is this way.** The guard only ever widens a busy decision. An undersized one means two very nearly adjacent sub-channels might fail to defer to each other; it cannot affect decoding, which never consults this. An oversized one puts back exactly the deferral this change exists to remove, across the whole station. That asymmetry is why the right size is a measured p99 rather than a worst case.
+
+Measured at 12 kHz on the modems GB7RDG runs now:
+
+| modem | occupied |
+|---|---|
+| afsk300-il2pc, 850 Hz audio (7050.3 kHz) | 680-1020 Hz |
+| bpsk300, 2150 Hz audio (7051.6 kHz) | 1980-2320 Hz |
+
+960 Hz of clear air between the edges, against the 100 Hz two 50 Hz guards spend. (`ardop` at 1500 Hz sits between them and is not a modem, so it is not in the gate either way.) Two afsk300 modems 133 Hz apart, which this station ran until 2026-09-21, overlap outright with no guard at all and keep deferring to each other, which is the property the guard must not break.
+
+### What did not become per-sub-channel
+
+* **A radio busy source stays station-wide.** `IChannelBusySource` reports on the receiver, not on a waveform, so when it has an opinion it still decides for everybody. `CarrierSenseRule.Occupied` is untouched, and the narrowing is to its `anyAudioBusy` argument only.
+* **Our own transmission stays absolute.** The station is half duplex: keying makes every receiver on it deaf, so it counts busy for every sub-channel.
+* **The turnaround hold** (`QuietAfterTransmit`, `MaxTurnaroundHold`) is a different mechanism and was already per-source.
+* **One PA** is handled by the per-source queues and the keyup loop, and is not carrier sense.
+* **A transmitter that is not a modem** - POCSAG paging, the CW ident, the operator's test transmission - goes through the delegate overload of `EnqueueTransmit` with an arbitrary `source` object, and nothing here knows what part of the band it occupies. Those get the station-wide answer, which is the conservative choice and is what they had before.
+* **ARDOP** skips carrier sense entirely, as it already did: it owns the channel's timing rather than contending for it.
+
+`PerSubChannelCarrierSenseTests` holds all of this, on GB7RDG's own modem geometry and a fake clock.
 
 ## The station with no control cable
 
