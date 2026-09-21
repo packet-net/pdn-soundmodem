@@ -93,17 +93,21 @@ public class FmShapeBusyDetectorRecordingTests
         (float[] audio, int rate) = WavFile.ReadMono(path);
         List<Episode> found = Run(audio, rate, out _, out double busySeconds);
 
-        // The chunk holds a handful of transmissions and about ten minutes of idle. Anything much
-        // above that count is the detector firing on the idle channel.
-        found.Should().HaveCountLessThan(30,
-            "the chunk holds about a dozen transmissions; more episodes than that is false busy. "
-            + "Found {0} totalling {1:F1} s",
-            found.Count, busySeconds);
+        // The chunk holds exactly 11 transmissions totalling 66.5 s, established independently
+        // from the collapse of power above the signal's band. Every extra episode here is false
+        // busy, which is deferral a station cannot see the reason for.
+        found.Should().HaveCount(11,
+            "the chunk holds 11 transmissions. Found {0} totalling {1:F1} s: {2}",
+            found.Count, busySeconds,
+            string.Join(", ", found.Select(e => $"{e.StartSeconds:F1}s+{e.LengthMilliseconds:F0}ms")));
 
+        busySeconds.Should().BeInRange(60, 75,
+            "and it must cover those 66.5 s without hanging on past them");
+
+        // 594 s of idle channel with nothing on it at all. This is the figure that decides
+        // whether the detector is safe to have switched on by default.
         double lengthSeconds = (double)audio.Length / rate;
-        (busySeconds / lengthSeconds).Should().BeLessThan(0.25,
-            "a station that reads busy for a quarter of a quiet channel is deferring for no "
-            + "reason anybody can see");
+        (lengthSeconds - busySeconds).Should().BeGreaterThan(580);
     }
 
     /// <summary>

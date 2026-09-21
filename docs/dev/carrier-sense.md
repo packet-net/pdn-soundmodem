@@ -225,7 +225,7 @@ Idle hiss on this path FALLS with frequency, by 37 dB across the band, where tex
 
 | | reference capture, radio1, 15 NinoTNC transmissions | 660 s chunk, radio1, 11 of ours | 60 s, **radio2**, 15 of ours |
 |---|---|---|---|
-| found | 15 of 15 | 11 of 11 | 15 of 15 |
+| found | 15 of 15 | 11 of 11, and nothing else in 594 s of idle | 15 of 15 |
 | assert latency after carrier up | median 26 ms | median 21 ms | 170 to 220 ms before the decode |
 | **false busy** | **0 blocks** | **0 blocks in 583 s of idle** | **none in 44 s of idle** |
 
