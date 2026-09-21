@@ -1,7 +1,7 @@
 <Project>
   <ItemGroup>
     <!-- Serial / IO -->
-    <PackageVersion Include="System.IO.Ports" Version="10.0.0" />
+    <PackageVersion Include="System.IO.Ports" Version="10.0.11" />
 
     <!-- FlexRadio 6000-series client (lifted out of this repo; AGPL-3.0-or-later). Adding it
          to the GPL-3.0 core is permitted by GPLv3 §13, which pulls AGPL §13 onto the combined
@@ -20,9 +20,15 @@
     <PackageVersion Include="M0LTE.Dsp" Version="0.2.0" />
     <!-- The FM link model, lifted out of this repository's test project so that the modems
          measured through it - here and in the out-of-tree ones - share one definition. -->
-    <PackageVersion Include="M0LTE.FmChannel" Version="0.6.0" />
+    <PackageVersion Include="M0LTE.FmChannel" Version="0.7.0" />
     <PackageVersion Include="M0LTE.FecLdpc" Version="0.1.0" />
     <PackageVersion Include="M0LTE.Ofdm" Version="0.1.0" />
+    <!-- The Tait CCDI driver, for OFDM-FM carrier sense taken from the radio's own squelch and
+         signal-strength meter rather than inferred from the audio a receiver produces. AGPL-3.0,
+         which this repo permits and already carries via M0LTE.Flex; see CLAUDE.md, Licence rules.
+         Only reached when a station opts in by writing ofdm-fm.station.json, so a station without
+         that file never constructs it and never opens a serial port. -->
+    <PackageVersion Include="Packet.Radio.Tait" Version="0.33.0" />
 
     <!-- Pure-managed zstd port for the ka9q_ubersdr / UberSDR IQ path (pcm-zstd WebSocket
          frames). MIT, so GPL-compatible per CLAUDE.md's licence rules. It was dev-tooling-only

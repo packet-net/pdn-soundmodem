@@ -194,11 +194,11 @@ public class ModemPluginRegistryTests
     [Fact]
     public void An_Unloaded_Plugin_Says_So_Rather_Than_Being_A_Missing_Mode()
     {
-        Action act = () => ModemCatalog.Create("ofdm-fm:nb", 48000, Sink);
+        Action act = () => ModemCatalog.Create("sample:loopback", 48000, Sink);
 
         act.Should().Throw<ArgumentException>()
-            .WithMessage("*unknown mode 'ofdm-fm:nb'*")
-            .WithMessage("*no modem plugin registered for 'ofdm-fm'*");
+            .WithMessage("*unknown mode 'sample:loopback'*")
+            .WithMessage("*no modem plugin registered for 'sample'*");
     }
 
     [Fact]

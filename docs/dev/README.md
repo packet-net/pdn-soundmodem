@@ -24,6 +24,7 @@ Every file here opens, under its H1, with a status line: whether it is current, 
 | [bench/](bench/) | Bench rigs and benchmarks: the NinoTNC cable loop, the QtSoundModem virtual-cable loop, sm-tnctest against the WA8LMF TNC Test CD, and the ARDOP on-air acceptance procedure. |
 | [hardware/](hardware/) | Hardware notes: the TM8100 to CM108 interface reasoning, the CM108 widget netlist, and the TM8100 internal USB board. The wiring guide itself is a user document at [docs/hardware/tait-tm8100-cm108.md](../hardware/tait-tm8100-cm108.md). |
 | [ms110d/](ms110d/) | MIL-STD-188-110D Appendix D: the transcribed interop tables and their README, the waveform design, and the standard itself under spec/. |
+| [ofdm-fm/](ofdm-fm/) | OFDM-FM design notes: the shipped preset set, how the 8 kHz preset was measured on air, the receive-path findings including what was reverted, carrier sense on an FM path, and the geometry-signalling work. |
 | [refs/](refs/) | Verbatim transcriptions of other people's specifications. Never edited. |
 | [plans/](plans/) | Plans for work not started: 2G ALE. |
 | [archive/](archive/) | Frozen records of closed work: plans, campaign evidence, handovers and closeouts. Its [README](archive/README.md) states the rules. |

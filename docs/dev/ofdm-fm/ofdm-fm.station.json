@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Carrier sense taken from the radio, not from the audio. This is NOT a soundmodem.json:",
+    "it is ofdm-fm.station.json, and it goes NEXT TO THE DAEMON, because a modem is handed",
+    "audio and nothing else and there is nowhere in the daemon's own config to put it.",
+    "",
+    "A station without this file keeps the shipped behaviour and opens no serial port.",
+    "",
+    "busyAboveDbm MUST be measured, not copied. Two nominally identical stations on the",
+    "reference bench have idle noise floors 31 dB apart (-94 and -126 dBm). Measure the floor",
+    "on a QUIET channel and set a threshold about 15 dB clear of it.",
+    "",
+    "Omit busyAboveDbm to use the radio's hardware DCD alone, which costs no serial traffic.",
+    "Be aware DCD reads nothing at all until the first squelch edge, so on a station running",
+    "with the squelch held open it may never assert. That is what the RSSI threshold is for.",
+    "",
+    "The radio's data port must be programmed for Command mode (CCDI), and the daemon's user",
+    "needs the port: the packaged unit already has SupplementaryGroups=dialout.",
+    "",
+    "With this on, the daemon HOLDS the serial port, so anything else wanting the same port",
+    "will fail while it runs. A serial port cannot be opened twice."
+  ],
+  "carrierSense": {
+    "taitPort": "/dev/ttyUSB0",
+    "taitBaud": 28800,
+    "busyAboveDbm": -75,
+    "pollMilliseconds": 100
+  }
+}

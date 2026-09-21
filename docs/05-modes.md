@@ -73,6 +73,27 @@ Codec2 OFDM burst waveforms for HF SSB. The payload is the same IL2P+CRC bit str
 | `freedv-datac13` | 64 bps | narrow | **On-air** - signalling mode |
 | `freedv-datac14` | 58 bps | narrow | **On-air** - shortest signalling mode |
 
+## OFDM-FM modes
+
+OFDM across the audio path of an ordinary FM transceiver, so the radio emits standard FM and regulatory compliance rides on that. Real-FFT symbols with a cyclic prefix, a self-correlating sync symbol, a channel estimate from a known preamble, pilot-tracked residual phase, Gray-coded constellations, a convolutional code with soft Viterbi decoding, and a burst whose header announces its own constellation, coding and length, so one station's rate is its own setting and the other end follows it burst by burst.
+
+The payload is **one AX.25 frame, opaque**, with no IL2P: the burst already supplies sync, a length, a CRC and forward error correction. These modes run at 48 kHz and occupy the audio band from just above DC, so they take no centre frequency.
+
+**All eight share one geometry table**, so a receiver on any of them decodes a burst sent on any other and a link can change bandwidth without a handshake. There are three carrier layouts: `ofdm-fm-narrow` is entry 0, the 6 kHz presets entry 1, the 8 kHz presets entry 2. Entry 0 carries the sync, preamble and header of every burst whatever its payload span, and `ofdm-fm-narrow` is entry 0, keyed and delivering every frame since 2026-09-20. `ofdm-fm-8k` is the default and the only one measured across the full range of payload sizes in both directions. Goodput is what a KISS application moved end to end at 1024 / 1900 / 3000 byte frames, scored from both stations' frame logs.
+
+| Mode | Coded rate | Span | Goodput | Verification |
+|---|---|---|---|---|
+| `ofdm-fm-narrow` | 2.5 kbit/s | 211 Hz to 2.9 kHz | 2.2 / 2.3 | **On-air** - every frame both directions; the only preset a voice-bandwidth path can carry |
+| `ofdm-fm-6k` | 5.5 kbit/s | 211 Hz to 6.0 kHz | not measured | **Sim only** - the robust data-port fallback |
+| `ofdm-fm-6k-fast` | 21.8 kbit/s | 211 Hz to 6.0 kHz | 13.3 / 16.6 / 17.8 | **On-air** - every frame delivered |
+| `ofdm-fm-8k` | 29.4 kbit/s | 211 Hz to 8.0 kHz | 17.5 / 22.3 / 24.7 | **On-air** - every frame at 1024 and 1900 both ways, 19 of 20 at 3000 |
+| `ofdm-fm-8k-r56` | 36.7 kbit/s | 211 Hz to 8.0 kHz | 19.2 / 25.5 / 29.8 | **On-air** - every frame or all but one in every cell, both directions |
+| `ofdm-fm-8k-r78` | 38.5 kbit/s | 211 Hz to 8.0 kHz | 21.1 / 24.1 / 29.8 | **On-air** - marks where the margin runs out, not a recommendation |
+| `ofdm-fm-8k-follow` | 29.4 kbit/s | 211 Hz to 8.0 kHz | 23.9 / 23.2 / 28.3 | **On-air** - follow-on frames; a failed header costs the rest of the keyup |
+| `ofdm-fm-8k-adaptive` | up to 29.4 kbit/s | 211 Hz to 8.0 kHz | what the link supports | **On-air** - point-to-point only; one controller per channel |
+
+Design notes, the measured rate ladder and what still limits the waveform are in [docs/dev/ofdm-fm/](dev/ofdm-fm/).
+
 ## MIL-STD-188-110D App D (MS110D) modes
 
 3 kHz serial-tone HF waveforms, 75 to 3200 bps, with the same IL2P+CRC payload. "Hard-gated" in a row means the simulation suite holds the mode at its App D performance mask over the standard's Poor channel.

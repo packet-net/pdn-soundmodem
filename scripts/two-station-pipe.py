@@ -7,7 +7,8 @@ stronger claim than a modem round-tripping its own buffer in one process: the tr
 receive path have to agree about something for it to work at all.
 
     scripts/two-station-pipe.py                                    # afsk1200, the baseline
-    scripts/two-station-pipe.py ofdm-fm:nb /opt/pdn/M0LTE.OfdmFm.dll 48000
+    scripts/two-station-pipe.py ofdm-fm-8k                          # built in, 48 kHz
+    scripts/two-station-pipe.py sample:loopback /path/to/MyModem.dll 48000   # from a plugin
 
 Exits 0 if the frame arrived byte-identical, 1 with both stations' logs if it did not.
 """

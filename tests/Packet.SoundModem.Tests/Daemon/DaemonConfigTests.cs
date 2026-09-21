@@ -879,8 +879,8 @@ public class DaemonConfigTests : IDisposable
         string path = WriteConfig("""
             {
               "device": "null",
-              "modemPlugins": [ { "path": "/opt/pdn/plugins/M0LTE.OfdmFm.dll" } ],
-              "modems": [ { "subChannel": 0, "mode": "ofdm-fm:nb" } ]
+              "modemPlugins": [ { "path": "/opt/pdn/plugins/MyModem.dll" } ],
+              "modems": [ { "subChannel": 0, "mode": "sample:loopback" } ]
             }
             """);
 
@@ -889,7 +889,7 @@ public class DaemonConfigTests : IDisposable
         error.Should().BeEmpty();
         config.Should().NotBeNull();
         config!.ModemPlugins.Should().ContainSingle()
-            .Which.Path.Should().Be("/opt/pdn/plugins/M0LTE.OfdmFm.dll");
+            .Which.Path.Should().Be("/opt/pdn/plugins/MyModem.dll");
     }
 
     [Fact]

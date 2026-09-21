@@ -12,7 +12,7 @@ namespace Packet.SoundModem.Modems;
 /// and loaded it. See <c>docs/dev/modem-plugins.md</c>.</para>
 /// <para>Modes are keyed <c>id:mode</c>, which no built-in name can collide with because no
 /// built-in contains a colon. That also makes an unloaded plugin diagnosable: a config asking for
-/// <c>ofdm-fm:nb</c> gets told no plugin <c>ofdm-fm</c> is registered, rather than that the mode
+/// <c>sample:loopback</c> gets told no plugin <c>sample</c> is registered, rather than that the mode
 /// does not exist.</para>
 /// <para>Thread-safe. Registration takes a lock and swaps in a fresh immutable snapshot; every
 /// lookup reads one reference and never locks, which is what lets the catalogue's per-call

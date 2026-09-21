@@ -415,8 +415,8 @@ foreach (string spec in modemSpecs)
         || !int.TryParse(specParts[0], out int specSubChannel)
         || (specParts.Length > 2 && !double.TryParse(specParts[2], out _)))
     {
-        // The commonest way to land here is a plugin mode: --modem 0:ofdm-fm:nb splits into
-        // three parts and "nb" is not a frequency. That is not a typo to correct, it is a
+        // The commonest way to land here is a plugin mode: --modem 0:sample:loopback splits into
+        // three parts and "loopback" is not a frequency. That is not a typo to correct, it is a
         // grammar collision - this option's own separator is the one a plugin mode uses - so
         // say which way out there is rather than printing a number-format exception.
         Console.Error.WriteLine($"--modem {spec} is not N:MODE[:FREQ]");
