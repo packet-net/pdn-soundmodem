@@ -506,7 +506,7 @@ public sealed class SoundModemChannel
 
     /// <summary>
     /// Raised alongside <see cref="FrameTransmitted"/> with everything the channel knows about
-    /// what it did with one frame: the trim it applied, and how long carrier sense held it.
+    /// what it did with one frame: the trim it applied, and how long the frame waited for the channel.
     /// </summary>
     /// <remarks>
     /// <para>A third event rather than a wider <see cref="FrameTransmittedWithTrim"/>, because

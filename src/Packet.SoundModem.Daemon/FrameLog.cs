@@ -305,7 +305,7 @@ internal sealed class FrameLog : IAsyncDisposable
     /// a station did with what we did about it.
     /// </param>
     /// <param name="heldMs">
-    /// How long carrier sense held this frame before it went out, in milliseconds. Written for
+    /// How long this frame waited for the channel before it went out, in milliseconds. Written for
     /// every transmission, including the ones that went straight out: the column is what a later
     /// question about how much airtime this station is losing to deferral gets asked of, and a
     /// column that only exists above a threshold cannot answer "how often" - only "how bad".

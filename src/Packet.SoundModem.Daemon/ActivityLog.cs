@@ -109,7 +109,7 @@ internal static class ActivityLog
         + HeldNote(heldFor);
 
     /// <summary>
-    /// How long carrier sense held this frame, on the lines where that is worth reading.
+    /// How long the channel held this frame, on the lines where that is worth reading.
     /// </summary>
     /// <remarks>
     /// <para>Quiet below <see cref="HeldWorthSaying"/>. On a clear channel a frame goes out in a
@@ -118,9 +118,14 @@ internal static class ActivityLog
     /// frame log keeps the figure for every frame regardless; this is the line an operator reads.</para>
     /// <para>The threshold is one TXDELAY's worth of waiting, which is the point at which the
     /// wait has cost more than sending the frame would have.</para>
+    /// <para>"waiting for the channel" rather than "by carrier sense", because carrier sense is
+    /// only the usual reason and not the only one: the roll, the turnaround hold, a transmit
+    /// inhibit and simply being behind this station's own earlier frames in the same keyup all
+    /// land in the same figure. Naming one cause on a line that cannot tell them apart would be
+    /// a claim the number does not support, and this number exists to be argued from.</para>
     /// </remarks>
     private static string HeldNote(TimeSpan heldFor) =>
-        heldFor < HeldWorthSaying ? "" : $"  held {Duration(heldFor)} by carrier sense";
+        heldFor < HeldWorthSaying ? "" : $"  held {Duration(heldFor)} waiting for the channel";
 
     /// <summary>Below this a wait is ordinary channel access and not worth a column.</summary>
     internal static readonly TimeSpan HeldWorthSaying = TimeSpan.FromMilliseconds(300);

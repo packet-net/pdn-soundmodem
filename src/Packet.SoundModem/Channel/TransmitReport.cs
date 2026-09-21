@@ -9,9 +9,11 @@ namespace Packet.SoundModem.Channel;
 /// </param>
 /// <param name="HeldFor">
 /// How long the frame waited between being handed to the channel and the transmitter picking it
-/// up - carrier sense, the p-persistence roll, the turnaround hold and
-/// <see cref="SoundModemChannel.TransmitInhibit"/>, all of it, because from the host's side they
-/// are one wait and it has no way to tell them apart.
+/// up: carrier sense, the p-persistence roll, the turnaround hold,
+/// <see cref="SoundModemChannel.TransmitInhibit"/>, and time spent behind this station's own
+/// earlier frames in the same keyup. All of it together, because from the host's side they are
+/// one wait and it has no way to tell them apart - which is also why nothing built on this
+/// should name a single cause.
 /// </param>
 /// <remarks>
 /// <para><b>Why a station records this.</b> A KISS host cannot see it. It writes a frame to a

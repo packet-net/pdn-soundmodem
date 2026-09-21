@@ -1868,14 +1868,14 @@ function logFrame(ev) {
   const trim = ev.txTrimHz != null
     ? `<span class="trim" title="Transmitted ${ev.txTrimHz.toFixed(1)} Hz off the channel centre, to land where this station's receiver is listening. Measured from its own frames: its transmit and receive share one oscillator, so a station heard high is listening high.">SHIFTED</span>`
     : "";
-  // How long this station's own carrier sense sat on the frame before sending it. Only ever on
-  // our own transmissions, and only where the wait was long enough to matter - see
+  // How long this frame waited for the channel before it was sent. Only ever on our own
+  // transmissions, and only where the wait was long enough to matter - see
   // WaterfallWebServer.HeldWorthShowing. It is worth a badge rather than only a figure because
   // the host that queued the frame cannot see this at all: it wrote to a socket and the write
   // returned, so its own retry timers have been running against the wrong moment for however
   // long this says.
   const held = ev.heldMs != null
-    ? `<span class="held" title="Carrier sense held this frame for ${heldText(ev.heldMs)} before it went out. The channel was busy, or another transmitter on it held the turnaround. The host that queued it had no way to know - a KISS write returns immediately - so anything it decided on a timer during that wait was decided blind.">HELD ${heldText(ev.heldMs)}</span>`
+    ? `<span class="held" title="This frame waited ${heldText(ev.heldMs)} for the channel before it went out. Usually carrier sense; also the turnaround hold, a transmit inhibit, or this station's own earlier frames in the same keyup. The host that queued it had no way to know - a KISS write returns immediately - so anything it decided on a timer during that wait was decided blind.">HELD ${heldText(ev.heldMs)}</span>`
     : "";
   // Escaped like every other field on the row. These three were not, and were safe only because
   // Ax25AddressParser restricts a callsign to [A-Z0-9] and an SSID and a mode name comes out of
@@ -2199,8 +2199,8 @@ function tagsFor(ev) {
   // the polls went out late and together, so nothing had a chance to answer the earlier ones.
   if (ev.heldMs != null) {
     tags.push(["held", `HELD ${heldText(ev.heldMs)}`,
-      "Our own carrier sense held this frame for " + heldText(ev.heldMs) + " before it reached the air. "
-      + "The channel was busy, or another transmitter on this station held the turnaround. "
+      "This frame waited " + heldText(ev.heldMs) + " for the channel before it reached the air. "
+      + "Usually carrier sense; also the turnaround hold, a transmit inhibit, or our own earlier frames. "
       + "The host that queued it could not see the wait, so any timer it ran during it was running blind."]);
   }
   return tags;

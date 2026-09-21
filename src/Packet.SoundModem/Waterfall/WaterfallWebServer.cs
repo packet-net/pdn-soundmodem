@@ -250,7 +250,7 @@ public sealed class WaterfallOptions
 /// the 0 dB the underlying figure carries when it was never measured (issue #479).
 /// </param>
 /// <param name="HeldMs">
-/// How long carrier sense held this frame before it went out, in milliseconds. Set on a
+/// How long this frame waited for the channel before it went out, in milliseconds. Set on a
 /// transmission; null on everything received, and on a transmission logged before the column
 /// existed - which reads as "nothing said" rather than as a frame that went straight out.
 /// </param>
@@ -1756,7 +1756,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         count = evt.Count,
         state = LinkStateName(evt.State),
         tx = evt.Transmitted ? true : (bool?)null,
-        // How long carrier sense held this frame, on our own transmissions only and only where
+        // How long this frame waited for the channel, on our own transmissions only and only where
         // it was long enough to be worth a tag. It belongs on the link's own feed as much as on
         // the flat panel: a card showing a run of unanswered polls reads as a link that is
         // failing, and this is the line that says the polls never reached the air when the
@@ -2034,7 +2034,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // How far this transmission was shifted to suit the station it was addressed to.
             // Null when it went out on the nominal centre, which is most of them.
             txTrimHz,
-            // How long carrier sense held this transmission before it went out. Null on a
+            // How long this transmission waited for the channel before it went out. Null on a
             // received frame - a station cannot know what the other end's channel access did -
             // and null on a transmission that went straight out, which is most of them on a
             // quiet channel. The page draws the note only where there is one.
@@ -3271,7 +3271,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 peakDbFs = ShownPeak(f.PeakDbFs, f.PeakWorthShowing),
                 clipped = f.Clipped is true ? true : (bool?)null,
                 level = LevelTag(f.Level),
-                // And how long the channel held it, so a page that has just been reloaded says
+                // And how long it waited for the channel, so a page that has just been reloaded says
                 // the same thing about a transmission as the live row did. Null on a received
                 // row, on a transmission that went straight out, and on one logged before the
                 // column existed.
