@@ -992,12 +992,19 @@ discriminator and interface into its card, measured by stepping a tone through
 `POST /api/txtest` and reading each tone's level coherently out of the receiving station's own
 `rawCapture`:
 
-| Hz | 50 | 70 | 100 | 140 | 200 | 280 | 400 | 560 | 800 | 1130 | 1600 | 2260 | 3200 | 4500 | 6400 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| dB | -6.9 | -3.2 | -1.7 | -0.9 | -0.4 | -0.1 | +0.1 | +0.1 | +0.1 | 0.0 | -0.1 | -0.3 | -0.8 | -0.9 | -3.7 |
+| Hz | 50 | 70 | 100 | 140 | 200 | 280 | 400 | 560 | 800 | 1130 | 1600 | 2260 | 3200 | 4500 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| dB | -6.9 | -3.2 | -1.7 | -0.9 | -0.4 | -0.1 | +0.1 | +0.1 | +0.1 | 0.0 | -0.1 | -0.3 | -0.8 | -0.9 |
 
-Flat from 280 Hz to 4.5 kHz, which is the part everyone looks at, and **3 dB down at about 70 Hz**,
-which is the part that matters for anything fed to a 9600 baud socket. 50 Hz is the transmit test
+| Hz | 6400 | 7500 | 8500 | 9600 | 11000 | 12500 | 14000 |
+|---|---|---|---|---|---|---|---|
+| dB | -3.4 | -6.7 | -10.8 | -16.2 | -28.0 | -49.5 | -58.3 |
+
+Flat from 280 Hz to 4.5 kHz, which is the part everyone looks at, **3 dB down at about 70 Hz**,
+which is the part that matters for anything fed to a 9600 baud socket, and 3 dB down again at
+6.4 kHz, which matters only for the 9600 symbol per second modes. The top half agrees closely with
+an independent measurement of the same pair two days earlier taken through the OFDM-FM carriers
+(-3 dB at 6.3 kHz, -6 at 7.4, -8 at 8, -18.7 at 10 kHz). 50 Hz is the transmit test
 tone's floor, so the shape below that is not measured; a single pole at 90 Hz and four poles at
 35 Hz both fit these fifteen points to within half a decibel, and they disagree about how much
 wander is left, so the number of stages is an open question.
@@ -1020,6 +1027,10 @@ impairment), the corner frequency at which each mode stops delivering:
 
 Twice the symbol rate is half the low-frequency content and so roughly twice the tolerance, and a
 2-level eye has three times the margin of a 4-level one, which is the whole table in one sentence.
+
+`c4fsk19200` gets no relief from running faster, because what it gains at the bottom it loses at
+the top: at 9600 symbols per second its band reaches 9.6 kHz, where this path is 16 dB down, and
+it is already 11 dB down at 8.5 kHz. Measured on air, its eye is no better than `c4fsk9600`'s.
 
 On air over these assemblies on the same day, 20 frames per rung scored from both stations' own
 journals, `fsk9600` delivered 100 % of 32-byte frames in both directions and 5 to 10 % of 512-byte
