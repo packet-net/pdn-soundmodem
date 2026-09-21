@@ -15,6 +15,8 @@ What to build to connect the single-sided CM108 interface board at [tomwardill/c
 
 The levels below were measured for this board and this radio on 2026-08-14, and the deviation confirmed on air on 2026-09-18. They are not generic: a different board, or this one on a different radio, needs [measurement 1](../dev/hardware/tm8100-cm108-interface-notes.md#measurement-1-what-the-cm108-input-and-output-full-scale-actually-are) redoing.
 
+**One caveat if you plan to run the 9600 baud modes** (`fsk9600`, `fsk9600-il2p`, `fsk4800-il2p`, `c4fsk9600`, `c4fsk19200`). These feed data right down to DC, and the coupling capacitors in this assembly and on the CM108 board itself high-pass it. Measured end to end on a pair of these on 2026-09-21, the chain is 3 dB down at 70 Hz, which carries `fsk9600` short frames but loses most long ones and does not carry either C4FSK mode at all. The figures and what would have to change are in the extended notes under [the end-to-end low-frequency corner](../dev/hardware/tm8100-cm108-interface-notes.md#measured-the-end-to-end-low-frequency-corner-and-what-it-costs-the-9600-baud-modes). The voice-band modes are unaffected.
+
 This page is only what to build. The reasoning, the arithmetic, the bench procedures and the measured evidence behind every figure are in the [extended notes](../dev/hardware/tm8100-cm108-interface-notes.md). The radio side comes from the 3DK Hardware Developer's Kit Application Manual (`MMA-00011-01` in [M0LTE/tait-tm8100-tm8200-docs](https://github.com/M0LTE/tait-tm8100-tm8200-docs)), whose section 5.1.1 is Tait's own worked example of this job. The interface side comes from its [netlist](../dev/hardware/cm108-widget-netlist.md).
 
 ## What the interface provides

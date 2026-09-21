@@ -513,7 +513,8 @@ tap, raise C3 to 8n2, which moves the pole to 31 kHz and costs about 0.4 dB at 9
 6 Hz at the top of the table, 32 Hz at the bottom. C2 10u into the dongle's bias network is about
 8 Hz. **If your dongle's full scale puts you in the bottom row, raise C1 to 10u**, which returns the
 corner to 7 Hz. All of this is moot if the dongle's own input capacitor is the limit, which is the
-reason for the line-input recommendation above.
+reason for the line-input recommendation above. **It is the limit, measured: see [the end-to-end low-frequency
+corner](#measured-the-end-to-end-low-frequency-corner-and-what-it-costs-the-9600-baud-modes).**
 
 ## Transmit path
 
@@ -982,6 +983,56 @@ is limiting and the tap is not programmed to T12 or T13.
   one now has an answer to compare against rather than just an expectation.
 
 Both take minutes and both settle questions faster than reading does.
+
+## Measured: the end-to-end low-frequency corner, and what it costs the 9600 baud modes
+
+**2026-09-21, radio1/radio2, the deployed variant-A assemblies.** The audio response of the whole
+chain, radio2's card out through its interface and T12, over RF, back through radio1's
+discriminator and interface into its card, measured by stepping a tone through
+`POST /api/txtest` and reading each tone's level coherently out of the receiving station's own
+`rawCapture`:
+
+| Hz | 50 | 70 | 100 | 140 | 200 | 280 | 400 | 560 | 800 | 1130 | 1600 | 2260 | 3200 | 4500 | 6400 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| dB | -6.9 | -3.2 | -1.7 | -0.9 | -0.4 | -0.1 | +0.1 | +0.1 | +0.1 | 0.0 | -0.1 | -0.3 | -0.8 | -0.9 | -3.7 |
+
+Flat from 280 Hz to 4.5 kHz, which is the part everyone looks at, and **3 dB down at about 70 Hz**,
+which is the part that matters for anything fed to a 9600 baud socket. 50 Hz is the transmit test
+tone's floor, so the shape below that is not measured; a single pole at 90 Hz and four poles at
+35 Hz both fit these fifteen points to within half a decibel, and they disagree about how much
+wander is left, so the number of stages is an open question.
+
+The corner is not one component. Both tails contribute (C1 and C2 on receive, C4 on transmit,
+whose corner the build page puts at 43 to 64 Hz), and so does a coupling capacitor at each end
+**on the CM108 board itself**, which is what the paragraph above warns about and which no change
+to our tail can fix.
+
+**What it costs.** A baseband mode puts data right down to DC, so a high pass makes its baseline
+wander, and a wandering baseline walks the signal across the slicer's thresholds. Measured against
+the real receivers (`C4fskBaselineWanderProbe`, 40 seeds, 60 dB AWGN so the filter is the only
+impairment), the corner frequency at which each mode stops delivering:
+
+| mode | levels | symbol rate | survives a corner of | dies at |
+|---|---|---|---|---|
+| `c4fsk9600` | 4 | 4800 | 30 Hz | 50 Hz |
+| `c4fsk19200` | 4 | 9600 | 70 Hz | 100 Hz |
+| `fsk9600` | 2 | 9600 | 200 Hz | 300 Hz |
+
+Twice the symbol rate is half the low-frequency content and so roughly twice the tolerance, and a
+2-level eye has three times the margin of a 4-level one, which is the whole table in one sentence.
+
+On air over these assemblies on the same day, 20 frames per rung scored from both stations' own
+journals, `fsk9600` delivered 100 % of 32-byte frames in both directions and 5 to 10 % of 512-byte
+frames, while `c4fsk9600` delivered nothing at any size. The falling curve on the binary mode is
+the wander: a longer frame has more chances to contain a run of same-sign symbols long enough to
+drag the baseline across the threshold.
+
+**So the interface as built is adequate for voice-band modes and marginal for the 9600 baud
+family.** Before recommending a change to the build, somebody has to measure which stage dominates,
+because if it is the board's own capacitor then raising C1, C2 or C4 buys nothing. The way to find
+out is to sweep each half separately: drive a known audio level into the radio's T12 and read the
+deviation off an SDR to characterise transmit alone, then inject at the far end and read the card
+to characterise receive alone. That measurement has not been made.
 
 ## What goes wrong
 
