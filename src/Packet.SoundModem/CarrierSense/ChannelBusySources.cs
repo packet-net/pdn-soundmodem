@@ -18,7 +18,12 @@ namespace Packet.SoundModem.CarrierSense;
 /// </code>
 /// Any <c>IRadioControl</c> works, so this is not Tait-specific even though the standalone opener
 /// is.</para>
-/// <para>Set it before the first modem is created. It is read once per modem, at construction.</para>
+/// <para><b>Nothing reads this implicitly.</b> Set it, then hand <see cref="Resolve"/> to the
+/// channel: <c>new SoundModemChannel(rate, channelBusySource: ChannelBusySources.Resolve())</c>.
+/// Having <c>SoundModemChannel</c> read the static itself was tried and taken back out, because a
+/// channel is built in a dozen places and a mutable global that silently decides what a station
+/// will transmit over is the wrong thing to depend on by accident. The daemon does the same thing
+/// through its own <c>StationCarrierSense</c>, which also honours this.</para>
 /// </remarks>
 public static class ChannelBusySources
 {

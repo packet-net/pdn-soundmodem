@@ -264,14 +264,17 @@ public class RadioCarrierSenseTests
     }
 
     [Fact]
-    public void A_Host_Source_Reaches_A_Station_That_Was_Given_None()
+    public void A_Host_Registers_Its_Radio_And_Hands_It_To_The_Channel()
     {
-        // The one-line integration for an in-process host: register the radio, build the channel.
-        // If this ever stops working, packet.net loses carrier sense silently.
+        // The integration for an in-process host: register the radio, then pass Resolve() to the
+        // channel. The channel does NOT read the static itself, on purpose - a mutable global
+        // that silently decides what a station transmits over is the wrong thing for a dozen
+        // construction sites to depend on by accident.
         try
         {
             ChannelBusySources.Host = new StubSource(true);
-            Assert.True(Station(null).ChannelBusy);
+            Assert.True(Station(ChannelBusySources.Resolve()).ChannelBusy);
+            Assert.False(Station(null).ChannelBusy);
         }
         finally
         {
