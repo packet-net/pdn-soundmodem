@@ -238,14 +238,14 @@ public sealed class SoundModemChannel
     /// interfered with.</para>
     /// <para><b>What that cost, measured.</b> On 2026-09-21 GB7RDG-2 could not answer a connect
     /// request for 3 minutes 48 seconds. Replaying the off-air capture of those 228 s through
-    /// this repo's own <see cref="Modems.EnergyBusyDetector"/>, the five sub-channels were busy
-    /// 36.1, 47.0, 81.1, 35.2 and 35.2 % of the time and the OR across them - what gated the
-    /// transmitter - was busy 96.8 %. That left one gap long enough to start a 15 byte frame,
-    /// where the modem with the traffic, busy 81.1 % on its own, had fourteen. It is arithmetic
-    /// rather than a broken detector: five roughly independent channels at those rates union to
-    /// 97.3 % by pure probability, so every modem added to a station multiplies the deferral
-    /// whether or not its channel has anything to do with the traffic
-    /// (packet-net/pdn-soundmodem#526).</para>
+    /// this repo's own <see cref="Modems.EnergyBusyDetector"/>, the four modems gating the
+    /// transmitter were busy 36.1, 81.1, 35.2 and 35.2 % of the time and the OR across them was
+    /// busy 96.4 %. That left 8.2 s of clear air and exactly one gap long enough to start a
+    /// 15 byte frame, where the modem with the traffic, busy 81.1 % on its own, had fourteen. It
+    /// is arithmetic rather than a broken detector: four roughly independent channels at those
+    /// rates union to 94.9 % by pure probability, against 96.4 % measured, so every modem added
+    /// to a station multiplies the deferral whether or not its channel has anything to do with
+    /// the traffic (packet-net/pdn-soundmodem#526).</para>
     /// <para><b>Overlap, not sub-channel equality.</b> Two afsk300 modems 133 Hz apart really do
     /// share a passband and must still defer to each other; the test is each modem's measured
     /// occupied band, with a guard for the fact that a modem listens wider than it transmits. See

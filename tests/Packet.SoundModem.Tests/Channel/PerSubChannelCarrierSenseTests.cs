@@ -14,8 +14,8 @@ namespace Packet.SoundModem.Tests.Channel;
 /// modems at 850, 987 and 1120 Hz and a bpsk300 modem at 2150 Hz, all inside one Flex slice but
 /// on four different RF frequencies. On 2026-09-21 it could not answer a connect request for
 /// 3 minutes 48 seconds, because the transmit gate was the OR across every modem: the bpsk300
-/// modem carrying the traffic was busy 81.1 % of those 228 s and the union was busy 96.8 %, one
-/// usable gap against fourteen. See packet-net/pdn-soundmodem#526.</para>
+/// modem carrying the traffic was busy 81.1 % of those 228 s and the union across the four was
+/// busy 96.4 %, one usable gap against fourteen. See packet-net/pdn-soundmodem#526.</para>
 /// <para>Every modem here is a real one, wrapped so its busy detector can be held down by hand:
 /// what decides whether two sub-channels defer to each other is their measured occupied
 /// bandwidth, so a test double with an invented passband would prove nothing about the station

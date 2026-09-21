@@ -38,8 +38,8 @@ internal readonly record struct ModemPassband(double LowHz, double HighHz)
     /// 691 Hz clear of the nearest AFSK edge and still 191 Hz clear with 250 Hz added to each
     /// side. That separation is the whole point of the change: over the 228 s that station could
     /// not answer a connect request, its bpsk300 modem was busy 81.1 % of the time and the OR
-    /// across all five sub-channels was busy 96.8 %, one usable gap against fourteen
-    /// (packet-net/pdn-soundmodem#526).</para>
+    /// across the four modems gating the transmitter was busy 96.4 %, one usable gap against
+    /// fourteen (packet-net/pdn-soundmodem#526).</para>
     /// <para>Erring wide is the safe direction: a guard that is too large only makes a station
     /// defer where it need not, which is where every station was before this.</para>
     /// </remarks>

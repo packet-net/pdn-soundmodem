@@ -224,13 +224,14 @@ On 2026-09-21 GB7RDG-2 could not answer a connect request from GB7LOX-2 for **3 
 | **ch2 bpsk300, 2150 Hz** (the modem with the traffic) | **81.1%** |
 | ch3 afsk300, 1120 Hz | 35.2% |
 | ch4 afsk300, 987 Hz | 35.2% |
-| **OR across all five (what gated TX)** | **96.8%** |
+| OR across all five, as replayed | 96.8% |
+| **OR across the four that gated TX** (ch1 is not one of them, below) | **96.4%** |
 
-The OR left **7.3 s of clear air in one gap** long enough to start a 15 byte frame. ch2 alone had **43.1 s in fourteen gaps**, the longest 2.76 s. The station had fourteen chances to transmit and took none.
+The gate left **8.2 s of clear air in 228 s and exactly one gap long enough to start a 15 byte frame**, at 0.72 s. ch2 alone had **43.1 s in fourteen such gaps**, the longest 2.76 s. The station had fourteen chances to transmit and took none.
 
-One correction to that table, which does not change anything it is arguing. **The ch1 ARDOP row was never part of the live transmit gate.** An `ardop` entry is not an `IModem`: `StationFactory.TryAddModems` skips it and the caller wires it as a receive tap plus a priority transmitter, so it is not in `SoundModemChannel.Modems` and could not contribute to `ChannelBusy`. The replay simulated five detectors; the gate was the OR across the other four, which unions to 94.9 % rather than 96.8 % by the same arithmetic. Four multipliers instead of five, and the conclusion stands unaltered.
+One correction to the replay, which does not change anything it is arguing. **The ch1 ARDOP row was never part of the live transmit gate.** An `ardop` entry is not an `IModem`: `StationFactory.TryAddModems` skips it and the caller wires it as a receive tap plus a priority transmitter, so it is not in `SoundModemChannel.Modems` and could not contribute to `ChannelBusy`. The replay simulated five detectors; the gate was the OR across the other four, which measures 96.4 % rather than 96.8 %, against 94.9 % predicted by independence. Four multipliers instead of five, and still 8.2 s of clear air and a single usable gap in 228 s, so the conclusion stands unaltered.
 
-**It is arithmetic, not a broken detector.** Five roughly independent channels busy 36/47/81/35/35% union to 97.3% by pure probability, against 96.8% measured. Every modem added to a station multiplies the deferral whether or not its channel has anything to do with the traffic. Removing sub-channels helps only by removing multipliers.
+**It is arithmetic, not a broken detector.** Five roughly independent channels busy 36/47/81/35/35% union to 97.3% by pure probability, against 96.8% measured; the four that gated predict 94.9% and measure 96.4%. Every modem added to a station multiplies the deferral whether or not its channel has anything to do with the traffic. Removing sub-channels helps only by removing multipliers.
 
 (Flex slice AGC pumping was suspected first and measured: an empty 3.2-5.2 kHz region is 5.8 dB *louder* during a burst, not quieter, so there is no gain suppression to blame.)
 
