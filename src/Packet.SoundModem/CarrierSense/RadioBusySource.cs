@@ -59,14 +59,14 @@ public sealed class RadioBusySource : IChannelBusySource
         if (busyAboveDbm is not null && !can.HasFlag(RadioCapabilities.RssiRead))
         {
             Console.Error.WriteLine(
-                "ofdm-fm: carrier sense: an RSSI threshold was configured but this radio does not "
+                "carrier sense: an RSSI threshold was configured but this radio does not "
                 + "report RSSI. Using DCD alone.");
         }
 
         if (!_dcdUsable && !_rssiUsable)
         {
             Console.Error.WriteLine(
-                "ofdm-fm: carrier sense: this radio offers neither carrier sense nor a usable RSSI "
+                "carrier sense: this radio offers neither carrier sense nor a usable RSSI "
                 + "threshold, so it will report no opinion and the station transmits as it did "
                 + "before. Check the radio's programming and that unsolicited reporting is on.");
         }
@@ -125,7 +125,7 @@ public sealed class RadioBusySource : IChannelBusySource
                 _rssiKnown = false;
                 LastRssiDbm = null;
                 Console.Error.WriteLine(
-                    $"ofdm-fm: carrier sense: RSSI reads failing ({e.Message}). Reporting no "
+                    $"carrier sense: RSSI reads failing ({e.Message}). Reporting no "
                     + "opinion until they come back.");
             }
         }

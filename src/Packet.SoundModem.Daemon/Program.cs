@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using M0LTE.Radio.Audio;
+using Packet.SoundModem.CarrierSense;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
@@ -172,6 +173,7 @@ if (mixerShow is not null)
 
 var modems = new List<ModemConfig>();
 PttConfig? pttConfig = null;
+CarrierSenseConfig? carrierSenseConfig = null;
 AlsaConfig? alsaConfig = null;
 PagingConfig? paging = null;
 FlexConfig? flexConfig = null;
@@ -236,6 +238,7 @@ if (configPath is not null)
     frameLogConfig = config.FrameLog;
     modems = config.Modems;
     pttConfig = config.Ptt;
+    carrierSenseConfig = config.CarrierSense;
     alsaConfig = config.Alsa;
     paging = config.Paging;
     flexConfig = config.Flex;
@@ -649,7 +652,14 @@ string pageSideband =
     ?? waterfallConfig?.Sideband
     ?? "usb";
 
-var channel = new SoundModemChannel(DspRate);
+// Carrier sense, once for the station: every modem on this channel listens to the same receiver,
+// so whether the channel is occupied is a fact about that receiver and not about any waveform.
+// Fails open - see StationCarrierSense.
+IChannelBusySource? carrierSense = StationCarrierSense.Open(
+    carrierSenseConfig, Console.WriteLine, out IDisposable? carrierSenseOwned);
+using IDisposable? carrierSenseLifetime = carrierSenseOwned;
+
+var channel = new SoundModemChannel(DspRate, channelBusySource: carrierSense);
 if (deviceIsUberSdr)
 {
     // Said once, here, so every path that could put something on the air - KISS, paging, ARDOP -

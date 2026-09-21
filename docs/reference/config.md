@@ -50,6 +50,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | `modems` | array | one `afsk1200` on sub-channel 0; none when a top-level `ardop` section is present | The modems sharing the audio channel. |
 | `modemPlugins` | array | `[]` | Assemblies outside the package that provide extra modes. |
 | `ptt` | object | absent: no keying line | How the radio is keyed: `serial` or `cm108`. |
+| `carrierSense` | object | absent: read from the audio | Read carrier sense from the radio's own squelch and signal meter over its control cable. Strongly recommended on FM. |
 | `txTest` | object | enabled, 5 s, cap 30 s | Bounds on the operator's two-tone and single-tone transmitter test. |
 | `alsa` | object | absent: levels left alone | The sound card's mixer levels. |
 | `paging` | object | absent: off | The POCSAG paging endpoint. |
@@ -202,6 +203,29 @@ Rules and refusals:
 - Refused: a `type` other than `serial` or `cm108` (`unknown ptt type 'X'`); any `ptt` with a `flex:` device (`--device flex: keys the radio itself; remove the conflicting --ptt (serial:/cm108:)`); any `ptt` with a `ubersdr:` device (`--device ubersdr: is a receive-only station ... Remove "ptt".`).
 - A device that cannot be opened exits 1, with the file, the key, an `ls` to run and the udev note for `/dev/hidraw*`, and the service retries. The [`--ptt` flag](command-line.md#station-flags) replaces this section.
 - Without a `ptt` the transmitter test is refused: `tx test: unavailable - no "ptt" is configured, so this daemon does not key the radio`.
+
+## `carrierSense`
+
+```json
+{ "carrierSense": { "radio": "tait", "port": "/dev/ttyUSB0", "baud": 28800, "busyAboveDbm": -75, "pollMilliseconds": 100 } }
+```
+
+| Key | Type | Default | What it is |
+|---|---|---|---|
+| `radio` | string | `"tait"` | Which radio driver to use. `"tait"` is the only one; `"none"` switches the section off without deleting it. |
+| `port` | string | absent | The radio's control serial port. With no `port` nothing is opened, whatever else this section says. |
+| `baud` | int | `28800` | Port speed, set by the radio's own data-port programming. |
+| `busyAboveDbm` | number | absent: carrier detect alone | Also call the channel busy when the radio's RSSI reads above this many dBm. |
+| `pollMilliseconds` | int | `100` | How often to read RSSI. Ignored without `busyAboveDbm`. |
+
+**On FM this is not an optimisation, it is the difference between working and not.** An FM receiver with the squelch open, which is how every packet FM station runs, is LOUDER when the channel is idle than when somebody is transmitting: the arriving carrier captures the discriminator and replaces band noise with modulation. Measured on the bench, a transmission reads 2.9 dB BELOW the idle channel in band. Every audio busy detector here asserts on a rise, so without this section an FM station's carrier sense is not merely deaf, it is pointing the wrong way. With a source configured, the station's answer becomes the radio's, ored with any modem's packet carrier detect, and the audio energy detectors stop contributing at all.
+
+- **Measure `busyAboveDbm` on your own station.** Two nominally identical radios on one bench read idle noise floors 31 dB apart, -94.3 dBm and -125.6 dBm, against a far end at about -35 dBm either way; the thresholds chosen there were -75 and -110. A figure copied from somebody else is a guess.
+- **A data station usually needs it.** The radio's carrier-detect line costs no serial traffic but reports nothing at all until the first squelch edge after unsolicited reporting is enabled, and on a station holding its squelch open that edge may never come.
+- **It fails open.** A port that will not open, a radio in the wrong mode, a cable pulled mid-session: each costs carrier sense and nothing else, with a line in the journal, leaving the station transmitting exactly as it did before. A carrier sense that can silence a station by losing a USB cable would be the worse failure by a distance.
+- **The daemon holds the port while it runs**, and a serial port cannot be opened twice. A programming tool or a separate signal probe on the same radio has to wait, or this section comes out and the daemon restarts.
+- Refused at load: a `radio` that is not `tait` or `none`.
+- The radio needs its data port programmed for command mode. See [the Tait TM8100 wiring guide](../hardware/tait-tm8100-cm108.md).
 
 ## `txTest`
 

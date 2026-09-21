@@ -276,6 +276,72 @@ public sealed class ModemPluginConfig
 }
 
 /// <summary>PTT configuration.</summary>
+/// <summary>
+/// Where this station's carrier sense comes from: the radio's own squelch and signal-strength
+/// meter, read over the control cable it is already wired for.
+/// </summary>
+/// <remarks>
+/// <para><b>Why the radio and not the audio.</b> An FM receiver with the squelch open, which is
+/// how every packet FM station runs, is LOUDER when the channel is idle than when somebody is
+/// transmitting: the arriving carrier captures the discriminator and replaces band noise with
+/// modulation. Every audio busy detector here asserts on a RISE, so on that path it is not merely
+/// deaf but anti-correlated, firing at the END of a transmission rather than during it. Two audio
+/// detectors were built for this and both were wrong, the second one badly enough to stop a bench
+/// station transmitting at all. The radio, meanwhile, has a squelch, a hardware carrier-detect
+/// line and a calibrated RSSI meter, and will simply tell you. See
+/// <c>docs/dev/carrier-sense.md</c>.</para>
+/// <para><b>It is off unless this section says otherwise</b>, and it fails open when it is on: a
+/// port that will not open, a radio in the wrong mode, a cable pulled mid-session all end with a
+/// station that transmits exactly as it did before the feature existed. A carrier sense that can
+/// silence a station by losing a USB cable is the worse failure by a distance.</para>
+/// <para><b>The daemon holds the port while it runs</b>, and a serial port cannot be opened
+/// twice. Anything else that talks to the same radio - a programming tool, a separate signal
+/// probe - has to wait, or this section has to come out and the daemon restart.</para>
+/// </remarks>
+public sealed class CarrierSenseConfig
+{
+    /// <summary>
+    /// Which radio driver to use. <c>"tait"</c> is the only one there is; <c>"none"</c> switches
+    /// the section off without deleting it.
+    /// </summary>
+    public string Radio { get; set; } = "tait";
+
+    /// <summary>
+    /// The radio's control serial port, for example <c>/dev/ttyUSB0</c>. Omit it and nothing
+    /// opens a port, whatever else this section says.
+    /// </summary>
+    public string? Port { get; set; }
+
+    /// <summary>Port speed. The radio's own data-port programming decides this; the bench
+    /// TM8110s are set to 28800.</summary>
+    public int Baud { get; set; } = 28800;
+
+    /// <summary>
+    /// Also call the channel busy when the radio's own RSSI reads above this many dBm. Omit it to
+    /// use the radio's carrier-detect line alone.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>A data station usually wants one.</b> Carrier detect is event driven and costs no
+    /// serial traffic, but it reports nothing at all until the first squelch edge after the radio
+    /// starts sending unsolicited progress messages, and on a station whose squelch is held open
+    /// that edge may never come.</para>
+    /// <para><b>It has to be measured per station and cannot be copied.</b> Two nominally
+    /// identical radios on one bench read idle noise floors 31 dB apart: -94.3 dBm and
+    /// -125.6 dBm, against a far end at about -35 dBm either way. The figures chosen there were
+    /// -75 and -110 respectively. Measure the floor on the quiet channel and sit well above it.
+    /// </para>
+    /// </remarks>
+    public double? BusyAboveDbm { get; set; }
+
+    /// <summary>How often to read RSSI, in milliseconds. Ignored without
+    /// <see cref="BusyAboveDbm"/>.</summary>
+    public int PollMilliseconds { get; set; } = 100;
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
 public sealed class PttConfig
 {
     /// <summary>"serial" or "cm108" (omit the whole section for VOX).</summary>
@@ -1301,6 +1367,13 @@ public sealed class DaemonConfig
     public PttConfig? Ptt { get; set; }
 
     /// <summary>
+    /// Carrier sense read from the radio rather than inferred from the audio; null leaves the
+    /// station on the audio-derived answer, which is what it has always had and which is wrong on
+    /// FM. See <see cref="CarrierSenseConfig"/>.
+    /// </summary>
+    public CarrierSenseConfig? CarrierSense { get; set; }
+
+    /// <summary>
     /// The operator's transmitter test - a two-tone or single-tone keyup on demand. The defaults
     /// stand when this is absent; there is nothing to switch on.
     /// </summary>
@@ -1440,6 +1513,10 @@ public sealed class DaemonConfig
         // receivers in RF terms and draws pages off the answer - and below the return it would
         // never be asked, so a monitor file could say anything at all here and be taken as USB.
         RequireKnownRadioKind(config);
+
+        // Above the flavour split too: a monitor listens to a radio like anything else, and a
+        // misspelled driver name there should be refused rather than silently ignored.
+        RequireKnownCarrierSenseRadio(config);
 
         if (config.Monitor is not null)
         {
@@ -1757,6 +1834,34 @@ public sealed class DaemonConfig
                 + "- the two sidebands, where RF is the dial plus or minus the audio, or FM, "
                 + "where the channel is the RF and the audio is only audio.");
         }
+    }
+
+    /// <summary>
+    /// A <c>carrierSense</c> section has to name a driver this build has, or say <c>"none"</c>.
+    /// </summary>
+    /// <remarks>
+    /// Misspelt and taken quietly, the station would start, print nothing, open no port and run
+    /// on the audio-derived carrier sense the operator wrote this section to get away from. The
+    /// whole failure would be invisible, which is the shape of defect this feature exists to fix.
+    /// </remarks>
+    private static void RequireKnownCarrierSenseRadio(DaemonConfig config)
+    {
+        if (config.CarrierSense is not { } sense)
+        {
+            return;
+        }
+
+        if (sense.Radio.Equals("tait", StringComparison.OrdinalIgnoreCase)
+            || sense.Radio.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        throw new InvalidDataException(
+            $"\"carrierSense\".\"radio\": \"{sense.Radio}\" is not a radio this build can read "
+            + "carrier sense from. Use \"tait\" (a TM8100 or TM9100 series set with its data "
+            + "port in command mode), or \"none\" to switch the section off without deleting "
+            + "it.");
     }
 
     /// <summary>
