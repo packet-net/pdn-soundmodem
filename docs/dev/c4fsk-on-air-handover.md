@@ -134,6 +134,47 @@ low-frequency content, is mangled. That rules out noise, jitter, level and clipp
 measurement, and it is why the received signal can look healthy on a spectrum display and carry
 nothing.
 
+## What is still not explained, and I would rather you knew
+
+The wander is the mechanism, in the sense that the measured response on its own takes both C4FSK
+modes from 40 of 40 to 0 of 40 in the probe, and undoing it on real off-air audio is a real
+improvement. But it does not account for all of the measured damage, and the part it does not
+account for is not linear. Three measurements say so, and they are the loose end:
+
+- **Undoing the measured low-frequency loss on real audio recovers about a third of it.** A cascade
+  inverse (two first-order sections at 50 Hz was the best of the shapes tried) lifts the eye from
+  0.193 to 0.160 and the sync correlation from 0.736 to 0.848. A clean transmission measures 0.032
+  on the same instrument, so most of the gap is still there.
+- **A linear model of the path, fitted from the sync word, does not explain the received sync
+  word.** Averaging 14 copies of the known preamble-tail-plus-sync out of one keyup gives a
+  noise-free waveform (0.83 % residual across copies), and a least-squares impulse response fitted
+  to it leaves **7.3 %** unexplained. The same fit on a clean transmission leaves 0.28 %.
+- **The post-cursor that fit does find is not what closes the eye.** It reads +1: -0.167,
+  +2: -0.080 symbol-spaced, against +1: -0.026 on a clean transmission, which looks like exactly
+  the pattern-dependent ISI the 5-tap equalizer exists to remove. Applying its exact inverse to the
+  real symbol samples moves the eye from 0.193 to 0.191, which is nothing. Neither does a
+  fractionally spaced MMSE equaliser built from the same estimate, at any span from 3 to 21
+  symbols, nor a decision-directed least-squares fit.
+
+So the channel behaves differently under the preamble and sync (all outer symbols, and in the
+preamble's case a single tone) than it does under data, which is what a non-linearity looks like.
+The tone sweep's own harmonic content points the same way: distortion products sit 45 dB down at
+50 to 140 Hz and rise to **26 dB down between 2.2 and 6.4 kHz**, and the received preamble carries
+2 % third harmonic where the transmitted one carries 0.4 %. Five per cent of distortion against a
+4-PAM margin of 33 % is a sixth of the eye, which matters here and would be invisible anywhere else
+in the tree.
+
+What it is not: it is not level (identical from 0 to -18 dB transmit, and the clipping that does
+occur is upstream of the mixer so the sweep could not have moved it), not noise or jitter (the
+all-outer preamble arrives with a 1.6 % spread and 0.75 % of a symbol of jitter), not the symbol
+rate (swept plus or minus 600 ppm, flat), and not the top of the band for `c4fsk9600`.
+
+Whoever picks this up: the instrument that settles it is a swept-tone measurement of the two halves
+of the path SEPARATELY, and a two-tone intermodulation measurement at a few points across the band.
+Both need the transmit side characterised against an SDR rather than against the far receiver, and
+the RSP1 on radio1 was not hearing the transmitter at all in this session, which is its own problem
+to solve first.
+
 ## Fault 3, minor: the envelope tracker can run away
 
 `TrackEnvelope` has no guard stopping `_peakHigh` crossing below `_peakLow`. Once it does,
