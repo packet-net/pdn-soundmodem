@@ -92,6 +92,45 @@ a re-arm for the envelope acquisition, and a reset for the deframer. The test it
 ratio rather than a level - see `docs/dev/carrier-sense.md`, where the same mistake was made twice
 at station level before it was fixed.
 
+### Fixed, and what it did and did not buy
+
+The gate now asks a second question alongside the energy one: whether the energy has become
+band-limited, which is true of a C4FSK signal on any path by construction and false of both FM
+hiss and broadband noise. Either answer opens it. On `ninorx.wav` that takes the gate from **0
+openings to 15**, one per transmission, each within about 30 ms of the measured carrier-on time,
+with none of the 41.6 s of idle channel opening it. The decisions go from 79 % one level to
+24/31/26/20 across the four, which is a balanced four-level eye where there was a railing slicer.
+
+Two things that cost time and are worth knowing.
+
+**The two detectors disagree about when a burst starts, and the gate's rising edge also arms the
+envelope acquisition.** The shape detector sees a band-limited signal about 26 ms before an energy
+detector sees the level clear its threshold, and the max-hold has `AcquireSymbols` (32) to learn
+the eye from, which at 4800 symbols a second is 6.7 ms. So an early open spends the whole
+acquisition on the noise in front of the burst: measured on the sim ladder at 20 dB it cost 3 of
+40 seeds their sync word. Re-arming on whichever detector rises LAST is worse still (29 of 40),
+because it re-acquires part way into a burst the tracker is already following. The answer is to
+say which detector owns which path: the shape half stands down when the level rises more than 3 dB
+above the station's own idle, which is every additive path and no FM one.
+
+**Neither the envelope guard nor the transmit headroom was responsible**, though both were
+plausible and both were checked first. Toggled independently over 40 seeds the old and new
+envelope agree to four decimal places, because at these signal-to-noise ratios the wrong-sign
+reading the guard exists to stop never occurs; and the headroom makes no difference because the
+rig sets its noise from the signal's own measured power.
+
+**It does not make C4FSK work on air.** With both bench stations on `c4fsk9600` and the fix
+deployed, radio1 transmitted 10 frames and radio2 decoded **0**. Captured off radio2 and put
+through the probe, the gate opens during our transmissions and the bits flow; nothing syncs. That
+is the eye, which is faults 2 and 3 below, and it is where the remaining work is.
+
+One new observation from that capture, for whoever picks this up. On OUR transmissions the ENERGY
+half fires for 12.5 s of the minute against 1.5 s for the shape half, and one of its openings
+latches for **15.5 s**. Our signal sits about 1 dB under the idle hiss rather than the 3 dB a
+NinoTNC's does, which is close enough for the energy detector's sagging floor to fire on the noise
+returning at the end of a burst and then hold. It is the anti-correlated behaviour again, now
+harmless to the gate's opening and still capable of holding it open long after a burst.
+
 ## Fault 2: baseline wander closes the 4-level eye
 
 With the gate forced open the modem still reads nothing, and the eye at the symbol instants is
