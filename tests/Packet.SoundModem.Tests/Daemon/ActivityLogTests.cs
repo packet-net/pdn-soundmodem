@@ -102,6 +102,38 @@ public class ActivityLogTests
         line.Should().Be("tx[2] qpsk2400 M0LTE-7>GB7RDG-2 20 bytes");
     }
 
+    /// <summary>
+    /// A transmission the channel sat on says so, and one that went straight out stays quiet.
+    /// </summary>
+    /// <remarks>
+    /// The wait is invisible to the host that queued the frame: a KISS write returns as soon as
+    /// the socket takes it, so a station whose carrier sense held a UA for 3 m 48 s (GB7RDG-2,
+    /// 2026-09-21) looked to LinBPQ exactly like one that sent it instantly. The journal is where
+    /// an operator finds out otherwise, so the wording is pinned here like the rest of the line.
+    /// </remarks>
+    [Fact]
+    public void A_Transmission_Carrier_Sense_Held_Says_How_Long()
+    {
+        string held = ActivityLog.Transmitted(
+            2, "bpsk300", Frame(sourceSsid: 7), heldFor: TimeSpan.FromSeconds(228));
+
+        held.Should().Be(
+            "tx[2] bpsk300 M0LTE-7>GB7RDG-2 20 bytes  held 3m48s waiting for the channel");
+
+        // Under a minute reads in seconds, because that is the resolution a channel-access
+        // problem is argued in.
+        ActivityLog.Transmitted(2, "bpsk300", Frame(sourceSsid: 7), heldFor: TimeSpan.FromSeconds(4.25))
+            .Should().EndWith("held 4.3s waiting for the channel");
+
+        // And a frame that went out promptly says nothing, so the note means something when it
+        // does appear rather than being a column of "held 0.0s" on every line.
+        ActivityLog.Transmitted(2, "bpsk300", Frame(sourceSsid: 7), heldFor: TimeSpan.FromMilliseconds(40))
+            .Should().Be("tx[2] bpsk300 M0LTE-7>GB7RDG-2 20 bytes");
+
+        // ASCII only: this goes to the journal, whose pager runs under a C locale.
+        held.Should().MatchRegex("^[\\x20-\\x7E]*$");
+    }
+
     [Fact]
     public void A_Dropped_Frame_Says_Which_Frame_And_Why()
     {

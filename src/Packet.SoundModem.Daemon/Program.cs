@@ -1060,10 +1060,12 @@ channel.QuietAfterTransmit = (_sub, frame) =>
         ? channel.TurnaroundHold
         : null;
 
-channel.FrameTransmittedWithTrim += (subChannel, frame, trimHz) =>
+channel.FrameTransmittedWithReport += (subChannel, frame, report) =>
 {
+    double trimHz = report.TrimHz;
     Console.WriteLine(ActivityLog.Transmitted(
-        subChannel, modeBySubChannel.GetValueOrDefault(subChannel, "?"), frame, trimHz));
+        subChannel, modeBySubChannel.GetValueOrDefault(subChannel, "?"), frame, trimHz,
+        report.HeldFor));
 
     // And into the station's journal, alongside what it heard: a log that records every frame
     // received and none sent is half a record. Raised after the audio has gone to the device, so
@@ -1088,7 +1090,11 @@ channel.FrameTransmittedWithTrim += (subChannel, frame, trimHz) =>
             : modeBySubChannel.GetValueOrDefault(subChannel, "?"),
         audio,
         rf,
-        trimHz == 0 ? null : trimHz);
+        trimHz == 0 ? null : trimHz,
+        // Written for every transmission, not just the ones the console line mentions: the log
+        // is the record a question gets asked of later, and "how often does this station wait,
+        // and for how long" cannot be answered from rows that only exist past a threshold.
+        (long)report.HeldFor.TotalMilliseconds);
 };
 // Dropped frames are rate-limited per reason. A station that loses its slice rejects every
 // frame it is handed, for as long as the fault lasts: the unmitigated version of this line

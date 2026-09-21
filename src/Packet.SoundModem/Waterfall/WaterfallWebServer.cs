@@ -249,6 +249,11 @@ public sealed class WaterfallOptions
 /// on the Ping and PingAck rows it was actually computed for. Null everywhere else, rather than
 /// the 0 dB the underlying figure carries when it was never measured (issue #479).
 /// </param>
+/// <param name="HeldMs">
+/// How long this frame waited for the channel before it went out, in milliseconds. Set on a
+/// transmission; null on everything received, and on a transmission logged before the column
+/// existed - which reads as "nothing said" rather than as a frame that went straight out.
+/// </param>
 public sealed record LoggedFrame(
     DateTimeOffset HeardAt,
     int SubChannel,
@@ -270,7 +275,8 @@ public sealed record LoggedFrame(
     int? TrailerNearBits = null,
     int? ChasedBits = null,
     int? Quality = null,
-    double? ArdopSnDb = null)
+    double? ArdopSnDb = null,
+    long? HeldMs = null)
 {
     /// <summary>
     /// Whether the callsigns this row was logged with may be presented as a station
@@ -1046,7 +1052,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _channel.TransmittedAudio += OnTransmittedAudio;
         _channel.TransmittingChanged += OnTransmittingChanged;
         _channel.FrameReceivedWithQuality += OnFrame;
-        _channel.FrameTransmittedWithTrim += OnFrameTransmitted;
+        _channel.FrameTransmittedWithReport += OnFrameTransmitted;
         _linkExpiry = _options.TimeProvider.CreateTimer(
             _ => ExpireLinks(), null, LinkExpiryPeriod, LinkExpiryPeriod);
         _pingedAt = _options.TimeProvider.GetTimestamp();
@@ -1572,7 +1578,18 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// audio is queued and repainted in real time while this fires as soon as the device has
     /// taken it, so the tag would sit somewhere up the burst rather than on it.</para>
     /// </remarks>
-    private void OnFrameTransmitted(int subChannel, byte[] frame, double trimHz)
+    /// <summary>
+    /// Below this a wait is ordinary channel access, and the row says nothing about it.
+    /// </summary>
+    /// <remarks>
+    /// The same threshold the journal uses, and for the same reason: on a clear channel every
+    /// frame waits a slot time or two, and a note on every transmission row is a column of noise
+    /// that hides the one row where the wait actually mattered. The frame log stores the figure
+    /// either way - the log is the record, the row is what somebody reads.
+    /// </remarks>
+    internal static readonly TimeSpan HeldWorthShowing = TimeSpan.FromMilliseconds(300);
+
+    private void OnFrameTransmitted(int subChannel, byte[] frame, Channel.TransmitReport report)
     {
         if (_source is null)
         {
@@ -1597,10 +1614,15 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 : "?",
             from, to, frame.Length, snrDb: null, burstLines: null, offsetHz: null,
             corrected: null, crc: null, transmitted: true,
-            txTrimHz: trimHz == 0 ? null : trimHz,
+            txTrimHz: report.TrimHz == 0 ? null : report.TrimHz,
+            // Only where it is worth a note. A frame that went straight out carries nothing,
+            // so an ordinary row draws exactly as it did before this existed.
+            heldMs: report.HeldFor >= HeldWorthShowing ? (long)report.HeldFor.TotalMilliseconds : null,
             raw: frame);
 
-        ObserveLink(subChannel, frame, transmitted: true);
+        ObserveLink(
+            subChannel, frame, transmitted: true,
+            heldMs: report.HeldFor >= HeldWorthShowing ? (long)report.HeldFor.TotalMilliseconds : null);
     }
 
     /// <summary>
@@ -1609,7 +1631,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// are not AX.25: the flat panel already lists those, and there is no link for them to be
     /// part of.
     /// </summary>
-    private void ObserveLink(int subChannel, byte[] frame, bool transmitted)
+    private void ObserveLink(int subChannel, byte[] frame, bool transmitted, long? heldMs = null)
     {
         lock (_stateLock)
         {
@@ -1624,7 +1646,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             {
                 type = "link",
                 link = LinkJson(link, withRecent: false),
-                @event = LinkEventJson(evt),
+                @event = LinkEventJson(evt, heldMs),
             }, Json));
         }
     }
@@ -1694,7 +1716,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         ab = SideJson(link.AtoB),
         ba = SideJson(link.BtoA),
         concern = link.Concern,
-        recent = withRecent ? link.Recent.Select(LinkEventJson) : null,
+        recent = withRecent ? link.Recent.Select(e => LinkEventJson(e)) : null,
     };
 
     private static object SideJson(Ax25LinkSideStats side) => new
@@ -1715,7 +1737,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// One frame on a link, as one line of its card's feed. Or the observer giving up on a call
     /// nothing answered, which is a line with no frame behind it: <c>kind</c> is null then.
     /// </summary>
-    private static object LinkEventJson(Ax25LinkEvent evt) => new
+    private static object LinkEventJson(Ax25LinkEvent evt, long? heldMs = null) => new
     {
         at = evt.At.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
         from = evt.From.ToString(),
@@ -1734,6 +1756,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         count = evt.Count,
         state = LinkStateName(evt.State),
         tx = evt.Transmitted ? true : (bool?)null,
+        // How long this frame waited for the channel, on our own transmissions only and only where
+        // it was long enough to be worth a tag. It belongs on the link's own feed as much as on
+        // the flat panel: a card showing a run of unanswered polls reads as a link that is
+        // failing, and this is the line that says the polls never reached the air when the
+        // sender thought they did. Absent on a replayed line - Ax25LinkEvent does not carry it,
+        // so a card rebuilt from Recent shows the tag only on lines seen live.
+        heldMs,
     };
 
     private static string LinkStateName(Ax25LinkState state) => state switch
@@ -1974,7 +2003,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         double? peakDbFs = null, bool? clipped = null, Audio.FrameLevel? level = null,
         bool? peakWorthShowing = null, bool? snrWorthShowing = null,
         int? trailerNearBits = null, int? chasedBits = null, byte[]? raw = null,
-        int? quality = null)
+        int? quality = null, long? heldMs = null)
     {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -2005,6 +2034,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // How far this transmission was shifted to suit the station it was addressed to.
             // Null when it went out on the nominal centre, which is most of them.
             txTrimHz,
+            // How long this transmission waited for the channel before it went out. Null on a
+            // received frame - a station cannot know what the other end's channel access did -
+            // and null on a transmission that went straight out, which is most of them on a
+            // quiet channel. The page draws the note only where there is one.
+            heldMs,
             // Only on a frame whose addresses would not read: why, which IL2P encapsulation
             // carried it, and the bytes themselves.
             why = note,
@@ -3237,6 +3271,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 peakDbFs = ShownPeak(f.PeakDbFs, f.PeakWorthShowing),
                 clipped = f.Clipped is true ? true : (bool?)null,
                 level = LevelTag(f.Level),
+                // And how long it waited for the channel, so a page that has just been reloaded says
+                // the same thing about a transmission as the live row did. Null on a received
+                // row, on a transmission that went straight out, and on one logged before the
+                // column existed.
+                heldMs = f.HeldMs is { } held && held >= HeldWorthShowing.TotalMilliseconds
+                    ? held
+                    : (long?)null,
                 hist = true,
             }),
         }, Json);
@@ -3372,7 +3413,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     {
         await _stopping.CancelAsync().ConfigureAwait(false);
         _channel.FrameReceivedWithQuality -= OnFrame;
-        _channel.FrameTransmittedWithTrim -= OnFrameTransmitted;
+        _channel.FrameTransmittedWithReport -= OnFrameTransmitted;
         _channel.TransmittedAudio -= OnTransmittedAudio;
         _channel.TransmittingChanged -= OnTransmittingChanged;
         _linkExpiry?.Dispose();

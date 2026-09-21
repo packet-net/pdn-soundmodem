@@ -655,9 +655,12 @@ internal sealed class RelayStation : IMonitorStation
 
         if (frame.Transmitted)
         {
+            // No held time: the wait belongs to the relaying station's own channel access, and
+            // this station has no way to know what it was. Null rather than zero, which would
+            // read as a relayed frame that never waited.
             _frameLog.RecordTransmitted(
                 frame.SubChannel, raw, frame.Mode, audioHz: null, rfHz: null,
-                frame.TransmitTrimHz, frame.At);
+                frame.TransmitTrimHz, at: frame.At);
             return;
         }
 

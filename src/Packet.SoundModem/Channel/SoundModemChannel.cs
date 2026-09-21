@@ -62,7 +62,9 @@ public sealed class SoundModemChannel
         object Source,
         TimeSpan? QuietAfter,
         Func<bool>? StopEarly = null,
-        Action<int>? Written = null)
+        Action<int>? Written = null,
+        long QueuedAt = 0,
+        Action<TimeSpan>? Started = null)
     {
         /// <summary>
         /// The token registration that withdraws this item, disposed once it has gone out or been
@@ -466,6 +468,7 @@ public sealed class SoundModemChannel
     private async Task SendAndAnnounceAsync(int subChannel, byte[] frame, IModem modem)
     {
         double applied = 0;
+        TimeSpan heldFor = TimeSpan.Zero;
         await EnqueueTransmit(
                 // Inside the modulate callback, so the trim is chosen when the burst is actually
                 // rendered rather than when it was queued - a frame can wait behind CSMA for
@@ -479,11 +482,13 @@ public sealed class SoundModemChannel
                 // The modem is the keyup's identity: this sub-channel's frames run back-to-back
                 // under one PTT, another sub-channel's do not.
                 source: modem,
-                quietAfter: QuietAfterTransmit?.Invoke(subChannel, frame))
+                quietAfter: QuietAfterTransmit?.Invoke(subChannel, frame),
+                started: held => heldFor = held)
             .ConfigureAwait(false);
 
         FrameTransmitted?.Invoke(subChannel, frame);
         FrameTransmittedWithTrim?.Invoke(subChannel, frame, applied);
+        FrameTransmittedWithReport?.Invoke(subChannel, frame, new TransmitReport(applied, heldFor));
     }
 
     /// <summary>
@@ -498,6 +503,21 @@ public sealed class SoundModemChannel
     /// station's average offset meaningless, mixing what they did with what we did about it.
     /// </remarks>
     public event Action<int, byte[], double>? FrameTransmittedWithTrim;
+
+    /// <summary>
+    /// Raised alongside <see cref="FrameTransmitted"/> with everything the channel knows about
+    /// what it did with one frame: the trim it applied, and how long the frame waited for the channel.
+    /// </summary>
+    /// <remarks>
+    /// <para>A third event rather than a wider <see cref="FrameTransmittedWithTrim"/>, because
+    /// this class ships as a NuGet package and the existing two are somebody else's compile.
+    /// Both of the older ones are still raised, in the order they were added; a station's own
+    /// consumers read this one.</para>
+    /// <para>The station's journal, frame log and page all take <see cref="TransmitReport.HeldFor"/>
+    /// from here, so the three say the same number about the same frame rather than each timing
+    /// the transmission from wherever it happened to be told about it.</para>
+    /// </remarks>
+    public event Action<int, byte[], TransmitReport>? FrameTransmittedWithReport;
 
     /// <summary>
     /// Raised once a KISS-addressed frame has been transmitted - after the audio has gone to the
@@ -564,10 +584,16 @@ public sealed class SoundModemChannel
     /// from a completion: what it rendered and what was actually written stop being the same
     /// number the moment a write can end early.
     /// </param>
+    /// <param name="started">
+    /// Told, once, how long the channel held this transmission: the interval between this call
+    /// and the transmitter picking the frame up. Called on the transmitter's thread immediately
+    /// before the burst is written, and only for a frame that is actually going out - a frame the
+    /// modem refuses never reports one. A handler that throws loses the figure and nothing else.
+    /// </param>
     public Task EnqueueTransmit(
         Func<int, float[]> modulate, Action<Exception>? rejected = null, bool ownsChannelTiming = false,
         object? source = null, TimeSpan? quietAfter = null, CancellationToken withdraw = default,
-        Func<bool>? stopEarly = null, Action<int>? written = null)
+        Func<bool>? stopEarly = null, Action<int>? written = null, Action<TimeSpan>? started = null)
     {
         ArgumentNullException.ThrowIfNull(modulate);
         if (ReceiveOnlyReason is string receiveOnly)
@@ -580,10 +606,18 @@ public sealed class SoundModemChannel
             return faulted;
         }
 
+        // Stamped here rather than in EnqueueNow, so that the wait a caller is told about is the
+        // whole wait it actually had: TransmitInhibit can hold a frame for tens of seconds before
+        // it ever reaches a queue, and a figure that started counting afterwards would report the
+        // channel as clear for the one case where it most obviously was not.
+        long queuedAt = _time.GetTimestamp();
         object identity = source ?? new object();
         return !ownsChannelTiming && TransmitInhibit is not null
-            ? EnqueueWhenPermittedAsync(modulate, rejected, identity, quietAfter, withdraw, stopEarly, written)
-            : EnqueueNow(modulate, rejected, ownsChannelTiming, identity, quietAfter, withdraw, stopEarly, written);
+            ? EnqueueWhenPermittedAsync(
+                modulate, rejected, identity, quietAfter, withdraw, stopEarly, written, queuedAt, started)
+            : EnqueueNow(
+                modulate, rejected, ownsChannelTiming, identity, quietAfter, withdraw, stopEarly, written,
+                queuedAt, started);
     }
 
     /// <summary>
@@ -711,11 +745,12 @@ public sealed class SoundModemChannel
 
     private async Task EnqueueWhenPermittedAsync(
         Func<int, float[]> modulate, Action<Exception>? rejected, object source, TimeSpan? quietAfter,
-        CancellationToken withdraw, Func<bool>? stopEarly, Action<int>? written)
+        CancellationToken withdraw, Func<bool>? stopEarly, Action<int>? written,
+        long queuedAt, Action<TimeSpan>? started)
     {
         // The injected clock, per the repo's wall-clock discipline - this was the library's
         // one Stopwatch and its one bare Task.Delay, which no test could virtualise.
-        long waitedFrom = _time.GetTimestamp();
+        long waitedFrom = queuedAt;
         while (TransmitInhibit?.Invoke() == true)
         {
             // Withdrawn before it was ever queued, which is the cheapest place for it to happen.
@@ -733,7 +768,9 @@ public sealed class SoundModemChannel
             await Task.Delay(InhibitPollInterval, _time).ConfigureAwait(false);
         }
 
-        await EnqueueNow(modulate, rejected, ownsChannelTiming: false, source, quietAfter, withdraw, stopEarly, written)
+        await EnqueueNow(
+                modulate, rejected, ownsChannelTiming: false, source, quietAfter, withdraw, stopEarly,
+                written, queuedAt, started)
             .ConfigureAwait(false);
     }
 
@@ -743,10 +780,13 @@ public sealed class SoundModemChannel
     private Task EnqueueNow(
         Func<int, float[]> modulate, Action<Exception>? rejected, bool ownsChannelTiming, object source,
         TimeSpan? quietAfter, CancellationToken withdraw = default,
-        Func<bool>? stopEarly = null, Action<int>? written = null)
+        Func<bool>? stopEarly = null, Action<int>? written = null,
+        long queuedAt = 0, Action<TimeSpan>? started = null)
     {
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var item = new TxItem(modulate, done, rejected, ownsChannelTiming, source, quietAfter, stopEarly, written);
+        var item = new TxItem(
+            modulate, done, rejected, ownsChannelTiming, source, quietAfter, stopEarly, written,
+            queuedAt, started);
         lock (_txGate)
         {
             if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue))
@@ -810,6 +850,35 @@ public sealed class SoundModemChannel
         if (removed)
         {
             item.Done.TrySetCanceled();
+        }
+    }
+
+    /// <summary>
+    /// Tells a queued transmission how long the channel held it, without letting a caller's
+    /// handler take the transmitter down with it.
+    /// </summary>
+    /// <remarks>
+    /// Guarded because this runs inside the keyup, between the modulation and the write. Every
+    /// other event on this class is raised from a path where a throwing handler costs one frame;
+    /// here it would cost the rest of the keyup and leave PTT to the finally, so the one caller
+    /// who writes a bad handler would take out the station's transmitter rather than their own
+    /// log line.
+    /// </remarks>
+    private static void NoteHeldFor(TxItem item, TimeSpan heldFor)
+    {
+        if (item.Started is null)
+        {
+            return;
+        }
+
+        try
+        {
+            item.Started(heldFor);
+        }
+        catch (Exception reporting) when (reporting is not OperationCanceledException)
+        {
+            // Nowhere useful to put it: the frame is going out regardless, and the transmitter
+            // has no log of its own. Losing the figure is the right cost for keeping the keyup.
         }
     }
 
@@ -1208,6 +1277,11 @@ public sealed class SoundModemChannel
                         inFlight = item;
                         // Subsequent frames in one keyup need only a token preamble.
                         int txDelay = keyupSource is null ? Csma.TxDelayMilliseconds : 30;
+                        // How long the channel held this frame, measured here: the wait ends when
+                        // the transmitter picks the frame up, not when the audio finishes. Taken
+                        // before Modulate so that rendering - which can be milliseconds of DSP for
+                        // a long burst - is not counted as time spent waiting for the channel.
+                        TimeSpan heldFor = _time.GetElapsedTime(item.QueuedAt);
                         float[] samples;
                         try
                         {
@@ -1225,6 +1299,12 @@ public sealed class SoundModemChannel
                         }
 
                         keyupSource = item.Source;
+                        // Announced only once the frame is certain to go out - past the modem's
+                        // chance to refuse it, and immediately before the write. A frame that was
+                        // dropped never waited for the channel in any sense the operator cares
+                        // about, and reporting a wait for it would put a held time on a row that
+                        // never existed.
+                        NoteHeldFor(item, heldFor);
                         // The hold belongs to the LAST thing actually sent, so a keyup that ends
                         // with a frame nobody will answer does not keep the others waiting.
                         quietAfter = item.QuietAfter;

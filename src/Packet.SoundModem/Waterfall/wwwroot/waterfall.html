@@ -298,6 +298,15 @@
      there (Tom, 2026-09-07). A class on body rather than a decision at render time, so changing
      the sideband takes them off rows already listed. */
   body.fm .fr .trim, body.fm .fr .trimtxt, body.fm .fr .offtxt { display: none; }
+  /* Amber rather than cyan, and filled rather than outlined, because unlike SHIFTED this is not
+     an annotation on a transmission that went as intended - it is the one badge on the panel
+     that says the station wanted to transmit and could not. It stays on an FM page: deferral is
+     a channel-access fact, not an RF one, and an FM channel radio defers exactly the same way. */
+  .fr .held {
+    display: inline-block; margin-left: 6px; padding: 0 4px; border-radius: 2px;
+    font-size: 9px; font-weight: 700; letter-spacing: .08em; vertical-align: 1px;
+    color: #1b1300; background: #f5b301;
+  }
   /* Read out of the station's frame log when the page opened, not heard since - dimmed so the
      backlog cannot be mistaken for a channel that is busy right now. Its timestamps are real,
      which is the other half of saying so. */
@@ -1859,13 +1868,22 @@ function logFrame(ev) {
   const trim = ev.txTrimHz != null
     ? `<span class="trim" title="Transmitted ${ev.txTrimHz.toFixed(1)} Hz off the channel centre, to land where this station's receiver is listening. Measured from its own frames: its transmit and receive share one oscillator, so a station heard high is listening high.">SHIFTED</span>`
     : "";
+  // How long this frame waited for the channel before it was sent. Only ever on our own
+  // transmissions, and only where the wait was long enough to matter - see
+  // WaterfallWebServer.HeldWorthShowing. It is worth a badge rather than only a figure because
+  // the host that queued the frame cannot see this at all: it wrote to a socket and the write
+  // returned, so its own retry timers have been running against the wrong moment for however
+  // long this says.
+  const held = ev.heldMs != null
+    ? `<span class="held" title="This frame waited ${heldText(ev.heldMs)} for the channel before it went out. Usually carrier sense; also the turnaround hold, a transmit inhibit, or this station's own earlier frames in the same keyup. The host that queued it had no way to know - a KISS write returns immediately - so anything it decided on a timer during that wait was decided blind.">HELD ${heldText(ev.heldMs)}</span>`
+    : "";
   // Escaped like every other field on the row. These three were not, and were safe only because
   // Ax25AddressParser restricts a callsign to [A-Z0-9] and an SSID and a mode name comes out of
   // the catalogue - an implicit dependency on a parser that a frame arriving over an uplink from
   // somebody else's station never went through.
   const who = (ev.from
     ? `<span class="from">${esc(ev.from)}</span><span class="arrow">›</span><span class="to">${esc(ev.to || "?")}</span>`
-    : `<span class="to">unattributed</span>`) + badge + plain + level + trim;
+    : `<span class="to">unattributed</span>`) + badge + plain + level + trim + held;
   const bits = [];
   bits.push(`${ev.sub}·${esc(ev.mode)}`);
   if (ev.snrDb != null) bits.push(`<i>${ev.snrDb.toFixed(1)} dB</i>`);
@@ -1885,6 +1903,7 @@ function logFrame(ev) {
   if (ev.txTrimHz != null) {
     bits.push(`<i class="trimtxt">shifted ${ev.txTrimHz >= 0 ? "+" : ""}${ev.txTrimHz.toFixed(1)} Hz</i>`);
   }
+  if (ev.heldMs != null) bits.push(`<i class="heldtxt">held ${heldText(ev.heldMs)}</i>`);
   bits.push(`${ev.lenBytes} B`);
   if (ev.corrected > 0) bits.push(`<i>fec ${ev.corrected}</i>`);
   if (ev.crc === false) bits.push(`<span class="bad">crc✗</span>`);
@@ -2175,6 +2194,15 @@ function tagsFor(ev) {
   if (has("timeout")) tags.push(["timeout", "NO ANSWER", "Nothing answered for longer than any station keeps trying, so this is given up on"]);
   if (has("protocolError")) tags.push(["error", "FAULT", "A frame the other side could not accept: a protocol error"]);
   if (has("unexpected")) tags.push(["odd", "NO LINK", "Numbered traffic on a link that is not up"]);
+  // Last, because it is not something the link did - it is something this station's own channel
+  // access did to it. On a card full of POLL and AGAIN tags this is usually the explanation:
+  // the polls went out late and together, so nothing had a chance to answer the earlier ones.
+  if (ev.heldMs != null) {
+    tags.push(["held", `HELD ${heldText(ev.heldMs)}`,
+      "This frame waited " + heldText(ev.heldMs) + " for the channel before it reached the air. "
+      + "Usually carrier sense; also the turnaround hold, a transmit inhibit, or our own earlier frames. "
+      + "The host that queued it could not see the wait, so any timer it ran during it was running blind."]);
+  }
   return tags;
 }
 
@@ -2191,6 +2219,17 @@ function lineFor(ev) {
   row.innerHTML = `<span class="t">${stampFor(ev)}</span><span class="from">${esc(ev.from)}</span>`
     + `<span class="say">${esc(ev.say)}</span>${tags.join("")}${text}`;
   return row;
+}
+
+/* A held time an operator can read at a glance, on the same steps the journal uses: tenths of a
+   second under a minute, minutes and seconds above it. Deliberately not "3800 ms" - the number
+   that matters is the order of magnitude, and four digits of milliseconds hide it. */
+function heldText(ms) {
+  if (ms < 1000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60000);
+  const s = Math.round((ms % 60000) / 1000);
+  return `${m}m${String(s).padStart(2, "0")}s`;
 }
 
 /* ---------- transcript ---------- */
