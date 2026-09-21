@@ -228,6 +228,8 @@ On 2026-09-21 GB7RDG-2 could not answer a connect request from GB7LOX-2 for **3 
 
 The OR left **7.3 s of clear air in one gap** long enough to start a 15 byte frame. ch2 alone had **43.1 s in fourteen gaps**, the longest 2.76 s. The station had fourteen chances to transmit and took none.
 
+One correction to that table, which does not change anything it is arguing. **The ch1 ARDOP row was never part of the live transmit gate.** An `ardop` entry is not an `IModem`: `StationFactory.TryAddModems` skips it and the caller wires it as a receive tap plus a priority transmitter, so it is not in `SoundModemChannel.Modems` and could not contribute to `ChannelBusy`. The replay simulated five detectors; the gate was the OR across the other four, which unions to 94.9 % rather than 96.8 % by the same arithmetic. Four multipliers instead of five, and the conclusion stands unaltered.
+
 **It is arithmetic, not a broken detector.** Five roughly independent channels busy 36/47/81/35/35% union to 97.3% by pure probability, against 96.8% measured. Every modem added to a station multiplies the deferral whether or not its channel has anything to do with the traffic. Removing sub-channels helps only by removing multipliers.
 
 (Flex slice AGC pumping was suspected first and measured: an empty 3.2-5.2 kHz region is 5.8 dB *louder* during a burst, not quieter, so there is no gain suppression to blame.)
