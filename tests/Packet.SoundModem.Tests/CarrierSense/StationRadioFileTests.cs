@@ -1,7 +1,7 @@
 using System.Text.Json;
-using Packet.SoundModem.Modems.OfdmFm;
+using Packet.SoundModem.CarrierSense;
 
-namespace Packet.SoundModem.Tests.Modems.OfdmFm;
+namespace Packet.SoundModem.Tests.CarrierSense;
 
 /// <summary>
 /// The station file that opts a standalone station in to radio carrier sense.

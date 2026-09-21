@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Packet.SoundModem.Modems.OfdmFm;
+namespace Packet.SoundModem.CarrierSense;
 
 /// <summary>
 /// Station-level settings that are a property of the radio rather than of the waveform, read from

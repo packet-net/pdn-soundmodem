@@ -1,4 +1,4 @@
-namespace Packet.SoundModem.Modems.OfdmFm;
+namespace Packet.SoundModem.CarrierSense;
 
 /// <summary>
 /// Something outside the demodulator that knows whether the channel is occupied.

@@ -1,6 +1,6 @@
 using Packet.Radio;
 
-namespace Packet.SoundModem.Modems.OfdmFm;
+namespace Packet.SoundModem.CarrierSense;
 
 /// <summary>
 /// Carrier sense read from a radio's control channel, for a radio somebody else owns.

@@ -1,4 +1,4 @@
-namespace Packet.SoundModem.Modems.OfdmFm;
+namespace Packet.SoundModem.CarrierSense;
 
 /// <summary>
 /// Carrier sense for an FM audio path, which works the opposite way round to carrier sense
