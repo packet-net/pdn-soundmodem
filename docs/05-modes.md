@@ -54,11 +54,11 @@ Every mode carries AX.25 frames behind the framing its row states and is address
 | `qpsk600` | QPSK (V.26A) | 1200 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1001), QtSM V26A | **Bench**, caveat - the corpus decodes; a live QtSM retest is still to come |
 | `qpsk2400` | QPSK (V.26A/DW2400) | 4800 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1011), QtSM V26A type 12 rather than the legacy type 10 | **Bench** - corpus; not yet proven on air |
 | `qpsk3600` | QPSK | 7200 bps | IL2P+CRC | 12 kHz | yes | FM (5.0 kHz dev) | NinoTNC (0101) | **Bench** - corpus; not yet proven on air |
-| `fsk9600` | GFSK (G3RUH) | 9600 bps | AX.25 HDLC | 48 kHz | no | FM (9600 port) | NinoTNC (0000), Dire Wolf, QtSM | **Bench** - corpus and a head-to-head; not yet proven on air |
+| `fsk9600` | GFSK (G3RUH) | 9600 bps | AX.25 HDLC | 48 kHz | no | FM (9600 port) | NinoTNC (0000), Dire Wolf, QtSM | **On-air**, caveat - 2026-09-21 Tait bench, 100 % of 32-byte frames both ways, falling to 5-10 % at 512 bytes; the interface's low-frequency coupling loss costs the long frames (#518) |
 | `fsk9600-il2p` | GFSK | 9600 bps | IL2P+CRC | 48 kHz | no | FM (9600 port) | NinoTNC (0010) | **Bench** - corpus; sync-only acquisition (0 ms preamble floor) |
 | `fsk4800-il2p` | GFSK (RUH-4800) | 4800 bps | IL2P+CRC | 48 kHz | no | FM | NinoTNC (0100), Dire Wolf/QtSM RUH | **Bench** - corpus + live QtSM both directions; sync-only acquisition |
-| `c4fsk9600` | 4-level FSK (MMDVM-TNC Mode 2) | 9600 bps | IL2P+CRC | 48 kHz | no | FM (2.5 kHz dev) | NinoTNC (0011), MMDVM-TNC | **Bench** - a wired loop both ways and the corpus; not yet proven on air |
-| `c4fsk19200` | 4-level FSK | 19200 bps | IL2P+CRC | 48 kHz | no | FM (5.0 kHz dev) | NinoTNC (0001), MMDVM-TNC | **Bench** - as `c4fsk9600` |
+| `c4fsk9600` | 4-level FSK (MMDVM-TNC Mode 2) | 9600 bps | IL2P+CRC | 48 kHz | no | FM (2.5 kHz dev) | NinoTNC (0011), MMDVM-TNC | **Bench only** - a wired loop both ways and the corpus. **Does not work over a real FM link yet** (#518): the receiver's energy gate never opens on a squelch-open FM receiver, and a 4-level eye needs an audio path flat to about 30 Hz, which a capacitor-coupled interface is not |
+| `c4fsk19200` | 4-level FSK | 19200 bps | IL2P+CRC | 48 kHz | no | FM (5.0 kHz dev) | NinoTNC (0001), MMDVM-TNC | **Bench only** - as `c4fsk9600`, and blocked by the same energy gate (#518); it needs a 70 Hz corner rather than 30, so it is the one to try first once the gate is fixed |
 
 ## FreeDV DATAC (OFDM) modes
 
