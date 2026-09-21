@@ -83,6 +83,10 @@
          to be the production encoder rather than a copy: a scorer with its own idea of the wire
          order would grade the demodulator against a fiction and never say so. -->
     <InternalsVisibleTo Include="sm-ota" />
+    <!-- The C4FSK bench probe (tools/Packet.SoundModem.C4fskProbe) reads the modem's own
+         decision/dibit observer seams over a WAV file, which is the only way to see what the
+         receiver made of a real off-air burst. Bench instrument, not deployment surface. -->
+    <InternalsVisibleTo Include="sm-c4fskprobe" />
   </ItemGroup>
 
 </Project>
