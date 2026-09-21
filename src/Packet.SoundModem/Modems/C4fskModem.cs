@@ -136,6 +136,21 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
     /// is a sixth of a single reading's.</summary>
     private const float EnvelopeRate = 0.05f;
 
+    /// <summary>
+    /// Smallest half-swing the slicer will divide by, and half the smallest outer swing
+    /// <see cref="TrackEnvelope"/> will leave. Orders of magnitude below any level a sound card
+    /// delivers a real signal at, so it only ever bounds the degenerate case.
+    /// </summary>
+    private const float MinimumHalfSwing = 1e-6f;
+
+    /// <summary>
+    /// How far outside the tracked eye one outer decision's reading may carry its own peak, in
+    /// units of the current half-swing. Wider than any real fade, ISI squeeze or level step
+    /// leaves a correctly decided outer symbol, so it bounds the pathological reading without
+    /// touching the working one. See <see cref="TrackEnvelope"/>.
+    /// </summary>
+    private const float MaximumEnvelopeReading = 3f;
+
     /// <summary>Dedupe window across the timing phases' deframers, in symbols: shorter than the
     /// shortest IL2P frame (a 15-byte header alone is 60 symbols at 2 bits a symbol), longer
     /// than the trailer a held plain reading waits for (32 bits, 16 symbols).</summary>
@@ -453,7 +468,7 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
                 }
 
                 float mid = (_peakHigh + _peakLow) * 0.5f;
-                float half = Math.Max((_peakHigh - _peakLow) * 0.5f, 1e-6f);
+                float half = Math.Max((_peakHigh - _peakLow) * 0.5f, MinimumHalfSwing);
                 float normalised = (value - mid) / half;
                 _slicerRing[(int)(_pointIndex % _slicerRing.Length)] = normalised;
 
@@ -637,16 +652,38 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
             return;
         }
 
+        float swing = Math.Max(_peakHigh - _peakLow, 2f * MinimumHalfSwing);
         float mid = (_peakHigh + _peakLow) * 0.5f;
-        float half = Math.Max((_peakHigh - _peakLow) * 0.5f, 1e-6f);
-        float reading = (normalisedCentre * half) + mid;
+
+        // Two bounds, and without them this tracker is a positive feedback loop that a real
+        // receiver will find (issue #518). An outer decision is a claim about ITS OWN side of the
+        // eye, so a reading on the far side of the midpoint is not evidence about that peak, it
+        // is evidence the decision was wrong; and a reading many times the eye's own size is the
+        // slicer already railing rather than a symbol. Feed either back and the peaks converge,
+        // cross, and the half-swing clamps to its floor - after which every normalised value
+        // rails, every decision reads outer, and the burst is dead from there on. Measured over a
+        // real off-air c4fsk19200 recording, phase 0's swing inverted at 1646 decisions and
+        // reached -306884 (the bench trace of the same fault at c4fsk9600 read +0.23, +0.08,
+        // -3.1, -43, -33173 about four seconds into an eight second burst).
+        //
+        // Held to the decided side and to MaximumEnvelopeReading of the half-swing, the loop is
+        // negative instead: an envelope that is too wide sees readings under 1 and pulls in, one
+        // that is too narrow sees them at the clamp and pushes out. The floor then says a single
+        // decision may take at most EnvelopeRate off the swing, which is all it could do anyway
+        // with a reading at the midpoint, so it costs nothing that tracking wanted and makes the
+        // crossing arithmetically impossible rather than merely unlikely. A pair of peaks that
+        // somehow arrives inverted is pushed back apart by the same expression.
+        float reading = Math.Min(Math.Abs(normalisedCentre), MaximumEnvelopeReading) * swing * 0.5f;
+        float floor = swing * (1f - EnvelopeRate);
         if (level == 3)
         {
-            _peakHigh += (reading - _peakHigh) * EnvelopeRate;
+            _peakHigh = Math.Max(
+                _peakHigh + ((mid + reading - _peakHigh) * EnvelopeRate), _peakLow + floor);
         }
         else
         {
-            _peakLow += (reading - _peakLow) * EnvelopeRate;
+            _peakLow = Math.Min(
+                _peakLow + ((mid - reading - _peakLow) * EnvelopeRate), _peakHigh - floor);
         }
     }
 
