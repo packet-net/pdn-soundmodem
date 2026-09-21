@@ -42,7 +42,50 @@ public class C4fskOnAirTests
         }
     }
 
-    /// <summary>The smallest and largest outer swing the tracker holds at any phase-0 decision
+    /// <summary>
+    /// A transmission that makes the receiver QUIETER still reaches the bit path.
+    /// </summary>
+    /// <remarks>
+    /// <para>Issue #518's first fault, and the one that accounted for every symptom. This modem
+    /// gates its bit path on a signal-present test, for a good reason: on silence the slicer
+    /// saturates to the outer levels and the Mode-2 sync word is 18 ones in 24 bits, so the
+    /// deframer false-locks continuously between bursts. That test used to be an in-band ENERGY
+    /// detector, which asserts when the level RISES - and an FM receiver with the squelch open
+    /// goes quiet when a carrier arrives. Over the NinoTNC reference capture, 45 s holding 15 real
+    /// C4FSK 19k2 transmissions, the gate opened <b>zero</b> times.</para>
+    /// <para>These drive the polarity the old gate could not survive: an idle channel from 10 dB
+    /// below the burst to 20 dB above it, which is the measured range on the bench as the far
+    /// end's transmit level is wound down. Delivery is asserted down to -10 dB; the two -20 dB
+    /// cases still fail on payload CRC rather than on the gate and stay on the aspiration
+    /// scoreboard with the measurement that says why.</para>
+    /// </remarks>
+    [Theory]
+    [InlineData("c4fsk9600", 10)]
+    [InlineData("c4fsk9600", 0)]
+    [InlineData("c4fsk9600", -1)]
+    [InlineData("c4fsk9600", -10)]
+    [InlineData("c4fsk19200", 10)]
+    [InlineData("c4fsk19200", 0)]
+    [InlineData("c4fsk19200", -1)]
+    [InlineData("c4fsk19200", -10)]
+    public void A_Burst_That_Quiets_The_Receiver_Is_Still_Decoded(string mode, double relativeDb)
+    {
+        int delivered = 0;
+        for (int seed = 1; seed <= 4; seed++)
+        {
+            delivered += C4fskFmReceiverAspirationTests.Delivered(mode, relativeDb, seed) ? 1 : 0;
+        }
+
+        delivered.Should().Be(
+            4,
+            "{0} must hear a burst that sits {1:0} dB against the idle channel's own level, in "
+            + "either direction: a gate's job is to say whether there is a signal, not whether "
+            + "the channel got louder",
+            mode,
+            relativeDb);
+    }
+
+    /// <summary>The smallest and largest outer swing the tracker holds at any phase-0 decision    /// <summary>The smallest and largest outer swing the tracker holds at any phase-0 decision
     /// over audio built to reproduce the bench case: a stretch of receiver noise at one level
     /// followed by a big step up in that noise, which is exactly what the end of an FM
     /// transmission looks like to this gate and is where it opens on the real recording.</summary>
@@ -198,16 +241,18 @@ public class C4fskFmReceiverAspirationTests
     /// and at the wrong moments: it asserted when a transmission STOPPED and the hiss came back.
     /// Both polarities have to work, so both are driven here.
     /// </summary>
+    /// <remarks>
+    /// <b>What is left of this, and it is no longer the gate.</b> Every level from +10 down to
+    /// -10 dB now delivers and has moved to <see cref="C4fskOnAirTests"/>, which blocks. At -20 dB
+    /// the gate still opens on time, the packet carrier detect still asserts, and the sync word
+    /// still matches in 6 of the 7 timing phases - the probe shows the two cases as very nearly
+    /// the same file - and the payload still fails its CRC. So what fails here is the eye, which
+    /// is issue #518's faults 2 and 3 and not its fault 1. The decisions give it away: 38 % outer
+    /// low and 39 % outer high against 11 % and 12 % inner, which is a two-level eye wearing a
+    /// four-level mode's clothes.
+    /// </remarks>
     [Theory]
-    [InlineData("c4fsk9600", 10)]
-    [InlineData("c4fsk9600", 0)]
-    [InlineData("c4fsk9600", -1)]
-    [InlineData("c4fsk9600", -10)]
     [InlineData("c4fsk9600", -20)]
-    [InlineData("c4fsk19200", 10)]
-    [InlineData("c4fsk19200", 0)]
-    [InlineData("c4fsk19200", -1)]
-    [InlineData("c4fsk19200", -10)]
     [InlineData("c4fsk19200", -20)]
     public void A_Burst_Is_Heard_Whether_It_Raises_Or_Lowers_The_Channel_Level(string mode, double relativeDb)
     {
@@ -282,6 +327,18 @@ public class C4fskFmReceiverAspirationTests
 
     /// <summary>One burst against an idle channel of its own, at a stated level difference as
     /// the modem's own front end sees it.</summary>
+    /// <summary>The audio a case is built from, so a bench probe can be pointed at it.</summary>
+    internal static float[] AudioFor(string mode, double relativeDb, int seed)
+    {
+        Audio(mode, relativeDb, seed, out float[] made);
+        return made;
+    }
+
+    /// <summary>Whether one case delivers its frame; shared with the blocking half of this
+    /// pair in <see cref="C4fskOnAirTests"/>.</summary>
+    internal static bool Delivered(string mode, double relativeDb, int seed) =>
+        Delivers(mode, relativeDb, seed);
+
     private static bool Delivers(string mode, double relativeDb, int seed)
     {
         int symbolRate = mode == "c4fsk19200" ? 9600 : 4800;
@@ -315,6 +372,29 @@ public class C4fskFmReceiverAspirationTests
 
         WanderRig.Feed(audio, modem.Process);
         return decoded;
+    }
+
+    /// <summary>The channel model above, without a modem attached.</summary>
+    private static void Audio(string mode, double relativeDb, int seed, out float[] made)
+    {
+        int symbolRate = mode == "c4fsk19200" ? 9600 : 4800;
+        byte[] frame = WanderRig.Frame(80, seed);
+        float[] burst = WanderRig.Make(mode, _ => { }).Modulate(frame, 300);
+        int lead = Rate;
+        var audio = new float[lead + burst.Length + (Rate / 2)];
+        float[] hiss = Hiss(symbolRate, 1f, audio.Length, seed + 900);
+        double burstPower = Power(burst, 1.5 * symbolRate);
+        double hissPower = Power(hiss, 1.5 * symbolRate);
+        float idleScale = (float)Math.Sqrt(burstPower / hissPower / Math.Pow(10, relativeDb / 10));
+        float quietedScale = Math.Min(idleScale, (float)Math.Sqrt(burstPower / hissPower / 1000.0));
+        for (int i = 0; i < audio.Length; i++)
+        {
+            bool inBurst = i >= lead && i - lead < burst.Length;
+            audio[i] = (inBurst ? burst[i - lead] : 0f)
+                + (hiss[i] * (inBurst ? quietedScale : idleScale));
+        }
+
+        made = audio;
     }
 
     /// <summary>Mean power of the audio below <paramref name="cutoffHz"/>.</summary>

@@ -95,10 +95,16 @@ public sealed class FmShapeBusyDetector : IChannelBusySource
     /// would move it 0.35 dB.</remarks>
     public const double ReferenceStepDbPerSecond = 2.5;
 
-    /// <summary>Audio heard before the detector will assert on anything.</summary>
-    /// <remarks>The reference is seeded from the LOUDEST and most in-band-heavy block of the
+    /// <summary>Audio heard before the detector will assert on anything, by default.</summary>
+    /// <remarks>
+    /// <para>The reference is seeded from the LOUDEST and most in-band-heavy block of the
     /// warm-up, deliberately: a reference seeded high makes the detector deaf, and deaf is the
-    /// safe failure.</remarks>
+    /// safe failure.</para>
+    /// <para>Two seconds suits a station, which runs for hours and whose cost of being wrong is a
+    /// transmitter that will not key. A caller whose cost of waiting is a burst it never hears at
+    /// all - a demodulator gating its own bit path - wants less, and passes its own; see the
+    /// constructor.</para>
+    /// </remarks>
     public const double WarmUpSeconds = 2.0;
 
     /// <summary>
@@ -150,7 +156,19 @@ public sealed class FmShapeBusyDetector : IChannelBusySource
     /// consult it at 12 kHz.</param>
     /// <param name="holdMilliseconds">Minimum busy time after the shape comes back. Costs 60 ms of
     /// hangover per burst on the reference recording and none at all on the 660 s chunk.</param>
-    public FmShapeBusyDetector(int sampleRate, int holdMilliseconds = 100)
+    /// <param name="splitHz">Where the two bands meet. Null takes a sixth of the sample rate,
+    /// which is the station-wide answer: it has to clear the widest signal the channel can carry
+    /// and nothing knows which that is. A caller listening for ONE waveform knows better and
+    /// should say so - see the remarks on <see cref="ShapeDb"/>.</param>
+    /// <param name="warmUpSeconds">Audio heard before it will assert on anything. Null takes
+    /// <see cref="WarmUpSeconds"/>. Shorter trades a reference seeded from less evidence for
+    /// hearing a burst sooner after start-up, which is the right trade for a demodulator and the
+    /// wrong one for a transmitter's carrier sense.</param>
+    public FmShapeBusyDetector(
+        int sampleRate,
+        int holdMilliseconds = 100,
+        double? splitHz = null,
+        double? warmUpSeconds = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(sampleRate, 0);
 
@@ -170,17 +188,21 @@ public sealed class FmShapeBusyDetector : IChannelBusySource
         _windowPower = power / _fftSize;
         _binHz = (double)sampleRate / _fftSize;
 
-        // A sixth of the rate, which is a third of Nyquist: the split is stated as a fraction of
-        // the rate rather than in hertz because what it has to clear is the widest signal the
-        // channel can carry, and that scales with the rate too.
-        double splitHz = sampleRate / 6.0;
+        // A sixth of the rate, which is a third of Nyquist: for a station the split is stated as a
+        // fraction of the rate rather than in hertz because what it has to clear is the widest
+        // signal the channel can carry, and that scales with the rate too. A caller that knows
+        // which waveform it is listening for passes its own.
+        double split = splitHz ?? (sampleRate / 6.0);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(split, 0);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(split, sampleRate / 2.0);
+        SplitHz = split;
         _lowFrom = Math.Max(1, (int)Math.Ceiling(LowBandFloorHz / _binHz));
-        _lowTo = (int)Math.Floor(splitHz / _binHz);
+        _lowTo = (int)Math.Floor(split / _binHz);
         _highTo = (_fftSize / 2) - 1;
 
         double blockSeconds = (double)_fftSize / sampleRate;
         _holdBlocks = Math.Max(1, (int)Math.Round(holdMilliseconds / 1000.0 / blockSeconds));
-        _warmUpBlocks = Math.Max(1, (int)Math.Round(WarmUpSeconds / blockSeconds));
+        _warmUpBlocks = Math.Max(1, (int)Math.Round((warmUpSeconds ?? WarmUpSeconds) / blockSeconds));
         _maxBusyBlocks = Math.Max(1, (int)Math.Round(MaxBusySeconds / blockSeconds));
         _referenceStepDb = ReferenceStepDbPerSecond * blockSeconds;
     }
@@ -188,7 +210,24 @@ public sealed class FmShapeBusyDetector : IChannelBusySource
     /// <inheritdoc/>
     public bool? Busy => _known ? _busy : null;
 
+    /// <summary>Where the two bands meet, in Hz.</summary>
+    /// <remarks>
+    /// <b>It is worth choosing.</b> Measured on the NinoTNC reference capture against the C4FSK
+    /// 19k2 bursts in it, with idle and burst blocks classified strictly, the worst-case margin
+    /// between the loudest idle block and the quietest burst block runs 11.1 dB at a 6 kHz split,
+    /// 19.0 dB at 8 kHz, 18.3 dB at that mode's 9600 symbol rate, 14.9 dB at 12 kHz and 12.2 dB
+    /// at the 14.4 kHz corner of the mode's own receive filter. Too low and the split eats the
+    /// signal's own occupancy (7.6 dB at 4.8 kHz); too high and it stops excluding the hiss.
+    /// </remarks>
+    public double SplitHz { get; }
+
     /// <summary>The shape ratio of the last block, in dB. For diagnostics and tests.</summary>
+    /// <remarks>
+    /// Power from 300 Hz to <see cref="SplitHz"/> over power from there to Nyquist. It rises both
+    /// when an FM carrier quiets the band above a signal and when a band-limited signal arrives on
+    /// a path that was carrying broadband noise, which are the same measurement and two different
+    /// reasons to care.
+    /// </remarks>
     public double ShapeDb { get; private set; }
 
     /// <summary>The station's own idle shape ratio, which <see cref="ShapeDb"/> is judged against.
