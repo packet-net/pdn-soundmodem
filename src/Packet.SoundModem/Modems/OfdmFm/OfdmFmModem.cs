@@ -49,7 +49,6 @@ public sealed class OfdmFmModem : IModem
     private readonly Action<byte[]> _frameReceived;
     private readonly EnergyBusyDetector _energy;
     private readonly FmQuietingBusyDetector _quieting;
-    private readonly IChannelBusySource? _externalBusy;
 
     /// <summary>The metric window: the two half-symbols being correlated, after the prefix.</summary>
     private readonly int _half;
@@ -146,11 +145,6 @@ public sealed class OfdmFmModem : IModem
     /// <param name="frameReceived">The decoded-frame sink.</param>
     /// <param name="timeProvider">Clock, for ageing out a correspondent's rate recommendation.
     /// Only used when the profile adapts.</param>
-    /// <param name="channelBusySource">Where carrier sense comes from, when the station has
-    /// something better than the audio to ask. Null means it has not configured one, and the
-    /// station keeps the shipped audio behaviour with the defects named on
-    /// <see cref="ChannelBusy"/>. See <see cref="ChannelBusySources"/> for the seam a host
-    /// supplies one through.</param>
     /// <param name="geometryTable">The station's geometry table, which every burst's header
     /// indexes, or null for a profile running alone. See <see cref="OfdmFmGeometryTable"/>.</param>
     public OfdmFmModem(
@@ -158,7 +152,6 @@ public sealed class OfdmFmModem : IModem
         OfdmFmParameters parameters,
         Action<byte[]> frameReceived,
         TimeProvider? timeProvider = null,
-        IChannelBusySource? channelBusySource = null,
         OfdmFmGeometryTable? geometryTable = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(mode);
@@ -220,7 +213,6 @@ public sealed class OfdmFmModem : IModem
         // of the two bench stations transmitting at all, because its thresholds are absolute dBFS
         // and the two stations' levels are not the same.
         _quieting = new FmQuietingBusyDetector(parameters.SampleRate);
-        _externalBusy = channelBusySource;
     }
 
     /// <inheritdoc/>
@@ -247,22 +239,20 @@ public sealed class OfdmFmModem : IModem
 
     /// <inheritdoc/>
     /// <remarks>
-    /// <para><b>With an <see cref="IChannelBusySource"/> registered</b> (see
-    /// <see cref="ChannelBusySources"/>) the answer is that source, ored with this modem's sync
-    /// detect. The audio energy detect is dropped entirely, because on this path it is not merely
-    /// redundant but harmful: see below. A source that does not know answers null and contributes
-    /// nothing, so one that loses its link costs carrier sense rather than costing the station its
-    /// transmitter.</para>
-    /// <para><b>Without one, the shipped audio behaviour, which is known to be wrong in two
-    /// ways.</b> The energy detect asserts at the END of every burst it hears on FM, for ten
-    /// seconds or more, because the return of the open-squelch noise looks like a signal to a
-    /// detector waiting for a rise. And neither source sees a far end's silent lead-in, which is
-    /// the window a far end's TXDELAY occupies and where two stations were measured colliding
-    /// head-on here on 2026-09-18. Both are measured; see docs/dev/ofdm-fm/carrier-sense.md.</para>
+    /// <para><b>This modem's own audio answer, and it is known to be wrong in two ways on an FM
+    /// path.</b> The energy detect asserts at the END of every burst it hears, for ten seconds or
+    /// more, because the return of the open-squelch noise looks like a signal to a detector
+    /// waiting for a rise. And neither half sees a far end's silent lead-in, which is the window a
+    /// far end's TXDELAY occupies and where two stations were measured colliding head-on on this
+    /// bench on 2026-09-18. Both are measured; see <c>docs/dev/carrier-sense.md</c>.</para>
+    /// <para><b>It is not what decides whether the station transmits.</b> That is
+    /// <see cref="Channel.SoundModemChannel.ChannelBusy"/>, which on a station with a radio to ask
+    /// drops this modem's energy detect and keeps only <see cref="CarrierDetect"/>. Carrier sense
+    /// belongs to the receive path and not to a waveform, and deciding it here was what let one
+    /// unused sub-channel hold a whole station's transmitter shut. See
+    /// <see cref="CarrierSenseRule"/>.</para>
     /// </remarks>
-    public bool ChannelBusy => _externalBusy is null
-        ? CarrierDetect || _energy.Busy
-        : CarrierDetect || (_externalBusy.Busy ?? false);
+    public bool ChannelBusy => CarrierDetect || _energy.Busy;
 
     /// <summary>The profile this modem runs.</summary>
     public OfdmFmParameters Parameters => _parameters;

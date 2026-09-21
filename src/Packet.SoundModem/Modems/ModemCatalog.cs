@@ -128,9 +128,6 @@ public static class ModemCatalog
             name,
             OfdmFmPresets.ByMode[name],
             b.FrameReceived,
-            // Carrier sense from outside the demodulator, if a host registered a source. Resolved
-            // per modem at construction, which is the contract ChannelBusySources documents.
-            channelBusySource: ChannelBusySources.Resolve(),
             // One table shared by every preset, so a receiver on any of them decodes a burst sent
             // on any other. Passing null here would silently reduce every mode to its own layout.
             geometryTable: OfdmFmPresets.Table));

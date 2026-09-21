@@ -466,8 +466,8 @@ public class GeometrySignallingTests
         rejected.Should().ContainSingle().Which.Name.Should().Be("zz-squatter");
 
         var delivered = new List<byte[]>();
-        var acq = new OfdmFmModem("acq", OnAcquisition, delivered.Add, null, null, table);
-        var wide = new OfdmFmModem("wide", OnWide, _ => { }, null, null, table);
+        var acq = new OfdmFmModem("acq", OnAcquisition, delivered.Add, null, table);
+        var wide = new OfdmFmModem("wide", OnWide, _ => { }, null, table);
         byte[] frame = Payload(64);
 
         acq.Process(wide.Modulate(frame, txDelayMilliseconds: 30));

@@ -1,6 +1,7 @@
 using M0LTE.Radio.Audio;
 using System.Threading.Channels;
 using M0LTE.Dsp;
+using Packet.SoundModem.CarrierSense;
 using Packet.SoundModem.Dsp;
 using Packet.SoundModem.Modems;
 
@@ -90,6 +91,7 @@ public sealed class SoundModemChannel
     private readonly BurstSnrMonitor _burstSnr;
     private readonly FrameLevelMonitor _frameLevel;
     private readonly Action<int, ReadOnlyMemory<byte>>? _constellationSink;
+    private readonly IChannelBusySource? _busySource;
     private volatile bool _transmitting;
 
     /// <summary>Creates a channel.</summary>
@@ -101,12 +103,19 @@ public sealed class SoundModemChannel
     /// (sub-channel, frame). Wired to any PSK modem added to the channel - see
     /// <see cref="ConstellationSource"/>; a no-op for the non-PSK modes.</param>
     /// <param name="randomSeed">Seed for the p-persistence roll (tests); null = random.</param>
+    /// <param name="channelBusySource">Something outside the audio path that knows whether the
+    /// channel is occupied - a radio's squelch and signal-strength meter, read over its control
+    /// link. Null falls back to <see cref="ChannelBusySources.Host"/>, which is the static a host
+    /// registers its own already-open radio through; null from both leaves the station on the
+    /// audio-derived answer it has always had. See <see cref="CarrierSenseRule"/> for what
+    /// difference having one makes, and why.</param>
     public SoundModemChannel(
         int sampleRate,
         TimeProvider? time = null,
         Action<ReadOnlyMemory<byte>>? spectrumSink = null,
         Action<int, ReadOnlyMemory<byte>>? constellationSink = null,
-        int? randomSeed = null)
+        int? randomSeed = null,
+        IChannelBusySource? channelBusySource = null)
     {
         SampleRate = sampleRate;
         _time = time ?? TimeProvider.System;
@@ -119,6 +128,9 @@ public sealed class SoundModemChannel
         _burstSnr = new BurstSnrMonitor(sampleRate);
         _frameLevel = new FrameLevelMonitor(sampleRate);
         _constellationSink = constellationSink;
+        // Read once, here, and never again: a host registers its radio before it builds a channel,
+        // and a station's receive path does not change under it while it runs.
+        _busySource = channelBusySource ?? ChannelBusySources.Host;
     }
 
     /// <summary>The channel's DSP sample rate.</summary>
@@ -153,8 +165,34 @@ public sealed class SoundModemChannel
     /// the transmitter keeps running.</summary>
     public event Action<int, byte[], Exception>? TransmitRejected;
 
-    /// <summary>True while any modem sees packet or energy busy, or we are transmitting.</summary>
-    public bool ChannelBusy => _transmitting || _modems.Values.Any(m => m.ChannelBusy);
+    /// <summary>
+    /// True while the channel is occupied: we are transmitting, or the station's carrier sense
+    /// says somebody else is.
+    /// </summary>
+    /// <remarks>
+    /// <para>This is what the CSMA below will not transmit over, and it is the station's one
+    /// answer rather than a modem's. <b>With a <see cref="BusySource"/> that has an opinion</b>,
+    /// that opinion decides, ored with any modem's packet carrier detect; every modem's in-band
+    /// energy detector is dropped, because on an FM path it is not merely redundant but
+    /// anti-correlated. <b>Without one</b>, or with one that does not know, it is the OR across
+    /// every modem's own audio answer, which is what this has always been. The measured argument
+    /// for both halves is on <see cref="CarrierSenseRule.Occupied"/>.</para>
+    /// <para><b>Our own transmission always counts</b>, first and unconditionally. It is not a
+    /// measurement of the channel and no source is asked about it: a station's receiver is muted
+    /// while it transmits, so nothing outside can see it.</para>
+    /// </remarks>
+    public bool ChannelBusy =>
+        _transmitting
+        || CarrierSenseRule.Occupied(
+            _busySource?.Busy,
+            anyCarrierDetect: _modems.Values.Any(m => m.CarrierDetect),
+            anyAudioBusy: _modems.Values.Any(m => m.ChannelBusy));
+
+    /// <summary>
+    /// Where this channel's carrier sense comes from, or null if it has nothing but the audio.
+    /// For diagnostics and for a station to report what it is running.
+    /// </summary>
+    public IChannelBusySource? BusySource => _busySource;
 
     /// <summary>True while any modem's packet DCD is asserted.</summary>
     public bool CarrierDetect => _modems.Values.Any(m => m.CarrierDetect);

@@ -1,5 +1,6 @@
-using Packet.SoundModem.Modems.OfdmFm;
 using Packet.SoundModem.CarrierSense;
+using Packet.SoundModem.Channel;
+using Packet.SoundModem.Modems.OfdmFm;
 namespace Packet.SoundModem.Tests.CarrierSense;
 
 using Packet.Radio;
@@ -219,33 +220,63 @@ public class RadioCarrierSenseTests
         public bool? Busy { get; set; } = busy;
     }
 
-    private static OfdmFmModem Modem(IChannelBusySource? source) =>
-        new("ofdm-fm:test", OfdmFmParameters.Synthetic, _ => { }, null, source);
-
-    [Fact]
-    public void A_Configured_Radio_Decides_Whether_The_Modem_May_Transmit()
+    /// <summary>
+    /// A station carrying one OFDM-FM modem, with whatever carrier sense the test supplies.
+    /// </summary>
+    /// <remarks>
+    /// The station and not the modem, because that is where the answer is decided since #522. A
+    /// modem's own <c>ChannelBusy</c> is its audio opinion and no longer gates anything by itself.
+    /// </remarks>
+    private static SoundModemChannel Station(IChannelBusySource? source)
     {
-        var source = new StubSource(false);
-        OfdmFmModem modem = Modem(source);
-        Assert.False(modem.ChannelBusy);
-
-        source.Busy = true;
-        Assert.True(modem.ChannelBusy);
+        var channel = new SoundModemChannel(
+            OfdmFmParameters.Synthetic.SampleRate, channelBusySource: source);
+        channel.AddModem(
+            0, sink => new OfdmFmModem("ofdm-fm:test", OfdmFmParameters.Synthetic, sink));
+        return channel;
     }
 
     [Fact]
-    public void A_Radio_With_No_Opinion_Leaves_The_Modem_Free_To_Transmit()
+    public void A_Configured_Radio_Decides_Whether_The_Station_May_Transmit()
     {
-        // Fails open at the modem too, not just inside the source.
-        Assert.False(Modem(new StubSource(null)).ChannelBusy);
+        var source = new StubSource(false);
+        SoundModemChannel station = Station(source);
+        Assert.False(station.ChannelBusy);
+
+        source.Busy = true;
+        Assert.True(station.ChannelBusy);
+    }
+
+    [Fact]
+    public void A_Radio_With_No_Opinion_Leaves_The_Station_Free_To_Transmit()
+    {
+        // Fails open at the station too, not just inside the source.
+        Assert.False(Station(new StubSource(null)).ChannelBusy);
     }
 
     [Fact]
     public void Without_A_Radio_The_Shipped_Audio_Behaviour_Is_Untouched()
     {
-        // The energy detector is dropped only for a station that opted in. Everyone else keeps
-        // exactly what they had, defects and all: see docs/carrier-sense-on-fm.md.
-        Assert.False(Modem(null).ChannelBusy);
+        // The energy detector is dropped only for a station that has something better to ask.
+        // Everyone else keeps exactly what they had, defects and all: see
+        // docs/dev/carrier-sense.md.
+        Assert.False(Station(null).ChannelBusy);
+    }
+
+    [Fact]
+    public void A_Host_Source_Reaches_A_Station_That_Was_Given_None()
+    {
+        // The one-line integration for an in-process host: register the radio, build the channel.
+        // If this ever stops working, packet.net loses carrier sense silently.
+        try
+        {
+            ChannelBusySources.Host = new StubSource(true);
+            Assert.True(Station(null).ChannelBusy);
+        }
+        finally
+        {
+            ChannelBusySources.Host = null;
+        }
     }
 
     [Fact]
@@ -265,14 +296,13 @@ public class RadioCarrierSenseTests
     }
 
     [Fact]
-    public void A_Station_File_Naming_A_Missing_Port_Still_Builds_A_Modem()
+    public void A_Station_File_Naming_A_Missing_Port_Still_Builds_A_Station()
     {
         var config = new StationRadio(TaitPort: $"/dev/nonexistent-{Guid.NewGuid():N}");
         try
         {
             ChannelBusySources.Host = TaitCarrierSense.ForStation(config);
-            OfdmFmModem modem = Modem(ChannelBusySources.Resolve());
-            Assert.False(modem.ChannelBusy);
+            Assert.False(Station(ChannelBusySources.Resolve()).ChannelBusy);
         }
         finally
         {
