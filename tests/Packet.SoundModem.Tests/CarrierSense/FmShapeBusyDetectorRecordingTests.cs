@@ -107,6 +107,45 @@ public class FmShapeBusyDetectorRecordingTests
     }
 
     /// <summary>
+    /// The generalisation check: a SECOND station, a second sound card and a second Tait, hearing
+    /// a different waveform.
+    /// </summary>
+    /// <remarks>
+    /// Everything else here is radio1 hearing one NinoTNC frame fifteen times. This is 60 s off
+    /// radio2 carrying 15 <c>ofdm-fm-8k</c> transmissions from radio1, and the ground truth is
+    /// radio2's own frame log: it decoded them between 17.18 and 33.12 s into the file, with idle
+    /// channel for 17 s before and 27 s after. Three of them arrived within a quarter of a second
+    /// of each other, so the detector reports slightly fewer episodes than transmissions, which is
+    /// the 100 ms hold doing its job rather than a miss.
+    /// </remarks>
+    [Fact]
+    public void A_Second_Station_Hearing_A_Different_Waveform_Is_Found_Too()
+    {
+        if (Fixture("radio2-ofdm-bursts.wav") is not { } path)
+        {
+            Assert.Skip($"set {FixtureVariable} to the directory holding radio2-ofdm-bursts.wav");
+            return;
+        }
+
+        (float[] audio, int rate) = WavFile.ReadMono(path);
+        List<Episode> found = Run(audio, rate, out _, out _);
+
+        found.Should().HaveCountGreaterThanOrEqualTo(10)
+            .And.HaveCountLessThanOrEqualTo(15,
+                "15 transmissions, some of them close enough together to be reported as one. "
+                + "Found: {0}",
+                string.Join(", ", found.Select(e => $"{e.StartSeconds:F2}s+{e.LengthMilliseconds:F0}ms")));
+
+        // Nothing outside the stretch radio2's own frame log says it was hearing traffic in. The
+        // idle channel either side of it is what a false-busy figure is made of.
+        found.Should().AllSatisfy(e =>
+        {
+            e.StartSeconds.Should().BeGreaterThan(16.5);
+            e.EndSeconds.Should().BeLessThan(33.6);
+        });
+    }
+
+    /// <summary>
     /// The property no audio detector may ever lose: it must not be able to silence a station.
     /// </summary>
     /// <remarks>

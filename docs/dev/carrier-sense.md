@@ -223,11 +223,11 @@ Idle hiss on this path FALLS with frequency, by 37 dB across the band, where tex
 
 ### What it scores
 
-| | reference capture, 15 transmissions | 660 s chunk, 11 transmissions |
-|---|---|---|
-| found | 15 of 15 | 11 of 11 |
-| assert latency after carrier up | median 26 ms | median 21 ms |
-| **false busy** | **0 blocks** | **0 blocks in 583 s of idle** |
+| | reference capture, radio1, 15 NinoTNC transmissions | 660 s chunk, radio1, 11 of ours | 60 s, **radio2**, 15 of ours |
+|---|---|---|---|
+| found | 15 of 15 | 11 of 11 | 15 of 15 |
+| assert latency after carrier up | median 26 ms | median 21 ms | 170 to 220 ms before the decode |
+| **false busy** | **0 blocks** | **0 blocks in 583 s of idle** | **none in 44 s of idle** |
 
 Zero false busy in 620 s of idle channel altogether, and the relative threshold gives 0 missed and 0 false at every value from 4 to 20 dB, which is what buying the margin was for.
 
@@ -241,7 +241,7 @@ Put the same channel through seven simulated station audio paths, from a card ro
 
 **It does not work on a 12 kHz channel.** The split would land at 2 kHz, inside a wideband mode's own occupancy: measured on the reference recording decimated, and cross-checked against an ideal brickwall to take the decimator out of the question, the best margin over every split from 1 to 4 kHz is 0.6 dB against 19.3 dB at 48 kHz. It is not used below 48 kHz and the journal says so at start-up. A station that wants carrier sense on a 12 kHz channel needs the control cable.
 
-**Its evidence is one station and one waveform.** All 15 transmissions on the reference recording are the same frame sample for sample, so a statistic tuned on it has seen one waveform fifteen times. The 660 s chunk adds our own transmissions at six drive levels, and that is all there is.
+**Its evidence is thin on stations and on waveforms.** All 15 transmissions on the reference recording are the same NinoTNC frame sample for sample, so a statistic tuned on it has seen one waveform fifteen times, and the 660 s chunk adds our own transmissions at six drive levels off the same receiver. One generalisation check exists and it passed: 60 s captured off **radio2**, a second sound card and a second Tait, carrying 15 `ofdm-fm-8k` transmissions from radio1 rather than NinoTNC C4FSK, scored against radio2's own frame log. Every one of the 15 fell inside a detected episode, no episode corresponded to anything else, and the 17 s of idle before the first and 27 s after the last produced no busy at all. Three of the transmissions arrived within a quarter of a second of each other and were reported as one episode, which is the 100 ms hold doing its job. That is two stations and two waveforms, not a survey.
 
 `#502`, telling the modem it is transmitting rather than making it infer that from a level, would make the dead-input gate belt and braces rather than load-bearing. At the channel it is nearly free already: `SoundModemChannel` does not feed the detector while it transmits.
 
@@ -252,6 +252,7 @@ Durable copies on the dev box at `/home/tf/fm-carrier-sense-evidence/`, with a R
 * `ninorx.wav` - 45 s, 15 NinoTNC C4FSK 19k2 bursts of about 131 ms against real idle hiss. The reference fixture.
 * `radio1-chunk-with-idle-and-bursts.wav` - 660 s, our own transmissions at 0 to -18 dB with long idle stretches, for idle statistics.
 * `fresh0db.wav` - 8.2 s, one of our own transmissions at full level.
+* `radio2-ofdm-bursts.wav` - 60 s off the OTHER station, 15 `ofdm-fm-8k` transmissions against its own idle channel. The generalisation fixture.
 
 ## State of the tree
 
