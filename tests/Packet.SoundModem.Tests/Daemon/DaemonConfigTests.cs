@@ -70,7 +70,9 @@ public class DaemonConfigTests : IDisposable
     public void A_Carrier_Sense_Key_This_Build_Does_Not_Know_Is_Reported()
     {
         // The extension-data bucket, which is why the section has one: a misspelt key would
-        // otherwise be dropped by the deserialiser and the setting silently ignored.
+        // otherwise be dropped by the deserialiser and the setting silently ignored. Capturing it
+        // is only half the job - it has to reach the warnings the daemon prints, or the operator
+        // still never hears about it and runs on DCD alone believing an RSSI threshold is live.
         string path = WriteConfig(
             """{"device":"null","carrierSense":{"port":"/dev/ttyUSB0","busyAbove":-75}}""");
 
@@ -78,6 +80,26 @@ public class DaemonConfigTests : IDisposable
 
         error.Should().BeEmpty();
         config!.CarrierSense!.UnknownSettings.Should().ContainKey("busyAbove");
+        config.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("carrierSense").And.Contain("busyAbove");
+    }
+
+    [Fact]
+    public void An_Explicitly_Null_Carrier_Sense_Radio_Is_Refused_In_Words()
+    {
+        // Several siblings in this section genuinely are nullable - "port", "busyAboveDbm" - so
+        // writing null here is a reasonable mistake. System.Text.Json does not enforce C#'s
+        // nullable annotations, so it lands as a real null on a non-nullable property, and an
+        // unguarded Equals on it would take the daemon down with a stack trace instead of the
+        // sentence this check exists to print. Same treatment "sideband" already gets.
+        string path = WriteConfig(
+            """{"device":"null","carrierSense":{"radio":null,"port":"/dev/ttyUSB0"}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("null").And.Contain("tait").And.Contain("none");
+        ShouldGuideTheOperator(error, path);
     }
 
     [Fact]
