@@ -650,6 +650,13 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
         }
     }
 
+    /// <summary>
+    /// What a mode transmitting at 100 % of its channel's deviation puts out, as a fraction of
+    /// full scale. Short of 1.0 so the pulse shaper's overshoot has somewhere to go; 0.8 is what
+    /// both modes used before this was made per-mode, and is known not to clip.
+    /// </summary>
+    private const double HeadroomFraction = 0.8;
+
     /// <inheritdoc />
     public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds)
     {
@@ -689,7 +696,28 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
         int samplesPerSymbol = _sampleRate / _symbolRate;
         int taps = 48 * _sampleRate / 48000;
         var shaper = new FirFilter(FilterDesign.LowPass(1.0 * _symbolRate, _sampleRate, taps));
-        ReadOnlySpan<float> amplitudes = [-0.8f, -0.8f / 3f, 0.8f / 3f, 0.8f];
+        // The outer level is scaled to the deviation this mode is PUBLISHED at, as a fraction of
+        // the channel's full deviation, rather than being the same 0.8 for every mode. Both modes
+        // used to emit at 0.8, which is wrong because they want different deviations: c4fsk9600 is
+        // specified at 2.5 kHz outer and c4fsk19200 at 5.0 kHz, a factor of two apart. A station
+        // levelled for one was necessarily wrong for the other, and measured on air at 146.900 MHz
+        // on 2026-09-21, c4fsk9600 came out at 6.92 kHz peak against its 2.5 kHz figure, occupying
+        // 19.5 kHz at -26 dBc where the radio's IF is 12.6 kHz wide.
+        //
+        // This fixes the RATIO, which is the part that belongs in the modem. The absolute level is
+        // the station's, set by its audio chain and its transmit volume: what a full-scale sample
+        // becomes in kHz is a property of the wiring, not of the waveform, and no modem can know
+        // it. A station still has to be levelled once; it no longer has to be levelled per mode.
+        //
+        // Headroom is deliberate. The pulse shaper overshoots past the symbol amplitude, and this
+        // is the only amplitude-coded mode in the tree, so clipping compresses the outer levels
+        // into the inner ones and no envelope tracker downstream can undo it.
+        FmModeProfile? profile = FmModeProfiles.For(_symbolRate == 9600 ? "c4fsk19200" : "c4fsk9600");
+        float outer = profile is null
+            ? (float)HeadroomFraction
+            : (float)(HeadroomFraction * profile.PeakDeviationHz
+                / FmModeProfile.FullDeviationHz(profile.ChannelSpacingHz));
+        ReadOnlySpan<float> amplitudes = [-outer, -outer / 3f, outer / 3f, outer];
         var samples = new float[(bits.Length / 2 * samplesPerSymbol) + taps];
         int position = 0;
         for (int i = 0; i + 1 < bits.Length; i += 2)
