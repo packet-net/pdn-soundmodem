@@ -58,6 +58,40 @@ audio is digital silence, so the gate is trivially right.
 **Every conclusion the first pass drew from a transmit-level sweep is void**, because the gate was
 shut throughout. That includes "correcting the level does not fix decoding".
 
+### Confirmed against the NinoTNC reference capture, and why it is not a one-line removal
+
+Run over `ninorx.wav`, 45 s holding 15 real NinoTNC C4FSK 19k2 transmissions, the shipped modem's
+gate **opened zero times**. Not "rarely", not "late": never. `sm-c4fskprobe` prints it in its
+first section and then stops, because nothing downstream of it can mean anything.
+
+`--lead-in` does not rescue that recording either, and the reason is worth knowing. It seeds the
+floor from digital silence so the gate opens on the idle hiss, but the floor then adapts up and
+the gate falls at 6.78 s, which is 3.4 s **before** the first transmission at 10.19 s. On this
+path the gate is open exactly when the channel is empty and shut exactly when it is not.
+
+**Removing the gate is not the fix, and the measurement says so both ways.** Bypassed entirely
+over the same file:
+
+- the idle hiss produces **63 near-sync matches in timing phase 0 alone** (Hamming distance 1,
+  inverted), 59 in phase 1, and so on. That is the false-lock the gate exists to prevent, and it
+  is real rather than historical.
+- **79 % of all decisions read `+inner`** and 14 % of normalised values sit below -1.5, which is
+  the slicer railing rather than slicing.
+- no frame decodes, so the gate is not the only thing between this receiver and the air.
+
+The railing has a structural cause that any replacement has to deal with: **the gate is what
+re-arms the envelope acquisition.** `_symbolsSinceGate` is reset on the gate's rising edge and the
+max-hold acquisition runs only for `AcquireSymbols` after it, with `TrackEnvelope`'s
+decision-directed update carrying the envelope from there. With no gate, `_symbolsSinceGate` never
+resets, the acquisition runs once at the very start of the stream and never again, and the tracker
+spends the rest of the file on whatever it learned from the first few milliseconds. The deframer
+reset on the falling edge hangs off the same signal.
+
+So a replacement owes three things, not one: a signal-present test that is true during an FM burst,
+a re-arm for the envelope acquisition, and a reset for the deframer. The test itself should be a
+ratio rather than a level - see `docs/dev/carrier-sense.md`, where the same mistake was made twice
+at station level before it was fixed.
+
 ## Fault 2: baseline wander closes the 4-level eye
 
 With the gate forced open the modem still reads nothing, and the eye at the symbol instants is
