@@ -134,6 +134,45 @@ low-frequency content, is mangled. That rules out noise, jitter, level and clipp
 measurement, and it is why the received signal can look healthy on a spectrum display and carry
 nothing.
 
+## Where the damage happens: the transmit side, measured
+
+Late in the session the RSP1 started working (it needed IFGR 20, not the 40 to 45 the first pass's
+recipe uses), which made it possible to measure the signal **as radiated**, before it has been
+anywhere near the receiving station. One `c4fsk9600` transmission, demodulated from the SDR with a
+40 kHz filter so the Tait's own 12.6 kHz IF is not in the path, scored on the same instrument at
+every stage of the chain:
+
+| stage | within-cluster rms as a fraction of the half-swing |
+|---|---|
+| the daemon's own transmit audio, clipped at full scale exactly as the card would | **0.021** |
+| as radiated, demodulated through a 40 kHz IF | **0.176** |
+| as radiated, demodulated through a simulated 12.6 kHz Tait IF | **0.169** |
+| as received at the far station, through the real Tait and its CM108 | **0.19** |
+
+Read that top to bottom. **Essentially all of the damage has already happened by the time the
+signal leaves the antenna.** The receiving station's IF, discriminator, interface and sound card
+add almost nothing to it. The instrument is the four-level k-means fit described below, and the
+0.021 on the first row is what a healthy eye reads.
+
+That is the opposite end of the link from where the first pass was looking, and from where I was
+looking for most of this session. The span that does the damage is: the CM108's DAC and its output
+coupling capacitor, the interface's transmit tail (Rt, Rb and C4), and the Tait's own T12 input.
+Three components and one radio input, none of which anybody has put a scope on.
+
+Undoing a single first-order high pass at about 90 Hz on the radiated signal recovers part of it,
+eye 0.188 to 0.164 and sync correlation 0.779 to 0.854, which is consistent with C4 (the build page
+puts its corner at 43 to 64 Hz) cascaded with the 1 uF the CM108 board has on its own output. Most
+of the gap between 0.021 and 0.164 is still unaccounted for.
+
+**Deviation as radiated is 6.55 kHz at the 99.9th percentile and 5.86 kHz at the 99th**, against
+this mode's published 2.5 kHz, measured with the discriminator low-passed at 7.2 kHz before
+decimation. That confirms fault 4 independently and on the air: the modulator's level is about 2.6
+times what the mode asks for, and #516 did not change it.
+
+**The next instrument is a scope on the CM108's output pin at the radio**, comparing the analogue
+waveform against the float samples the daemon wrote, and then the same at the far end of the
+interface tail. That splits the three remaining suspects and needs no radio time.
+
 ## What is still not explained, and I would rather you knew
 
 The wander is the mechanism, in the sense that the measured response on its own takes both C4FSK
@@ -280,10 +319,15 @@ modulator that emits above 1.0 clips identically at every mixer setting, and no 
 the transmit volume down will show you it is happening. See fault 4 below, which is where that
 observation led.
 
-**The RSP1 heard nothing at IFGR 40 to 45 with RFGR 0** in this session, peak |x| 0.011 across a
-25 s capture with a transmitter a few metres away. Whatever it was doing for the first pass it was
-not doing today; do not plan an experiment that depends on it without checking it hears the
-carrier first.
+**The RSP1's gain recipe in the first pass is wrong for this path.** At IFGR 40 to 45 with RFGR 0
+it heard nothing at all: peak |x| 0.011 across a 25 s capture with a transmitter a few metres away.
+At **IFGR 20, RFGR 0** the same carrier is 54 dB over the noise. Check it hears the carrier before
+planning anything that depends on it.
+
+**Decimating a 1 Msps discriminator output straight to 48 kHz folds 20 kHz of noise into the audio
+band and closes the eye by itself.** Low-pass the discriminator output at the modem's own receive
+bandwidth BEFORE subsampling. My first reading of the radiated eye was made without that and was
+not trustworthy; it happened to give nearly the same answer, which is luck, not method.
 
 ## How to measure this rig, quickly
 
