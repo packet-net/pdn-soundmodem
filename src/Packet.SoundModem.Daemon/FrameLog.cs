@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Packet.SoundModem.Channel;
 using Microsoft.Data.Sqlite;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Modems;
@@ -184,6 +185,15 @@ internal sealed class FrameLog : IAsyncDisposable
                      ("quality", "INTEGER"),
                      ("ardop_sn_db", "REAL"),
                      ("held_ms", "INTEGER"),
+                     ("held_cause", "TEXT"),
+                     ("held_busy_ms", "INTEGER"),
+                     ("held_slot_ms", "INTEGER"),
+                     ("held_turnaround_ms", "INTEGER"),
+                     ("held_inhibit_ms", "INTEGER"),
+                     ("held_ourtx_ms", "INTEGER"),
+                     ("held_queue_ms", "INTEGER"),
+                     ("held_busy_ch", "INTEGER"),
+                     ("held_busy_by", "TEXT"),
                  })
         {
             using SqliteCommand columns = connection.CreateCommand();
@@ -304,6 +314,11 @@ internal sealed class FrameLog : IAsyncDisposable
     /// measurement of somebody else's transmitter, and averaging the two together would mix what
     /// a station did with what we did about it.
     /// </param>
+    /// <param name="waits">
+    /// Where that wait went, split by cause, and which sub-channels asserted carrier sense during
+    /// it. Null on a transmission this process did not make and on one made by a consumer that
+    /// does not measure it; a station's own frames always carry it.
+    /// </param>
     /// <param name="heldMs">
     /// How long this frame waited for the channel before it went out, in milliseconds. Written for
     /// every transmission, including the ones that went straight out: the column is what a later
@@ -324,7 +339,7 @@ internal sealed class FrameLog : IAsyncDisposable
     internal void RecordTransmitted(
         int subChannel, byte[] frame, string mode, double? audioHz, double? rfHz,
         double? txTrimHz = null, long? heldMs = null, DateTimeOffset? at = null,
-        string? modeName = null)
+        string? modeName = null, TransmitWaits? waits = null)
     {
         if (Backlogged())
         {
@@ -357,7 +372,8 @@ internal sealed class FrameLog : IAsyncDisposable
             rfHz,
             frame,
             txTrimHz,
-            HeldMs: heldMs));
+            HeldMs: heldMs,
+            Waits: waits));
     }
 
     /// <summary>
@@ -411,7 +427,8 @@ internal sealed class FrameLog : IAsyncDisposable
                 SELECT heard_at, sub_channel, mode, source, destination,
                        length, corrected, crc_valid, offset_hz, direction, tx_trim_hz,
                        monitor_only, plain_il2p, peak_dbfs, clipped, level, peak_shown,
-                       trailer_near_bits, chased_bits, quality, ardop_sn_db, held_ms
+                       trailer_near_bits, chased_bits, quality, ardop_sn_db, held_ms,
+                       held_cause, held_busy_ch
                 FROM frames ORDER BY id DESC LIMIT $count
                 """;
             query.Parameters.AddWithValue("$count", count);
@@ -465,7 +482,15 @@ internal sealed class FrameLog : IAsyncDisposable
                     // How long the channel held it. Only ever set on a transmission, and null on
                     // a transmission from before the column: a backlog row that says nothing is
                     // drawn without the note rather than as an instant one.
-                    row.IsDBNull(21) ? null : row.GetInt64(21)));
+                    row.IsDBNull(21) ? null : row.GetInt64(21))
+                {
+                    // And which cause accounted for most of that wait, so a page that has just
+                    // been reloaded tells a busy channel from a frame behind our own window
+                    // exactly as the live row did. Null on a row from before the columns, which
+                    // draws the held note with no cause on it, as it always did.
+                    HeldCause = row.IsDBNull(22) ? null : row.GetString(22),
+                    HeldBusySubChannel = row.IsDBNull(23) ? null : row.GetInt32(23),
+                });
             }
         }
         catch (Exception e) when (e is SqliteException or IOException or FormatException)
@@ -550,6 +575,84 @@ internal sealed class FrameLog : IAsyncDisposable
         return frames;
     }
 
+    /// <summary>
+    /// Fills in where a transmission's wait went, a column per cause plus the one that dominated.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Columns rather than one packed field</b>, because the question this exists to
+    /// answer is asked of thousands of rows at once and not of one row at a time: "how much of
+    /// this station's deferral is other people's traffic" is
+    /// <c>SELECT held_cause, COUNT(*), SUM(held_ms)/1000 FROM frames WHERE direction='tx' GROUP BY
+    /// held_cause</c>, and "which sub-channel is holding us up" is the same query over
+    /// <c>held_busy_ch</c>. Neither is possible against a packed string without teaching every
+    /// reader to unpack it.</para>
+    /// <para><c>held_busy_by</c> is the one text field, and it is there because the answer can be
+    /// "the radio", which is not a sub-channel and must not be filed as one. A station whose
+    /// carrier sense comes from a control cable reports the whole station's answer; one reading
+    /// the audio reports the sub-channels that overlapped the frame's own passband, which is the
+    /// diagnostic for packet-net/pdn-soundmodem#526.</para>
+    /// <para>Null on every row from a build before this existed, and on every row for a
+    /// transmission made somewhere else, which is what null in those columns has always meant.</para>
+    /// </remarks>
+    private static void BindWaits(SqliteCommand insert, TransmitWaits? waits)
+    {
+        if (waits is not TransmitWaits spent || spent.Total <= TimeSpan.Zero)
+        {
+            foreach (string name in WaitColumns)
+            {
+                insert.Parameters[name].Value = DBNull.Value;
+            }
+
+            return;
+        }
+
+        // "mixed" rather than null where no one cause took half the wait, so that null in this
+        // column means exactly one thing: nothing measured it. A row with a held time and no cause
+        // at all would otherwise be indistinguishable from a row written before the columns
+        // existed, and the query this is here for would quietly count the two together.
+        insert.Parameters["$held_cause"].Value = CauseText(spent.Dominant);
+        insert.Parameters["$held_busy_ms"].Value = Milliseconds(spent.ChannelBusy);
+        insert.Parameters["$held_slot_ms"].Value = Milliseconds(spent.Backoff);
+        insert.Parameters["$held_turnaround_ms"].Value = Milliseconds(spent.TurnaroundHold);
+        insert.Parameters["$held_inhibit_ms"].Value = Milliseconds(spent.TransmitInhibit);
+        insert.Parameters["$held_ourtx_ms"].Value = Milliseconds(spent.OurTransmission);
+        insert.Parameters["$held_queue_ms"].Value = Milliseconds(spent.OurTurn);
+        insert.Parameters["$held_busy_ch"].Value = (object?)spent.BusiestSubChannel ?? DBNull.Value;
+
+        string subs = spent.SubChannelList();
+        string by = (subs, spent.RadioSaidBusy) switch
+        {
+            ("", true) => "radio",
+            ("", false) => "",
+            (_, true) => $"radio,{subs}",
+            _ => subs,
+        };
+        insert.Parameters["$held_busy_by"].Value = by.Length == 0 ? DBNull.Value : by;
+    }
+
+    private static readonly string[] WaitColumns =
+    [
+        "$held_cause", "$held_busy_ms", "$held_slot_ms", "$held_turnaround_ms", "$held_inhibit_ms",
+        "$held_ourtx_ms", "$held_queue_ms", "$held_busy_ch", "$held_busy_by",
+    ];
+
+    private static long Milliseconds(TimeSpan span) => (long)span.TotalMilliseconds;
+
+    /// <summary>
+    /// The cause as it is written into the log: one lower-case word per cause, stable, so a query
+    /// written today against a station's log still runs next year.
+    /// </summary>
+    internal static string CauseText(TransmitWaitCause cause) => cause switch
+    {
+        TransmitWaitCause.ChannelBusy => "busy",
+        TransmitWaitCause.Backoff => "slot",
+        TransmitWaitCause.TurnaroundHold => "turnaround",
+        TransmitWaitCause.TransmitInhibit => "inhibit",
+        TransmitWaitCause.OurTransmission => "ourtx",
+        TransmitWaitCause.OurTurn => "queue",
+        _ => "mixed",
+    };
+
     private void WriteLoop()
     {
         using SqliteCommand insert = _connection.CreateCommand();
@@ -559,12 +662,15 @@ internal sealed class FrameLog : IAsyncDisposable
                length, corrected, crc_valid, trailer_near_bits, monitor_only, plain_il2p,
                erased_bytes, chased_bits, snr_db, offset_hz, audio_hz, rf_hz, payload,
                tx_trim_hz, peak_dbfs, clipped, level, peak_shown, quality, ardop_sn_db,
-               held_ms)
+               held_ms, held_cause, held_busy_ms, held_slot_ms, held_turnaround_ms,
+               held_inhibit_ms, held_ourtx_ms, held_queue_ms, held_busy_ch, held_busy_by)
             VALUES
               ($heard_at, $direction, $sub, $mode, $mode_name, $source, $destination,
                $length, $corrected, $crc, $trailer, $monitor, $plain, $erased, $chased, $snr,
                $offset, $audio, $rf, $payload, $tx_trim, $peak, $clipped, $level, $peak_shown,
-               $quality, $ardop_sn_db, $held_ms)
+               $quality, $ardop_sn_db, $held_ms, $held_cause, $held_busy_ms, $held_slot_ms,
+               $held_turnaround_ms, $held_inhibit_ms, $held_ourtx_ms, $held_queue_ms,
+               $held_busy_ch, $held_busy_by)
             """;
         foreach (string name in new[]
                  {
@@ -572,7 +678,9 @@ internal sealed class FrameLog : IAsyncDisposable
                      "$destination", "$length", "$corrected", "$crc", "$trailer", "$monitor",
                      "$plain", "$erased", "$chased", "$snr", "$offset", "$audio", "$rf", "$payload",
                      "$tx_trim", "$peak", "$clipped", "$level", "$peak_shown", "$quality",
-                     "$ardop_sn_db", "$held_ms",
+                     "$ardop_sn_db", "$held_ms", "$held_cause", "$held_busy_ms", "$held_slot_ms",
+                     "$held_turnaround_ms", "$held_inhibit_ms", "$held_ourtx_ms", "$held_queue_ms",
+                     "$held_busy_ch", "$held_busy_by",
                  })
         {
             insert.Parameters.Add(new SqliteParameter(name, DBNull.Value));
@@ -608,6 +716,7 @@ internal sealed class FrameLog : IAsyncDisposable
                 insert.Parameters["$quality"].Value = (object?)entry.Quality ?? DBNull.Value;
                 insert.Parameters["$ardop_sn_db"].Value = (object?)entry.ArdopSnDb ?? DBNull.Value;
                 insert.Parameters["$held_ms"].Value = (object?)entry.HeldMs ?? DBNull.Value;
+                BindWaits(insert, entry.Waits);
                 insert.Parameters["$offset"].Value = (object?)entry.OffsetHz ?? DBNull.Value;
             insert.Parameters["$tx_trim"].Value = (object?)entry.TxTrimHz ?? DBNull.Value;
                 insert.Parameters["$audio"].Value = (object?)entry.AudioHz ?? DBNull.Value;
@@ -686,5 +795,6 @@ internal sealed class FrameLog : IAsyncDisposable
         bool? PeakWorthShowing = null,
         int? Quality = null,
         double? ArdopSnDb = null,
-        long? HeldMs = null);
+        long? HeldMs = null,
+        TransmitWaits? Waits = null);
 }

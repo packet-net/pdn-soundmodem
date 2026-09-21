@@ -1,3 +1,4 @@
+using Packet.SoundModem.Channel;
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Waterfall;
@@ -103,10 +104,10 @@ internal static class ActivityLog
     /// </param>
     internal static string Transmitted(
         int subChannel, string mode, ReadOnlySpan<byte> frame, double trimHz = 0,
-        TimeSpan heldFor = default) =>
+        TimeSpan heldFor = default, TransmitWaits waits = default) =>
         $"tx[{subChannel}] {mode} {Addresses(frame)} {frame.Length} bytes"
         + (trimHz == 0 ? "" : $"  shifted {trimHz:+0.0;-0.0} Hz to suit them")
-        + HeldNote(heldFor);
+        + HeldNote(heldFor, waits);
 
     /// <summary>
     /// How long the channel held this frame, on the lines where that is worth reading.
@@ -118,14 +119,29 @@ internal static class ActivityLog
     /// frame log keeps the figure for every frame regardless; this is the line an operator reads.</para>
     /// <para>The threshold is one TXDELAY's worth of waiting, which is the point at which the
     /// wait has cost more than sending the frame would have.</para>
-    /// <para>"waiting for the channel" rather than "by carrier sense", because carrier sense is
-    /// only the usual reason and not the only one: the roll, the turnaround hold, a transmit
-    /// inhibit and simply being behind this station's own earlier frames in the same keyup all
-    /// land in the same figure. Naming one cause on a line that cannot tell them apart would be
-    /// a claim the number does not support, and this number exists to be argued from.</para>
+    /// <para><b>One cause, named, when the channel can prove it.</b> The figure used to say only
+    /// "waiting for the channel", because carrier sense is the usual reason and not the only one
+    /// and a line that could not tell them apart had no business naming one. The channel now
+    /// measures which of them the wait actually went into
+    /// (<see cref="Packet.SoundModem.Channel.TransmitWaits"/>), so the line names the one that
+    /// accounts for at least half of it and says nothing when none does. That is the difference
+    /// between "held 8.3s (8.1s channel busy on ch0)", which is a frequency nobody can use, and
+    /// "held 8.3s (6.8s behind our own transmissions)", which is the third frame of a window on a
+    /// channel that is working - two rows an operator could not previously tell apart.</para>
+    /// <para>One cause and not six numbers: the point of a note on a line an operator scans is to
+    /// let them skip the rest, and the full breakdown is a column apiece in the frame log, where
+    /// the question "where does this station's airtime go" is a query rather than a read.</para>
     /// </remarks>
-    private static string HeldNote(TimeSpan heldFor) =>
-        heldFor < HeldWorthSaying ? "" : $"  held {Duration(heldFor)} waiting for the channel";
+    private static string HeldNote(TimeSpan heldFor, TransmitWaits waits)
+    {
+        if (heldFor < HeldWorthSaying)
+        {
+            return "";
+        }
+
+        string held = $"  held {Duration(heldFor)}";
+        return waits.Describe() is string cause ? $"{held} ({cause})" : $"{held} waiting for the channel";
+    }
 
     /// <summary>Below this a wait is ordinary channel access and not worth a column.</summary>
     internal static readonly TimeSpan HeldWorthSaying = TimeSpan.FromMilliseconds(300);

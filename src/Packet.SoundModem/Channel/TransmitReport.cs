@@ -29,4 +29,21 @@ namespace Packet.SoundModem.Channel;
 /// send once it started. The two differ by the frame's airtime, which is a property of the mode
 /// and already knowable from the length.</para>
 /// </remarks>
-public readonly record struct TransmitReport(double TrimHz, System.TimeSpan HeldFor);
+public readonly record struct TransmitReport(double TrimHz, System.TimeSpan HeldFor)
+{
+    /// <summary>
+    /// Where <see cref="HeldFor"/> went: the same total, split by what was holding the frame at
+    /// each moment of it.
+    /// </summary>
+    /// <remarks>
+    /// <para>A property rather than a third positional parameter, so that everything already
+    /// written against <c>new TransmitReport(trim, held)</c> still compiles and still means what
+    /// it meant. This assembly ships as a NuGet package; the same reasoning put
+    /// <see cref="SoundModemChannel.FrameTransmittedWithReport"/> beside
+    /// <see cref="SoundModemChannel.FrameTransmittedWithTrim"/> rather than widening it.</para>
+    /// <para>Default (every field zero) on a report raised by anything that does not measure the
+    /// split, which reads as "no wait recorded" rather than as a wait of nothing - the total is
+    /// still <see cref="HeldFor"/>.</para>
+    /// </remarks>
+    public TransmitWaits Waits { get; init; }
+}

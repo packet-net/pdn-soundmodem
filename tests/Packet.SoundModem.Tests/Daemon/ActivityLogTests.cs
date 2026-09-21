@@ -1,3 +1,4 @@
+using Packet.SoundModem.Channel;
 using AwesomeAssertions;
 using Packet.SoundModem.Daemon;
 using Packet.SoundModem.Kiss;
@@ -132,6 +133,63 @@ public class ActivityLogTests
 
         // ASCII only: this goes to the journal, whose pager runs under a C locale.
         held.Should().MatchRegex("^[\\x20-\\x7E]*$");
+    }
+
+    /// <summary>
+    /// The note names what took most of the wait, so that the two readings of one number can be
+    /// told apart on the line rather than by opening the frame log.
+    /// </summary>
+    /// <remarks>
+    /// GB7RDG-2's 8.3 s row on 2026-09-21 was the third frame of a MAXFRAME=3 window, 1.5 s of
+    /// channel access and 6.8 s of this station's own two earlier bursts: a station working
+    /// normally. An 8.3 s row that is somebody else occupying the frequency is the same number and
+    /// wants a different response, and until the channel measured the split neither line could say
+    /// which it was.
+    /// </remarks>
+    [Fact]
+    public void A_Held_Transmission_Names_What_Took_The_Time()
+    {
+        string ours = ActivityLog.Transmitted(
+            2, "bpsk300", Frame(sourceSsid: 7), heldFor: TimeSpan.FromMilliseconds(8281),
+            waits: new TransmitWaits
+            {
+                Total = TimeSpan.FromMilliseconds(8281),
+                ChannelBusy = TimeSpan.FromMilliseconds(1476),
+                OurTransmission = TimeSpan.FromMilliseconds(6805),
+            });
+
+        ours.Should().Be(
+            "tx[2] bpsk300 M0LTE-7>GB7RDG-2 20 bytes  held 8.3s (6.8s behind our own transmissions)");
+
+        string theirs = ActivityLog.Transmitted(
+            2, "bpsk300", Frame(sourceSsid: 7), heldFor: TimeSpan.FromMilliseconds(8281),
+            waits: new TransmitWaits
+            {
+                Total = TimeSpan.FromMilliseconds(8281),
+                ChannelBusy = TimeSpan.FromMilliseconds(8100),
+                BusySubChannels = 1,
+                BusiestSubChannel = 0,
+            });
+
+        theirs.Should().Be(
+            "tx[2] bpsk300 M0LTE-7>GB7RDG-2 20 bytes  held 8.3s (8.1s channel busy on ch0)");
+
+        // No one cause worth naming: the line says how long and stops, rather than picking the
+        // largest of six numbers that between them mean "ordinary channel access".
+        ActivityLog.Transmitted(
+                2, "bpsk300", Frame(sourceSsid: 7), heldFor: TimeSpan.FromSeconds(4),
+                waits: new TransmitWaits
+                {
+                    Total = TimeSpan.FromSeconds(4),
+                    ChannelBusy = TimeSpan.FromSeconds(1.4),
+                    Backoff = TimeSpan.FromSeconds(1.3),
+                    OurTransmission = TimeSpan.FromSeconds(1.3),
+                })
+            .Should().EndWith("held 4.0s waiting for the channel");
+
+        // ASCII only, both ways round: this goes to the journal.
+        ours.Should().MatchRegex("^[\\x20-\\x7E]*$");
+        theirs.Should().MatchRegex("^[\\x20-\\x7E]*$");
     }
 
     [Fact]

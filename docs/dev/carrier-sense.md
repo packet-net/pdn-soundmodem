@@ -291,6 +291,47 @@ Measured at 12 kHz on the modems GB7RDG runs now:
 
 `PerSubChannelCarrierSenseTests` holds all of this, on GB7RDG's own modem geometry and a fake clock.
 
+## Measuring what actually held a frame
+
+A held time on its own does not say whether carrier sense was the reason for it, which means it
+cannot say whether any of the above is working. `TransmitWaits` splits it, and the frame log keeps
+the split per transmission (`held_cause`, `held_busy_ms`, `held_ourtx_ms`, `held_busy_ch` and the
+rest, documented in [../11-logging-and-metrics.md](../11-logging-and-metrics.md)).
+
+**The diagnostic this section cares about is `held_busy_ch`: which sub-channel's detector asserted
+carrier sense while a frame was held.** That is the question the per-sub-channel rule was written to
+change the answer to, and until it was recorded, the only way to ask it was to replay an off-air
+capture through the detectors by hand, which is how #526 was measured in the first place. On a
+station whose deferral is genuine, a frame on sub-channel 2 is held by sub-channel 2. A station
+whose `held_busy_ch` is mostly some other modem is deferring to something it cannot collide with,
+and the passband geometry or the guard is wrong:
+
+```sql
+SELECT sub_channel, held_busy_ch, COUNT(*), SUM(held_busy_ms)/1000 AS seconds
+FROM frames WHERE direction = 'tx' AND held_busy_ms > 0
+GROUP BY sub_channel, held_busy_ch ORDER BY seconds DESC;
+```
+
+`held_busy_by` says `radio` where the station's control cable answered for the whole station, which
+is not a sub-channel and is never filed as one.
+
+**How the split is measured.** The transmitter loop is the only party that knows, because it is the
+only one that can see both what it is waiting for and who is waiting. It declares what it is about
+to spend time on (`EnterWait`), and the moments since the last declaration are booked to every
+transmitter that has something queued: to the one being served under the cause, and to the others as
+`OurTurn`, since one loop and one PA mean another link's channel access is a wait of theirs too. A
+frame takes a copy of its transmitter's running ledger when it is queued and subtracts it when the
+transmitter picks it up, so nothing is computed per frame while it waits and the p-persistence loop
+gains one indexed add per waiting transmitter per slot.
+
+**A frame queued behind another inherits what was holding the one in front of it.** A window of
+three that waited out a minute of carrier sense reports a minute of carrier sense on all three, not
+"behind our own traffic" on two of them: the channel was occupied and none of them was going
+anywhere. What does read as this station's own doing is `OurTransmission`, the part of the wait
+spent with the PA keyed, and that is what separates the third frame of a MAXFRAME=3 window from a
+busy frequency. GB7RDG-2's 8.3 s row on 2026-09-21 was 1.5 s of carrier sense and 6.8 s of its own
+two earlier bursts, and nothing in the station could say so at the time.
+
 ## The station with no control cable
 
 A station with no serial link to its radio, or a radio that is not a Tait, reads carrier sense off the SHAPE of the received spectrum: `FmShapeBusyDetector`. It is on by default (`carrierSense.audioFallback`), because off is not a neutral choice - off is the ten-second hangover measured above.

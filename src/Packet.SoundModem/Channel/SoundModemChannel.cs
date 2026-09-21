@@ -85,7 +85,76 @@ public sealed class SoundModemChannel
         /// the channel's timing, neither of which can be held.
         /// </summary>
         public ITimer? HeldTooLong { get; set; }
+
+        /// <summary>
+        /// This transmitter's running wait ledger, and a copy of it as it stood when this item was
+        /// queued. The difference at pickup is where this frame's own wait went.
+        /// </summary>
+        /// <remarks>
+        /// Properties rather than more positional parameters. This record's trailing parameters
+        /// are exactly the shape that accepts two arguments transposed without a word - which is
+        /// the first thing anyone suspects when a duration comes out wrong - and there is no
+        /// reason to lengthen the row of them for state the constructor cannot sensibly set.
+        /// The item holds the ledger ITSELF rather than looking it up again at pickup, because a
+        /// transmitter's ledger is dropped when its queue empties and the last frame of a keyup
+        /// is picked up from a queue that has just become empty.
+        /// </remarks>
+        public long[]? Ledger { get; set; }
+
+        /// <inheritdoc cref="Ledger" />
+        public long[]? LedgerAtQueue { get; set; }
+
+        /// <summary>
+        /// The ledger as it stood when the transmitter took this item off the queue, which is the
+        /// instant its wait ended. Copied there rather than read back later because the ledger
+        /// goes on moving the moment the burst starts, and because the last item of a keyup
+        /// empties its transmitter's queue and the ledger goes with it.
+        /// </summary>
+        public long[]? LedgerAtPickup { get; set; }
+
+        /// <summary>
+        /// Told the whole wait and where it went, immediately before the burst is written. The
+        /// station's own path, beside the public <see cref="Started"/> callback: the breakdown is
+        /// carried to a consumer on <see cref="FrameTransmittedWithReport"/>, which is where a
+        /// station's journal, frame log and page all read it from.
+        /// </summary>
+        public Action<TimeSpan, TransmitWaits>? Noted { get; set; }
     }
+
+    // Where a waiting transmission's time goes. One slot per cause, then one per sub-channel for
+    // the carrier sense that asserted, then one for the radio's own station-wide answer - all in
+    // a single long[] per transmitter so that a frame can take a copy at enqueue and subtract it
+    // at pickup. Ticks of the TimeProvider's own timestamp, converted only at the end.
+    //
+    // A flat array rather than a class of named fields because the hot path is "add this many
+    // ticks to these slots", which is an indexed add with no allocation and no branching per
+    // field; the names live in WaitSlot, one place, and the public shape is TransmitWaits.
+    private enum WaitSlot
+    {
+        Unattributed = 0,
+        ChannelBusy = 1,
+        Backoff = 2,
+        TurnaroundHold = 3,
+        OurTransmission = 4,
+        OurTurn = 5,
+        TransmitInhibit = 6,
+    }
+
+    private const int WaitSlotCount = 7;
+    private const int BusySubChannelBase = WaitSlotCount;   // + sub-channel 0..15
+    private const int BusyRadioSlot = BusySubChannelBase + 16;
+    private const int LedgerLength = BusyRadioSlot + 1;
+    private const int RadioBusyBit = 1 << 16;               // matches TransmitWaits.RadioBit
+
+    // The running ledger per transmitter, alongside its queue. Kept in step with _txQueues: a
+    // transmitter with nothing queued has nothing waiting, and its next frame starts a fresh
+    // ledger from zero. Items that are already queued hold the array itself, so dropping it here
+    // cannot strand a frame's figures.
+    private readonly Dictionary<object, long[]> _waitLedgers = new(ReferenceEqualityComparer.Instance);
+    private WaitSlot _waitSlot = WaitSlot.Unattributed;
+    private object? _waitFor;
+    private int _waitAsserted;
+    private long _waitMark;
 
     // A queue PER TRANSMITTER rather than one for the channel. With a single queue a deferred
     // frame at the head blocks everything behind it, including the link that is not deferred -
@@ -279,12 +348,54 @@ public sealed class SoundModemChannel
     /// a transmitter occupies, and the conservative choice for an unknown passband is the one
     /// every transmitter had before this existed.
     /// </remarks>
-    private bool ChannelBusyFor(object? source) =>
-        _transmitting
-        || CarrierSenseRule.Occupied(
-            _busySource?.Busy,
-            anyCarrierDetect: _modems.Values.Any(m => m.CarrierDetect),
-            anyAudioBusy: AnyAudioBusyFor(source));
+    private bool ChannelBusyFor(object? source) => ChannelBusyFor(source, out _);
+
+    /// <summary>
+    /// The same answer, and who gave it: a bit per sub-channel that asserted carrier sense, with
+    /// <see cref="RadioBusyBit"/> when the station's radio answered for the whole station.
+    /// </summary>
+    /// <remarks>
+    /// <para>For the wait ledger, and only for it - the decision is identical either way. Which
+    /// sub-channel held a frame is the question that says whether the per-sub-channel rule of
+    /// packet-net/pdn-soundmodem#526 is doing its job, and a station that is deferring to a modem
+    /// 1.3 kHz away it could not collide with has no other way of showing it.</para>
+    /// <para>Both halves are evaluated exactly as before, the audio answer included even when the
+    /// radio has an opinion and decides. They are reads of a detector's current state and the
+    /// result does not depend on them, but the transmit gate is not the place to start changing
+    /// how often a detector is asked.</para>
+    /// </remarks>
+    private bool ChannelBusyFor(object? source, out int asserted)
+    {
+        asserted = 0;
+        if (_transmitting)
+        {
+            // Our own keyup, asked of no source and answered before anything is read - the same
+            // short circuit this always had. The transmitter never sees it: it only asks between
+            // keyups.
+            return true;
+        }
+
+        int detected = 0;
+        foreach ((int sub, IModem modem) in _modems)
+        {
+            if (modem.CarrierDetect)
+            {
+                detected |= 1 << sub;
+            }
+        }
+
+        int audio = 0;
+        bool anyAudioBusy = AnyAudioBusyFor(source, ref audio);
+
+        if (_busySource?.Busy is bool known)
+        {
+            asserted = (known ? RadioBusyBit : 0) | detected;
+            return known || detected != 0;
+        }
+
+        asserted = anyAudioBusy ? audio : 0;
+        return anyAudioBusy;
+    }
 
     /// <summary>
     /// Whether any modem sharing <paramref name="source"/>'s passband hears something.
@@ -294,16 +405,31 @@ public sealed class SoundModemChannel
     /// sub-channel's detector. An unmeasured passband, at either end of the comparison, could be
     /// anywhere and so counts as overlapping: carrier sense that does not know must defer.
     /// </remarks>
-    private bool AnyAudioBusyFor(object? source)
+    /// <param name="source">The transmitter asking, whose passband narrows the answer.</param>
+    /// <param name="asserted">
+    /// Collects a bit per sub-channel whose modem is the reason for the answer, for the wait
+    /// ledger. Every overlapping modem that hears something is recorded, not just the first,
+    /// which is the only difference from the answer this always gave: a frame held by two
+    /// sub-channels at once is a different diagnosis from one held by either of them.
+    /// </param>
+    private bool AnyAudioBusyFor(object? source, ref int asserted)
     {
         if (source is not IModem asking
             || !_passbands.TryGetValue(asking, out ModemPassband? measured)
             || measured is not ModemPassband mine)
         {
-            return _modems.Values.Any(m => m.ChannelBusy);
+            foreach ((int sub, IModem modem) in _modems)
+            {
+                if (modem.ChannelBusy)
+                {
+                    asserted |= 1 << sub;
+                }
+            }
+
+            return asserted != 0;
         }
 
-        foreach (IModem other in _modems.Values)
+        foreach ((int sub, IModem other) in _modems)
         {
             if (!other.ChannelBusy)
             {
@@ -314,11 +440,11 @@ public sealed class SoundModemChannel
                 || band is not ModemPassband theirs
                 || mine.Overlaps(theirs))
             {
-                return true;
+                asserted |= 1 << sub;
             }
         }
 
-        return false;
+        return asserted != 0;
     }
 
     /// <summary>
@@ -583,7 +709,8 @@ public sealed class SoundModemChannel
     {
         double applied = 0;
         TimeSpan heldFor = TimeSpan.Zero;
-        await EnqueueTransmit(
+        TransmitWaits waits = default;
+        await EnqueueTransmitCore(
                 // Inside the modulate callback, so the trim is chosen when the burst is actually
                 // rendered rather than when it was queued - a frame can wait behind CSMA for
                 // seconds, and the estimate may have moved on by then.
@@ -593,16 +720,26 @@ public sealed class SoundModemChannel
                     return ApplyTransmitTrim(modem.Modulate(frame, txDelay), applied);
                 },
                 rejection => TransmitRejected?.Invoke(subChannel, frame, rejection),
+                ownsChannelTiming: false,
                 // The modem is the keyup's identity: this sub-channel's frames run back-to-back
                 // under one PTT, another sub-channel's do not.
                 source: modem,
                 quietAfter: QuietAfterTransmit?.Invoke(subChannel, frame),
-                started: held => heldFor = held)
+                withdraw: default,
+                stopEarly: null,
+                written: null,
+                started: null,
+                noted: (held, where) =>
+                {
+                    heldFor = held;
+                    waits = where;
+                })
             .ConfigureAwait(false);
 
         FrameTransmitted?.Invoke(subChannel, frame);
         FrameTransmittedWithTrim?.Invoke(subChannel, frame, applied);
-        FrameTransmittedWithReport?.Invoke(subChannel, frame, new TransmitReport(applied, heldFor));
+        FrameTransmittedWithReport?.Invoke(
+            subChannel, frame, new TransmitReport(applied, heldFor) { Waits = waits });
     }
 
     /// <summary>
@@ -707,7 +844,28 @@ public sealed class SoundModemChannel
     public Task EnqueueTransmit(
         Func<int, float[]> modulate, Action<Exception>? rejected = null, bool ownsChannelTiming = false,
         object? source = null, TimeSpan? quietAfter = null, CancellationToken withdraw = default,
-        Func<bool>? stopEarly = null, Action<int>? written = null, Action<TimeSpan>? started = null)
+        Func<bool>? stopEarly = null, Action<int>? written = null, Action<TimeSpan>? started = null) =>
+        EnqueueTransmitCore(
+            modulate, rejected, ownsChannelTiming, source, quietAfter, withdraw, stopEarly, written,
+            started, noted: null);
+
+    /// <summary>
+    /// The whole of <see cref="EnqueueTransmit(Func{int, float[]}, Action{Exception}, bool, object,
+    /// TimeSpan?, CancellationToken, Func{bool}, Action{int}, Action{TimeSpan})"/>, plus the
+    /// station's own richer report of the wait.
+    /// </summary>
+    /// <remarks>
+    /// Private, and the public overload delegates to it unchanged, so the published signature does
+    /// not gain a parameter. This assembly ships as a NuGet package and that signature is
+    /// somebody else's compile; the breakdown reaches a station through
+    /// <see cref="FrameTransmittedWithReport"/>, which is where its journal, frame log and page
+    /// read everything else about a transmission from.
+    /// </remarks>
+    private Task EnqueueTransmitCore(
+        Func<int, float[]> modulate, Action<Exception>? rejected, bool ownsChannelTiming,
+        object? source, TimeSpan? quietAfter, CancellationToken withdraw,
+        Func<bool>? stopEarly, Action<int>? written, Action<TimeSpan>? started,
+        Action<TimeSpan, TransmitWaits>? noted)
     {
         ArgumentNullException.ThrowIfNull(modulate);
         if (ReceiveOnlyReason is string receiveOnly)
@@ -734,7 +892,7 @@ public sealed class SoundModemChannel
         // by the transmitter, which has one queue to draw from and cannot reorder it.
         return EnqueueNow(
             modulate, rejected, ownsChannelTiming, identity, quietAfter, withdraw, stopEarly, written,
-            queuedAt, started);
+            queuedAt, started, noted);
     }
 
     /// <summary>
@@ -907,14 +1065,16 @@ public sealed class SoundModemChannel
 
     private Task EnqueueNow(
         Func<int, float[]> modulate, Action<Exception>? rejected, bool ownsChannelTiming, object source,
-        TimeSpan? quietAfter, CancellationToken withdraw = default,
-        Func<bool>? stopEarly = null, Action<int>? written = null,
-        long queuedAt = 0, Action<TimeSpan>? started = null)
+        TimeSpan? quietAfter, CancellationToken withdraw, Func<bool>? stopEarly, Action<int>? written,
+        long queuedAt, Action<TimeSpan>? started, Action<TimeSpan, TransmitWaits>? noted)
     {
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var item = new TxItem(
             modulate, done, rejected, ownsChannelTiming, source, quietAfter, stopEarly, written,
-            queuedAt, started);
+            queuedAt, started)
+        {
+            Noted = noted,
+        };
         lock (_txGate)
         {
             if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue))
@@ -924,6 +1084,18 @@ public sealed class SoundModemChannel
                 _txOrder.Add(source);
             }
 
+            // Brought up to this instant BEFORE the copy below, so that the stretch the
+            // transmitter is in the middle of is booked against the frames that were already
+            // waiting and none of it lands on this one, which has only just arrived.
+            CreditWaitLocked(_time.GetTimestamp());
+            if (!_waitLedgers.TryGetValue(source, out long[]? ledger))
+            {
+                ledger = new long[LedgerLength];
+                _waitLedgers[source] = ledger;
+            }
+
+            item.Ledger = ledger;
+            item.LedgerAtQueue = (long[])ledger.Clone();
             queue.Enqueue(item);
             _txSignal.TrySetResult();
         }
@@ -1000,6 +1172,7 @@ public sealed class SoundModemChannel
         {
             _txQueues.Remove(item.Source);
             _txOrder.Remove(item.Source);
+            _waitLedgers.Remove(item.Source);
         }
         else
         {
@@ -1045,6 +1218,7 @@ public sealed class SoundModemChannel
         var refusal = new InvalidOperationException(
             $"another service is holding the channel (waited {TransmitInhibitTimeout.TotalSeconds:F0}s); "
             + "transmission dropped");
+
         // Announced BEFORE the task faults, which is the order the wait this replaces used, and it
         // is load-bearing: a caller awaiting the task is released the instant it faults, and if
         // the announcement came second that caller could look for the rejection and not find it
@@ -1069,6 +1243,147 @@ public sealed class SoundModemChannel
     }
 
     /// <summary>
+    /// Books the time since the last change of phase against every transmitter that had something
+    /// waiting for it. Call under <see cref="_txGate"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>The whole wait accounting is this one method. The transmitter loop is always doing
+    /// exactly one thing - waiting out a hold, waiting out carrier sense, waiting a slot after a
+    /// lost roll, or keyed up - and it says which as it goes; everything between two of those
+    /// statements is credited at the second one. A frame then gets its own breakdown by
+    /// subtracting the ledger as it stood when it was queued, which costs nothing while it
+    /// waits.</para>
+    /// <para><b>Every waiting transmitter is credited, not just the one being served.</b> There
+    /// is one transmitter loop and one radio: while it is waiting out carrier sense for one modem,
+    /// every other modem's traffic is waiting too, and a breakdown that left those moments out
+    /// would not add up to the frame's own held time. What the others get is
+    /// <see cref="WaitSlot.OurTurn"/> - they were behind another of this station's links - except
+    /// during a hold or a keyup, which are the station's business rather than one link's and are
+    /// credited to everybody as what they are.</para>
+    /// <para>Cost is one indexed add per waiting transmitter per phase change, with a second for
+    /// each sub-channel that asserted carrier sense. Phase changes happen at slot time at worst,
+    /// which is 10 to 100 ms on a real station, and nothing here allocates.</para>
+    /// </remarks>
+    private void CreditWaitLocked(long now)
+    {
+        long elapsed = now - _waitMark;
+        _waitMark = now;
+        if (elapsed <= 0 || _waitLedgers.Count == 0)
+        {
+            return;
+        }
+
+        foreach ((object source, long[] ledger) in _waitLedgers)
+        {
+            bool served = _waitFor is null || ReferenceEquals(source, _waitFor);
+            ledger[(int)(served ? _waitSlot : WaitSlot.OurTurn)] += elapsed;
+            if (!served || _waitSlot != WaitSlot.ChannelBusy)
+            {
+                continue;
+            }
+
+            for (int asserted = _waitAsserted; asserted != 0; asserted &= asserted - 1)
+            {
+                ledger[BusySubChannelBase + System.Numerics.BitOperations.TrailingZeroCount(asserted)] += elapsed;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Says what the transmitter is about to spend time on, so the moments before it are booked
+    /// against whatever it was doing until now.
+    /// </summary>
+    /// <param name="slot">What it is about to do.</param>
+    /// <param name="waitFor">
+    /// The transmitter being served, or null for something that holds up all of them - a
+    /// turnaround hold, or this station's own keyup.
+    /// </param>
+    /// <param name="asserted">
+    /// Which sub-channels said the channel was busy, as a bit each, with
+    /// <see cref="RadioBusyBit"/> for the radio's station-wide answer. Only read for
+    /// <see cref="WaitSlot.ChannelBusy"/>.
+    /// </param>
+    private void EnterWait(WaitSlot slot, object? waitFor, int asserted = 0)
+    {
+        lock (_txGate)
+        {
+            CreditWaitLocked(_time.GetTimestamp());
+            _waitSlot = slot;
+            _waitFor = waitFor;
+            _waitAsserted = asserted;
+        }
+    }
+
+    /// <summary>
+    /// Where one frame's wait went, from the ledger it has been subtracting from since it was
+    /// queued.
+    /// </summary>
+    /// <remarks>
+    /// The remainder after the measured causes is reported as
+    /// <see cref="TransmitWaits.Unattributed"/> rather than quietly dropped or folded into the
+    /// biggest cause: the parts of this have to add up to the whole, because the whole is a figure
+    /// an operator already has from somewhere else and a breakdown that does not reconcile with it
+    /// is worse than no breakdown.
+    /// </remarks>
+    private TransmitWaits WaitsFor(TxItem item, TimeSpan heldFor)
+    {
+        Span<long> spent = stackalloc long[LedgerLength];
+        if (item.LedgerAtPickup is { } atPickup && item.LedgerAtQueue is { } atQueue)
+        {
+            for (int i = 0; i < LedgerLength; i++)
+            {
+                spent[i] = atPickup[i] - atQueue[i];
+            }
+        }
+
+        int busiest = -1;
+        int mask = 0;
+        for (int sub = 0; sub < 16; sub++)
+        {
+            long ticks = spent[BusySubChannelBase + sub];
+            if (ticks <= 0)
+            {
+                continue;
+            }
+
+            mask |= 1 << sub;
+            if (busiest < 0 || ticks > spent[BusySubChannelBase + busiest])
+            {
+                busiest = sub;
+            }
+        }
+
+        if (spent[BusyRadioSlot] > 0)
+        {
+            mask |= RadioBusyBit;
+        }
+
+        TimeSpan busy = Elapsed(spent[(int)WaitSlot.ChannelBusy]);
+        TimeSpan backoff = Elapsed(spent[(int)WaitSlot.Backoff]);
+        TimeSpan hold = Elapsed(spent[(int)WaitSlot.TurnaroundHold]);
+        TimeSpan ours = Elapsed(spent[(int)WaitSlot.OurTransmission]);
+        TimeSpan turn = Elapsed(spent[(int)WaitSlot.OurTurn]);
+        TimeSpan inhibit = Elapsed(spent[(int)WaitSlot.TransmitInhibit]);
+        TimeSpan accounted = busy + backoff + hold + ours + turn + inhibit;
+        return new TransmitWaits
+        {
+            Total = heldFor,
+            ChannelBusy = busy,
+            Backoff = backoff,
+            TurnaroundHold = hold,
+            TransmitInhibit = inhibit,
+            OurTransmission = ours,
+            OurTurn = turn,
+            Unattributed = heldFor > accounted ? heldFor - accounted : TimeSpan.Zero,
+            BusySubChannels = mask,
+            BusiestSubChannel = busiest < 0 ? null : busiest,
+        };
+    }
+
+    /// <summary>Timestamp ticks as a duration, on this channel's own clock.</summary>
+    private TimeSpan Elapsed(long ticks) => ticks <= 0 ? TimeSpan.Zero : _time.GetElapsedTime(0, ticks);
+
+    /// <summary>
     /// Tells a queued transmission how long the channel held it, without letting a caller's
     /// handler take the transmitter down with it.
     /// </summary>
@@ -1079,16 +1394,17 @@ public sealed class SoundModemChannel
     /// who writes a bad handler would take out the station's transmitter rather than their own
     /// log line.
     /// </remarks>
-    private static void NoteHeldFor(TxItem item, TimeSpan heldFor)
+    private void NoteHeldFor(TxItem item, TimeSpan heldFor)
     {
-        if (item.Started is null)
+        if (item.Started is null && item.Noted is null)
         {
             return;
         }
 
         try
         {
-            item.Started(heldFor);
+            item.Started?.Invoke(heldFor);
+            item.Noted?.Invoke(heldFor, WaitsFor(item, heldFor));
         }
         catch (Exception reporting) when (reporting is not OperationCanceledException)
         {
@@ -1250,7 +1566,18 @@ public sealed class SoundModemChannel
                 return null;
             }
 
+            // Booked before the dequeue, while this transmitter's ledger is still registered: the
+            // stretch that ends here - a keyup's earlier burst, the last slot of carrier sense -
+            // is the end of this frame's wait, and the item is about to be told what that wait
+            // was. The copy is what the breakdown is computed from, because from the next
+            // instruction onwards the ledger belongs to the frames behind this one.
+            CreditWaitLocked(_time.GetTimestamp());
             TxItem item = queue.Dequeue();
+            if (item.Ledger is { } ledger)
+            {
+                item.LedgerAtPickup = (long[])ledger.Clone();
+            }
+
 
             // Unregister, NOT Dispose. Dispose blocks until a callback that is already running
             // has finished, and that callback is Withdraw, whose first act is to take this very
@@ -1267,6 +1594,12 @@ public sealed class SoundModemChannel
             {
                 _txQueues.Remove(source);
                 _txOrder.Remove(source);
+
+                // A transmitter with nothing queued has nothing waiting, so its ledger goes with
+                // its queue and the next frame starts a fresh one from zero. The item just taken
+                // holds the array itself, so this cannot strand the figures of the frame that is
+                // about to go out.
+                _waitLedgers.Remove(source);
             }
             else
             {
@@ -1326,6 +1659,7 @@ public sealed class SoundModemChannel
 
             _txQueues.Clear();
             _txOrder.Clear();
+            _waitLedgers.Clear();
             foreach (TxItem item in queued)
             {
                 // Same reasoning as TakeFrom: never Dispose under this lock.
@@ -1368,6 +1702,12 @@ public sealed class SoundModemChannel
             cancellation.ThrowIfCancellationRequested();
             await WaitForWorkAsync(cancellation).ConfigureAwait(false);
 
+            // From here until the keyup, everything this loop does is a queued frame's wait, and
+            // it says which kind as it goes so the wait can be told apart afterwards. Nothing was
+            // waiting before this point - the loop had nothing to send - so the stretch that ends
+            // here is booked to nobody.
+            EnterWait(WaitSlot.Unattributed, null);
+
             // Whose turn is it? While a turnaround hold is running the answer is only the
             // transmitter it protects; everyone else waits a slot and asks again. This is the
             // half CSMA cannot do: at this instant the reply we are protecting has not started,
@@ -1379,6 +1719,8 @@ public sealed class SoundModemChannel
                 source = NextEligibleSource();
                 if (source is null)
                 {
+                    EnterWait(WaitSlot.TurnaroundHold, null);
+
                     // Wait out what is left of the hold rather than polling at slot intervals.
                     // Exact, and safe against a slot time of zero: a host may set one, and
                     // LinBPQ was sending exactly that to this station until its config gained a
@@ -1395,6 +1737,10 @@ public sealed class SoundModemChannel
                 // waiting on a poll of its own before it is queued. See InhibitHolds.
                 if (InhibitHolds(source))
                 {
+                    // Booked to everybody with something queued, because the hold is the
+                    // station's business rather than one link's: it stops every transmitter that
+                    // shares the channel, which is all of them bar the holder's own.
+                    EnterWait(WaitSlot.TransmitInhibit, null);
                     source = null;
                     await Delay(InhibitPollInterval, cancellation).ConfigureAwait(false);
                 }
@@ -1424,8 +1770,9 @@ public sealed class SoundModemChannel
                 // detector and to any modem sharing its passband, and not to one 1.3 kHz away
                 // that it could not collide with - see ChannelBusyFor, which has what the
                 // station-wide answer cost GB7RDG.
-                if (ChannelBusyFor(source))
+                if (ChannelBusyFor(source, out int asserted))
                 {
+                    EnterWait(WaitSlot.ChannelBusy, source, asserted);
                     await Delay(Csma.SlotTimeMilliseconds, cancellation).ConfigureAwait(false);
                     continue;
                 }
@@ -1435,6 +1782,7 @@ public sealed class SoundModemChannel
                     break;
                 }
 
+                EnterWait(WaitSlot.Backoff, source);
                 await Delay(Csma.SlotTimeMilliseconds, cancellation).ConfigureAwait(false);
             }
 
@@ -1449,6 +1797,11 @@ public sealed class SoundModemChannel
             }
 
             _transmitting = true;
+
+            // Keyed up, which is a fact about the station rather than about one link: every frame
+            // still queued, on this transmitter or any other, is now waiting on our own airtime.
+            // Set before the PTT, so the key itself counts as ours rather than as channel access.
+            EnterWait(WaitSlot.OurTransmission, null);
             TransmittingChanged?.Invoke(true);
             bool keyed = false;
             // Declared out here because the finally that starts the turnaround hold needs them:
@@ -1652,6 +2005,7 @@ public sealed class SoundModemChannel
 
                 TransmittingChanged?.Invoke(false);
                 _transmitting = false;
+                EnterWait(WaitSlot.Unattributed, null);
             }
         }
     }

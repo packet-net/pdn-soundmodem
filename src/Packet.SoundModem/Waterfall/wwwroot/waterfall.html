@@ -1874,8 +1874,13 @@ function logFrame(ev) {
   // the host that queued the frame cannot see this at all: it wrote to a socket and the write
   // returned, so its own retry timers have been running against the wrong moment for however
   // long this says.
+  // The cause is on the badge, not only in the tooltip: a row that waited because somebody else
+  // was using the frequency and a row that waited behind this station's own window carry the same
+  // number and want opposite responses, and a reader scanning the panel must not have to hover
+  // over each one to find out which it is. Absent where no single cause took half the wait, and
+  // on a row replayed from a log written before the station measured it.
   const held = ev.heldMs != null
-    ? `<span class="held" title="This frame waited ${heldText(ev.heldMs)} for the channel before it went out. Usually carrier sense; also the turnaround hold, a transmit inhibit, or this station's own earlier frames in the same keyup. The host that queued it had no way to know - a KISS write returns immediately - so anything it decided on a timer during that wait was decided blind.">HELD ${heldText(ev.heldMs)}</span>`
+    ? `<span class="held" title="This frame waited ${heldText(ev.heldMs)} for the channel before it went out.${heldWhy(ev.heldCause)} The host that queued it had no way to know - a KISS write returns immediately - so anything it decided on a timer during that wait was decided blind.">HELD ${heldText(ev.heldMs)}${ev.heldCause ? " " + esc(ev.heldCause) : ""}</span>`
     : "";
   // Escaped like every other field on the row. These three were not, and were safe only because
   // Ax25AddressParser restricts a callsign to [A-Z0-9] and an SSID and a mode name comes out of
@@ -1903,7 +1908,9 @@ function logFrame(ev) {
   if (ev.txTrimHz != null) {
     bits.push(`<i class="trimtxt">shifted ${ev.txTrimHz >= 0 ? "+" : ""}${ev.txTrimHz.toFixed(1)} Hz</i>`);
   }
-  if (ev.heldMs != null) bits.push(`<i class="heldtxt">held ${heldText(ev.heldMs)}</i>`);
+  if (ev.heldMs != null) {
+    bits.push(`<i class="heldtxt">held ${heldText(ev.heldMs)}${ev.heldCause ? ", " + esc(ev.heldCause) : ""}</i>`);
+  }
   bits.push(`${ev.lenBytes} B`);
   if (ev.corrected > 0) bits.push(`<i>fec ${ev.corrected}</i>`);
   if (ev.crc === false) bits.push(`<span class="bad">crc✗</span>`);
@@ -2198,10 +2205,10 @@ function tagsFor(ev) {
   // access did to it. On a card full of POLL and AGAIN tags this is usually the explanation:
   // the polls went out late and together, so nothing had a chance to answer the earlier ones.
   if (ev.heldMs != null) {
-    tags.push(["held", `HELD ${heldText(ev.heldMs)}`,
-      "This frame waited " + heldText(ev.heldMs) + " for the channel before it reached the air. "
-      + "Usually carrier sense; also the turnaround hold, a transmit inhibit, or our own earlier frames. "
-      + "The host that queued it could not see the wait, so any timer it ran during it was running blind."]);
+    tags.push(["held", `HELD ${heldText(ev.heldMs)}${ev.heldCause ? " " + ev.heldCause : ""}`,
+      "This frame waited " + heldText(ev.heldMs) + " for the channel before it reached the air."
+      + heldWhy(ev.heldCause)
+      + " The host that queued it could not see the wait, so any timer it ran during it was running blind."]);
   }
   return tags;
 }
@@ -2230,6 +2237,33 @@ function heldText(ms) {
   const m = Math.floor(ms / 60000);
   const s = Math.round((ms % 60000) / 1000);
   return `${m}m${String(s).padStart(2, "0")}s`;
+}
+
+/* What the badge's cause word means, spelled out for the tooltip. The short form is what a reader
+   scanning the panel sees; this is what they get when they stop on one. An unknown word - a row
+   from a station running a later build than this page - falls back to the sentence the badge
+   carried before any of this existed rather than to nothing. */
+function heldWhy(cause) {
+  if (!cause) {
+    return " No single reason accounts for half of that: carrier sense, the p-persistence roll,"
+      + " the turnaround hold and our own earlier frames all took some of it.";
+  }
+  if (cause.startsWith("busy")) {
+    /* "busy" on its own is the radio's station-wide answer; "busy chN" names the sub-channel whose
+       detector asserted, and N is what follows "ch" rather than a fixed offset into the string. */
+    const sub = cause.startsWith("busy ch") ? cause.slice("busy ch".length) : "";
+    return " Most of it was carrier sense" + (sub ? " on sub-channel " + sub : "")
+      + ": somebody else was using the frequency.";
+  }
+  if (cause === "our tx") {
+    return " Most of it was this station's own transmissions going out in front of it, which is"
+      + " what the later frames of a window do rather than a sign of a busy channel.";
+  }
+  if (cause === "other link") return " Most of it was spent behind another of this station's links.";
+  if (cause === "backoff") return " Most of it was the p-persistence roll on a channel that was clear.";
+  if (cause === "turnaround") return " Most of it was the hold that keeps the channel clear for a reply.";
+  if (cause === "inhibit") return " Most of it was another service holding the channel, such as an ARQ session.";
+  return " Usually carrier sense; also the turnaround hold, a transmit inhibit, or our own earlier frames.";
 }
 
 /* ---------- transcript ---------- */

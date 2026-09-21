@@ -90,14 +90,14 @@ public class HeldForAttributionTests
         return (channel, time, busy);
     }
 
-    private static async Task<Task> StartAsync(
+    private static async Task<(Task Transmitter, VirtualAir.PacedSink Sink)> StartAsync(
         SoundModemChannel channel, FakeTimeProvider time, CancellationToken cancellation)
     {
-        Task transmitter = channel.RunTransmitterAsync(
-            new VirtualAir.PacedSink(SampleRate, time), new RecordingPtt(), cancellation);
+        var sink = new VirtualAir.PacedSink(SampleRate, time);
+        Task transmitter = channel.RunTransmitterAsync(sink, new RecordingPtt(), cancellation);
         VirtualAir.Pump(time, cancellation);
         await Task.Yield();
-        return transmitter;
+        return (transmitter, sink);
     }
 
     /// <summary>
@@ -112,6 +112,10 @@ public class HeldForAttributionTests
         var held = new List<TimeSpan>();
         channel.FrameTransmittedWithReport += (_, _, report) => held.Add(report.HeldFor);
 
+        // Whether the station is keyed up, so the second keyup below can be made to be one.
+        var keyed = false;
+        channel.TransmittingChanged += on => Volatile.Write(ref keyed, on);
+
         // Every instant below is READ off the fake clock rather than assumed. The crank runs on
         // the thread pool and cannot be made to stop exactly on a mark, so a test that took its
         // own targets for the truth would fail by however far the crank overshot - which is a
@@ -119,7 +123,7 @@ public class HeldForAttributionTests
         busy.Busy = true;
         DateTimeOffset firstQueued = time.GetUtcNow();
         Task first = channel.EnqueueTransmit(2, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        (Task transmitter, VirtualAir.PacedSink sink) = await StartAsync(channel, time, cancellation.Token);
 
         // A second frame a second into the first one's wait. Same source, so one queue: it is
         // behind the first frame and it will share the first frame's keyup.
@@ -133,6 +137,16 @@ public class HeldForAttributionTests
         busy.Busy = false;
         await first.WaitAsync(TimeSpan.FromSeconds(60));
         await second.WaitAsync(TimeSpan.FromSeconds(60));
+
+        // Wait for the first keyup to END before handing over the next frame. A frame that
+        // arrives while the drain loop is still running joins THAT keyup and is picked up the
+        // instant it is queued, which is a keyup of three rather than the two-then-one this is
+        // about. The enqueue task of the last frame completes inside the keyup, one write before
+        // the tail and the unkey, so awaiting it is not the same as waiting for the keyup.
+        while (Volatile.Read(ref keyed))
+        {
+            await Task.Delay(1, CancellationToken.None);
+        }
 
         // Now a second keyup, after a fresh wait of its own, to prove the ledger is per frame and
         // not something cumulative that keeps counting from the first one.
@@ -192,22 +206,14 @@ public class HeldForAttributionTests
         (SoundModemChannel channel, FakeTimeProvider time, Switch busy) = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         var held = new List<TimeSpan>();
-        var logged = new List<DateTimeOffset>();
-
-        // Stamped exactly where the frame log stamps heard_at on a tx row: in the handler for
-        // FrameTransmittedWithReport, which is raised once the burst has gone to the device.
-        channel.FrameTransmittedWithReport += (_, _, report) =>
-        {
-            held.Add(report.HeldFor);
-            logged.Add(time.GetUtcNow());
-        };
+        channel.FrameTransmittedWithReport += (_, _, report) => held.Add(report.HeldFor);
 
         busy.Busy = true;
         DateTimeOffset queued = time.GetUtcNow();
         Task a = channel.EnqueueTransmit(2, Broadcast());
         Task b = channel.EnqueueTransmit(2, Broadcast());
         Task c = channel.EnqueueTransmit(2, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        (Task transmitter, VirtualAir.PacedSink sink) = await StartAsync(channel, time, cancellation.Token);
 
         await VirtualAir.AdvanceToAsync(time, queued + TimeSpan.FromMilliseconds(800));
         DateTimeOffset opened = time.GetUtcNow();
@@ -237,7 +243,11 @@ public class HeldForAttributionTests
 
         // And here is the trap, reproduced. heard_at is stamped a whole burst after the pickup, so
         // heard_at - held_ms is the queue instant PLUS that frame's own airtime, and the first
-        // frame of the keyup is the only one carrying a full TXDELAY.
+        // frame of the keyup is the only one carrying a full TXDELAY. The logged instants are the
+        // ones the sink recorded as each burst finished going to the device, which is the instant
+        // a station stamps: see PacedSink.Written for why they are not read from the event.
+        IReadOnlyList<DateTimeOffset> logged = sink.Written;
+        logged.Should().HaveCount(3);
         DateTimeOffset impliedA = logged[0] - held[0];
         DateTimeOffset impliedB = logged[1] - held[1];
         DateTimeOffset impliedC = logged[2] - held[2];

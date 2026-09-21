@@ -87,7 +87,32 @@ internal static class VirtualAir
     /// </summary>
     internal sealed class PacedSink(int sampleRate, FakeTimeProvider time) : IAudioOutput
     {
+        private readonly List<DateTimeOffset> _written = [];
+
         public int SampleRate { get; } = sampleRate;
+
+        /// <summary>
+        /// When each burst finished going to the device, on the fake clock and in order.
+        /// </summary>
+        /// <remarks>
+        /// The instant a station stamps as a transmitted frame's <c>heard_at</c>: the frame log
+        /// writes it from the handler for FrameTransmittedWithReport, which is raised once the
+        /// enqueue task completes, and the enqueue task completes when this write returns. A test
+        /// that stamps it in that handler instead is stamping when the thread pool got round to
+        /// the continuation, which on a loaded box is a second or more later and is the pool's
+        /// business rather than the channel's. Taken here it is the same instant, on the
+        /// transmitter's own thread.
+        /// </remarks>
+        public IReadOnlyList<DateTimeOffset> Written
+        {
+            get
+            {
+                lock (_written)
+                {
+                    return [.. _written];
+                }
+            }
+        }
 
         public void Write(ReadOnlySpan<float> samples)
         {
@@ -96,6 +121,11 @@ internal static class VirtualAir
             while (time.GetUtcNow() < until)
             {
                 Tick(time);
+            }
+
+            lock (_written)
+            {
+                _written.Add(time.GetUtcNow());
             }
         }
 

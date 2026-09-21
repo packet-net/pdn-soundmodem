@@ -46,6 +46,13 @@ public class TransmitRecordTests
             + "FrameTransmittedWithTrim once the burst has gone out, which is what the daemon "
             + "writes every modem's traffic down from (Program.cs, channel.FrameTransmittedWithTrim)"),
 
+        new("src/Packet.SoundModem/Channel/SoundModemChannel.cs",
+            "noted: null",
+            "not a transmitter at all: the published EnqueueTransmit handing straight to the "
+            + "private overload that also carries the wait breakdown. Whatever it is passed is "
+            + "recorded wherever its own caller records it, which is the entry above for the "
+            + "byte-frame path and one of the entries below for everything else"),
+
         new("src/Packet.SoundModem/Pocsag/PagingTcpServer.cs",
             "source: _encoder",
             "POCSAG paging: raises PageSent once the page has actually gone out, and the daemon "
@@ -189,7 +196,26 @@ public class TransmitRecordTests
     /// </summary>
     private static IEnumerable<(int Line, string Code)> CallsIn(string text)
     {
-        const string name = "EnqueueTransmit(";
+        var found = new List<(int, string)>();
+        foreach (string name in TransmitEntryPoints)
+        {
+            found.AddRange(CallsIn(text, name));
+        }
+
+        found.Sort((a, b) => a.Item1.CompareTo(b.Item1));
+        return found;
+    }
+
+    /// <summary>
+    /// Both ways into the channel's transmit queue. <c>EnqueueTransmitCore</c> is the private one
+    /// the published overload hands to, and it is scanned as well because a transmitter added
+    /// inside this assembly would reach for it and would otherwise never be asked how it writes
+    /// itself down. Neither string matches the other: the character after "Transmit" differs.
+    /// </summary>
+    private static readonly string[] TransmitEntryPoints = ["EnqueueTransmit(", "EnqueueTransmitCore("];
+
+    private static IEnumerable<(int Line, string Code)> CallsIn(string text, string name)
+    {
         var found = new List<(int, string)>();
 
         for (int at = text.IndexOf(name, StringComparison.Ordinal); at >= 0;
