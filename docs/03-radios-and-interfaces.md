@@ -34,7 +34,7 @@ At start-up the journal says what was opened and at what rate:
 audio: plughw:CARD=Device,DEV=0 capture 48000 Hz -> 12000 Hz
 ```
 
-Wiring an interface to a Tait TM8100 or TM8200 is a page of its own: [hardware/tait-tm8100-cm108.md](hardware/tait-tm8100-cm108.md). Setting the card's gains comes next, in [04-levels.md](04-levels.md).
+Wiring an interface to a radio is a page of its own, one per radio: [hardware/tait-tm8100-cm108.md](hardware/tait-tm8100-cm108.md) for a Tait TM8100 or TM8200 on FM, and [hardware/yaesu-ft450d-cm108.md](hardware/yaesu-ft450d-cm108.md) for a Yaesu FT-450D's rear-panel DATA jack on HF. Setting the card's gains comes next, in [04-levels.md](04-levels.md).
 
 ## Choose how the radio is keyed
 

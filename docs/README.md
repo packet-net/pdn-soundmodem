@@ -18,7 +18,7 @@ pdn-soundmodem is a software TNC for Linux. It turns a sound card, a FlexRadio o
 12. [12-troubleshooting.md](12-troubleshooting.md): read the journal, the start-up refusals, and what to do when nothing decodes.
 13. [13-decode-a-recording.md](13-decode-a-recording.md): get the frames out of a WAV file with the source-tree tools.
 
-The one hardware page, [hardware/tait-tm8100-cm108.md](hardware/tait-tm8100-cm108.md), is what to build to wire a CM108 interface to a Tait TM8100.
+The two hardware pages are what to build to wire a CM108 interface to a radio: [hardware/tait-tm8100-cm108.md](hardware/tait-tm8100-cm108.md) for a Tait TM8100 on FM, and [hardware/yaesu-ft450d-cm108.md](hardware/yaesu-ft450d-cm108.md) for a Yaesu FT-450D's DATA jack on HF.
 
 ## I want to
 
@@ -46,6 +46,7 @@ The one hardware page, [hardware/tait-tm8100-cm108.md](hardware/tait-tm8100-cm10
 - Fix a service that will not start: [12-troubleshooting.md](12-troubleshooting.md#the-service-will-not-start).
 - Decode a recording: [13-decode-a-recording.md](13-decode-a-recording.md).
 - Wire a Tait TM8100: [hardware/tait-tm8100-cm108.md](hardware/tait-tm8100-cm108.md).
+- Wire a Yaesu FT-450D: [hardware/yaesu-ft450d-cm108.md](hardware/yaesu-ft450d-cm108.md).
 - Run two modems on one machine: [01-install.md](01-install.md#more-than-one-modem-on-one-machine).
 - Upgrade or remove it: [01-install.md](01-install.md#upgrading).
 
