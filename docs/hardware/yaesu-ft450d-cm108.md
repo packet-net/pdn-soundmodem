@@ -72,34 +72,66 @@ Pin by pin, from the iron's point of view:
 - Pin 5 (DATA OUT) takes four components. From pin 5, C1 first. Then Rs in series. From Rs's far end, Rp and C3 down to the ground wire. That junction wires to IN.
 - Pins 4 and 6 and the SQL pad get nothing.
 
-All seven fit free-standing in the tail with heatshrink over each leg and the lot, or on a fingernail of stripboard in the plug's backshell.
+### How it goes together
+
+Three segments, with the seven components on a scrap of protoboard between the second and the third.
+
+```
+  PC  --USB lead--  CM108 dongle  --5 cm wires--  protoboard  --0.3 m pigtail--  radio
+                    PCB                           7 parts     screened, moulded
+                                                              6-pin mini-DIN,
+                                                              bare ends this end
+```
+
+That arrangement is better than it looks, and it is worth knowing why before rearranging it. **The unscreened segment is the one carrying the high level, and the screened segment is the one carrying the low level**, which is the right way round in both directions.
+
+- **Transmit.** The 5 cm carries the CM108's full 2.828 Vp-p. Anything induced into it is attenuated by the divider, about 34 dB, along with the wanted signal, so 5 cm of unscreened wire there costs about 34 dB less than 5 cm anywhere downstream. The pigtail then carries about 51 mVp-p, which is small, and it is screened.
+- **Receive.** The pigtail carries the radio's full 500 mVp-p from 600 ohm. The 5 cm carries 97 mV from a 451 ohm source into MICIN. The receive divider is shallow, about 5 dB, so there is no large asymmetry to exploit here; the argument is only that 5 cm of unscreened wire beats 30 cm of it.
+- **And the components in the middle are what keeps the radio's cable away from the codec.** RF arriving up the pigtail meets Rb, 100 ohm to ground, and then 4k7 in series before it can reach the line output. On the other path it meets C3 and then Rs. A divider at either end gives up one of those two properties; in the middle you get both.
+
+So build it as drawn, and keep the 5 cm at 5 cm. **No component value changes for this form factor.** The pigtail's 30-odd picofarads put the transmit pole at 63 MHz and the receive pole at 13 MHz, and the 5 cm wires are a few picofarads.
+
+Twist each 5 cm signal wire with a ground wire back to the dongle's GND pad, or twist all three loosely around one. At 5 cm it barely matters and it costs nothing.
 
 Mind the direction. The board is the TNC here: OUT drives DATA IN on pin 1, IN listens on DATA OUT on pin 5. This is the opposite way round from the bench loop in [ninotnc-loop.md](../dev/bench/ninotnc-loop.md), where the board played the radio, and copying that table into this build swaps transmit and receive.
 
 ### About the connector
 
-Six-pin mini-DIN is unpleasant to solder and easy to mis-number. Buy a moulded lead and cut it rather than soldering a bare plug, and identify the conductors with a meter against the DATA JACK diagram in the radio's own manual rather than by colour, because cable colour codes are not standard between makers. Pin 2 is the only ground on the jack, so it is the one to find first and the one every shunt leg returns to.
+A moulded pigtail is the right way to buy this: six-pin mini-DIN is unpleasant to solder and easy to mis-number. Identify the bare ends with a meter against the DATA JACK diagram in the radio's own manual rather than by colour, because cable colour codes are not standard between makers. Pin 2 is the only ground on the jack, so it is the one to find first and the one every shunt leg returns to.
 
-Keep the tail short and screened.
+**Buzz two more things out of the pigtail before you trust it**, because both vary between makers and neither is visible:
+
+- **Does pin 2 have a core of its own, or is the braid doing that job?** A lead with six cores and a separate drain is what you want. A lead that saves a core by using the braid as pin 2 leaves the screen carrying signal return, which is the one arrangement [Grounding and the screen](#grounding-and-the-screen) is written to avoid. Over 0.3 m with everything else short it is a tolerable compromise, but know which one you have, because it is the first suspect if hum appears.
+- **Is the braid bonded to the mini-DIN shell inside the moulding?** Often it is, sometimes it is not, and the radio has already tied that shell to pin 2 and to its own chassis. If it is not bonded, the screen is landed at one end only whatever you do at the protoboard.
 
 ### Grounding and the screen
 
 Buzz the radio out before you build and you will find the DATA jack's pin 2, the mini-DIN's metal shell and the rig's chassis are all one node. The board is the same story at its end: the [netlist](../dev/hardware/cm108-widget-netlist.md) puts the GND pad and the micro-USB connector's **GND pin** on the same net, and leaves the micro-USB **shell** on a net of its own, connected to nothing. So there are two decisions and only one of them is open.
 
-**The GND wire is not a choice.** Pin 2 to the GND pad, on its own conductor. It is the return for both audio paths and for PTT, and there is no circuit without it. The moment it is fitted the rig's chassis and the host's ground are bonded, because the GND pad is the USB ground pin is the host.
+**There is one ground node in this assembly, and it lives on the protoboard.** Five things meet at a single point there, and nothing daisy-chains:
 
-**The screen is a choice, and the answer here is both ends.** Land it on the plug's shell at the radio end, which a metal backshell does for you and which the radio has already bonded to pin 2 internally, and on the GND pad at the board end. The usual audio-interconnect rule is the opposite, one end only, and it does not apply here:
+1. the pigtail's pin 2 core, out to the radio;
+2. the pigtail's braid;
+3. a wire back to the dongle's GND pad, 5 cm;
+4. Rb, the transmit shunt;
+5. Rp and C3, the receive shunts.
+
+**The wire to the GND pad is not a choice.** It is the return for both audio paths and for PTT, and there is no circuit without it. The moment it is fitted the rig's chassis and the host's ground are bonded, because the GND pad is the USB ground pin is the host.
+
+**The screen is a choice, and the answer here is both ends.** At the radio end the moulding has usually done it for you, on to a shell the radio has already tied to pin 2 and to its chassis; buzz it, as above. At the other end, land the braid on the protoboard's star point. The usual audio-interconnect rule is the opposite, one end only, and it does not apply here:
 
 - **The loop it avoids already exists.** Chassis, pin 2, the GND wire, the GND pad, the USB ground pin, the host, its mains earth, back round to the rig's supply. Floating one end of the screen does not break that loop, so it buys nothing at mains frequencies.
 - **Above a few hundred kilohertz a screen earthed at one end is not a screen**, it is a wire with a free end. At an HF station that is the failure it was fitted to prevent. Bonded at both ends it carries common-mode current around the conductors instead of letting that current develop a voltage across them.
 
-**The screen is never the return.** Use a cable with four inner conductors, DATA IN, DATA OUT, PTT and GND, plus an overall screen. Not a three-core leaning on the braid for ground. A screen carrying signal return current puts every millivolt of common-mode noise on it directly in series with the audio, and that, rather than the mains loop, is the real argument against bonding both ends. Giving the return its own conductor is what disposes of it.
+**The screen is never the return.** The pigtail wants a core for pin 2 and a braid that carries no signal current. A screen doing double duty as the return puts every millivolt of common-mode noise on it directly in series with the audio, and that, rather than the mains loop, is the real argument against bonding both ends. Giving the return its own conductor is what disposes of it.
 
 **Bond the rig to the station earth with something heavier than this cable.** A moulded mini-DIN lead's ground conductor is a thin wire, and once fitted it is one of the bonds between the rig's chassis and the host's. It should never be the main one. A short braid strap from the rig's GND terminal to the station earth leaves the data cable's ground carrying only the signal return it was sized for.
 
-**Star the shunt legs.** Rb, Rp and C3 all return to ground. Bring them to one point and run a single wire from there to pin 2, rather than tapping the ground wire in three places. It costs nothing and keeps PTT's switching current out of the audio returns.
+**One point, not three.** PTT's switching current shares the ground wire with both audio returns, so the five legs above meet at a point and go their separate ways from there. Tapping the ground wire in three places along the protoboard puts that current in series with the audio instead. It is a few millivolts either way and it costs nothing to get right.
 
-**Leave the micro-USB shell as it is.** It is isolated from board ground by design, and there is nothing better to connect it to, because the board has no chassis and its only ground is the codec's. If RF ingress turns out to be a problem, 10 nF from the USB shell to the GND pad is the conventional thing to try and it is reversible. That is a suggestion, not a tested fix.
+**Leave the micro-USB shell as it is.** It is isolated from board ground by design, and on a bare board there is nothing better to connect it to, because the board has no chassis and its only ground is the codec's.
+
+**The upgrade, if RF bites: put the dongle and the protoboard in one small metal box.** That is the real answer to a bare board and 5 cm of unscreened wire sitting a few feet from an HF antenna, and it tidies up three loose ends at once. The box becomes the screen the 5 cm run does not have. The pigtail's braid lands on the box wall where it enters, which is a better termination than a pad. And the USB lead's braid lands on the box wall at the other end, which bonds the micro-USB shell's job to ground properly rather than through the 10 nF bodge that would otherwise be the thing to try. Bond the box to the star point at one place.
 
 **If you fit the isolation transformers**, all of this is replaced by the simple case. The CM108's ground is then not connected to the rig at all, so land the screen at the radio end only and leave the board end floating: at that point there is finally a loop worth not closing.
 
@@ -114,8 +146,9 @@ Buzz the radio out before you build and you will find the DATA jack's pin 2, the
 | C4 | **10u** | non-polarised: bipolar electrolytic or film; X7R only at 25 V rating or more | 20% | >= 16 V |
 | C1 | **4u7** | non-polarised, as C4 | 20% | >= 16 V |
 | C3 | **10n** | ceramic, C0G preferred, X7R acceptable | 20% | 50 V |
-| plug | 6-way mini-DIN, male, metal shell, on a moulded lead | | | |
-| cable | 4 inner conductors plus an overall screen; the screen is not one of the four | | | |
+| pigtail | 0.3 m moulded 6-way mini-DIN, male, screened, bare ends; a core for pin 2 and a braid that is not it | | | |
+| protoboard | a scrap, and 5 cm of wire to the dongle's pads | | | |
+| box | small metal enclosure for the dongle and the protoboard together. Optional, and the answer if RF bites | | | |
 
 Tolerance is looser here than on the Tait build, and for a reason worth knowing: there the transmit divider set a hard deviation ceiling with only half a decibel of margin, so 5% parts could breach it unaided. Here the transmit level is set on the ALC meter against the radio's own indication, so a resistor that is half a decibel off is absorbed by the mixer in the first five minutes. 1% metal film is specified because it costs nothing and holds its value in a warm shack, not because the design needs it.
 

@@ -179,30 +179,39 @@ While the assembly is on the bench, an audio sweep of the whole chain is worth t
 
 Measured on the bench on 2026-09-22, with a continuity meter, and it agrees with the netlist already in tree.
 
-- **At the radio: DATA jack pin 2, the mini-DIN shell and the rig chassis are one node.** So the radio offers no distinction between a signal ground and a chassis ground, and a metal-shelled plug bonds the screen to signal ground whether or not you ask it to.
+- **At the radio: DATA jack pin 2, the mini-DIN shell and the rig chassis are one node.** So the radio offers no distinction between a signal ground and a chassis ground, and a moulded pigtail whose braid reaches its shell has already bonded the screen to signal ground at that end whether or not you asked it to. Whether a given pigtail does is a per-lead fact and wants a meter.
 - **At the board: the GND pad and the micro-USB GND pin are one node, and the micro-USB shell is not on it.** The [netlist](cm108-widget-netlist.md) says the same thing independently: `J9.1` and `J10.5(GND)` are both on the `GND` net, and `J10.6(Shield)` is `N$14`, a single-pin net going nowhere.
 
 **The consequence that decides everything else: the mandatory GND conductor already bonds the rig's chassis to the host.** Pin 2, the GND wire, the GND pad, the USB ground pin, the host, its mains earth, back to the rig's supply. That loop is closed by the one wire the circuit cannot work without, so no decision about the screen can open it.
 
 Which is why the usual unbalanced-audio rule, screen at one end only, is the wrong answer here and the Tait page's version of that sentence should not have been carried over. It is a rule for breaking a loop, and there is no loop left to break. What it costs, meanwhile, is real: above a few hundred kilohertz a conductor earthed at one end and free at the other is a stub, not a shield, and HF ingress is the dominant threat at this station rather than mains hum.
 
-**So: screen bonded at both ends, and a separate conductor for the return.** Those two go together and neither works without the other. The genuine hazard in a both-ends screen is the one the audio world calls the pin 1 problem, where the braid is doing double duty as signal return, so that common-mode current on the screen appears in series with the wanted signal. Give the return its own core, keep the screen out of the signal path entirely, and the hazard goes with it. A four-core plus overall screen is the cable; a three-core relying on the braid is not.
+**So: screen bonded at both ends, and a separate conductor for the return.** Those two go together and neither works without the other. The genuine hazard in a both-ends screen is the one the audio world calls the pin 1 problem, where the braid is doing double duty as signal return, so that common-mode current on the screen appears in series with the wanted signal. Give the return its own core, keep the screen out of the signal path entirely, and the hazard goes with it. A pigtail with a core for pin 2 and a braid carrying no signal current is the cable; one that saves a core by using the braid as pin 2 is not, and which of the two you have bought is not visible without a meter.
 
 **The heavy bond is not optional either.** The data lead's ground core is thin wire, and it is now one of the conductors bonding two chassis. A braid strap from the rig's earth terminal to the station earth means it is never the main one. This is a safety point as much as a noise one.
 
 **What changes with isolation.** Fit the two 600:600 transformers and an opto in place of the PTT wire and the picture inverts: the board's ground is no longer connected to the rig, a real loop becomes possible, and the screen should then be landed at the radio end only. The recommendation above is conditional on the direct build, and the build page says so.
 
-### Where the dividers sit, and what the cable then carries
+### Where the dividers sit, and what each segment then carries
 
-All seven components sit at the board end, in the tail off the pads. That is a choice, it differs in the two directions, and it is worth recording which way each one goes.
+The assembly is three segments, not two, and that is what makes the placement question easy. A USB lead to the dongle PCB, **5 cm of unscreened wire** to a protoboard carrying all seven components, and a **0.3 m screened moulded pigtail** to the radio. The components are neither at one end nor the other; they are in the middle, and the middle is where both arguments point.
 
-**Receive: the board end is plainly right.** With Rs, Rp and C3 at the board, the cable carries the radio's full 500 mVp-p from a 600 ohm source into a 1.2k load. Move them into the backshell and it carries 97 mV into MICIN's high impedance instead, which is a small signal on a high-impedance line, the worst pair available.
+**The unscreened segment carries the high level and the screened segment carries the low level**, which is the right way round in both directions.
 
-**Transmit: the board end is the RF answer rather than the noise answer, and the trade is worth knowing.** With Rt and Rb at the board the cable carries the attenuated signal, about 51 mVp-p on the 600 ohm reading, from a 98 ohm source. Move the pair into the backshell and the cable carries the CM108's full 2.828 Vp-p, and anything induced into it is then attenuated by the same 33.5 dB as the wanted signal when it reaches the divider. **That is 33.5 dB of immunity to induced noise for the cost of moving two components** **DERIVED**.
+| Path | 5 cm, unscreened | 0.3 m pigtail, screened |
+|---|---|---|
+| transmit | 2.828 Vp-p from the CM108's line out | about 51 mVp-p from 98 ohm into 600 ohm |
+| receive | 97 mVrms from 451 ohm into MICIN | 500 mVp-p from 600 ohm into 1.2k |
 
-What buys it back is what Rt does where it is: 4k7 in series between the cable and the codec's line output is RF attenuation into the card, and Rs with C3 does the same on the receive side. At an HF station, RF getting into the codec is likelier than hum getting into a screened metre of cable, so the board end wins on the threat that actually materialises.
+**On transmit that asymmetry is worth about 34 dB** **DERIVED**: the divider as built attenuates 33.6 dB open circuit and 34.9 dB into 600 ohm, which is not the same number as the -33.47 dB the design asked for and is the one that applies here. Noise induced into the 5 cm sits at the divider's input alongside 2.828 Vp-p and is attenuated with it, so the signal-to-noise ratio arriving at pin 1 is set by the level at the divider's input rather than at its output. The same noise induced downstream would add to 51 mV directly. Five centimetres of unscreened wire in the one place where it costs 34 dB less than anywhere else is a good trade for a build that has to solder somewhere.
 
-Build it at the board end. If transmit audio turns out to carry hum or buzz that the screen, the strap and the ferrites do not fix, moving Rt and Rb into the backshell is the fix with 33.5 dB behind it, and it is a rebuild of one end of the lead rather than a redesign.
+**On receive there is no such asymmetry to exploit**, because the receive divider is shallow: about 5.2 dB between noise injected before it and after it **DERIVED**. The argument there is only the ordinary one, that 5 cm of unscreened wire picks up less than 30 cm of it, and that a 451 ohm source is a hard thing to couple into.
+
+**And the middle is the only place that protects the codec from the radio's cable.** RF arriving up the pigtail meets Rb, 100 ohm to ground, and then 4k7 in series before it can reach the line output; on the receive path it meets C3 and then Rs. A divider at the dongle end would give up that 34 dB; a divider in the plug, which a moulded pigtail does not offer anyway, would give up the RF isolation and put the low-level transmit signal on the longer run. The protoboard gets both.
+
+**No component value changes for this form factor.** The pigtail contributes something like 30 pF, which puts the transmit pole at 63 MHz against the 98 ohm and 600 ohm either side of it, and the receive pole at 13 MHz against 600 ohm and 1.2k. The 5 cm runs are a few picofarads. Neither is near anything.
+
+**What the form factor does cost is a bare protoboard and 5 cm of open wire a few feet from an HF antenna**, which is the one thing about it that is worse than a tail in a backshell. The fix is a small metal box around the dongle and the protoboard together, with the pigtail's braid and the USB lead's braid landed on the box wall where each enters and the box bonded to the star point at one place. That also disposes of the micro-USB shell question, since the braid is then terminated to the box rather than left floating at the dongle. Worth doing at the first sign of RF, and worth doing anyway on a station that runs full power.
 
 ## RF ingress
 
