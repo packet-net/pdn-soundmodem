@@ -68,7 +68,7 @@ Pin by pin, from the iron's point of view:
 
 - Pin 2 (GND) takes a plain wire to the GND pad. It is also the return for every shunt component: Rb, Rp and C3 all land on it.
 - Pin 3 (DATA PTT) takes a plain wire to the PTT pad, with no components. The board already has the open-drain stage and the radio end has the pull-up.
-- Pin 1 (DATA IN) takes three components. From OUT, Rt in series. From Rt's far end, Rb down to the ground wire. From that same junction, C4 to pin 1. **C4 must be the last element before the pin**, and that matters more here than it did on the Tait build: Rb is 100 ohm, so if DATA IN carries any DC bias at all, a DC-coupled Rb is a short across it. Yaesu do not say whether it does, which is exactly why the capacitor goes there and not somewhere more convenient.
+- Pin 1 (DATA IN) takes three components. From OUT, Rt in series. From Rt's far end, Rb down to the ground wire. From that same junction, C4 to pin 1. **C4 must be the last element before the pin**, which is an ordering rule and not a position: with the components at the board end, C4 sits between the Rt/Rb junction and the cable core, and the core runs on to pin 1 with no DC reference, which is what is wanted. It matters more here than it did on the Tait build: Rb is 100 ohm, so if DATA IN carries any DC bias at all, a DC-coupled Rb is a short across it. Yaesu do not say whether it does, which is exactly why the capacitor goes there and not somewhere more convenient.
 - Pin 5 (DATA OUT) takes four components. From pin 5, C1 first. Then Rs in series. From Rs's far end, Rp and C3 down to the ground wire. That junction wires to IN.
 - Pins 4 and 6 and the SQL pad get nothing.
 
@@ -80,7 +80,28 @@ Mind the direction. The board is the TNC here: OUT drives DATA IN on pin 1, IN l
 
 Six-pin mini-DIN is unpleasant to solder and easy to mis-number. Buy a moulded lead and cut it rather than soldering a bare plug, and identify the conductors with a meter against the DATA JACK diagram in the radio's own manual rather than by colour, because cable colour codes are not standard between makers. Pin 2 is the only ground on the jack, so it is the one to find first and the one every shunt leg returns to.
 
-Keep the tail short and screened, and land the screen on pin 2 at the radio end only.
+Keep the tail short and screened.
+
+### Grounding and the screen
+
+Buzz the radio out before you build and you will find the DATA jack's pin 2, the mini-DIN's metal shell and the rig's chassis are all one node. The board is the same story at its end: the [netlist](../dev/hardware/cm108-widget-netlist.md) puts the GND pad and the micro-USB connector's **GND pin** on the same net, and leaves the micro-USB **shell** on a net of its own, connected to nothing. So there are two decisions and only one of them is open.
+
+**The GND wire is not a choice.** Pin 2 to the GND pad, on its own conductor. It is the return for both audio paths and for PTT, and there is no circuit without it. The moment it is fitted the rig's chassis and the host's ground are bonded, because the GND pad is the USB ground pin is the host.
+
+**The screen is a choice, and the answer here is both ends.** Land it on the plug's shell at the radio end, which a metal backshell does for you and which the radio has already bonded to pin 2 internally, and on the GND pad at the board end. The usual audio-interconnect rule is the opposite, one end only, and it does not apply here:
+
+- **The loop it avoids already exists.** Chassis, pin 2, the GND wire, the GND pad, the USB ground pin, the host, its mains earth, back round to the rig's supply. Floating one end of the screen does not break that loop, so it buys nothing at mains frequencies.
+- **Above a few hundred kilohertz a screen earthed at one end is not a screen**, it is a wire with a free end. At an HF station that is the failure it was fitted to prevent. Bonded at both ends it carries common-mode current around the conductors instead of letting that current develop a voltage across them.
+
+**The screen is never the return.** Use a cable with four inner conductors, DATA IN, DATA OUT, PTT and GND, plus an overall screen. Not a three-core leaning on the braid for ground. A screen carrying signal return current puts every millivolt of common-mode noise on it directly in series with the audio, and that, rather than the mains loop, is the real argument against bonding both ends. Giving the return its own conductor is what disposes of it.
+
+**Bond the rig to the station earth with something heavier than this cable.** A moulded mini-DIN lead's ground conductor is a thin wire, and once fitted it is one of the bonds between the rig's chassis and the host's. It should never be the main one. A short braid strap from the rig's GND terminal to the station earth leaves the data cable's ground carrying only the signal return it was sized for.
+
+**Star the shunt legs.** Rb, Rp and C3 all return to ground. Bring them to one point and run a single wire from there to pin 2, rather than tapping the ground wire in three places. It costs nothing and keeps PTT's switching current out of the audio returns.
+
+**Leave the micro-USB shell as it is.** It is isolated from board ground by design, and there is nothing better to connect it to, because the board has no chassis and its only ground is the codec's. If RF ingress turns out to be a problem, 10 nF from the USB shell to the GND pad is the conventional thing to try and it is reversible. That is a suggestion, not a tested fix.
+
+**If you fit the isolation transformers**, all of this is replaced by the simple case. The CM108's ground is then not connected to the rig at all, so land the screen at the radio end only and leave the board end floating: at that point there is finally a loop worth not closing.
 
 ## Parts
 
@@ -93,7 +114,8 @@ Keep the tail short and screened, and land the screen on pin 2 at the radio end 
 | C4 | **10u** | non-polarised: bipolar electrolytic or film; X7R only at 25 V rating or more | 20% | >= 16 V |
 | C1 | **4u7** | non-polarised, as C4 | 20% | >= 16 V |
 | C3 | **10n** | ceramic, C0G preferred, X7R acceptable | 20% | 50 V |
-| plug | 6-way mini-DIN, male, screened, on a moulded lead | | | |
+| plug | 6-way mini-DIN, male, metal shell, on a moulded lead | | | |
+| cable | 4 inner conductors plus an overall screen; the screen is not one of the four | | | |
 
 Tolerance is looser here than on the Tait build, and for a reason worth knowing: there the transmit divider set a hard deviation ceiling with only half a decibel of margin, so 5% parts could breach it unaided. Here the transmit level is set on the ALC meter against the radio's own indication, so a resistor that is half a decibel off is absorbed by the mixer in the first five minutes. 1% metal film is specified because it costs nothing and holds its value in a warm shack, not because the design needs it.
 
@@ -197,8 +219,9 @@ Do fit 100k from Q1's gate to ground, tacked across the BSS138 gate and source l
 
 This section has no counterpart on the Tait page, because a 25 W mobile on VHF does not do this and a 100 W HF station does. A USB lead, a sound card and a wire to the radio, a few feet from an antenna carrying 100 W, is the classic arrangement for common-mode RF to find its way into the interface. The symptoms read as software faults: PTT that latches on and will not release, the card falling off the USB bus mid-transmission, the modem hearing its own transmission, the host locking up on one band and not another.
 
-Three defences, in the order they are worth fitting.
+Four defences, in the order they are worth fitting.
 
+- **The screen bonded at both ends and a proper earth strap to the rig**, as [Grounding and the screen](#grounding-and-the-screen) sets out. Free, and the one a station is likeliest to have got wrong.
 - **Ferrites and short leads.** A clip-on mix 31 sleeve at each end of the USB lead and one on the DATA tail, several turns through each where the lead will take it. This is cheap and fixes most of it.
 - **A common-mode choke on the feedline**, which is an antenna-system problem rather than an interface one, but it is the root cause more often than the cable is.
 - **Transformer isolation, which is nearly free here.** SSB data lives between 300 and 2700 Hz, and a 600:600 telecoms transformer is flat across exactly that window. On the Tait build isolation cost low-frequency response that the 9600 baud modes needed; here there is nothing below 300 Hz to lose. One transformer after C1 on receive and one after C4 on transmit, with the PTT taken to an opto-isolator, breaks every galvanic path between the radio and the host. If you are building this from scratch rather than retrofitting, plan for it.

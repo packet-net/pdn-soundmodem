@@ -175,6 +175,35 @@ Nothing on this page has been measured. Five things, in the order they are worth
 
 While the assembly is on the bench, an audio sweep of the whole chain is worth the ten minutes it costs. The Tait equivalent is in the [low-frequency corner section](tm8100-cm108-interface-notes.md#measured-the-end-to-end-low-frequency-corner-and-what-it-costs-the-9600-baud-modes), and the same method applies: step a tone through `POST /api/txtest` and read each tone's level coherently out of the receiving station's `rawCapture`. On HF the interesting part is the top end rather than the bottom, because the SSB filter is there and the modem's band plan arithmetic assumes the passband is where it says.
 
+## Grounding and the screen
+
+Measured on the bench on 2026-09-22, with a continuity meter, and it agrees with the netlist already in tree.
+
+- **At the radio: DATA jack pin 2, the mini-DIN shell and the rig chassis are one node.** So the radio offers no distinction between a signal ground and a chassis ground, and a metal-shelled plug bonds the screen to signal ground whether or not you ask it to.
+- **At the board: the GND pad and the micro-USB GND pin are one node, and the micro-USB shell is not on it.** The [netlist](cm108-widget-netlist.md) says the same thing independently: `J9.1` and `J10.5(GND)` are both on the `GND` net, and `J10.6(Shield)` is `N$14`, a single-pin net going nowhere.
+
+**The consequence that decides everything else: the mandatory GND conductor already bonds the rig's chassis to the host.** Pin 2, the GND wire, the GND pad, the USB ground pin, the host, its mains earth, back to the rig's supply. That loop is closed by the one wire the circuit cannot work without, so no decision about the screen can open it.
+
+Which is why the usual unbalanced-audio rule, screen at one end only, is the wrong answer here and the Tait page's version of that sentence should not have been carried over. It is a rule for breaking a loop, and there is no loop left to break. What it costs, meanwhile, is real: above a few hundred kilohertz a conductor earthed at one end and free at the other is a stub, not a shield, and HF ingress is the dominant threat at this station rather than mains hum.
+
+**So: screen bonded at both ends, and a separate conductor for the return.** Those two go together and neither works without the other. The genuine hazard in a both-ends screen is the one the audio world calls the pin 1 problem, where the braid is doing double duty as signal return, so that common-mode current on the screen appears in series with the wanted signal. Give the return its own core, keep the screen out of the signal path entirely, and the hazard goes with it. A four-core plus overall screen is the cable; a three-core relying on the braid is not.
+
+**The heavy bond is not optional either.** The data lead's ground core is thin wire, and it is now one of the conductors bonding two chassis. A braid strap from the rig's earth terminal to the station earth means it is never the main one. This is a safety point as much as a noise one.
+
+**What changes with isolation.** Fit the two 600:600 transformers and an opto in place of the PTT wire and the picture inverts: the board's ground is no longer connected to the rig, a real loop becomes possible, and the screen should then be landed at the radio end only. The recommendation above is conditional on the direct build, and the build page says so.
+
+### Where the dividers sit, and what the cable then carries
+
+All seven components sit at the board end, in the tail off the pads. That is a choice, it differs in the two directions, and it is worth recording which way each one goes.
+
+**Receive: the board end is plainly right.** With Rs, Rp and C3 at the board, the cable carries the radio's full 500 mVp-p from a 600 ohm source into a 1.2k load. Move them into the backshell and it carries 97 mV into MICIN's high impedance instead, which is a small signal on a high-impedance line, the worst pair available.
+
+**Transmit: the board end is the RF answer rather than the noise answer, and the trade is worth knowing.** With Rt and Rb at the board the cable carries the attenuated signal, about 51 mVp-p on the 600 ohm reading, from a 98 ohm source. Move the pair into the backshell and the cable carries the CM108's full 2.828 Vp-p, and anything induced into it is then attenuated by the same 33.5 dB as the wanted signal when it reaches the divider. **That is 33.5 dB of immunity to induced noise for the cost of moving two components** **DERIVED**.
+
+What buys it back is what Rt does where it is: 4k7 in series between the cable and the codec's line output is RF attenuation into the card, and Rs with C3 does the same on the receive side. At an HF station, RF getting into the codec is likelier than hum getting into a screened metre of cable, so the board end wins on the threat that actually materialises.
+
+Build it at the board end. If transmit audio turns out to carry hum or buzz that the screen, the strap and the ferrites do not fix, moving Rt and Rb into the backshell is the fix with 33.5 dB behind it, and it is a rebuild of one end of the lead rather than a redesign.
+
 ## RF ingress
 
 The Tait note's grounding section says that in a fixed station with one supply and a short USB lead, a direct connection is usually fine. **That advice does not carry over.** It was written about a 25 W VHF mobile, and the failure mode being weighed was a ground loop through a vehicle's electrical system. Here the transmitter is 100 W into an HF antenna a few feet from a USB lead, and the mechanism is common-mode current on every conductor leaving the shack, not a loop.
@@ -183,9 +212,10 @@ What makes it worth designing for rather than debugging later is that the sympto
 
 The defences, in the order they pay:
 
-1. **Ferrites and short leads.** Mix 31 sleeves at both ends of the USB lead and on the DATA tail, with as many turns through each as will fit.
-2. **A common-mode choke at the feedpoint.** More often the root cause than the interface is, and not an interface problem at all.
-3. **Transformer isolation**, which is close to free on this build and was not on the Tait one. Two 600:600 telecoms transformers, one after C1 on receive and one after C4 on transmit, plus an opto-isolator in place of the direct PTT wire, breaks every galvanic path between radio and host. Such a transformer is flat from a few hundred hertz, which is marginal on a flat FM discriminator tap and exactly right for a 300 to 2700 Hz SSB passband. If the assembly is being built from scratch, leave room for them.
+1. **The screen bonded at both ends and a proper earth strap**, per the section above. This is the one that is free, and the one a station is likeliest not to have done.
+2. **Ferrites and short leads.** Mix 31 sleeves at both ends of the USB lead and on the DATA tail, with as many turns through each as will fit.
+3. **A common-mode choke at the feedpoint.** More often the root cause than the interface is, and not an interface problem at all.
+4. **Transformer isolation**, which is close to free on this build and was not on the Tait one. Two 600:600 telecoms transformers, one after C1 on receive and one after C4 on transmit, plus an opto-isolator in place of the direct PTT wire, breaks every galvanic path between radio and host. Such a transformer is flat from a few hundred hertz, which is marginal on a flat FM discriminator tap and exactly right for a 300 to 2700 Hz SSB passband. If the assembly is being built from scratch, leave room for them.
 
 Test at full power on every band the station will use, into a dummy load first. RF ingress is frequency-dependent and a station clean on 40 m can be unusable on 10 m.
 
@@ -202,5 +232,8 @@ Predicted rather than observed, since nothing has been built, but each is either
 - **Full power for a data duty cycle.** Yaesu's own advice is 1/2 to 1/3 of maximum for anything longer than a few minutes; a packet node is longer than a few minutes.
 - **+20 dB mic boost left on**, which puts the receive path deep into clipping. pdn-soundmodem forces it off at every start-up, so this only bites a hand-run bench test.
 - **A fast AGC**, which pumps on every strong signal in the passband and amplitude-modulates the wanted one. Reads as a marginal path and is not.
+- **The screen doing double duty as the ground return**, on a three-core lead with the braid as pin 2. Every millivolt of common-mode noise on the braid is then in series with the audio, and this is the one way a both-ends screen does harm.
+- **The screen floated at the board end**, carried over from the audio-interconnect rule. It breaks no loop here, because the GND conductor has already closed that loop, and it turns the braid into a stub at HF.
+- **The data lead's ground core left as the only bond between the rig's chassis and the host.** It is thin wire doing a job that wants a braid strap.
 - **RF ingress**, which reads as a software fault. See above.
 - **The 100k gate pull-down not fitted.** The BSS138's gate floats until the driver configures GPIO3, and a floating gate can sit above threshold. On this radio that is 100 W keyed by a plugged-in USB lead.
