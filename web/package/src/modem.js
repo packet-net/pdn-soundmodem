@@ -125,16 +125,29 @@ export class Cm108Ptt {
   static VENDOR_CMEDIA = 0x0d8c
 
   /**
+   * What the picker offers when the caller does not say: every C-Media part, and the interfaces
+   * that are not C-Media but emulate its GPIO report. The G1LRO/skuep AIOC is the one that
+   * matters - an STM32 on the pid.codes vendor ID, whose firmware (usb_hid.c) takes the same
+   * four-byte output report on a Consumer Control collection and maps GPIO3 to PTT1 by default.
+   * It is listed by product as well as vendor because 0x1209 is shared by every pid.codes
+   * project, and offering all of them would put unrelated gadgets in a PTT picker.
+   */
+  static DEFAULT_FILTERS = [
+    { vendorId: Cm108Ptt.VENDOR_CMEDIA },
+    { vendorId: 0x1209, productId: 0x7388 }, // AIOC
+  ]
+
+  /**
    * Prompts for a device (must be called from a user gesture) and opens it.
    *
    * @param {{ gpio?: number, filters?: HIDDeviceFilter[], debug?: boolean | ((message: string) => void) }} [options]
    *   `gpio` is the pin, 1 to 8, and 3 on every interface we have seen. `filters` narrows the
-   *   browser's picker; the default is C-Media's vendor ID, and `[]` shows every HID device on
-   *   the machine, which is what a clone that reports somebody else's ID needs. `debug` traces
-   *   every report to the console, or to a function of your own.
+   *   browser's picker; the default is `DEFAULT_FILTERS`, C-Media's vendor ID and the AIOC, and
+   *   `[]` shows every HID device on the machine, which is what a clone that reports somebody
+   *   else's ID needs. `debug` traces every report to the console, or to a function of your own.
    * @returns {Promise<Cm108Ptt>}
    */
-  static async request({ gpio = 3, filters = [{ vendorId: Cm108Ptt.VENDOR_CMEDIA }], debug = false } = {}) {
+  static async request({ gpio = 3, filters = Cm108Ptt.DEFAULT_FILTERS, debug = false } = {}) {
     if (!navigator.hid) throw new Error('this browser has no WebHID (Chrome, Edge or Opera on desktop required)')
     const [device] = await navigator.hid.requestDevice({ filters })
     // An empty list is the user closing the picker, not a failure of the device.
