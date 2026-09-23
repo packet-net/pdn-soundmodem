@@ -105,14 +105,16 @@ await modem.open({ mode: 'afsk1200', ptt: await Cm108Ptt.request({ debug: true }
 which is worth having because it makes the whole station one USB lead: the dongle carries
 receive audio, transmit audio and the keying, so `inputDeviceId`, `outputDeviceId` and the PTT
 are all the same piece of hardware. `gpio` defaults to 3, which is what every interface we have
-seen wires PTT to, and `filters` defaults to C-Media's vendor ID - pass `filters: []` to see
-every HID device on the machine for a clone that reports somebody else's.
+seen wires PTT to, and `filters` defaults to C-Media's vendor ID plus the AIOC (`1209:7388`),
+which emulates the same report - pass `filters: []` to see every HID device on the machine for
+a clone that reports somebody else's.
 
 On Linux the browser needs permission on the hidraw node, and it runs as you rather than as a
 service account, so `uaccess` is the rule to write rather than a group:
 
 ```
 KERNEL=="hidraw*", ATTRS{idVendor}=="0d8c", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", TAG+="uaccess"
 ```
 
 One thing to know before you key a radio from a tab: the chip latches the pin, so PTT survives

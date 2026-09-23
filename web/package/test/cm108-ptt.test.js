@@ -90,3 +90,20 @@ test('the debug hook traces every report', async () => {
   assert.match(lines[0], /opened USB PnP Sound Device \(0d8c:013c\), keying GPIO3 \(mask 0x04\)/)
   assert.match(lines.at(-1), /key\s+-> report 0x00 \[00 04 04 00\]/)
 })
+
+test('the picker offers the AIOC as well as C-Media by default, and a caller can override it', async () => {
+  const asked = []
+  globalThis.navigator ??= {}
+  const hid = navigator.hid
+  navigator.hid = { requestDevice: async (options) => { asked.push(options.filters); return [new FakeHidDevice()] } }
+  try {
+    await Cm108Ptt.request()
+    await Cm108Ptt.request({ filters: [] })
+  } finally {
+    navigator.hid = hid
+  }
+
+  // The AIOC is on pid.codes' shared vendor ID, so it has to be matched by product too: the
+  // vendor alone would offer every pid.codes gadget on the machine as a PTT.
+  assert.deepEqual(asked, [[{ vendorId: 0x0d8c }, { vendorId: 0x1209, productId: 0x7388 }], []])
+})
