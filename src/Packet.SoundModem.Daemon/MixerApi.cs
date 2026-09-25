@@ -223,6 +223,13 @@ internal static class MixerApi
             ["available"] = true,
             ["card"] = report.Card,
             ["controls"] = new JsonArray([.. report.Controls.Select(c => JsonValue.Create(c))]),
+            // The transmit card, which is "card" again unless the station transmits through a
+            // different card from the one it receives on ("playbackDevice"). Always present, so
+            // a script reading the playback level never has to know which kind of station it is.
+            ["playbackCard"] = report.PlaybackCard ?? report.Card,
+            ["playbackControls"] = new JsonArray([.. (report.PlaybackCard is null
+                ? report.Controls
+                : report.PlaybackControls).Select(c => JsonValue.Create(c))]),
             ["capture"] = Volume(report.Capture, report.Sources.CaptureGain),
             ["playback"] = Volume(report.Playback, report.Sources.Playback),
             ["agc"] = Switch(report.Agc),

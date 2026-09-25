@@ -149,6 +149,22 @@ internal static class MixerStateFile
     }
 
     /// <summary>
+    /// What the state file is stamped with for a station's audio: the device, or both devices
+    /// when it receives on one card and transmits through another.
+    /// </summary>
+    /// <remarks>
+    /// Both, because a file holds a level for each side: a station that moved its transmit audio
+    /// to another card must not have the old card's playback level put on the new one. A
+    /// one-card station stamps exactly what it always did, so no existing file is orphaned.
+    /// </remarks>
+    /// <param name="capture">The device the station receives from.</param>
+    /// <param name="playback">The device it transmits through.</param>
+    public static string StampFor(string capture, string playback) =>
+        string.Equals(capture, playback, StringComparison.Ordinal)
+            ? capture
+            : $"{capture} (capture), {playback} (playback)";
+
+    /// <summary>
     /// Reads the state file, or explains in one journal-ready sentence why it is being ignored.
     /// </summary>
     /// <remarks>

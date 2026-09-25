@@ -10,7 +10,7 @@ By the end of this page you will know which `device` string and which `ptt` bloc
 
 ## Pick the audio path
 
-`device` says where receive audio comes from and where transmit audio goes. One string covers both directions.
+`device` says where receive audio comes from and where transmit audio goes. One string covers both directions; if yours are on two different sound cards, see [Receive and transmit on different cards](#receive-and-transmit-on-different-cards).
 
 | What you have | `device` |
 |---|---|
@@ -33,6 +33,25 @@ At start-up the journal says what was opened and at what rate:
 ```
 audio: plughw:CARD=Device,DEV=0 capture 48000 Hz -> 12000 Hz
 ```
+
+### Receive and transmit on different cards
+
+If your receive audio comes in on one sound card and your transmit audio goes out through another, keep `device` for one of them and name the other with `captureDevice` (receive) or `playbackDevice` (transmit):
+
+```json
+{
+  "device": "plughw:CARD=Device,DEV=0",
+  "playbackDevice": "plughw:CARD=Device_1,DEV=0"
+}
+```
+
+The journal then names both:
+
+```
+audio: capture plughw:CARD=Device,DEV=0 48000 Hz -> 12000 Hz, playback plughw:CARD=Device_1,DEV=0
+```
+
+Each card has its own mixer. The capture gain is set on the receive card and the transmit level on the transmit card, and the station page's sliders follow them. Both cards run at `captureRate`. This works with sound cards only; a Flex, an UberSDR or a pipe carries both directions itself.
 
 Wiring an interface to a radio is a page of its own, one per radio: [hardware/tait-tm8100-cm108.md](hardware/tait-tm8100-cm108.md) for a Tait TM8100 or TM8200 on FM, and [hardware/yaesu-ft450d-cm108.md](hardware/yaesu-ft450d-cm108.md) for a Yaesu FT-450D's rear-panel DATA jack on HF. Setting the card's gains comes next, in [04-levels.md](04-levels.md).
 

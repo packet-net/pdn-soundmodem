@@ -30,12 +30,29 @@ internal static class DeviceDiagnostics
             : $"  Set by \"{key}\" in {configPath}";
 
     internal static string Audio(string device, string? configPath, Exception error) =>
+        Audio(device, configPath, error, "device");
+
+    /// <summary>
+    /// <see cref="Audio(string, string?, Exception)"/> naming the key that chose the device, for
+    /// a station that receives on one card and transmits through another: an operator with two
+    /// cards has to be told which of them would not open.
+    /// </summary>
+    /// <param name="device">The device that would not open.</param>
+    /// <param name="configPath">The config file, or null for a command-line station.</param>
+    /// <param name="error">What the open threw.</param>
+    /// <param name="key"><c>device</c>, <c>captureDevice</c> or <c>playbackDevice</c>.</param>
+    internal static string Audio(string device, string? configPath, Exception error, string key) =>
         $"""
         cannot open the sound device "{device}"
           {error.Message}
 
-        {Source(configPath, "device", "--device")}
-          This is the ALSA device used for both capture and playback. List what this
+        {Source(configPath, key, "--device")}
+          {key switch
+          {
+              "captureDevice" => "This is the ALSA device the station receives from.",
+              "playbackDevice" => "This is the ALSA device the station transmits through.",
+              _ => "This is the ALSA device used for both capture and playback.",
+          }} List what this
           machine actually has:
             aplay -l ; arecord -l ; aplay -L
           Prefer a stable name such as plughw:CARD=Device,DEV=0 over plughw:1,0 - card

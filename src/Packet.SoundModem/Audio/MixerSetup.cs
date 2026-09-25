@@ -43,6 +43,16 @@ public sealed record MixerReport
     /// <summary>Every control the card offers.</summary>
     public IReadOnlyList<string> Controls { get; init; } = [];
 
+    /// <summary>
+    /// The card the playback level is on, when the station transmits through a different card
+    /// from the one it receives on; null when one card does both, which is every station that
+    /// does not set <c>playbackDevice</c>. <see cref="Card"/> is then the receive card.
+    /// </summary>
+    public string? PlaybackCard { get; init; }
+
+    /// <summary>Every control <see cref="PlaybackCard"/> offers; empty when there is none.</summary>
+    public IReadOnlyList<string> PlaybackControls { get; init; } = [];
+
     /// <summary>The capture gain, or null when the card has no control this station knows.</summary>
     public MixerVolumeState? Capture { get; init; }
 
@@ -107,10 +117,32 @@ public static class MixerSetup
     /// <param name="wanted">What to set; every null is a control left alone.</param>
     /// <param name="journal">Where each line goes as it is produced (the daemon's stdout).</param>
     /// <returns>What was found and what it reads back as.</returns>
-    public static MixerReport Apply(IAlsaMixer mixer, MixerSettings wanted, Action<string>? journal = null)
+    public static MixerReport Apply(IAlsaMixer mixer, MixerSettings wanted, Action<string>? journal = null) =>
+        Apply(mixer, mixer, wanted, journal);
+
+    /// <summary>
+    /// <see cref="Apply(IAlsaMixer, MixerSettings, Action{string}?)"/> for a station that
+    /// receives on one card and transmits through another.
+    /// </summary>
+    /// <remarks>
+    /// The capture gain, the AGC and the mic boost are all on the receive side, so they go to
+    /// <paramref name="capture"/>; the playback level is the transmit side and goes to
+    /// <paramref name="playback"/>. Passing the same mixer twice is the one-card station exactly,
+    /// journal lines and all.
+    /// </remarks>
+    /// <param name="capture">The mixer of the card the station receives on.</param>
+    /// <param name="playback">The mixer of the card it transmits through.</param>
+    /// <param name="wanted">What to set; every null is a control left alone.</param>
+    /// <param name="journal">Where each line goes as it is produced.</param>
+    /// <returns>What was found and what it reads back as.</returns>
+    public static MixerReport Apply(
+        IAlsaMixer capture, IAlsaMixer playback, MixerSettings wanted, Action<string>? journal = null)
     {
-        ArgumentNullException.ThrowIfNull(mixer);
+        ArgumentNullException.ThrowIfNull(capture);
+        ArgumentNullException.ThrowIfNull(playback);
         ArgumentNullException.ThrowIfNull(wanted);
+        bool split = !ReferenceEquals(capture, playback);
+        IAlsaMixer mixer = capture;
 
         var lines = new List<string>();
         void Say(string line)
@@ -120,7 +152,15 @@ public static class MixerSetup
             journal?.Invoke(full);
         }
 
-        Say($"{mixer.Card} has {string.Join(", ", mixer.Controls)}");
+        if (split)
+        {
+            Say(Has(capture, "receive"));
+            Say(Has(playback, "transmit"));
+        }
+        else
+        {
+            Say($"{mixer.Card} has {string.Join(", ", mixer.Controls)}");
+        }
 
         // First, and unconditionally on the start-up path: neither of these is a setting any
         // more. One line for the pair of them, because "the two things that are always off are
@@ -130,13 +170,13 @@ public static class MixerSetup
             Say(ForcedOffLine(mixer, wanted));
         }
 
-        (MixerVolumeState? capture, double? captureSet) = Volume(
-            mixer, wanted.CaptureControls, MixerDirection.Capture, CaptureKey,
+        (MixerVolumeState? gain, double? captureSet) = Volume(
+            capture, wanted.CaptureControls, MixerDirection.Capture, CaptureKey,
             wanted.CaptureGainDb, Say);
         MixerSwitchState? agc = Switch(mixer, wanted.AgcControls);
         MixerSwitchState? boost = Switch(mixer, wanted.MicBoostControls);
-        (MixerVolumeState? playback, double? playbackSet) = Volume(
-            mixer, wanted.PlaybackControls, MixerDirection.Playback, PlaybackKey,
+        (MixerVolumeState? level, double? playbackSet) = Volume(
+            playback, wanted.PlaybackControls, MixerDirection.Playback, PlaybackKey,
             wanted.PlaybackDb, Say);
 
         // A pure read-back - a GET, --mixer-show, a station whose file and state file say
@@ -146,9 +186,9 @@ public static class MixerSetup
         bool tag = wanted.SetsAnything;
 
         var parts = new List<string>();
-        if (capture is not null)
+        if (gain is not null)
         {
-            parts.Add(Describe(capture, "capture", captureSet, wanted.Sources.CaptureGain, tag));
+            parts.Add(Describe(gain, "capture", captureSet, wanted.Sources.CaptureGain, tag));
         }
 
         if (agc is not null)
@@ -161,9 +201,9 @@ public static class MixerSetup
             parts.Add(Describe(boost, wanted.ForceAgcAndBoostOff));
         }
 
-        if (playback is not null)
+        if (level is not null)
         {
-            parts.Add(Describe(playback, "playback", playbackSet, wanted.Sources.Playback, tag));
+            parts.Add(Describe(level, "playback", playbackSet, wanted.Sources.Playback, tag));
         }
 
         string? summary = null;
@@ -175,16 +215,22 @@ public static class MixerSetup
         }
         else
         {
-            Say($"{mixer.Card} has none of the controls this station looks for, so nothing "
-                + "was set; the capture gain and the transmit level stay as the card has them");
+            Say(split
+                ? $"{capture.Card} and {playback.Card} have none of the controls this station "
+                    + "looks for, so nothing was set; the capture gain and the transmit level stay "
+                    + "as the cards have them"
+                : $"{mixer.Card} has none of the controls this station looks for, so nothing "
+                    + "was set; the capture gain and the transmit level stay as the card has them");
         }
 
         return new MixerReport
         {
             Card = mixer.Card,
             Controls = mixer.Controls,
-            Capture = capture,
-            Playback = playback,
+            PlaybackCard = split ? playback.Card : null,
+            PlaybackControls = split ? playback.Controls : [],
+            Capture = gain,
+            Playback = level,
             Agc = agc,
             MicBoost = boost,
             Sources = wanted.Sources,
@@ -194,12 +240,12 @@ public static class MixerSetup
     }
 
     /// <summary>
-    /// <see cref="Apply"/>, with anything it throws turned into one journal line and a null.
+    /// <see cref="Apply(IAlsaMixer, MixerSettings, Action{string}?)"/>, with anything it throws turned into one journal line and a null.
     /// </summary>
     /// <remarks>
     /// <para>What this is for is a <c>libasound</c> that has some of the mixer API and not the
     /// rest. <see cref="AlsaMixer.TryOpen"/> catches a missing symbol among the ten entry points
-    /// it uses itself, but <see cref="Apply"/> then reaches twenty more - the selem id, the
+    /// it uses itself, but <see cref="Apply(IAlsaMixer, MixerSettings, Action{string}?)"/> then reaches twenty more - the selem id, the
     /// find, the has/get/set families, the dB getters - and an <c>EntryPointNotFoundException</c>
     /// from any of those would leave the daemon's top-level statements with nothing above them to
     /// catch it. That is a crash at every start-up and a systemd restart loop, over a mixer.</para>
@@ -213,12 +259,27 @@ public static class MixerSetup
     /// <param name="why">What went wrong, when this returns null.</param>
     /// <returns>The report, or null if the attempt threw.</returns>
     public static MixerReport? TryApply(
-        IAlsaMixer mixer, MixerSettings wanted, Action<string>? journal, out string why)
+        IAlsaMixer mixer, MixerSettings wanted, Action<string>? journal, out string why) =>
+        TryApply(mixer, mixer, wanted, journal, out why);
+
+    /// <summary>
+    /// <see cref="TryApply(IAlsaMixer, MixerSettings, Action{string}?, out string)"/> for a
+    /// station that receives on one card and transmits through another.
+    /// </summary>
+    /// <param name="capture">The mixer of the card the station receives on.</param>
+    /// <param name="playback">The mixer of the card it transmits through.</param>
+    /// <param name="wanted">What to set; every null is a control left alone.</param>
+    /// <param name="journal">Where each line goes as it is produced.</param>
+    /// <param name="why">What went wrong, when this returns null.</param>
+    /// <returns>The report, or null if the attempt threw.</returns>
+    public static MixerReport? TryApply(
+        IAlsaMixer capture, IAlsaMixer playback, MixerSettings wanted, Action<string>? journal,
+        out string why)
     {
         why = "";
         try
         {
-            return Apply(mixer, wanted, journal);
+            return Apply(capture, playback, wanted, journal);
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
@@ -355,27 +416,43 @@ public static class MixerSetup
     /// has to answer before it acts.
     /// </summary>
     /// <remarks>
-    /// <para><see cref="Apply"/> journals these and carries on, which is right for start-up: a
+    /// <para><see cref="Apply(IAlsaMixer, MixerSettings, Action{string}?)"/> journals these and carries on, which is right for start-up: a
     /// config file with one impossible level must not cost the station the other three controls,
     /// or the station. An API request is the other case - there is somebody waiting for an answer
     /// and nothing has been touched yet - so <c>/api/mixer</c> asks this first and refuses with
     /// the sentence, rather than applying half of a request and reporting success.</para>
     /// <para>Only the two dB refusals. A control the card has not got at all is left to
-    /// <see cref="Apply"/>'s "not found, skipped", which is what it has always done and what the
+    /// <see cref="Apply(IAlsaMixer, MixerSettings, Action{string}?)"/>'s "not found, skipped", which is what it has always done and what the
     /// operator page relies on to mark a button missing.</para>
     /// </remarks>
     /// <param name="mixer">The card's mixer.</param>
     /// <param name="wanted">What is about to be asked of it.</param>
-    public static string? WhyRefused(IAlsaMixer mixer, MixerSettings wanted)
+    public static string? WhyRefused(IAlsaMixer mixer, MixerSettings wanted) =>
+        WhyRefused(mixer, mixer, wanted);
+
+    /// <summary>
+    /// <see cref="WhyRefused(IAlsaMixer, MixerSettings)"/> for a station that receives on one
+    /// card and transmits through another; each level is judged against its own card.
+    /// </summary>
+    /// <param name="capture">The mixer of the card the station receives on.</param>
+    /// <param name="playback">The mixer of the card it transmits through.</param>
+    /// <param name="wanted">What is about to be asked of them.</param>
+    public static string? WhyRefused(IAlsaMixer capture, IAlsaMixer playback, MixerSettings wanted)
     {
-        ArgumentNullException.ThrowIfNull(mixer);
+        ArgumentNullException.ThrowIfNull(capture);
+        ArgumentNullException.ThrowIfNull(playback);
         ArgumentNullException.ThrowIfNull(wanted);
 
-        return Refusal(wanted.CaptureControls, MixerDirection.Capture, CaptureKey, wanted.CaptureGainDb)
-            ?? Refusal(wanted.PlaybackControls, MixerDirection.Playback, PlaybackKey, wanted.PlaybackDb);
+        return Refusal(
+                capture, wanted.CaptureControls, MixerDirection.Capture, CaptureKey,
+                wanted.CaptureGainDb)
+            ?? Refusal(
+                playback, wanted.PlaybackControls, MixerDirection.Playback, PlaybackKey,
+                wanted.PlaybackDb);
 
-        string? Refusal(
-            IReadOnlyList<string> names, MixerDirection direction, string key, double? wantedDb)
+        static string? Refusal(
+            IAlsaMixer mixer, IReadOnlyList<string> names, MixerDirection direction, string key,
+            double? wantedDb)
         {
             if (wantedDb is not double target || Find(mixer, names) is not string control)
             {
@@ -396,6 +473,14 @@ public static class MixerSetup
                 : null;
         }
     }
+
+    /// <summary>
+    /// The opening line for one card of a pair: which side it is, and what it has. A card whose
+    /// mixer could not be opened has no controls, and says so rather than listing nothing.
+    /// </summary>
+    private static string Has(IAlsaMixer mixer, string side) => mixer.Controls.Count == 0
+        ? $"{mixer.Card} ({side}) has no controls"
+        : $"{mixer.Card} ({side}) has {string.Join(", ", mixer.Controls)}";
 
     /// <summary>
     /// Whether a level is off the end of a card's range, with a hundredth of a dB of slack.

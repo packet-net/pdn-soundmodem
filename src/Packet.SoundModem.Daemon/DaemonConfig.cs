@@ -1292,6 +1292,26 @@ public sealed class DaemonConfig
     /// <summary>ALSA device for capture and playback.</summary>
     public string Device { get; set; } = "default";
 
+    /// <summary>
+    /// The sound card to receive from, when it is not <see cref="Device"/>; null receives from
+    /// <see cref="Device"/>. See <see cref="ValidateSplitDevices"/>.
+    /// </summary>
+    public string? CaptureDevice { get; set; }
+
+    /// <summary>
+    /// The sound card to transmit through, when it is not <see cref="Device"/>; null transmits
+    /// through <see cref="Device"/>.
+    /// </summary>
+    public string? PlaybackDevice { get; set; }
+
+    /// <summary>The device the station actually receives from.</summary>
+    [JsonIgnore]
+    public string CaptureDeviceInUse => CaptureDevice ?? Device;
+
+    /// <summary>The device the station actually transmits through.</summary>
+    [JsonIgnore]
+    public string PlaybackDeviceInUse => PlaybackDevice ?? Device;
+
     /// <summary>Capture rate; card-native (48000) recommended - the daemon decimates.</summary>
     public int CaptureRate { get; set; } = 48000;
 
@@ -1531,6 +1551,7 @@ public sealed class DaemonConfig
             ValidatePublish(config);
         }
 
+        ValidateSplitDevices(config);
         ValidateAlsa(config, asPath ?? path);
 
         // Above the flavour split: a monitor is a radio kind's business too - it plans its
@@ -1774,6 +1795,65 @@ public sealed class DaemonConfig
                 + "configuration file. That file is never written by this daemon and a mixer "
                 + "change would overwrite it; point \"stateFile\" somewhere else, or remove it "
                 + $"to take the default ({MixerStateFile.DefaultName} in the state directory).");
+        }
+    }
+
+    /// <summary>
+    /// What <c>captureDevice</c> and <c>playbackDevice</c> have to say before this station can
+    /// use them.
+    /// </summary>
+    /// <remarks>
+    /// <para>For a station whose receive and transmit audio are on two different sound cards: a
+    /// radio with a separate receive output, or two USB dongles. Each key overrides
+    /// <c>device</c> for one direction and nothing else, so a file that states neither is
+    /// exactly the station it always was.</para>
+    /// <para>Sound cards only, on both sides and in <c>device</c> too. A FlexRadio, a web
+    /// receiver and a pair of pipes each carry both directions in one thing, so there is nothing
+    /// for a split to mean there, and a key that silently did nothing would be worse than one
+    /// that says so. Exit 2, the same as every other refusal in this file.</para>
+    /// </remarks>
+    private static void ValidateSplitDevices(DaemonConfig config)
+    {
+        foreach ((string key, string? value) in (ReadOnlySpan<(string, string?)>)
+            [
+                ("captureDevice", config.CaptureDevice),
+                ("playbackDevice", config.PlaybackDevice),
+            ])
+        {
+            if (value is null)
+            {
+                continue;
+            }
+
+            if (config.Monitor is not null)
+            {
+                throw new InvalidDataException(
+                    $"this file sets both \"{key}\" and \"monitor\". A monitor fronts web "
+                    + $"receivers and has no sound card of its own - remove \"{key}\".");
+            }
+
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                throw new InvalidDataException(
+                    $"\"{key}\" is empty. Name the sound card, as \"plughw:CARD=Device,DEV=0\", "
+                    + "or remove the key to use \"device\" for that direction too.");
+            }
+
+            if (!IsSoundCard(value))
+            {
+                throw new InvalidDataException(
+                    $"\"{key}\" is \"{value}\", which is not a sound card. Only a sound card can "
+                    + "be split into a receive device and a transmit device; a FlexRadio, a web "
+                    + "receiver or a pipe carries both directions itself and goes in \"device\".");
+            }
+
+            if (!IsSoundCard(config.Device))
+            {
+                throw new InvalidDataException(
+                    $"\"{key}\" is set but \"device\" is \"{config.Device}\", which is not a "
+                    + "sound card. A FlexRadio, a web receiver or a pipe carries both directions "
+                    + $"itself; remove \"{key}\", or point \"device\" at a sound card.");
+            }
         }
     }
 
