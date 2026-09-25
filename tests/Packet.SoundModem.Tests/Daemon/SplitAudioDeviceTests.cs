@@ -228,10 +228,24 @@ public class SplitAudioDeviceTests : IDisposable
     {
         string message = DeviceDiagnostics.Audio(
             Transmit, "/etc/pdn-soundmodem/soundmodem.json", new IOException("No such device"),
-            "playbackDevice");
+            "playbackDevice", split: true);
 
         message.Should().Contain($"cannot open the sound device \"{Transmit}\"");
         message.Should().Contain("Set by \"playbackDevice\" in /etc/pdn-soundmodem/soundmodem.json");
         message.Should().Contain("the ALSA device the station transmits through");
+    }
+
+    [Fact]
+    public void Device_Is_Not_Called_Both_Directions_On_A_Station_That_Splits()
+    {
+        // "playbackDevice" is set, so "device" is only the receive side, and a message saying it
+        // is used for both would send the operator to the wrong card.
+        string message = DeviceDiagnostics.Audio(
+            Receive, "/etc/pdn-soundmodem/soundmodem.json", new IOException("No such device"),
+            "device", split: true, capture: true);
+
+        message.Should().Contain("Set by \"device\"");
+        message.Should().Contain("the ALSA device the station receives from");
+        message.Should().NotContain("both capture and playback");
     }
 }

@@ -2840,9 +2840,10 @@ else
             out string applyWhy);
         if (mixerRuntime is null)
         {
-            mixerWhyNot = mixerSplit
-                ? $"{mixerCard} and {playbackMixerCard} could not be read or set: {applyWhy}"
-                : $"{mixerCard} could not be read or set: {applyWhy}";
+            string unread = !mixerSplit || playbackMixer is null ? mixerCard
+                : openedMixer is null ? playbackMixerCard
+                : $"{mixerCard} and {playbackMixerCard}";
+            mixerWhyNot = $"{unread} could not be read or set: {applyWhy}";
             openedMixer?.Dispose();
             mixer = null;
             playbackMixer?.Dispose();
@@ -2870,6 +2871,7 @@ else
     // station either side can be the card that is missing.
     string opening = playbackDevice;
     string openingKey = playbackDeviceKey is null ? "device" : "playbackDevice";
+    bool openingCapture = false;
     try
     {
         // Transmit: modulate at the DSP rate; play at the card-native capture rate through the
@@ -2886,6 +2888,7 @@ else
         // the 120 ms one on every run, so every station gets the deep buffer now.
         opening = captureDevice;
         openingKey = captureDeviceKey is null ? "device" : "captureDevice";
+        openingCapture = true;
         var alsaInput = new AlsaAudioInput(captureDevice, captureRate);
         alsaIn = alsaInput;
         input = alsaInput;
@@ -2893,12 +2896,15 @@ else
     catch (Exception e) when (e is IOException or UnauthorizedAccessException
                                 or InvalidOperationException or ArgumentException)
     {
-        Console.Error.WriteLine(DeviceDiagnostics.Audio(opening, configPath, e, openingKey));
+        Console.Error.WriteLine(DeviceDiagnostics.Audio(
+            opening, configPath, e, openingKey,
+            split: !string.Equals(captureDevice, playbackDevice, StringComparison.Ordinal),
+            capture: openingCapture));
         return 1;
     }
 
     Console.WriteLine(string.Equals(captureDevice, playbackDevice, StringComparison.Ordinal)
-        ? $"audio: {device} capture {captureRate} Hz -> {DspRate} Hz"
+        ? $"audio: {captureDevice} capture {captureRate} Hz -> {DspRate} Hz"
         : $"audio: capture {captureDevice} {captureRate} Hz -> {DspRate} Hz, "
             + $"playback {playbackDevice}");
 

@@ -30,7 +30,7 @@ internal static class DeviceDiagnostics
             : $"  Set by \"{key}\" in {configPath}";
 
     internal static string Audio(string device, string? configPath, Exception error) =>
-        Audio(device, configPath, error, "device");
+        Audio(device, configPath, error, "device", split: false);
 
     /// <summary>
     /// <see cref="Audio(string, string?, Exception)"/> naming the key that chose the device, for
@@ -41,18 +41,20 @@ internal static class DeviceDiagnostics
     /// <param name="configPath">The config file, or null for a command-line station.</param>
     /// <param name="error">What the open threw.</param>
     /// <param name="key"><c>device</c>, <c>captureDevice</c> or <c>playbackDevice</c>.</param>
-    internal static string Audio(string device, string? configPath, Exception error, string key) =>
+    /// <param name="split">Whether the station receives and transmits on different devices, so
+    /// that <c>device</c> is only one direction's and must not be described as both.</param>
+    /// <param name="capture">Which direction failed, when <paramref name="split"/> is set.</param>
+    internal static string Audio(
+        string device, string? configPath, Exception error, string key, bool split,
+        bool capture = false) =>
         $"""
         cannot open the sound device "{device}"
           {error.Message}
 
         {Source(configPath, key, "--device")}
-          {key switch
-          {
-              "captureDevice" => "This is the ALSA device the station receives from.",
-              "playbackDevice" => "This is the ALSA device the station transmits through.",
-              _ => "This is the ALSA device used for both capture and playback.",
-          }} List what this
+          {(!split ? "This is the ALSA device used for both capture and playback."
+              : capture ? "This is the ALSA device the station receives from."
+              : "This is the ALSA device the station transmits through.")} List what this
           machine actually has:
             aplay -l ; arecord -l ; aplay -L
           Prefer a stable name such as plughw:CARD=Device,DEV=0 over plughw:1,0 - card
