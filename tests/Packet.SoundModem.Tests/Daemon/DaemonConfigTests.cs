@@ -309,6 +309,49 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void Polyglot_Port_Puts_Every_Packet_Modem_Behind_One_Port_With_The_First_As_Default()
+    {
+        string path = WriteConfig("""
+            {"device": "null",
+             "modems": [{"subChannel": 2, "mode": "afsk1200"}, {"subChannel": 0, "mode": "ardop"},
+                        {"subChannel": 1, "mode": "afsk1200-il2p"}],
+             "polyglotPort": 8456}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        PolyglotConfig polyglot = config!.Polyglot.Should().ContainSingle().Subject;
+        polyglot.Port.Should().Be(8456);
+        polyglot.SubChannels.Should().Equal([2, 1], "ARDOP has no KISS form, so it is left out");
+        polyglot.Default.Should().Be(2, "the first packet modem as written, not the lowest number");
+        polyglot.ForgetAfterMinutes.Should().Be(60);
+    }
+
+    [Fact]
+    public void Polyglot_Port_With_One_Packet_Modem_Is_Refused()
+    {
+        string path = WriteConfig("""{"device": "null", "modems": [{"subChannel": 0, "mode": "afsk1200"}], "polyglotPort": 8456}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"polyglotPort\": 8456").And.Contain("this station has 1");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void Polyglot_Port_Clashing_With_Another_Port_Is_Refused_By_Its_Own_Name()
+    {
+        string path = WriteConfig("{\"device\": \"null\", " + PolyglotModems + ", \"polyglotPort\": 8105}");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"polyglotPort\" and \"kissPort\" both want TCP port 8105");
+    }
+
+    [Fact]
     public void A_Polyglot_Port_Cannot_Include_Ardop()
     {
         string path = WriteConfig("""

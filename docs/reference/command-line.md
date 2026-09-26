@@ -133,7 +133,7 @@ When `--config` is given, the file is read after every flag has been parsed and 
 
 Flags with no config-file equivalent: `--txdelay`, `--wav`, `--wav-loop`, `--quality-frames`, `--psk-detector`, `--mixer-show`, `--uplink-token`, `--version` and `--help`.
 
-Config-file sections and keys with no flag: `sideband`, `dialFrequency`, `modemPlugins`, `polyglot`, `txTest`, `alsa`, `ubersdr`, `monitor`, `publish`, `api`, `frameLog`, `survey`, `metrics`, `frequencyMatching`, `rawCapture`, `deadFeed` and `idBeacons`. Within sections a flag does reach: a modem entry's `port`, `rfFrequency`, `bandwidth`, `offsetPairs`, `offsetStepHz`, `acceptPlainIl2p` and `identify`; `flex.txPowerWatts`, `flex.transmitFilterHighHz`, `flex.stationName`, `flex.arbitration` and `flex.receiveOnly`; `paging.invertPolarity`; and every `waterfall` key other than `port` and `dialFrequencyHz`. The [configuration reference](config.md) documents each of them.
+Config-file sections and keys with no flag: `sideband`, `dialFrequency`, `modemPlugins`, `polyglot`, `polyglotPort`, `txTest`, `alsa`, `ubersdr`, `monitor`, `publish`, `api`, `frameLog`, `survey`, `metrics`, `frequencyMatching`, `rawCapture`, `deadFeed` and `idBeacons`. Within sections a flag does reach: a modem entry's `port`, `rfFrequency`, `bandwidth`, `offsetPairs`, `offsetStepHz`, `acceptPlainIl2p` and `identify`; `flex.txPowerWatts`, `flex.transmitFilterHighHz`, `flex.stationName`, `flex.arbitration` and `flex.receiveOnly`; `paging.invertPolarity`; and every `waterfall` key other than `port` and `dialFrequencyHz`. The [configuration reference](config.md) documents each of them.
 
 ## The usage text
 

@@ -306,6 +306,11 @@ public sealed class PolyglotConfig
     /// <summary>Keys in this entry that the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+
+    /// <summary>Whether this entry was written as <see cref="DaemonConfig.PolyglotPort"/> rather
+    /// than in the list, so a refusal can name the key the operator actually wrote.</summary>
+    [JsonIgnore]
+    internal bool FromShorthand { get; init; }
 }
 
 /// <summary>PTT configuration.</summary>
@@ -1446,6 +1451,12 @@ public sealed class DaemonConfig
     /// </summary>
     public List<PolyglotConfig> Polyglot { get; set; } = [];
 
+    /// <summary>
+    /// Shorthand for the usual <see cref="Polyglot"/> port: every packet modem on it, the first
+    /// in <see cref="Modems"/> as the default, remembered for the default time. Null for none.
+    /// </summary>
+    public int? PolyglotPort { get; set; }
+
     /// <summary>PTT control; null = VOX / none.</summary>
     public PttConfig? Ptt { get; set; }
 
@@ -2038,12 +2049,13 @@ public sealed class DaemonConfig
                 + "behind one page with neither. Remove whichever one you did not mean.");
         }
 
-        if (config.Polyglot is { Count: > 0 })
+        if (config.Polyglot is { Count: > 0 } || config.PolyglotPort is not null)
         {
+            string key = config.PolyglotPort is not null ? "polyglotPort" : "polyglot";
             throw new InvalidDataException(
-                "this file sets both \"polyglot\" and \"monitor\". A polyglot port is a KISS "
+                $"this file sets both \"{key}\" and \"monitor\". A polyglot port is a KISS "
                 + "port for a node to transmit through, and a monitor has neither. Remove "
-                + "\"polyglot\".");
+                + $"\"{key}\".");
         }
 
         if (monitor.Modems.Count == 0)
@@ -2698,6 +2710,28 @@ public sealed class DaemonConfig
     private static void ValidatePolyglot(DaemonConfig config)
     {
         config.Polyglot ??= [];
+
+        // The shorthand becomes an ordinary entry, so everything after this - the checks, the
+        // port claim, the daemon - sees one kind of polyglot port.
+        if (config.PolyglotPort is int shorthand)
+        {
+            List<int> packet = [.. config.Modems.Where(m => !IsArdop(m.Mode)).Select(m => m.SubChannel)];
+            if (packet.Count < 2)
+            {
+                throw new InvalidDataException(
+                    $"\"polyglotPort\": {shorthand} puts every packet modem behind one port, and "
+                    + $"this station has {packet.Count}. It needs two or more in \"modems\" to "
+                    + "choose between; with one, use \"kissPort\" or that modem's own \"port\".");
+            }
+
+            config.Polyglot.Add(new PolyglotConfig
+            {
+                Port = shorthand,
+                SubChannels = packet,
+                Default = packet[0],
+                FromShorthand = true,
+            });
+        }
         foreach (PolyglotConfig? entry in config.Polyglot)
         {
             if (entry is not { } polyglot)
@@ -2714,7 +2748,7 @@ public sealed class DaemonConfig
                     + "to, e.g. {\"port\": 8120, \"subChannels\": [0, 1], \"default\": 0}.");
             }
 
-            string where = $"\"polyglot\" port {port}";
+            string where = polyglot.FromShorthand ? $"\"polyglotPort\": {port}" : $"\"polyglot\" port {port}";
             polyglot.SubChannels ??= [];
             if (polyglot.SubChannels.Count < 2)
             {
@@ -2797,7 +2831,7 @@ public sealed class DaemonConfig
 
         foreach (PolyglotConfig polyglot in config.Polyglot)
         {
-            Claim(polyglot.Port!.Value, "a \"polyglot\" port");
+            Claim(polyglot.Port!.Value, polyglot.FromShorthand ? "\"polyglotPort\"" : "a \"polyglot\" port");
         }
 
         foreach (ModemConfig modem in config.Modems.Where(m => m.Port is not null))

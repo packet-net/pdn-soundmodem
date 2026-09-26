@@ -52,6 +52,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | `modems` | array | one `afsk1200` on sub-channel 0; none when a top-level `ardop` section is present | The modems sharing the audio channel. |
 | `modemPlugins` | array | `[]` | Assemblies outside the package that provide extra modes. |
 | `polyglot` | array | `[]` | KISS ports that overlay several modems, sending each frame in the mode its next hop was last heard in. |
+| `polyglotPort` | int | absent: none | Shorthand for one `polyglot` port over every packet modem, the first as the default. |
 | `ptt` | object | absent: no keying line | How the radio is keyed: `serial` or `cm108`. |
 | `carrierSense` | object | absent: read from the audio | Read carrier sense from the radio's own squelch and signal meter over its control cable. Strongly recommended on FM. |
 | `txTest` | object | enabled, 5 s, cap 30 s | Bounds on the operator's two-tone and single-tone transmitter test. |
@@ -111,7 +112,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 
 - `bind` must parse as an IP address, or be `"*"`; anything else is refused with `"bind": "<value>" is not an IP address. Use "127.0.0.1" for loopback only, "*" for every interface, or the address of one interface.` A blank value stays on loopback.
 - KISS has no authentication. Binding beyond loopback prints a `kiss: WARNING - listening beyond loopback` line at start-up; the text is under [Every listener](ports-and-endpoints.md#every-listener).
-- Two services asking for one TCP port are refused before anything opens: `<this> and <that> both want TCP port N. Give them different ports.` The claims are `"kissPort"`, `a "polyglot" port`, `the "port" of modem N`, `the ARDOP data port of modem N` (its `port` plus one), `the waterfall`, `the paging endpoint`, `the ARDOP command port` and `the ARDOP data port`. With a top-level `ardop` section `"kissPort"` is not claimed, so a clash between it and the ARDOP ports fails when the listener binds rather than at validation; see [`ardop`](#ardop).
+- Two services asking for one TCP port are refused before anything opens: `<this> and <that> both want TCP port N. Give them different ports.` The claims are `"kissPort"`, `"polyglotPort"`, `a "polyglot" port`, `the "port" of modem N`, `the ARDOP data port of modem N` (its `port` plus one), `the waterfall`, `the paging endpoint`, `the ARDOP command port` and `the ARDOP data port`. With a top-level `ardop` section `"kissPort"` is not claimed, so a clash between it and the ARDOP ports fails when the listener binds rather than at validation; see [`ardop`](#ardop).
 - Channel access (TXDELAY, persistence, slot time, TXTAIL) has no key here; the host sets it over KISS at runtime.
 - `kissMaxFrameBytes` bounds what is buffered per host before a frame's closing delimiter arrives. It is a memory bound, not a statement about any mode: a frame too long for the mode it is addressed to is refused by that mode, and a `frame rejected` line says so. The default, 8192, is above anything a built-in mode carries; a plugin modem that carries more is the reason to raise it. Below 512 the file is refused: `"kissMaxFrameBytes": N is below 512.` A frame that hits the cap is dropped and `kiss[PORT] HOST sent a frame over N bytes; dropped.` goes to the journal, at most once per host per ten seconds. It used to be 2048 and silent, which capped the throughput of any burst modem whose frames could usefully be longer, and did so with nothing in any log.
 
@@ -205,6 +206,12 @@ Rules and refusals:
 ## `polyglot`
 
 ```json
+{ "polyglotPort": 8120 }
+```
+
+The short form: every packet modem in `modems` goes behind port 8120, the first one listed is the `default`, and stations are remembered for 60 minutes. `ardop` entries are left out. It needs at least two packet modems: `"polyglotPort": N puts every packet modem behind one port, and this station has 1.` Write the full form below when you want some of the modems, a different default or a different memory.
+
+```json
 { "polyglot": [ { "port": 8120, "subChannels": [0, 1], "default": 0, "forgetAfterMinutes": 60 } ] }
 ```
 
@@ -219,7 +226,7 @@ Rules and refusals:
 - A frame from the host goes out on the modem its next hop was last heard on: the first digipeater that has not repeated it yet, or the destination. A station not heard within `forgetAfterMinutes` gets `default`. So does a beacon or broadcast sent direct, because `ID`, `BEACON` and `NODES` never transmit; one sent via a digipeater follows that digipeater, like any other frame. An alias a digipeater repeated under, such as `WIDE2`, is remembered like a station.
 - When a station's frames move to a different modem the journal says so: `polyglot[8120]: G4ABC-1 heard on modem 1 fsk9600, frames for it go there now (was modem 0 afsk1200, the default)`. A station heard only on the default gets no line.
 - A frame two listed modems both decode within a second reaches the host once. The same frame twice from one modem, such as two digipeaters repeating it, reaches the host twice, as on the shared port. SETHW on this port goes to the `default` modem.
-- Refusals: an empty entry; an entry with no `port` or no `default`; fewer than two `subChannels`, or one listed twice; a sub-channel with no modem entry, or an `ardop` one; a `default` not in `subChannels`; `forgetAfterMinutes` of 0 or less, or above 10080; and a `"polyglot"` section in a monitor's file. [06-connect-your-software.md](../06-connect-your-software.md#one-port-for-several-modes) has a worked example.
+- Refusals: an empty entry; an entry with no `port` or no `default`; fewer than two `subChannels`, or one listed twice; a sub-channel with no modem entry, or an `ardop` one; a `default` not in `subChannels`; `forgetAfterMinutes` of 0 or less, or above 10080; and `"polyglot"` or `"polyglotPort"` in a monitor's file. [06-connect-your-software.md](../06-connect-your-software.md#one-port-for-several-modes) has a worked example.
 
 ## `ptt`
 
