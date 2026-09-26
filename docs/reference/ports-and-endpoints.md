@@ -8,6 +8,7 @@ Every TCP listener pdn-soundmodem opens, what each one speaks, and what the jour
 |---|---|---|---|---|
 | Shared KISS port | every packet modem, addressed by sub-channel | `8105` | `kissPort`, `--kiss` | KISS over TCP |
 | Per-modem KISS port | one modem, presented as sub-channel 0 | none | `modems[].port` on a packet modem | KISS over TCP |
+| Polyglot KISS port | several overlaid modems, presented as sub-channel 0 | none | `polyglot[].port` | KISS over TCP |
 | ARDOP command port | the ardopcf host interface | `8515` | `modems[].port` on an `ardop` entry, `ardop.port`, `--ardop` | CR-terminated ASCII |
 | ARDOP data port | the ardopcf data socket | command port + 1 | always the next port up | length-prefixed blocks |
 | Paging port | POCSAG pages in, pages heard out | `8106` | `paging.port`, `--paging PORT[:BAUD]` | one text line per command |
@@ -51,8 +52,9 @@ The framing is standard KISS: `FEND` (`0xC0`) delimited frames with `FESC` trans
 |---|---|---|
 | Shared (`kissPort`) | every modem's frames, each under its own sub-channel | transmitted on the modem the sub-channel names |
 | Per-modem (`modems[].port`) | that modem's frames only, relabelled sub-channel 0 | transmitted on that modem whatever sub-channel the host wrote |
+| Polyglot (`polyglot[].port`) | its modems' frames, relabelled sub-channel 0, a burst two of them decode delivered once | transmitted on the modem the frame's next hop was last heard on, or the `default` |
 
-Both kinds run at once on one channel, and any number of hosts may attach to any port; every host on a port receives every frame that port publishes. A frame for a sub-channel with no modem is refused and journalled as `tx[N] DROPPED ...: no modem on sub-channel N`, at most once a minute per reason, with the number held back appended to the next line as `(and N more like it in the last minute)`. On a station that receives only, every frame from a host is refused the same way, with the reason, and the journal says so once at start-up. An `ardop` modem entry's `port` is never a KISS port.
+All three kinds run at once on one channel, and any number of hosts may attach to any port; every host on a port receives every frame that port publishes. A frame for a sub-channel with no modem is refused and journalled as `tx[N] DROPPED ...: no modem on sub-channel N`, at most once a minute per reason, with the number held back appended to the next line as `(and N more like it in the last minute)`. On a station that receives only, every frame from a host is refused the same way, with the reason, and the journal says so once at start-up. An `ardop` modem entry's `port` is never a KISS port.
 
 A host that stops reading is dropped once more than 1 MiB of frames is queued for it unread, with that reason on its disconnect line.
 
@@ -84,7 +86,7 @@ On a port whose modem is `ms110d-*`, a SETHW frame switches the transmit wavefor
 | `0` | waveform number: 0 to 8 or 13 |
 | `1` (optional) | interleaver: `0` short, `1` long; absent keeps the current one |
 
-An applied SETHW is echoed back to the sending host as a SETHW frame with the same payload, under the port's own sub-channel (0 on a per-modem port). A refused one is journalled and nothing is sent back, because KISS has no error channel. The setting is not written anywhere; a restart returns to the configured `mode`. On any other mode's port SETHW is journalled as ignored. An empty SETHW is ignored silently.
+An applied SETHW is echoed back to the sending host as a SETHW frame with the same payload, under the port's own sub-channel (0 on a per-modem or polyglot port). On a polyglot port SETHW acts on its `default` modem. A refused one is journalled and nothing is sent back, because KISS has no error channel. The setting is not written anywhere; a restart returns to the configured `mode`. On any other mode's port SETHW is journalled as ignored. An empty SETHW is ignored silently.
 
 ```
 modem 3: SETHW -> ms110d-wn2, short interleaver
@@ -94,7 +96,7 @@ modem 0: SETHW ignored - the modem on port 0 has no hardware settings
 
 ### ACKMODE
 
-An ACKMODE frame's payload is `id_lo id_hi data...`. The data is transmitted as a data frame would be, and once its audio has been handed to the sound card (at most one card buffer, 120 ms, before it has finished playing; the keyup is still holding the channel) the two id bytes come back to the host that sent them, alone, in a command `12` frame under the port's own sub-channel (0 on a per-modem port). An id with no data is acknowledged at once. A frame the channel refuses gets no acknowledgement; the journal carries the `DROPPED` line.
+An ACKMODE frame's payload is `id_lo id_hi data...`. The data is transmitted as a data frame would be, and once its audio has been handed to the sound card (at most one card buffer, 120 ms, before it has finished playing; the keyup is still holding the channel) the two id bytes come back to the host that sent them, alone, in a command `12` frame under the port's own sub-channel (0 on a per-modem or polyglot port). An id with no data is acknowledged at once. A frame the channel refuses gets no acknowledgement; the journal carries the `DROPPED` line.
 
 ### Quality frames
 

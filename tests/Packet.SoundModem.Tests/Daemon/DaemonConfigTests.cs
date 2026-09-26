@@ -264,6 +264,121 @@ public class DaemonConfigTests : IDisposable
         config.Modems[0].Port.Should().Be(8110);
     }
 
+    private const string PolyglotModems =
+        "\"modems\": [{\"subChannel\": 0, \"mode\": \"afsk1200\"}, "
+        + "{\"subChannel\": 1, \"mode\": \"afsk1200-il2p\"}]";
+
+    [Fact]
+    public void A_Polyglot_Port_Loads()
+    {
+        string path = WriteConfig(
+            "{\"device\": \"null\", " + PolyglotModems
+            + ", \"polyglot\": [{\"port\": 8120, \"subChannels\": [1, 0], \"default\": 0}]}");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Warnings.Should().BeEmpty();
+        PolyglotConfig polyglot = config.Polyglot.Should().ContainSingle().Subject;
+        polyglot.SubChannels.Should().Equal(1, 0);
+        polyglot.Default.Should().Be(0);
+        polyglot.ForgetAfterMinutes.Should().Be(60);
+    }
+
+    [Theory]
+    [InlineData("""{"subChannels": [0, 1], "default": 0}""", "no \"port\"")]
+    [InlineData("""{"port": 8120, "subChannels": [0], "default": 0}""", "two or more")]
+    [InlineData("""{"port": 8120, "subChannels": [0, 0], "default": 0}""", "twice")]
+    [InlineData("""{"port": 8120, "subChannels": [0, 7], "default": 0}""", "no modem entry has \"subChannel\": 7")]
+    [InlineData("""{"port": 8120, "subChannels": [0, 1]}""", "no \"default\"")]
+    [InlineData("""{"port": 8120, "subChannels": [0, 1], "default": 2}""", "not in its \"subChannels\"")]
+    [InlineData("""{"port": 8120, "subChannels": [0, 1], "default": 0, "forgetAfterMinutes": 0}""", "above 0")]
+    [InlineData("""{"port": 8120, "subChannels": [0, 1], "default": 0, "forgetAfterMinutes": 1e12}""", "at most 10080")]
+    [InlineData("null", "is empty")]
+    [InlineData("""{"port": 8105, "subChannels": [0, 1], "default": 0}""", "both want TCP port 8105")]
+    public void A_Polyglot_Port_That_Cannot_Work_Is_Refused_With_The_Reason(string entry, string reason)
+    {
+        string path = WriteConfig(
+            "{\"device\": \"null\", " + PolyglotModems + ", \"polyglot\": [" + entry + "]}");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain(reason);
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void Polyglot_Port_Puts_Every_Packet_Modem_Behind_One_Port_With_The_First_As_Default()
+    {
+        string path = WriteConfig("""
+            {"device": "null",
+             "modems": [{"subChannel": 2, "mode": "afsk1200"}, {"subChannel": 0, "mode": "ardop"},
+                        {"subChannel": 1, "mode": "afsk1200-il2p"}],
+             "polyglotPort": 8456}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        PolyglotConfig polyglot = config!.Polyglot.Should().ContainSingle().Subject;
+        polyglot.Port.Should().Be(8456);
+        polyglot.SubChannels.Should().Equal([2, 1], "ARDOP has no KISS form, so it is left out");
+        polyglot.Default.Should().Be(2, "the first packet modem as written, not the lowest number");
+        polyglot.ForgetAfterMinutes.Should().Be(60);
+    }
+
+    [Fact]
+    public void Polyglot_Port_With_One_Packet_Modem_Is_Refused()
+    {
+        string path = WriteConfig("""{"device": "null", "modems": [{"subChannel": 0, "mode": "afsk1200"}], "polyglotPort": 8456}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"polyglotPort\": 8456").And.Contain("this station has 1");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void Polyglot_Port_Clashing_With_Another_Port_Is_Refused_By_Its_Own_Name()
+    {
+        string path = WriteConfig("{\"device\": \"null\", " + PolyglotModems + ", \"polyglotPort\": 8105}");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"polyglotPort\" and \"kissPort\" both want TCP port 8105");
+    }
+
+    [Fact]
+    public void A_Polyglot_Port_Cannot_Include_Ardop()
+    {
+        string path = WriteConfig("""
+            {"device": "null",
+             "modems": [{"subChannel": 0, "mode": "afsk1200"}, {"subChannel": 1, "mode": "ardop"}],
+             "polyglot": [{"port": 8120, "subChannels": [0, 1], "default": 0}]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("ardop").And.Contain("cannot sit behind a KISS port");
+    }
+
+    [Fact]
+    public void An_Unknown_Key_In_A_Polyglot_Entry_Is_Reported()
+    {
+        string path = WriteConfig(
+            "{\"device\": \"null\", " + PolyglotModems
+            + ", \"polyglot\": [{\"port\": 8120, \"subChannels\": [0, 1], \"default\": 0, \"defualt\": 1}]}");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Warnings.Should().ContainSingle().Which.Should().Contain("polyglot port 8120").And.Contain("defualt");
+    }
+
     [Theory]
     // A modem's port against the shared one, and against another modem's.
     [InlineData("""{"kissPort": 8105, "modems": [{"subChannel": 0, "port": 8105}]}""", "8105")]

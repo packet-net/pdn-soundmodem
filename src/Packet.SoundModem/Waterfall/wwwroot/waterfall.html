@@ -763,8 +763,9 @@ function txTime(at) {
   return isNaN(when) ? "" : when.toTimeString().slice(0, 8);
 }
 
-// Which KISS ports the station serves and how many hosts are on each: [{port, sub, clients}],
-// sub null being the multiplexed port, which reaches every modem. Empty until the server says
+// Which KISS ports the station serves and how many hosts are on each: [{port, sub, subs, clients}].
+// subs is set on a polyglot port and lists the modems it overlays; otherwise sub null is the
+// multiplexed port, which reaches every modem. Empty until the server says
 // otherwise, and the chips then say nothing about attachment rather than guessing at it.
 let hostPorts = [];
 function setHostPorts(msg) {
@@ -1556,26 +1557,28 @@ function renderChips() {
 }
 
 // Whether the node software is attached to a port that can reach this modem: its own dedicated
-// port, and the multiplexed one, which reaches every modem by nibble. Nothing at all when the
+// port, a polyglot port it belongs to, and the multiplexed one, which reaches every modem by nibble. Nothing at all when the
 // station has not said what it serves - an absent badge is honest, a green one would not be.
 // The port number used to live in the tooltip alone, which meant reading it required a hover
 // nobody watching the bar above the spectrum display was going to make (#427) - it is in the
 // chip text itself now.
 function hostBadge(sub) {
   if (cfg.publicMonitor) return "";
-  const reach = hostPorts.filter(p => p.sub == null || p.sub === sub);
+  // A polyglot port (subs set) reaches the overlaid modems it lists, and counts as each one's own.
+  const reach = hostPorts.filter(p =>
+    p.subs ? p.subs.includes(sub) : p.sub == null || p.sub === sub);
   if (!reach.length) return "";
-  // A modem with its own dedicated port shows only that port in the chip text and counts only
-  // its own clients - the shared port also reaches it, but is not what an operator plugged a TNC
-  // into, and naming both told the reader nothing they could act on. A modem with no dedicated
-  // port falls back to the shared port, as before. The tooltip still lists every port that
+  // A modem with its own dedicated or polyglot port shows only those ports in the chip text and
+  // counts only their clients - the shared port also reaches it, but is not what an operator
+  // plugged a TNC into, and naming both told the reader nothing they could act on. A modem with
+  // neither falls back to the shared port, as before. The tooltip still lists every port that
   // reaches the modem, shared and dedicated alike, so the shared port's hosts stay discoverable
   // on hover even for a modem whose chip text has stopped naming it.
-  const own = reach.find(p => p.sub === sub);
-  const shown = own ? [own] : reach;
+  const own = reach.filter(p => p.sub === sub || p.subs);
+  const shown = own.length ? own : reach;
   const clients = shown.reduce((n, p) => n + (p.clients || 0), 0);
   const detail = reach.map(p =>
-    `${p.port} (${p.sub == null ? "all modems" : "this modem"}): ` +
+    `${p.port} (${p.subs ? "polyglot" : p.sub == null ? "all modems" : "this modem"}): ` +
     (p.clients ? `${p.clients} connected` : "nothing connected")).join("\n");
   const ports = esc(shown.map(p => p.port).join(", "));
   const text = clients

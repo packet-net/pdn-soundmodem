@@ -275,6 +275,44 @@ public sealed class ModemPluginConfig
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
+/// <summary>
+/// One polyglot KISS port: several modems overlaid on the same channel behind one port, with each
+/// frame the host sends going out in the mode its next hop was last heard in
+/// (packet-net/pdn-soundmodem#450).
+/// </summary>
+/// <remarks>
+/// For a station with one frequency and peers on different equipment. Every member modem hears
+/// every burst, so which one decoded a station says what that station can do; the host sees one
+/// nibble-0 port and never has to choose. A station not heard within
+/// <see cref="ForgetAfterMinutes"/> gets <see cref="Default"/>, which should be the mode every
+/// peer has. Beacons and broadcasts go to destinations that never transmit, so they always take
+/// the default. See <see cref="Kiss.PolyglotRouter"/>.
+/// </remarks>
+public sealed class PolyglotConfig
+{
+    /// <summary>The TCP port the host attaches to. Required.</summary>
+    public int? Port { get; set; }
+
+    /// <summary>The overlaid modems, by their <see cref="ModemConfig.SubChannel"/>; two or more.</summary>
+    public List<int> SubChannels { get; set; } = [];
+
+    /// <summary>The sub-channel a frame goes out on when its next hop has not been heard
+    /// recently. Required, and one of <see cref="SubChannels"/>.</summary>
+    public int? Default { get; set; }
+
+    /// <summary>How long a station is remembered after it was last heard, in minutes.</summary>
+    public double ForgetAfterMinutes { get; set; } = 60;
+
+    /// <summary>Keys in this entry that the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+
+    /// <summary>Whether this entry was written as <see cref="DaemonConfig.PolyglotPort"/> rather
+    /// than in the list, so a refusal can name the key the operator actually wrote.</summary>
+    [JsonIgnore]
+    internal bool FromShorthand { get; init; }
+}
+
 /// <summary>PTT configuration.</summary>
 /// <summary>
 /// Where this station's carrier sense comes from: the radio's own squelch and signal-strength
@@ -1407,6 +1445,18 @@ public sealed class DaemonConfig
     /// </remarks>
     public List<ModemPluginConfig> ModemPlugins { get; set; } = [];
 
+    /// <summary>
+    /// Polyglot KISS ports: overlaid modems behind one port, each frame sent in the mode its next
+    /// hop was last heard in. Empty by default.
+    /// </summary>
+    public List<PolyglotConfig> Polyglot { get; set; } = [];
+
+    /// <summary>
+    /// Shorthand for the usual <see cref="Polyglot"/> port: every packet modem on it, the first
+    /// in <see cref="Modems"/> as the default, remembered for the default time. Null for none.
+    /// </summary>
+    public int? PolyglotPort { get; set; }
+
     /// <summary>PTT control; null = VOX / none.</summary>
     public PttConfig? Ptt { get; set; }
 
@@ -1706,6 +1756,7 @@ public sealed class DaemonConfig
         config.SidebandWasStated = StatesKey(path, "sideband");
         config.WaterfallSidebandWasStated = StatesKey(path, "waterfall", "sideband");
         ValidateTxTest(config);
+        ValidatePolyglot(config);
         ValidatePorts(config);
         ValidateKissFrames(config);
         config.Warnings = CollectWarnings(config);
@@ -1996,6 +2047,15 @@ public sealed class DaemonConfig
                 + "incompatible things about what this process is: \"device\" is one radio or one "
                 + "receiver with a KISS port and a transmitter, \"monitor\" is many web receivers "
                 + "behind one page with neither. Remove whichever one you did not mean.");
+        }
+
+        if (config.Polyglot is { Count: > 0 } || config.PolyglotPort is not null)
+        {
+            string key = config.PolyglotPort is not null ? "polyglotPort" : "polyglot";
+            throw new InvalidDataException(
+                $"this file sets both \"{key}\" and \"monitor\". A polyglot port is a KISS "
+                + "port for a node to transmit through, and a monitor has neither. Remove "
+                + $"\"{key}\".");
         }
 
         if (monitor.Modems.Count == 0)
@@ -2523,6 +2583,10 @@ public sealed class DaemonConfig
         Unknown("flex", config.Flex?.UnknownSettings);
         Unknown("alsa", config.Alsa?.UnknownSettings);
         Unknown("alsa mixer", config.Alsa?.Mixer?.UnknownSettings);
+        foreach (PolyglotConfig polyglot in config.Polyglot ?? [])
+        {
+            Unknown($"polyglot port {polyglot.Port}", polyglot.UnknownSettings);
+        }
 
         // The generic line above says a key is being ignored; this one says what to write
         // instead. Both, because "captureGainPercent is not a setting this version knows" on a
@@ -2639,6 +2703,113 @@ public sealed class DaemonConfig
         }
     }
 
+    /// <summary>A week: longer than any station stays on one radio without being heard, and far
+    /// short of the figure where turning minutes into a time span would overflow.</summary>
+    private const double MaxForgetAfterMinutes = 7 * 24 * 60;
+
+    private static void ValidatePolyglot(DaemonConfig config)
+    {
+        config.Polyglot ??= [];
+
+        // The shorthand becomes an ordinary entry, so everything after this - the checks, the
+        // port claim, the daemon - sees one kind of polyglot port.
+        if (config.PolyglotPort is int shorthand)
+        {
+            List<int> packet = [.. config.Modems.Where(m => !IsArdop(m.Mode)).Select(m => m.SubChannel)];
+            if (packet.Count < 2)
+            {
+                throw new InvalidDataException(
+                    $"\"polyglotPort\": {shorthand} puts every packet modem behind one port, and "
+                    + $"this station has {packet.Count}. It needs two or more in \"modems\" to "
+                    + "choose between; with one, use \"kissPort\" or that modem's own \"port\".");
+            }
+
+            config.Polyglot.Add(new PolyglotConfig
+            {
+                Port = shorthand,
+                SubChannels = packet,
+                Default = packet[0],
+                FromShorthand = true,
+            });
+        }
+        foreach (PolyglotConfig? entry in config.Polyglot)
+        {
+            if (entry is not { } polyglot)
+            {
+                throw new InvalidDataException(
+                    "a \"polyglot\" entry is empty (null). Each entry is one port, e.g. "
+                    + "{\"port\": 8120, \"subChannels\": [0, 1], \"default\": 0}.");
+            }
+
+            if (polyglot.Port is not int port)
+            {
+                throw new InvalidDataException(
+                    "a \"polyglot\" entry has no \"port\". It is the KISS port your node attaches "
+                    + "to, e.g. {\"port\": 8120, \"subChannels\": [0, 1], \"default\": 0}.");
+            }
+
+            string where = polyglot.FromShorthand ? $"\"polyglotPort\": {port}" : $"\"polyglot\" port {port}";
+            polyglot.SubChannels ??= [];
+            if (polyglot.SubChannels.Count < 2)
+            {
+                throw new InvalidDataException(
+                    $"{where} lists {polyglot.SubChannels.Count} sub-channel(s) in \"subChannels\". "
+                    + "It overlays two or more modems; for one modem on a port of its own, give that "
+                    + "modem entry a \"port\" instead.");
+            }
+
+            if (polyglot.SubChannels.GroupBy(s => s).FirstOrDefault(g => g.Count() > 1) is { } repeated)
+            {
+                throw new InvalidDataException(
+                    $"{where} lists sub-channel {repeated.Key} twice in \"subChannels\". List each "
+                    + "modem once.");
+            }
+
+            foreach (int sub in polyglot.SubChannels)
+            {
+                ModemConfig? modem = config.Modems.FirstOrDefault(m => m.SubChannel == sub);
+                if (modem is null)
+                {
+                    throw new InvalidDataException(
+                        $"{where} lists sub-channel {sub}, and no modem entry has \"subChannel\": "
+                        + $"{sub}. Every sub-channel it lists has to be one of your \"modems\".");
+                }
+
+                if (IsArdop(modem.Mode))
+                {
+                    throw new InvalidDataException(
+                        $"{where} lists sub-channel {sub}, which is \"mode\": \"ardop\". ARDOP is "
+                        + "an ARQ session with its own host interface, not a packet modem, so it "
+                        + "cannot sit behind a KISS port. Take it out of \"subChannels\".");
+                }
+            }
+
+            if (polyglot.Default is not int fallback)
+            {
+                throw new InvalidDataException(
+                    $"{where} has no \"default\". It is the sub-channel a frame goes out on when "
+                    + "the station it is for has not been heard recently, so it should be the mode "
+                    + "every peer has, e.g. your afsk1200 modem.");
+            }
+
+            if (!polyglot.SubChannels.Contains(fallback))
+            {
+                throw new InvalidDataException(
+                    $"{where} has \"default\": {fallback}, which is not in its \"subChannels\" "
+                    + $"[{string.Join(", ", polyglot.SubChannels)}]. The default has to be one of "
+                    + "the modems it overlays.");
+            }
+
+            if (!(polyglot.ForgetAfterMinutes is > 0 and <= MaxForgetAfterMinutes))
+            {
+                throw new InvalidDataException(
+                    $"{where} has \"forgetAfterMinutes\": {polyglot.ForgetAfterMinutes}. It is how "
+                    + $"long a station is remembered after it was last heard, and has to be above 0 "
+                    + $"and at most {MaxForgetAfterMinutes} (a week); leave it out for 60.");
+            }
+        }
+    }
+
     private static void ValidatePorts(DaemonConfig config)
     {
         var claimed = new Dictionary<int, string>();
@@ -2656,6 +2827,11 @@ public sealed class DaemonConfig
         if (config.Ardop is null)
         {
             Claim(config.KissPort, "\"kissPort\"");
+        }
+
+        foreach (PolyglotConfig polyglot in config.Polyglot)
+        {
+            Claim(polyglot.Port!.Value, polyglot.FromShorthand ? "\"polyglotPort\"" : "a \"polyglot\" port");
         }
 
         foreach (ModemConfig modem in config.Modems.Where(m => m.Port is not null))

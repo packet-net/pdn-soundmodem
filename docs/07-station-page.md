@@ -52,7 +52,7 @@ At the right, the connection state reads `live` while the page's socket is up, a
 
 One chip per modem sits under the header, in sub-channel order: the sub-channel number, the mode, the audio centre frequency, and the RF frequency once you have set the dial. Each chip's colour is the colour that modem's band is drawn in on the spectrum and waterfall. Hover a chip for its audio band in Hz.
 
-A chip also carries a KISS badge, `KISS 8001: 1 host`, saying which port reaches that modem and how many hosts are attached; it reads `KISS 8001, no host` when nothing is. A modem with its own dedicated port names that port; one without names the shared port. The badge follows clients live, so you can watch your node software attach. [06-connect-your-software.md](06-connect-your-software.md) covers what attaches and how.
+A chip also carries a KISS badge, `KISS 8001: 1 host`, saying which port reaches that modem and how many hosts are attached; it reads `KISS 8001, no host` when nothing is. A modem with its own dedicated port or in a polyglot port names that port; one with neither names the shared port. The badge follows clients live, so you can watch your node software attach. [06-connect-your-software.md](06-connect-your-software.md) covers what attaches and how.
 
 The badge is absent until the station has said what it serves, and a public page carries none.
 

@@ -250,14 +250,31 @@ internal static class ActivityLog
         from is null ? "(no callsign)" : $"{from}>{to ?? "?"}";
 
     /// <summary>A host attached to a KISS port.</summary>
-    internal static string ClientConnected(int port, int? dedicatedSubChannel, KissClientEvent e) =>
-        $"kiss[{port}] {Host(e.Remote)} connected - {Clients(e.Clients)}{Serving(dedicatedSubChannel)}";
+    internal static string ClientConnected(
+        int port, int? dedicatedSubChannel, KissClientEvent e, IReadOnlyList<int>? polyglot = null) =>
+        $"kiss[{port}] {Host(e.Remote)} connected - {Clients(e.Clients)}{Serving(dedicatedSubChannel, polyglot)}";
 
     /// <summary>A host's KISS session ended; the reason is given where it was not a clean close.</summary>
-    internal static string ClientDisconnected(int port, int? dedicatedSubChannel, KissClientEvent e) =>
+    internal static string ClientDisconnected(
+        int port, int? dedicatedSubChannel, KissClientEvent e, IReadOnlyList<int>? polyglot = null) =>
         $"kiss[{port}] {Host(e.Remote)} disconnected"
         + (e.Reason is { Length: > 0 } why ? $": {why}" : "")
-        + $" - {Clients(e.Clients)}{Serving(dedicatedSubChannel)}";
+        + $" - {Clients(e.Clients)}{Serving(dedicatedSubChannel, polyglot)}";
+
+    /// <summary>
+    /// A polyglot port will now send a station's frames on a different modem: it was heard on a
+    /// modem other than the one its frames would have gone to.
+    /// </summary>
+    /// <param name="port">The polyglot port.</param>
+    /// <param name="e">Who, and which modems.</param>
+    /// <param name="modeOf">The mode on a sub-channel, for the line to name it.</param>
+    /// <param name="defaultSubChannel">The port's default, so the line can say when "before" was
+    /// only the default rather than a modem the station had been heard on.</param>
+    internal static string PolyglotLearned(
+        int port, PolyglotLearnedEvent e, Func<int, string> modeOf, int defaultSubChannel) =>
+        $"polyglot[{port}]: {e.Station} heard on modem {e.SubChannel} {modeOf(e.SubChannel)}, "
+        + $"frames for it go there now (was modem {e.Previous} {modeOf(e.Previous)}"
+        + (e.Previous == defaultSubChannel ? ", the default)" : ")");
 
     /// <summary>A host's frame was longer than the port allows and was dropped, with the fix.</summary>
     internal static string FrameOversize(int port, KissOversizeEvent e) =>
@@ -269,8 +286,10 @@ internal static class ActivityLog
     private static string Clients(int count) => count == 1 ? "1 client" : $"{count} clients";
 
     /// <summary>Which modems that port reaches - the thing a host operator gets wrong.</summary>
-    private static string Serving(int? dedicatedSubChannel) =>
-        dedicatedSubChannel is int sub ? $" (modem {sub} only)" : " (all modems)";
+    private static string Serving(int? dedicatedSubChannel, IReadOnlyList<int>? polyglot = null) =>
+        polyglot is { Count: > 0 }
+            ? $" (polyglot: modems {string.Join(", ", polyglot)})"
+            : dedicatedSubChannel is int sub ? $" (modem {sub} only)" : " (all modems)";
 
     /// <summary>
     /// <c>SOURCE&gt;DEST</c> where the frame is AX.25, else a marker. Not every mode carries AX.25

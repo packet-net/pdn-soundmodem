@@ -115,7 +115,7 @@ Design notes, the measured rate ladder and what still limits the waveform are in
 
 A station can have several modems, and they all listen to the same audio at the same time. Each entry takes its own `subChannel`, 0 to 15, which is the KISS sub-channel your node or APRS software addresses it on. Two entries may not share one, and start-up refuses a file where they do. A 12 kHz mode and a 48 kHz mode can sit side by side; the channel then runs at 48 kHz.
 
-A modem can also be given a `port` of its own, which presents that one modem as sub-channel 0 for software that speaks only one channel. [06-connect-your-software.md](06-connect-your-software.md) has the recipes.
+A modem can also be given a `port` of its own, which presents that one modem as sub-channel 0 for software that speaks only one channel. Several modems on one frequency can also share a single polyglot port, which answers each station in the mode it was heard in. [06-connect-your-software.md](06-connect-your-software.md) has the recipes.
 
 ## Where a mode sits in the audio
 
