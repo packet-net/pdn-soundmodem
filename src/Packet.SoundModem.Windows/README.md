@@ -1,7 +1,8 @@
 # pdn-soundmodem-windows
 
 Windows backends for the pdn-soundmodem core, so that a Windows application can run the modem in
-its own process over a USB radio interface. The Linux daemon does not use or reference this
+its own process over a USB radio interface. Published to NuGet as `pdn-soundmodem-windows` by the
+same release as the core, on the same version, depending on the core at exactly that version. The Linux daemon does not use or reference this
 library; the core knows nothing about it.
 
 ## What is here
