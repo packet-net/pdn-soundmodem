@@ -24,6 +24,10 @@ namespace Packet.SoundModem.Kiss;
 /// multiplexed port such a host can only ever reach sub-channel 0, however many modems are
 /// configured. Several servers can share one channel, so a daemon can offer the multiplexed
 /// port and per-modem ports at the same time.
+/// <para>Constructed with a <see cref="PolyglotRouter"/> the server is <b>polyglot</b>: several
+/// modems overlaid on one channel behind one nibble-0 port. It surfaces every member modem's
+/// frames and transmits each frame on the member its next hop was last heard on, so the host
+/// reaches every peer in that peer's own mode without choosing one (#450).</para>
 /// </remarks>
 public sealed class KissTcpServer : IAsyncDisposable
 {
@@ -42,6 +46,7 @@ public sealed class KissTcpServer : IAsyncDisposable
     private readonly TcpListener _listener;
     private readonly SoundModemChannel _channel;
     private readonly int? _dedicatedSubChannel;
+    private readonly PolyglotRouter? _polyglot;
     private readonly TimeProvider _time;
     private readonly ConcurrentDictionary<Guid, ClientSession> _clients = [];
     private readonly CancellationTokenSource _stopping = new();
@@ -64,11 +69,35 @@ public sealed class KissTcpServer : IAsyncDisposable
     public KissTcpServer(
         SoundModemChannel channel, int port = 8105, IPAddress? bind = null, int? subChannel = null,
         TimeProvider? time = null, int maxFrameBytes = KissDecoder.DefaultMaxFrame)
+        : this(channel, port, bind, subChannel, polyglot: null, time, maxFrameBytes)
+    {
+    }
+
+    /// <summary>Creates a polyglot server: <paramref name="polyglot"/>'s modems behind one
+    /// nibble-0 port, each frame sent in the mode its next hop was last heard in.</summary>
+    /// <param name="channel">The modem channel to serve.</param>
+    /// <param name="polyglot">Which modems, the default, and what has been heard on each.</param>
+    /// <param name="port">TCP port to listen on; 0 binds an ephemeral one.</param>
+    /// <param name="bind">Address to bind; loopback when null.</param>
+    /// <param name="time">Wall clock; the system's when null.</param>
+    /// <param name="maxFrameBytes">As on the other constructor.</param>
+    public KissTcpServer(
+        SoundModemChannel channel, PolyglotRouter polyglot, int port, IPAddress? bind = null,
+        TimeProvider? time = null, int maxFrameBytes = KissDecoder.DefaultMaxFrame)
+        : this(channel, port, bind, subChannel: null, polyglot ?? throw new ArgumentNullException(nameof(polyglot)),
+            time, maxFrameBytes)
+    {
+    }
+
+    private KissTcpServer(
+        SoundModemChannel channel, int port, IPAddress? bind, int? subChannel, PolyglotRouter? polyglot,
+        TimeProvider? time, int maxFrameBytes)
     {
         ArgumentNullException.ThrowIfNull(channel);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxFrameBytes, 1);
         _channel = channel;
         _dedicatedSubChannel = subChannel;
+        _polyglot = polyglot;
         MaxFrameBytes = maxFrameBytes;
         _time = time ?? TimeProvider.System;
         _listener = new TcpListener(bind ?? IPAddress.Loopback, port);
@@ -76,8 +105,15 @@ public sealed class KissTcpServer : IAsyncDisposable
         _channel.FrameReceivedWithQuality += OnFrameQuality;
     }
 
-    /// <summary>The modem this server is dedicated to, or null when it is multiplexed.</summary>
+    /// <summary>The modem this server is dedicated to, or null when it is multiplexed or polyglot.</summary>
     public int? DedicatedSubChannel => _dedicatedSubChannel;
+
+    /// <summary>The routing of a polyglot server, or null when it is not one.</summary>
+    public PolyglotRouter? Polyglot => _polyglot;
+
+    /// <summary>Whether this server speaks only nibble 0 to its hosts: dedicated and polyglot
+    /// ports do, the multiplexed port speaks each modem's own.</summary>
+    private bool SpeaksNibbleZero => _dedicatedSubChannel is not null || _polyglot is not null;
 
     /// <summary>How many hosts hold a session on this port right now.</summary>
     /// <remarks>
@@ -258,19 +294,19 @@ public sealed class KissTcpServer : IAsyncDisposable
                 // the channel announces every rejection on TransmitRejected (including a frame
                 // for a sub-channel with no modem), and this keeps the same fault from
                 // resurfacing later as an UnobservedTaskException.
-                Observe(_channel.EnqueueTransmit(TransmitSubChannel(frame.Port), frame.Payload));
+                Observe(_channel.EnqueueTransmit(TransmitSubChannel(frame.Port, frame.Payload), frame.Payload));
                 break;
 
             case KissCommand.AckModeData when frame.Payload.Length >= 2:
             {
                 byte[] ackId = frame.Payload[..2];
-                int port = TransmitSubChannel(frame.Port);
+                int port = TransmitSubChannel(frame.Port, frame.Payload.AsSpan(2));
 
                 // The ack goes back under the nibble this server SPEAKS, which on a dedicated
-                // port is 0 - the same relabelling every received frame gets. Encoding the
-                // real sub-channel here made a dedicated port answer with a nibble its host
-                // never uses (and, per BPQ's convention, would mis-file).
-                int ackNibble = _dedicatedSubChannel is null ? port : 0;
+                // or polyglot port is 0 - the same relabelling every received frame gets.
+                // Encoding the real sub-channel here made a dedicated port answer with a nibble
+                // its host never uses (and, per BPQ's convention, would mis-file).
+                int ackNibble = SpeaksNibbleZero ? 0 : port;
                 byte[] ack = KissCodec.Encode(new KissFrame(ackNibble, KissCommand.AckModeData, ackId));
 
                 if (frame.Payload.Length == 2)
@@ -321,14 +357,15 @@ public sealed class KissTcpServer : IAsyncDisposable
                 // frames are echoed back to the sender as the confirmation KISS itself never
                 // defined; refused ones are journalled and NOT echoed - KISS has no error
                 // channel, and a NinoTNC-style host expects fire-and-forget to stay silent.
-                int port = TransmitSubChannel(frame.Port);
+                // A polyglot port has no frame to route by, so SETHW goes to its default modem.
+                int port = _polyglot?.DefaultSubChannel ?? TransmitSubChannel(frame.Port, []);
                 if (_channel.Modems.TryGetValue(port, out IModem? modem)
                     && modem is IHardwareControllable hw)
                 {
                     bool applied = hw.TrySetHardware(frame.Payload, out string outcome);
                     if (applied)
                     {
-                        int nibble = _dedicatedSubChannel is null ? port : 0;
+                        int nibble = SpeaksNibbleZero ? 0 : port;
                         Send(origin, KissCodec.Encode(
                             new KissFrame(nibble, KissCommand.SetHardware, frame.Payload)));
                     }
@@ -355,9 +392,11 @@ public sealed class KissTcpServer : IAsyncDisposable
 
     /// <summary>
     /// Where a client's frame is transmitted. A dedicated server ignores the client's nibble
-    /// entirely - the whole point is to serve a host that can only ever send 0.
+    /// entirely - the whole point is to serve a host that can only ever send 0 - and a polyglot
+    /// one ignores it too, choosing by the frame's next hop instead.
     /// </summary>
-    private int TransmitSubChannel(int requested) => _dedicatedSubChannel ?? requested;
+    private int TransmitSubChannel(int requested, ReadOnlySpan<byte> frame) =>
+        _polyglot?.Route(frame) ?? _dedicatedSubChannel ?? requested;
 
     /// <summary>Reads a fire-and-forget transmission's fault so it cannot surface as an
     /// UnobservedTaskException. The rejection itself is the channel's to announce.</summary>
@@ -370,18 +409,34 @@ public sealed class KissTcpServer : IAsyncDisposable
 
     /// <summary>
     /// The nibble a frame is published under, or null to withhold it from this server's
-    /// clients. A dedicated server publishes only its own modem, relabelled 0.
+    /// clients. A dedicated server publishes only its own modem, relabelled 0; a polyglot one
+    /// publishes its members' frames, relabelled 0, and withholds a second copy of one burst.
     /// </summary>
-    private int? PublishNibble(int subChannel) => _dedicatedSubChannel switch
+    /// <param name="subChannel">The modem that decoded it.</param>
+    /// <param name="frame">The frame.</param>
+    /// <param name="arriving">True for the data frame itself, which a polyglot server learns
+    /// from; false for the extras that follow it, which go wherever the data frame went.</param>
+    private int? PublishNibble(int subChannel, byte[] frame, bool arriving)
     {
-        null => subChannel,
-        int dedicated when dedicated == subChannel => 0,
-        _ => null,
-    };
+        if (_polyglot is { } polyglot)
+        {
+            bool deliver = arriving
+                ? polyglot.Heard(subChannel, frame)
+                : polyglot.WasDelivered(subChannel, frame);
+            return deliver ? 0 : null;
+        }
+
+        return _dedicatedSubChannel switch
+        {
+            null => subChannel,
+            int dedicated when dedicated == subChannel => 0,
+            _ => null,
+        };
+    }
 
     private void OnFrameReceived(int subChannel, byte[] frame)
     {
-        if (PublishNibble(subChannel) is not int nibble)
+        if (PublishNibble(subChannel, frame, arriving: true) is not int nibble)
         {
             return;
         }
@@ -400,7 +455,8 @@ public sealed class KissTcpServer : IAsyncDisposable
         // Asked of the quality itself rather than inferred from whether OnFrameReceived fired:
         // the two events arrive from the same synchronous decode, so ordering looks like a usable
         // signal right up to the frame where one of them simply does not come.
-        if (!EmitQualityFrames || quality.MonitorOnly || PublishNibble(subChannel) is not int nibble)
+        if (!EmitQualityFrames || quality.MonitorOnly
+            || PublishNibble(subChannel, frame, arriving: false) is not int nibble)
         {
             return;
         }

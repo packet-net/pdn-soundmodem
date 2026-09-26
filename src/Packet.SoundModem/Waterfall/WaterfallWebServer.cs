@@ -330,7 +330,14 @@ public sealed record DeclaredBand(int SubChannel, string Mode, double CentreHz, 
 /// nibble). The page uses this to decide which modem labels a session on this port lights up.
 /// </param>
 /// <param name="Clients">Hosts currently attached.</param>
-public readonly record struct HostPortStatus(int Port, int? SubChannel, int Clients);
+public readonly record struct HostPortStatus(int Port, int? SubChannel, int Clients)
+{
+    /// <summary>
+    /// The modems a polyglot port reaches, or null for any other port. A polyglot port has no one
+    /// <see cref="SubChannel"/> and does not reach every modem either, so it says which.
+    /// </summary>
+    public IReadOnlyList<int>? SubChannels { get; init; }
+}
 
 /// <summary>
 /// Where a page said it came from, and the host it reached this station on.
@@ -753,6 +760,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 {
                     port = p.Port,
                     sub = p.SubChannel,
+                    subs = p.SubChannels,
                     clients = p.Clients,
                 }),
             },

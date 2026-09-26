@@ -785,10 +785,13 @@ public sealed class OfdmFmModem : IModem
         // failing one never reaches here. Reported as CrcValid rather than null because a display
         // asking "did this frame's CRC check out" has a true answer, even though the CRC is this
         // waveform's own rather than IL2P's; there is no IL2P here at all.
+        // The frame before its quality, as every other modem does: a KISS host is promised the
+        // quality frame after the data frame it describes, and a polyglot port decides whether
+        // there is a quality frame at all from what it did with the data frame.
+        _frameReceived(payload);
         FrameDecoded?.Invoke(
             payload,
             new FrameQuality(_mode, payload.Length, CorrectedBytes: null, CrcValid: true));
-        _frameReceived(payload);
     }
 
     /// <summary>

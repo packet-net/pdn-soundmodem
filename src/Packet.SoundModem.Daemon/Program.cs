@@ -176,6 +176,7 @@ if (mixerShow is not null)
 }
 
 var modems = new List<ModemConfig>();
+List<PolyglotConfig> polyglotPorts = [];
 PttConfig? pttConfig = null;
 CarrierSenseConfig? carrierSenseConfig = null;
 AlsaConfig? alsaConfig = null;
@@ -243,6 +244,7 @@ if (configPath is not null)
     dialFrequency = config.DialFrequency;
     frameLogConfig = config.FrameLog;
     modems = config.Modems;
+    polyglotPorts = config.Polyglot;
     pttConfig = config.Ptt;
     carrierSenseConfig = config.CarrierSense;
     alsaConfig = config.Alsa;
@@ -1801,7 +1803,10 @@ void PublishHostPorts()
     foreach (KissTcpServer server in kissServers)
     {
         ports.Add(new Packet.SoundModem.Waterfall.HostPortStatus(
-            server.LocalPort, server.DedicatedSubChannel, server.ClientCount));
+            server.LocalPort, server.DedicatedSubChannel, server.ClientCount)
+        {
+            SubChannels = server.Polyglot?.SubChannels,
+        });
     }
 
     waterfallServer.SetHostPorts(ports);
@@ -1814,12 +1819,14 @@ void WatchClients(KissTcpServer server)
 {
     server.ClientConnected += e =>
     {
-        Console.WriteLine(ActivityLog.ClientConnected(server.LocalPort, server.DedicatedSubChannel, e));
+        Console.WriteLine(ActivityLog.ClientConnected(
+            server.LocalPort, server.DedicatedSubChannel, e, server.Polyglot?.SubChannels));
         PublishHostPorts();
     };
     server.ClientDisconnected += e =>
     {
-        Console.WriteLine(ActivityLog.ClientDisconnected(server.LocalPort, server.DedicatedSubChannel, e));
+        Console.WriteLine(ActivityLog.ClientDisconnected(
+            server.LocalPort, server.DedicatedSubChannel, e, server.Polyglot?.SubChannels));
         PublishHostPorts();
     };
     server.AcceptFailed += why => Console.Error.WriteLine(
@@ -1896,6 +1903,29 @@ if (benchTxTest is null && modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
         Console.WriteLine(
             $"kiss tcp: {shown}:{dedicated.LocalPort} (modem {modemConfig.SubChannel} "
             + $"{modemConfig.Mode} only, as nibble 0)");
+    }
+
+    // Overlaid modems behind one port, each frame sent in the mode its next hop was last heard
+    // in (#450). Validation has already checked every member is a packet modem on this station.
+    string ModeOn(int sub) => modems.FirstOrDefault(m => m.SubChannel == sub)?.Mode ?? "?";
+    foreach (PolyglotConfig polyglotConfig in polyglotPorts)
+    {
+        var router = new PolyglotRouter(
+            polyglotConfig.SubChannels, polyglotConfig.Default!.Value,
+            TimeSpan.FromMinutes(polyglotConfig.ForgetAfterMinutes));
+        var polyglot = new KissTcpServer(
+            channel, router, polyglotConfig.Port!.Value, listenAddress, maxFrameBytes: kissMaxFrameBytes);
+        polyglot.EmitQualityFrames = qualityFrames;
+        WatchClients(polyglot);
+        router.Learned += e => Console.WriteLine(
+            ActivityLog.PolyglotLearned(polyglot.LocalPort, e, ModeOn, router.DefaultSubChannel));
+        polyglot.Start();
+        kissServers.Add(polyglot);
+        Console.WriteLine(
+            $"kiss tcp: {shown}:{polyglot.LocalPort} (polyglot: modems "
+            + string.Join(", ", router.SubChannels.Select(s => $"{s} {ModeOn(s)}"))
+            + $", as nibble 0; unheard stations get modem {router.DefaultSubChannel}, "
+            + $"forgotten after {polyglotConfig.ForgetAfterMinutes:0.##} min)");
     }
 
     // The opening state, once every port is up: no host attached yet, or - if a node beat the

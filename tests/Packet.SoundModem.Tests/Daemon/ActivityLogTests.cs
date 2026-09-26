@@ -347,6 +347,32 @@ public class ActivityLogTests
     }
 
     [Fact]
+    public void A_Polyglot_Port_Says_Which_Modems_It_Overlays()
+    {
+        var remote = new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 40000);
+
+        string line = ActivityLog.ClientConnected(8120, null, new KissClientEvent(remote, 1), [1, 0]);
+
+        line.Should().Be("kiss[8120] 127.0.0.1:40000 connected - 1 client (polyglot: modems 1, 0)");
+    }
+
+    [Fact]
+    public void A_Polyglot_Change_Names_The_Station_And_Both_Modes()
+    {
+        static string Mode(int sub) => sub == 0 ? "afsk1200" : "fsk9600";
+
+        string learned = ActivityLog.PolyglotLearned(8120, new PolyglotLearnedEvent("G4ABC-1", 1, 0), Mode, 0);
+        string back = ActivityLog.PolyglotLearned(8120, new PolyglotLearnedEvent("G4ABC-1", 0, 1), Mode, 0);
+
+        learned.Should().Be(
+            "polyglot[8120]: G4ABC-1 heard on modem 1 fsk9600, frames for it go there now "
+            + "(was modem 0 afsk1200, the default)");
+        back.Should().Be(
+            "polyglot[8120]: G4ABC-1 heard on modem 0 afsk1200, frames for it go there now "
+            + "(was modem 1 fsk9600)");
+    }
+
+    [Fact]
     public void A_Host_That_Vanished_Reads_Differently_From_One_That_Said_Goodbye()
     {
         var remote = new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 40000);

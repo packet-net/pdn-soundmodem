@@ -54,6 +54,31 @@ kiss tcp: 127.0.0.1:8110 (modem 0 afsk1200 only, as nibble 0)
 
 If two services ask for one TCP port the modem stops at start-up, naming both settings. The keys are under [`modems`](reference/config.md#modems).
 
+## One port for several modes
+
+Some peers only have 1200 baud, others can do IL2P or 9600, and you only have one frequency. Run a modem for each mode on the same channel. Every modem hears every burst, so whichever one decodes a station tells you what that station uses. Then group them behind one polyglot port:
+
+```json
+{
+  "modems": [
+    { "subChannel": 0, "mode": "afsk1200" },
+    { "subChannel": 1, "mode": "afsk1200-il2p" }
+  ],
+  "polyglot": [
+    { "port": 8120, "subChannels": [0, 1], "default": 0 }
+  ]
+}
+```
+
+Point your node at port 8120 as KISS channel 0. It sees one port, and it gets frames from both modems. When it sends a frame, the modem picks the mode the next station along was last heard in. A station it hasn't heard in the last hour goes out in the `default` mode, and so does a beacon or broadcast sent direct, so make that the mode everyone has.
+
+```
+kiss tcp: 127.0.0.1:8120 (polyglot: modems 0 afsk1200, 1 afsk1200-il2p, as nibble 0; unheard stations get modem 0, forgotten after 60 min)
+polyglot[8120]: G4ABC-1 heard on modem 1 afsk1200-il2p, frames for it go there now (was modem 0 afsk1200, the default)
+```
+
+Your node still has one set of link timers for the whole port, so choose them for the slowest mode. If you'd rather have separate timers for each speed, give each modem its own `port` and set up a node port for each. There's no need to pair `afsk1200` with `afsk1200-fx25`: stations without FX.25 can already read FX.25 frames. The keys are under [`polyglot`](reference/config.md#polyglot).
+
 ## Channel access is your software's to set
 
 The modem does not carry TXDELAY, persistence, slot time or TXTAIL in its config file. Your node or APRS software sends them over KISS, and the modem applies each to the channel as it arrives, with no restart.
