@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Packet.SoundModem/Packet.SoundModem.csproj" />
     <Project Path="src/Packet.SoundModem.Daemon/Packet.SoundModem.Daemon.csproj" />
+    <Project Path="src/Packet.SoundModem.Windows/Packet.SoundModem.Windows.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Packet.SoundModem.Decode/Packet.SoundModem.Decode.csproj" />
@@ -19,5 +20,6 @@
   <Folder Name="/tests/">
     <Project Path="tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj" />
     <Project Path="tests/Packet.SoundModem.SamplePlugin/Packet.SoundModem.SamplePlugin.csproj" />
+    <Project Path="tests/Packet.SoundModem.Windows.Tests/Packet.SoundModem.Windows.Tests.csproj" />
   </Folder>
 </Solution>

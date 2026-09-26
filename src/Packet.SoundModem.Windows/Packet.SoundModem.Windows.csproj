@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Windows sound card and PTT backends for the soundmodem core: WASAPI capture and render,
+       endpoint levels, CM108-compatible HID PTT (CM108/CM119 dongles, the AIOC) and discovery of
+       which audio, HID and serial devices belong to one radio interface.
+
+       A separate library so that nothing about Windows reaches the Linux daemon or its package:
+       the core does not reference this, and this builds (but only runs) anywhere, so the
+       solution still builds on the Linux CI runners without Windows targeting packs. -->
+
+  <PropertyGroup>
+    <PackageId>pdn-soundmodem-windows</PackageId>
+    <Description>Windows audio (WASAPI) and PTT (CM108/AIOC HID, serial) backends for pdn-soundmodem, plus radio interface discovery.</Description>
+    <PackageTags>packet-radio;soundmodem;wasapi;cm108;aioc;ptt;amateur-radio</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- LibraryImport's generated marshalling and the HIDP_CAPS fixed buffer. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- This library is AGPL-3.0-or-later, unlike the GPL-3.0-or-later core it builds on
+         (GPLv3 section 13 permits the combination). New code, written for the Windows app;
+         nothing in it is derived from QtSoundModem or Dire Wolf. -->
+    <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Packet.SoundModem/Packet.SoundModem.csproj" />
+    <PackageReference Include="NAudio.Wasapi" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Packet.SoundModem.Windows.Tests" />
+  </ItemGroup>
+
+</Project>
