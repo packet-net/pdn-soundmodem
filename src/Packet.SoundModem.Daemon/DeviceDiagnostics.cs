@@ -30,12 +30,31 @@ internal static class DeviceDiagnostics
             : $"  Set by \"{key}\" in {configPath}";
 
     internal static string Audio(string device, string? configPath, Exception error) =>
+        Audio(device, configPath, error, "device", split: false);
+
+    /// <summary>
+    /// <see cref="Audio(string, string?, Exception)"/> naming the key that chose the device, for
+    /// a station that receives on one card and transmits through another: an operator with two
+    /// cards has to be told which of them would not open.
+    /// </summary>
+    /// <param name="device">The device that would not open.</param>
+    /// <param name="configPath">The config file, or null for a command-line station.</param>
+    /// <param name="error">What the open threw.</param>
+    /// <param name="key"><c>device</c>, <c>captureDevice</c> or <c>playbackDevice</c>.</param>
+    /// <param name="split">Whether the station receives and transmits on different devices, so
+    /// that <c>device</c> is only one direction's and must not be described as both.</param>
+    /// <param name="capture">Which direction failed, when <paramref name="split"/> is set.</param>
+    internal static string Audio(
+        string device, string? configPath, Exception error, string key, bool split,
+        bool capture = false) =>
         $"""
         cannot open the sound device "{device}"
           {error.Message}
 
-        {Source(configPath, "device", "--device")}
-          This is the ALSA device used for both capture and playback. List what this
+        {Source(configPath, key, "--device")}
+          {(!split ? "This is the ALSA device used for both capture and playback."
+              : capture ? "This is the ALSA device the station receives from."
+              : "This is the ALSA device the station transmits through.")} List what this
           machine actually has:
             aplay -l ; arecord -l ; aplay -L
           Prefer a stable name such as plughw:CARD=Device,DEV=0 over plughw:1,0 - card

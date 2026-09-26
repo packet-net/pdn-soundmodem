@@ -32,6 +32,7 @@ internal sealed record MixerOutcome(
 internal sealed class MixerRuntime
 {
     private readonly IAlsaMixer _mixer;
+    private readonly IAlsaMixer _playback;
     private readonly AlsaMixerConfig? _config;
     private readonly MixerSettings _baseline;
     private readonly string _device;
@@ -40,10 +41,12 @@ internal sealed class MixerRuntime
     private MixerState _state;
 
     private MixerRuntime(
-        IAlsaMixer mixer, AlsaMixerConfig? config, MixerSettings baseline, MixerState state,
-        string statePath, string device, Action<string> journal, TimeProvider clock)
+        IAlsaMixer mixer, IAlsaMixer playback, AlsaMixerConfig? config, MixerSettings baseline,
+        MixerState state, string statePath, string device, Action<string> journal,
+        TimeProvider clock)
     {
         _mixer = mixer;
+        _playback = playback;
         _config = config;
         _baseline = baseline;
         _state = state;
@@ -80,9 +83,31 @@ internal sealed class MixerRuntime
     /// <returns>The runtime, or null when the card could not be read or set at all.</returns>
     public static MixerRuntime? Start(
         IAlsaMixer mixer, AlsaMixerConfig? config, string configPath, string device,
-        Action<string> journal, out string why, TimeProvider? clock = null)
+        Action<string> journal, out string why, TimeProvider? clock = null) =>
+        Start(mixer, mixer, config, configPath, device, journal, out why, clock);
+
+    /// <summary>
+    /// <see cref="Start(IAlsaMixer, AlsaMixerConfig?, string, string, Action{string}, out string, TimeProvider?)"/>
+    /// for a station that receives on one card and transmits through another: the capture gain
+    /// goes to <paramref name="capture"/>, the playback level to <paramref name="playback"/>.
+    /// </summary>
+    /// <param name="capture">The receive card's mixer.</param>
+    /// <param name="playback">The transmit card's mixer; the same object as
+    /// <paramref name="capture"/> on a one-card station.</param>
+    /// <param name="config">The <c>alsa.mixer</c> block, or null when there is none.</param>
+    /// <param name="configPath">The config file, for the default state-file location.</param>
+    /// <param name="device">What the state file is stamped with: the device, or both of them
+    /// (see <see cref="MixerStateFile.StampFor"/>).</param>
+    /// <param name="journal">Where each line goes as it is produced.</param>
+    /// <param name="why">What went wrong, when this returns null.</param>
+    /// <param name="clock">The clock the state file is stamped from.</param>
+    /// <returns>The runtime, or null when the cards could not be read or set at all.</returns>
+    public static MixerRuntime? Start(
+        IAlsaMixer capture, IAlsaMixer playback, AlsaMixerConfig? config, string configPath,
+        string device, Action<string> journal, out string why, TimeProvider? clock = null)
     {
-        ArgumentNullException.ThrowIfNull(mixer);
+        ArgumentNullException.ThrowIfNull(capture);
+        ArgumentNullException.ThrowIfNull(playback);
         ArgumentNullException.ThrowIfNull(journal);
 
         string statePath = MixerStateFile.PathFor(config?.StateFile, configPath);
@@ -90,7 +115,7 @@ internal sealed class MixerRuntime
         journal(MixerSetup.JournalPrefix + MixerStateFile.StartUpLine(statePath, read, ignored));
 
         MixerSettings wanted = MixerStateFile.Combine(config, read);
-        if (MixerSetup.TryApply(mixer, wanted, journal, out why) is not MixerReport report)
+        if (MixerSetup.TryApply(capture, playback, wanted, journal, out why) is not MixerReport report)
         {
             return null;
         }
@@ -98,7 +123,7 @@ internal sealed class MixerRuntime
         // A state file that was ignored is not carried forward: the next change starts a fresh
         // one for this card rather than folding itself into another card's settings.
         return new MixerRuntime(
-            mixer, config, wanted.LeaveEverything(), read ?? new MixerState(),
+            capture, playback, config, wanted.LeaveEverything(), read ?? new MixerState(),
             statePath, device, journal, clock ?? TimeProvider.System)
         {
             StartUpReport = report,
@@ -107,7 +132,7 @@ internal sealed class MixerRuntime
 
     /// <summary>The card as it reads back now, with what pinned each control.</summary>
     public MixerReport Read() =>
-        MixerSetup.Apply(_mixer, _baseline with { Sources = Sources() }, null);
+        MixerSetup.Apply(_mixer, _playback, _baseline with { Sources = Sources() }, null);
 
     /// <summary>
     /// Why a change cannot be put on this card, or null when it can. Asked before anything is
@@ -117,7 +142,7 @@ internal sealed class MixerRuntime
     public string? WhyRefused(MixerChange change)
     {
         ArgumentNullException.ThrowIfNull(change);
-        return MixerSetup.WhyRefused(_mixer, change.Over(_baseline));
+        return MixerSetup.WhyRefused(_mixer, _playback, change.Over(_baseline));
     }
 
     /// <summary>
@@ -136,7 +161,7 @@ internal sealed class MixerRuntime
     {
         ArgumentNullException.ThrowIfNull(change);
 
-        MixerReport report = MixerSetup.Apply(_mixer, change.Over(_baseline), _journal);
+        MixerReport report = MixerSetup.Apply(_mixer, _playback, change.Over(_baseline), _journal);
 
         // Said first, because it is the surprising one. The card is set now either way, but a
         // control the config file pins comes back to the file's value at the next start-up, and

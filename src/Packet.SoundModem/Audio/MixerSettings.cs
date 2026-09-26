@@ -123,7 +123,7 @@ public sealed record MixerSettings
 
     /// <summary>
     /// The same control-name lists, asking for nothing to be changed - which turns
-    /// <see cref="MixerSetup.Apply"/> into a pure read-back of the card.
+    /// <see cref="MixerSetup.Apply(IAlsaMixer, MixerSettings, Action{string}?)"/> into a pure read-back of the card.
     /// </summary>
     public MixerSettings LeaveEverything() => this with
     {

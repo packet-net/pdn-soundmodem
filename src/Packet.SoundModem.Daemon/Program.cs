@@ -29,6 +29,10 @@ using Packet.SoundModem.Ms110d;
 // switch and fails if its flags and the usage text's differ, so the two cannot drift.
 
 string device = "default";
+// "captureDevice" and "playbackDevice": a sound card for one direction when it is not "device".
+// Config file only, and null on every station that does not split its audio.
+string? captureDeviceKey = null;
+string? playbackDeviceKey = null;
 int captureRate = 48000;
 int kissPort = 8105;
 int kissMaxFrameBytes = KissDecoder.DefaultMaxFrame;
@@ -227,6 +231,8 @@ if (configPath is not null)
     }
 
     device = config.Device;
+    captureDeviceKey = config.CaptureDevice;
+    playbackDeviceKey = config.PlaybackDevice;
     captureRate = config.CaptureRate;
     kissPort = config.KissPort;
     kissMaxFrameBytes = config.KissMaxFrameBytes;
@@ -1956,7 +1962,8 @@ if (benchTxTest is null && ardopModem is not null)
     // A reply that cannot make its turnaround is taken back rather than keyed late: see
     // ArdopReplyWindow for why a late ARQ frame is worse than a missing one.
     var ardopReplies = new ArdopReplyWindow(TimeProvider.System);
-    var ardopTnc = new M0LTE.Ardop.Host.ArdopHostTnc(captureDevice: device, playbackDevice: device)
+    var ardopTnc = new M0LTE.Ardop.Host.ArdopHostTnc(
+        captureDevice: captureDeviceKey ?? device, playbackDevice: playbackDeviceKey ?? device)
     {
         // Awaited rather than fire-and-forget: the TNC's transmit worker does not survive an
         // exception out of this delegate, and on a receive-only channel every burst is refused.
@@ -2264,6 +2271,9 @@ AlsaAudioInput? alsaIn = null;
 // nothing is written to the card unless a key in "alsa"."mixer", or a change remembered in the
 // state file from an earlier run, said so.
 AlsaMixer? mixer = null;
+// The transmit card's mixer, on a station that transmits through a different card from the one
+// it receives on; null everywhere else, where "mixer" does both.
+AlsaMixer? playbackMixer = null;
 MixerRuntime? mixerRuntime = null;
 string mixerWhyNot = "this station has no sound card, so it has no mixer";
 
@@ -2769,10 +2779,49 @@ else
     // difference between clean audio and clipped audio and the start-up log should say what it
     // is; written only where a key said so, so a file with no "alsa" section leaves every control
     // alone.
-    string mixerCard = alsaConfig?.Mixer?.Card ?? AlsaMixer.CardFor(device);
-    if (AlsaMixer.TryOpen(mixerCard, out AlsaMixer? openedMixer, out string mixerWhy))
+    //
+    // A station that receives on one card and transmits through another ("captureDevice",
+    // "playbackDevice") has two mixers: the capture gain, AGC and mic boost are on the receive
+    // card, the playback level on the transmit card. Both are opened here, above the PCMs, for
+    // the same reason. "alsa"."mixer"."card" names one mixer for both sides when it is set.
+    string captureDevice = captureDeviceKey ?? device;
+    string playbackDevice = playbackDeviceKey ?? device;
+    string mixerCard = alsaConfig?.Mixer?.Card ?? AlsaMixer.CardFor(captureDevice);
+    string playbackMixerCard = alsaConfig?.Mixer?.Card ?? AlsaMixer.CardFor(playbackDevice);
+    bool mixerSplit = !string.Equals(mixerCard, playbackMixerCard, StringComparison.Ordinal);
+    if (mixerSplit)
+    {
+        if (AlsaMixer.TryOpen(playbackMixerCard, out AlsaMixer? openedPlayback, out string playbackWhy))
+        {
+            playbackMixer = openedPlayback;
+        }
+        else
+        {
+            Console.WriteLine(
+                $"{MixerSetup.JournalPrefix}{playbackMixerCard} (transmit) has no mixer "
+                + $"({playbackWhy}); the transmit level is left as the card has it");
+        }
+    }
+
+    bool captureMixerOpened = AlsaMixer.TryOpen(mixerCard, out AlsaMixer? openedMixer, out string mixerWhy);
+    if (mixerSplit && !captureMixerOpened)
+    {
+        Console.WriteLine(
+            $"{MixerSetup.JournalPrefix}{mixerCard} (receive) has no mixer ({mixerWhy}); the "
+            + "capture gain is left as the card has it, and there is no AGC or mic boost to "
+            + "switch off");
+    }
+
+    if (captureMixerOpened || playbackMixer is not null)
     {
         mixer = openedMixer;
+
+        // A split station whose one card has no mixer still sets the other: the missing side is
+        // a stand-in with no controls, so its levels are simply not found.
+        IAlsaMixer captureSide = openedMixer is not null ? openedMixer : new AbsentMixer(mixerCard);
+        IAlsaMixer playbackSide = !mixerSplit ? captureSide
+            : playbackMixer is not null ? playbackMixer
+            : new AbsentMixer(playbackMixerCard);
 
         // Guarded, not bare: these are top-level statements with nothing above them to catch
         // anything, and TryOpen only proves the ten entry points it uses itself. A libasound
@@ -2786,14 +2835,25 @@ else
         // in the working directory. Nothing writes it on such a station anyway - the config API
         // refuses to be served without a --config file - but the read still has to have a path.
         mixerRuntime = MixerRuntime.Start(
-            mixer!, alsaConfig?.Mixer, configPath ?? ".", device, Console.WriteLine,
+            captureSide, playbackSide, alsaConfig?.Mixer, configPath ?? ".",
+            MixerStateFile.StampFor(captureDevice, playbackDevice), Console.WriteLine,
             out string applyWhy);
         if (mixerRuntime is null)
         {
-            mixerWhyNot = $"{mixerCard} could not be read or set: {applyWhy}";
-            openedMixer!.Dispose();
+            string unread = !mixerSplit || playbackMixer is null ? mixerCard
+                : openedMixer is null ? playbackMixerCard
+                : $"{mixerCard} and {playbackMixerCard}";
+            mixerWhyNot = $"{unread} could not be read or set: {applyWhy}";
+            openedMixer?.Dispose();
             mixer = null;
+            playbackMixer?.Dispose();
+            playbackMixer = null;
         }
+    }
+    else if (mixerSplit)
+    {
+        // Both lines are already in the journal, one per card.
+        mixerWhyNot = $"neither {mixerCard} nor {playbackMixerCard} has a mixer";
     }
     else
     {
@@ -2807,11 +2867,17 @@ else
             + "boost to switch off");
     }
 
+    // Which key chose the device being opened, so a failure names the one to fix: on a split
+    // station either side can be the card that is missing.
+    string opening = playbackDevice;
+    string openingKey = playbackDeviceKey is null ? "device" : "playbackDevice";
+    bool openingCapture = false;
     try
     {
         // Transmit: modulate at the DSP rate; play at the card-native capture rate through the
         // image-rejecting upsampler (cards commonly refuse to open 12 kHz playback directly).
-        var alsaPlayback = new AlsaAudioOutput(device, captureRate == DspRate ? DspRate : captureRate);
+        var alsaPlayback = new AlsaAudioOutput(
+            playbackDevice, captureRate == DspRate ? DspRate : captureRate);
         alsaOut = alsaPlayback;
         playback = captureRate == DspRate
             ? alsaPlayback
@@ -2820,18 +2886,27 @@ else
         // asks for by default. It used to be 120 ms here, with 500 ms for ARDOP alone on the
         // grounds that only snd-aloop hiccupped; a qpsk3600 start-up on the bench CM108 overran
         // the 120 ms one on every run, so every station gets the deep buffer now.
-        var alsaInput = new AlsaAudioInput(device, captureRate);
+        opening = captureDevice;
+        openingKey = captureDeviceKey is null ? "device" : "captureDevice";
+        openingCapture = true;
+        var alsaInput = new AlsaAudioInput(captureDevice, captureRate);
         alsaIn = alsaInput;
         input = alsaInput;
     }
     catch (Exception e) when (e is IOException or UnauthorizedAccessException
                                 or InvalidOperationException or ArgumentException)
     {
-        Console.Error.WriteLine(DeviceDiagnostics.Audio(device, configPath, e));
+        Console.Error.WriteLine(DeviceDiagnostics.Audio(
+            opening, configPath, e, openingKey,
+            split: !string.Equals(captureDevice, playbackDevice, StringComparison.Ordinal),
+            capture: openingCapture));
         return 1;
     }
 
-    Console.WriteLine($"audio: {device} capture {captureRate} Hz -> {DspRate} Hz");
+    Console.WriteLine(string.Equals(captureDevice, playbackDevice, StringComparison.Ordinal)
+        ? $"audio: {captureDevice} capture {captureRate} Hz -> {DspRate} Hz"
+        : $"audio: capture {captureDevice} {captureRate} Hz -> {DspRate} Hz, "
+            + $"playback {playbackDevice}");
 
     // What the card actually gave us, because the buffer is the difference between a station
     // that survives a slow first pass through the modem and one that dies at every start-up,
@@ -2861,6 +2936,7 @@ else
 }
 
 using AlsaMixer? mixerLifetime = mixer;
+using AlsaMixer? playbackMixerLifetime = playbackMixer;
 
 // The operator page's mixer group and any script that wants the card's state come through here,
 // under the same key as every other change - or under no key at all, where

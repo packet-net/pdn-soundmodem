@@ -41,6 +41,8 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | Key | Type | Default | What it is |
 |---|---|---|---|
 | `device` | string | `"default"` | The audio input and output: an ALSA name, `null`, `pipe:`, `flex:` or `ubersdr:`. |
+| `captureDevice` | string | absent: `device` | The sound card to receive from, when it is not `device`. See [Two cards](#two-cards-capturedevice-and-playbackdevice). |
+| `playbackDevice` | string | absent: `device` | The sound card to transmit through, when it is not `device`. See [Two cards](#two-cards-capturedevice-and-playbackdevice). |
 | `captureRate` | int | `48000` | ALSA capture and playback rate in Hz; the modem decimates to its DSP rate. |
 | `kissPort` | int | `8105` | The shared KISS TCP port carrying every packet modem by sub-channel nibble. |
 | `kissMaxFrameBytes` | int | `8192` | The most bytes one KISS frame from a host may carry, on every KISS port. A longer frame is dropped and the journal says so. |
@@ -86,6 +88,19 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 - `captureRate` applies to ALSA and pipe devices only. It must be a multiple of the channel's DSP rate (12000, or 48000 when any 48 kHz mode is configured), or start-up refuses with `--capture-rate must be a multiple of N`. A pipe's own rate has the same rule: `pipe rate N is not a multiple of the channel's N Hz`.
 - A `flex:` or `ubersdr:` device provides its own clock; `captureRate` is ignored.
 - A device that will not open exits 1 with a message naming the key and the file, and the service retries.
+
+### Two cards: `captureDevice` and `playbackDevice`
+
+```json
+{ "device": "plughw:CARD=Device,DEV=0", "playbackDevice": "plughw:CARD=Device_1,DEV=0" }
+```
+
+- Each key overrides `device` for one direction: `captureDevice` for receive, `playbackDevice` for transmit. Leave both out and `device` does both, as before.
+- Sound cards only. Refused, exit 2: either key naming a `pipe:`, `flex:` or `ubersdr:` device (`"captureDevice" is "X", which is not a sound card`); either key when `device` itself is not a sound card (`"captureDevice" is set but "device" is "X", which is not a sound card`); either key beside `monitor`; an empty value.
+- Both directions run at `captureRate`.
+- The start-up line names both: `audio: capture <capture device> 48000 Hz -> 12000 Hz, playback <playback device>`.
+- When the two are on different cards, the capture gain, AGC and mic boost are set on the receive card's mixer and `playbackDb` on the transmit card's; see [`alsa`](#alsa).
+- Config file only; the command line has no flag for either.
 
 ## `kissPort` and `bind`
 
@@ -269,7 +284,7 @@ A station with no serial link to its radio, or one that is not a Tait, reads car
 |---|---|---|---|
 | `captureGainDb` | number | absent: left alone | Capture gain in dB, inside the card's own range. |
 | `playbackDb` | number | absent: left alone | Transmit-side playback level in dB, inside the card's range. |
-| `card` | string | derived from `device` | The mixer card when it is not the one the device string implies. |
+| `card` | string | derived from `device` | The mixer card when it is not the one the device string implies. With `captureDevice` or `playbackDevice`, it names one mixer for both directions. |
 | `stateFile` | string | `mixer-state.json` in the state directory | Where a change made on the station page or over `/api/mixer` is remembered between runs. |
 | `captureControls` | string array | `Mic`, `Mic Capture`, `Capture` | Control names to look for the capture gain under, in order. |
 | `agcControls` | string array | `Auto Gain Control`, `AGC`, `Mic AGC` | Control names to look for the AGC switch under; it is only ever switched off. |
@@ -283,6 +298,7 @@ A station with no serial link to its radio, or one that is not a Tait, reads car
 - Removed keys are warned about by name. `captureGainPercent` and `playbackPercent`: `alsa mixer: <key> is no longer read; use <captureGainDb or playbackDb>, the card's range is shown by --mixer-show`. `agc` and `micBoost`: `alsa mixer: <key> is no longer a setting: AGC and mic boost are switched off at every start-up on any card that has them ...`, with a second sentence saying to remove the key.
 - Refused: `alsa.mixer` beside `monitor` (`A monitor fronts web receivers and has no sound card of its own`); `alsa.mixer` with a `device` that is not a sound card (`"alsa"."mixer" is set but "device" is "X", which is not a sound card`); a `stateFile` that names the configuration file itself (`which is this configuration file. That file is never written by this daemon and a mixer change would overwrite it`).
 - A card with no mixer is not a failure: `alsa: mixer: <card> has no mixer (<why>); the capture gain and the transmit level are left as the card has them, and there is no AGC or mic boost to switch off`.
+- With [`captureDevice` or `playbackDevice`](#two-cards-capturedevice-and-playbackdevice) on two different cards, and no `card`, each card's mixer is found from its own device. `captureGainDb`, AGC and mic boost go to the receive card, `playbackDb` to the transmit card. The journal lists each card as `<card> (receive) has ...` and `<card> (transmit) has ...`. A card with no mixer costs only its own side: `alsa: mixer: <card> (transmit) has no mixer (<why>); the transmit level is left as the card has it`. The state file is stamped with both devices, so one written for a single card is not applied to the pair.
 
 ## `paging`
 
