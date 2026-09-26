@@ -30,6 +30,10 @@
          that file never constructs it and never opens a serial port. -->
     <PackageVersion Include="Packet.Radio.Tait" Version="0.33.0" />
 
+    <!-- WASAPI capture/render and endpoint volume for Packet.SoundModem.Windows. MIT, so
+         GPL-compatible per CLAUDE.md's licence rules; only the Windows library references it. -->
+    <PackageVersion Include="NAudio.Wasapi" Version="2.2.1" />
+
     <!-- Pure-managed zstd port for the ka9q_ubersdr / UberSDR IQ path (pcm-zstd WebSocket
          frames). MIT, so GPL-compatible per CLAUDE.md's licence rules. It was dev-tooling-only
          while the only consumer was the capture tool; the shipped package now carries the

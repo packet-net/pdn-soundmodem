@@ -1,9 +1,10 @@
 name: release
 
-# The release pipeline for a `v*` tag: test, then build the pdn-soundmodem NuGet package
-# (modem core library), the @packet-net/soundmodem npm package (the same core compiled to
-# WebAssembly, for the browser) and the .deb packages (daemon + systemd unit) for
-# amd64/arm64/armhf, attach them to a GitHub Release, and push to nuget.org and npmjs.com.
+# The release pipeline for a `v*` tag: test, then build the pdn-soundmodem NuGet packages
+# (the modem core library, and pdn-soundmodem-windows beside it), the @packet-net/soundmodem
+# npm package (the same core compiled to WebAssembly, for the browser) and the .deb packages
+# (daemon + systemd unit) for amd64/arm64/armhf, attach them to a GitHub Release, and push to
+# nuget.org and npmjs.com.
 #
 # All three carry the same version, from the same tag, built from the same commit: a station
 # on a browser page and a station on a Debian box are then provably running the same modem.
@@ -144,12 +145,18 @@ jobs:
           done < <(find tests -path '*/TestResults/*.log' -newermt '-30 minutes' 2>/dev/null)
           [ "$found" = 1 ] || echo "::warning::no TestResults log found to report"
 
-      - name: Pack NuGet package
+      # Two packages on the same version: the core, and the Windows audio/PTT backends
+      # (pdn-soundmodem-windows, AGPL-3.0-or-later) that pdn-win consumes. The Windows package
+      # depends on the core at exactly this version, so the pair always restores together.
+      - name: Pack NuGet packages
         run: |
-          dotnet pack src/Packet.SoundModem/Packet.SoundModem.csproj \
-            --configuration Release \
-            --output ./artifacts \
-            -p:Version=${{ steps.version.outputs.version }}
+          for project in src/Packet.SoundModem/Packet.SoundModem.csproj \
+                         src/Packet.SoundModem.Windows/Packet.SoundModem.Windows.csproj; do
+            dotnet pack "$project" \
+              --configuration Release \
+              --output ./artifacts \
+              -p:Version=${{ steps.version.outputs.version }}
+          done
 
       # The browser modem. AOT is the shipped build: the download is 2.8 MB gzipped against
       # 1.4 MB for the interpreter, paid once and cached, and it buys roughly 3.5x the CPU
@@ -310,17 +317,23 @@ jobs:
         if: steps.version.outputs.publish == 'true' && env.NUGET_API_KEY != ''
         run: |
           set -euo pipefail
-          dotnet nuget push "./artifacts/pdn-soundmodem.${{ steps.version.outputs.version }}.nupkg" \
-            --source https://api.nuget.org/v3/index.json \
-            --api-key "${NUGET_API_KEY}" \
-            --skip-duplicate
-          if [ -f "./artifacts/pdn-soundmodem.${{ steps.version.outputs.version }}.snupkg" ]; then
-            dotnet nuget push "./artifacts/pdn-soundmodem.${{ steps.version.outputs.version }}.snupkg" \
+          version="${{ steps.version.outputs.version }}"
+          # The core first: if the Windows package's push is refused (a key scoped to the old
+          # package ID alone would do it), the core has still shipped and the job goes red
+          # naming the package that did not.
+          for id in pdn-soundmodem pdn-soundmodem-windows; do
+            dotnet nuget push "./artifacts/${id}.${version}.nupkg" \
               --source https://api.nuget.org/v3/index.json \
               --api-key "${NUGET_API_KEY}" \
-              --skip-duplicate || \
-              echo "::warning::snupkg push failed; main nupkg still uploaded."
-          fi
+              --skip-duplicate
+            if [ -f "./artifacts/${id}.${version}.snupkg" ]; then
+              dotnet nuget push "./artifacts/${id}.${version}.snupkg" \
+                --source https://api.nuget.org/v3/index.json \
+                --api-key "${NUGET_API_KEY}" \
+                --skip-duplicate || \
+                echo "::warning::${id} snupkg push failed; its nupkg is still uploaded."
+            fi
+          done
 
       - name: Warn if NUGET_API_KEY missing
         if: steps.version.outputs.publish == 'true' && env.NUGET_API_KEY == ''

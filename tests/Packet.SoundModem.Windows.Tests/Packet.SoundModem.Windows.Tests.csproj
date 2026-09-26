@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Only the device-free logic is tested here (the ring, the CM108 report, how devices are
+       grouped into radio interfaces), so this runs on the Linux CI runners like everything else.
+       The WASAPI and HID paths themselves need a Windows machine with an interface attached. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Packet.SoundModem.Windows/Packet.SoundModem.Windows.csproj" />
+  </ItemGroup>
+
+</Project>

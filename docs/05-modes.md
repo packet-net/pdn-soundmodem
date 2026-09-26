@@ -52,7 +52,7 @@ Every mode carries AX.25 frames behind the framing its row states and is address
 | `bpsk1200` | BPSK + diversity bank | 1200 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1010), QtSM V26A | **On-air** - AWGN campaign 2026-07-28 |
 | `bpsk1200-multi` | alias of `bpsk1200` | 1200 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | as `bpsk1200` | **On-air** |
 | `qpsk600` | QPSK (V.26A) | 1200 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1001), QtSM V26A | **Bench**, caveat - the corpus decodes; a live QtSM retest is still to come |
-| `qpsk2400` | QPSK (V.26A/DW2400) | 4800 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1011), QtSM V26A type 12 rather than the legacy type 10 | **Bench** - corpus; not yet proven on air |
+| `qpsk2400` | QPSK (V.26A/DW2400) | 4800 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1011), QtSM V26A type 12 rather than the legacy type 10 | **On-air** - a connected session with GB7RDG, both directions (2026-09-26); bench corpus |
 | `qpsk3600` | QPSK | 7200 bps | IL2P+CRC | 12 kHz | yes | FM (5.0 kHz dev) | NinoTNC (0101) | **Bench** - corpus; not yet proven on air |
 | `fsk9600` | GFSK (G3RUH) | 9600 bps | AX.25 HDLC | 48 kHz | no | FM (9600 port) | NinoTNC (0000), Dire Wolf, QtSM | **On-air**, caveat - 2026-09-21 Tait bench, 100 % of 32-byte frames both ways, falling to 5-10 % at 512 bytes; the interface's low-frequency coupling loss costs the long frames (#518) |
 | `fsk9600-il2p` | GFSK | 9600 bps | IL2P+CRC | 48 kHz | no | FM (9600 port) | NinoTNC (0010) | **Bench** - corpus; sync-only acquisition (0 ms preamble floor) |
