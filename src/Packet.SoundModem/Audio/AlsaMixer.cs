@@ -397,6 +397,56 @@ public sealed class AlsaMixer : IAlsaMixer
     }
 
     /// <inheritdoc />
+    public bool HasVolume(string control, MixerDirection direction)
+    {
+        lock (_gate)
+        {
+            return TryElement(control, out IntPtr element) && HasVolume(element, direction);
+        }
+    }
+
+    /// <inheritdoc />
+    public bool TrySetSwitch(string control, MixerDirection direction, bool on)
+    {
+        lock (_gate)
+        {
+            if (!TryElement(control, out IntPtr element))
+            {
+                return false;
+            }
+
+            int value = on ? 1 : 0;
+            return direction == MixerDirection.Capture
+                ? snd_mixer_selem_has_capture_switch(element) != 0
+                    && snd_mixer_selem_set_capture_switch_all(element, value) >= 0
+                : snd_mixer_selem_has_playback_switch(element) != 0
+                    && snd_mixer_selem_set_playback_switch_all(element, value) >= 0;
+        }
+    }
+
+    /// <inheritdoc />
+    public bool TryReadSwitch(string control, MixerDirection direction, out bool on)
+    {
+        on = false;
+        lock (_gate)
+        {
+            if (!TryElement(control, out IntPtr element))
+            {
+                return false;
+            }
+
+            int value = 0;
+            bool read = direction == MixerDirection.Capture
+                ? snd_mixer_selem_has_capture_switch(element) != 0
+                    && snd_mixer_selem_get_capture_switch(element, FirstChannel, out value) >= 0
+                : snd_mixer_selem_has_playback_switch(element) != 0
+                    && snd_mixer_selem_get_playback_switch(element, FirstChannel, out value) >= 0;
+            on = read && value != 0;
+            return read;
+        }
+    }
+
+    /// <inheritdoc />
     public void Dispose()
     {
         lock (_gate)

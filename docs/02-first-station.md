@@ -56,11 +56,13 @@ CM108, where a GPIO pin on the radio interface itself drives the PTT:
 "ptt": { "type": "cm108", "device": "/dev/hidraw0" }
 ```
 
-Serial needs nothing extra, because the service user is already in the `dialout` group. CM108 does: `/dev/hidraw*` is root-only by default. Find your interface's USB IDs with `lsusb` (`0d8c:0012` is a common C-Media one), then write a udev rule with your own IDs in place of those:
+Serial needs nothing extra, because the service user is already in the `dialout` group. CM108 needs nothing extra either on a C-Media interface (USB vendor `0d8c`, which is most of them) or an AIOC: `/dev/hidraw*` is root-only by default, and the package installs a udev rule, `/usr/lib/udev/rules.d/70-pdn-soundmodem.rules`, that gives those two the `audio` group the service runs in. `ls -l /dev/hidraw*` should show group `audio` for your interface.
+
+An interface from another vendor needs a rule of its own. Find its USB IDs with `lsusb`, then write a rule with them in place of these:
 
 ```sh
 sudo tee /etc/udev/rules.d/99-pdn-soundmodem-cm108.rules >/dev/null <<'EOF'
-KERNEL=="hidraw*", ATTRS{idVendor}=="0d8c", ATTRS{idProduct}=="0012", MODE="0660", GROUP="audio"
+KERNEL=="hidraw*", ATTRS{idVendor}=="1234", ATTRS{idProduct}=="5678", MODE="0660", GROUP="audio"
 EOF
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```

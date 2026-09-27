@@ -45,6 +45,7 @@ check "payload in /usr/lib"             "[ -x /usr/lib/pdn-soundmodem/pdn-soundm
 check "native shim shipped"             "[ -f /usr/lib/pdn-soundmodem/libSystem.IO.Ports.Native.so ]"
 check "systemd unit installed"          "[ -f /usr/lib/systemd/system/pdn-soundmodem.service ]"
 check "template unit installed"         "[ -f /usr/lib/systemd/system/pdn-soundmodem@.service ]"
+check "hidraw udev rule installed"      "[ -f /usr/lib/udev/rules.d/70-pdn-soundmodem.rules ]"
 # Must not live under /usr/share/doc: postinst reads it, and Debian permits doc to be
 # stripped (the official Ubuntu images ship a dpkg path-exclude for exactly that).
 check "example config outside doc"      "[ -f /usr/share/pdn-soundmodem/soundmodem.example.json ]"

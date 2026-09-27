@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Discovery, the access and holder diagnoses and the mixer rules, against written sysfs trees
+       and fake cards, so this runs on the Linux CI runners and anywhere else. The real paths need
+       a Linux machine with an interface attached. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Packet.SoundModem.Linux/Packet.SoundModem.Linux.csproj" />
+  </ItemGroup>
+
+</Project>

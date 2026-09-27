@@ -1,7 +1,7 @@
 name: release
 
 # The release pipeline for a `v*` tag: test, then build the pdn-soundmodem NuGet packages
-# (the modem core library, and pdn-soundmodem-windows beside it), the @packet-net/soundmodem
+# (the modem core library, and pdn-soundmodem-windows and -linux beside it), the @packet-net/soundmodem
 # npm package (the same core compiled to WebAssembly, for the browser) and the .deb packages
 # (daemon + systemd unit) for amd64/arm64/armhf, attach them to a GitHub Release, and push to
 # nuget.org and npmjs.com.
@@ -145,13 +145,15 @@ jobs:
           done < <(find tests -path '*/TestResults/*.log' -newermt '-30 minutes' 2>/dev/null)
           [ "$found" = 1 ] || echo "::warning::no TestResults log found to report"
 
-      # Two packages on the same version: the core, and the Windows audio/PTT backends
-      # (pdn-soundmodem-windows, AGPL-3.0-or-later) that pdn-win consumes. The Windows package
-      # depends on the core at exactly this version, so the pair always restores together.
+      # Three packages on the same version: the core, and the Windows and Linux radio interface
+      # libraries (pdn-soundmodem-windows and pdn-soundmodem-linux, AGPL-3.0-or-later) that
+      # pdn-win consumes. Each depends on the core at exactly this version, so they always
+      # restore together.
       - name: Pack NuGet packages
         run: |
           for project in src/Packet.SoundModem/Packet.SoundModem.csproj \
-                         src/Packet.SoundModem.Windows/Packet.SoundModem.Windows.csproj; do
+                         src/Packet.SoundModem.Windows/Packet.SoundModem.Windows.csproj \
+                         src/Packet.SoundModem.Linux/Packet.SoundModem.Linux.csproj; do
             dotnet pack "$project" \
               --configuration Release \
               --output ./artifacts \
@@ -232,6 +234,8 @@ jobs:
             # The template instances (pdn-soundmodem@NAME) run from this one.
             grep -q 'usr/lib/systemd/system/pdn-soundmodem@\.service$' <<<"$listing"
             grep -q 'usr/lib/pdn-soundmodem/pdn-soundmodem$' <<<"$listing"
+            # CM108 and AIOC PTT for the service without a hand-written udev rule.
+            grep -q 'usr/lib/udev/rules.d/70-pdn-soundmodem\.rules$' <<<"$listing"
             grep -q 'usr/bin/pdn-soundmodem ->' <<<"$listing"
             # postinst seeds the config from this path; if it moves, install breaks.
             grep -q 'usr/share/pdn-soundmodem/soundmodem\.example\.json$' <<<"$listing"
@@ -318,10 +322,10 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ steps.version.outputs.version }}"
-          # The core first: if the Windows package's push is refused (a key scoped to the old
-          # package ID alone would do it), the core has still shipped and the job goes red
+          # The core first: if a platform package's push is refused (a key scoped to the old
+          # package IDs alone would do it), the core has still shipped and the job goes red
           # naming the package that did not.
-          for id in pdn-soundmodem pdn-soundmodem-windows; do
+          for id in pdn-soundmodem pdn-soundmodem-windows pdn-soundmodem-linux; do
             dotnet nuget push "./artifacts/${id}.${version}.nupkg" \
               --source https://api.nuget.org/v3/index.json \
               --api-key "${NUGET_API_KEY}" \

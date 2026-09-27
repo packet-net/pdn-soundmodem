@@ -24,8 +24,7 @@ User=pdn-soundmodem
 # capture paths follow $STATE_DIRECTORY, so two instances never share a SQLite file.
 StateDirectory=pdn-soundmodem/%i
 StateDirectoryMode=0750
-# audio: /dev/snd/*. dialout: serial PTT. CM108 PTT on /dev/hidraw* needs the udev rule the
-# plain unit describes.
+# audio: /dev/snd/* and the hidraw nodes the package's udev rule covers. dialout: serial PTT.
 SupplementaryGroups=audio dialout
 LimitRTPRIO=10
 

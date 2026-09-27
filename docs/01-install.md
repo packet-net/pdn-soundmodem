@@ -53,7 +53,7 @@ apt picks the build for your architecture, and pulls in the handful of system li
 
 The full list, including what the modem writes and when, is in the [files reference](reference/files.md#what-the-package-installs).
 
-The service runs as a system user called `pdn-soundmodem`, which the package creates. The unit gives that user the `audio` group so it can open `/dev/snd/*`, and `dialout` so it can key a radio over serial PTT, so `id pdn-soundmodem` does not list either. CM108 keying needs one more step, a udev rule, which [02-first-station.md](02-first-station.md) covers when you get to it.
+The service runs as a system user called `pdn-soundmodem`, which the package creates. The unit gives that user the `audio` group so it can open `/dev/snd/*`, and `dialout` so it can key a radio over serial PTT, so `id pdn-soundmodem` does not list either. CM108 keying on a C-Media interface or an AIOC is covered too, by a udev rule the package installs that gives their `/dev/hidraw*` nodes to the `audio` group; an interface from another vendor needs a rule of its own, which [02-first-station.md](02-first-station.md) covers when you get to it.
 
 ## Check it worked
 
