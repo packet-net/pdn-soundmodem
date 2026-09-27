@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Linux radio interface support for applications that run the soundmodem core in their own
+       process: finding which ALSA card, hidraw node and serial port belong to one USB interface
+       (sysfs), checking the operator can open them, noticing plugs and unplugs, saying who holds a
+       busy card (PipeWire, PulseAudio), and the mixer rules a radio interface needs (nothing above
+       0 dB, AGC and boost off, the mic monitor path closed), over the core's ALSA classes.
+
+       A separate library, as the Windows one is: the daemon does not reference it, so nothing
+       here reaches its package, and it builds (but only runs) anywhere. -->
+
+  <PropertyGroup>
+    <PackageId>pdn-soundmodem-linux</PackageId>
+    <Description>Linux radio interface discovery (ALSA, hidraw, serial by USB device), device access checks, hot-plug, and mixer hygiene and levels for pdn-soundmodem.</Description>
+    <PackageTags>packet-radio;soundmodem;alsa;cm108;aioc;ptt;amateur-radio;linux</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- LibraryImport's generated marshalling for realpath and access. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- AGPL-3.0-or-later, as the Windows library is and unlike the GPL-3.0-or-later core it
+         builds on (GPLv3 section 13 permits the combination). New code, written for the Linux
+         app; nothing in it is derived from QtSoundModem or Dire Wolf. -->
+    <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Packet.SoundModem/Packet.SoundModem.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Packet.SoundModem.Linux.Tests" />
+  </ItemGroup>
+
+</Project>
