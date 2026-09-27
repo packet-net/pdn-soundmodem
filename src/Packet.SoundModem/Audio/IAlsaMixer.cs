@@ -117,4 +117,38 @@ public interface IAlsaMixer : IDisposable
     /// <param name="on">Its state.</param>
     /// <returns>False when there is no such control, or it has no switch.</returns>
     bool TryReadSwitch(string control, out bool on);
+
+    /// <summary>Whether a control has a volume on one side.</summary>
+    /// <param name="control">The control's name.</param>
+    /// <param name="direction">Capture or playback.</param>
+    /// <returns>True when the control is there and has a volume on that side.</returns>
+    bool HasVolume(string control, MixerDirection direction) =>
+        TryReadVolume(control, direction, out _, out _);
+
+    /// <summary>Turns one side of a control's on/off switch on or off, on every channel.</summary>
+    /// <param name="control">The control's name.</param>
+    /// <param name="direction">The side whose switch to set.</param>
+    /// <param name="on">The state wanted.</param>
+    /// <returns>False when there is no such control, or it has no switch on that side.</returns>
+    /// <remarks>
+    /// The directionless <see cref="TrySetSwitch(string, bool)"/> is right for a switch that is
+    /// on one side only, and wrong for a control that has one on each. A CM108's "Mic" is the
+    /// case that matters: its capture switch is whether the modem hears the radio at all, and its
+    /// playback switch is the card monitoring that input to its own output, which on a radio
+    /// interface sends received audio straight back into the transmitter. Closing the monitor
+    /// must not also mute the receiver. The default says no, so a mixer that cannot tell the two
+    /// apart never claims to have done it.
+    /// </remarks>
+    bool TrySetSwitch(string control, MixerDirection direction, bool on) => false;
+
+    /// <summary>Reads one side of a control's on/off switch back from the card.</summary>
+    /// <param name="control">The control's name.</param>
+    /// <param name="direction">The side whose switch to read.</param>
+    /// <param name="on">Its state.</param>
+    /// <returns>False when there is no such control, or it has no switch on that side.</returns>
+    bool TryReadSwitch(string control, MixerDirection direction, out bool on)
+    {
+        on = false;
+        return false;
+    }
 }
