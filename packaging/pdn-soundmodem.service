@@ -22,9 +22,9 @@ User=pdn-soundmodem
 # a station that enabled the log would refuse to start.
 StateDirectory=pdn-soundmodem
 StateDirectoryMode=0750
-# audio: /dev/snd/*. dialout: serial PTT (/dev/ttyUSB*, /dev/ttyS*). CM108 PTT writes
-# to /dev/hidraw*, which is root-only by default - add a udev rule granting the audio
-# group access to your interface's hidraw node if you use "ptt": {"type": "cm108"}.
+# audio: /dev/snd/*, and /dev/hidraw* for CM108 PTT on C-Media and AIOC interfaces, which the
+# package's udev rule (70-pdn-soundmodem.rules) gives the audio group. dialout: serial PTT
+# (/dev/ttyUSB*, /dev/ttyS*). An interface from another vendor needs a rule of its own.
 SupplementaryGroups=audio dialout
 # Real-time-ish scheduling headroom for the audio thread (optional; see docs).
 LimitRTPRIO=10

@@ -43,6 +43,7 @@ PKGDIR=/usr/lib/pdn-soundmodem
 DOCDIR=/usr/share/doc/pdn-soundmodem
 DATADIR=/usr/share/pdn-soundmodem
 UNITDIR=/usr/lib/systemd/system
+UDEVDIR=/usr/lib/udev/rules.d
 
 dotnet publish "$ROOT/src/Packet.SoundModem.Daemon/Packet.SoundModem.Daemon.csproj" \
   --configuration Release \
@@ -56,7 +57,7 @@ dotnet publish "$ROOT/src/Packet.SoundModem.Daemon/Packet.SoundModem.Daemon.cspr
 
 mkdir -p "$STAGE/root$PKGDIR" \
          "$STAGE/root/usr/bin" \
-         "$STAGE/root$UNITDIR" \
+         "$STAGE/root$UNITDIR"          "$STAGE/root$UDEVDIR" \
          "$STAGE/root/etc/pdn-soundmodem" \
          "$STAGE/root$DATADIR" \
          "$STAGE/root$DOCDIR" \
@@ -72,6 +73,9 @@ ln -s "..${PKGDIR#/usr}/pdn-soundmodem" "$STAGE/root/usr/bin/pdn-soundmodem"
 
 install -m 0644 "$HERE/pdn-soundmodem.service" "$STAGE/root$UNITDIR/pdn-soundmodem.service"
 install -m 0644 "$HERE/pdn-soundmodem@.service" "$STAGE/root$UNITDIR/pdn-soundmodem@.service"
+# CM108 and AIOC hidraw nodes to the audio group, which the service runs in: without it every
+# CM108 station began with a udev rule written by hand.
+install -m 0644 "$HERE/70-pdn-soundmodem.rules" "$STAGE/root$UDEVDIR/70-pdn-soundmodem.rules"
 install -m 0644 "$HERE/copyright" "$STAGE/root$DOCDIR/copyright"
 # The seed config lives under /usr/share/pdn-soundmodem, NOT /usr/share/doc: Debian
 # permits /usr/share/doc to be stripped (the official Ubuntu images ship a dpkg
@@ -228,6 +232,12 @@ case "$1" in
         cp "$EXAMPLE" "$CONFIG"
         chmod 0644 "$CONFIG"
         echo "pdn-soundmodem: seeded $CONFIG from the example."
+    fi
+    # Apply the hidraw rule to interfaces already plugged in, so CM108 PTT works without a
+    # re-plug. Skipped where udev is not running (a container, a chroot).
+    if [ -d /run/udev ] && command -v udevadm >/dev/null; then
+        udevadm control --reload-rules >/dev/null 2>&1 || true
+        udevadm trigger --subsystem-match=hidraw --action=change >/dev/null 2>&1 || true
     fi
     echo "pdn-soundmodem: edit $CONFIG for your sound device and PTT, then"
     echo "                systemctl restart pdn-soundmodem. Until then the service will"

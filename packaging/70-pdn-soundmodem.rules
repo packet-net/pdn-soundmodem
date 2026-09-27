@@ -1,0 +1,6 @@
+# pdn-soundmodem: let the service (which runs in the audio group) key a radio through a USB radio
+# interface's HID GPIO, the C-Media CM108 family and the AIOC, without a rule of the operator's
+# own. /dev/hidraw* is root's alone otherwise. An interface from another vendor still needs a
+# rule like these with its own IDs; docs/02-first-station.md says how.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0d8c", GROUP="audio", MODE="0660"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="7388", GROUP="audio", MODE="0660"
