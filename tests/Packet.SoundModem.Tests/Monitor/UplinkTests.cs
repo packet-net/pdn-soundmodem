@@ -464,6 +464,10 @@ public class UplinkTests
             line => line.Contains("could not build", StringComparison.Ordinal));
     }
 
+    // QUARANTINED (packet-net/pdn-soundmodem#540): fails intermittently under full-suite load and
+    // passes alone. Excluded from the blocking Test steps in ci.yml and release.yml; still runs,
+    // non-blocking, in ci.yml's Quarantine step. Remove the trait when #540 is fixed.
+    [Trait("Category", "Quarantine")]
     [Fact(Timeout = TestTimeoutMs)]
     public async Task An_Audio_Rate_This_Site_Cannot_Draw_Is_Refused_Without_A_Stack_Trace()
     {

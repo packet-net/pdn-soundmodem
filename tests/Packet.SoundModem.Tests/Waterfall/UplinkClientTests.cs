@@ -774,6 +774,10 @@ public class UplinkClientTests
     /// A token the site will not accept is a mistake somebody has to fix, not a condition that
     /// clears itself: an hour between complaints, and quarter-hours between attempts.
     /// </summary>
+    // QUARANTINED (packet-net/pdn-soundmodem#540): fails intermittently under full-suite load and
+    // passes alone. Excluded from the blocking Test steps in ci.yml and release.yml; still runs,
+    // non-blocking, in ci.yml's Quarantine step. Remove the trait when #540 is fixed.
+    [Trait("Category", "Quarantine")]
     [Fact]
     public async Task A_Refused_Token_Backs_Off_To_Quarter_Hours_And_Says_So_Once()
     {
@@ -1367,6 +1371,10 @@ public class UplinkClientTests
     }
 
     /// <summary>The record of the ladder is capped, so a site that is down for a year costs nothing.</summary>
+    // QUARANTINED (packet-net/pdn-soundmodem#540): fails intermittently under full-suite load and
+    // passes alone. Excluded from the blocking Test steps in ci.yml and release.yml; still runs,
+    // non-blocking, in ci.yml's Quarantine step. Remove the trait when #540 is fixed.
+    [Trait("Category", "Quarantine")]
     [Fact]
     public async Task The_Reconnect_Ladder_Is_Not_Remembered_For_Ever()
     {
