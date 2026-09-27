@@ -21,6 +21,12 @@ namespace Packet.SoundModem.Tests.Channel;
 /// cost the air. That matters more here than anywhere else: with a free write there is no own
 /// airtime for a frame to be behind, and the case this exists to separate would not arise.</para>
 /// </remarks>
+// QUARANTINED (packet-net/pdn-soundmodem#537): these fail intermittently in the full suite on the
+// self-hosted runner and pass alone, apparently from the VirtualAir harness's fake clock being
+// cranked from several threads (and timer callbacks re-entering from the paced write). They are
+// excluded from the blocking Test steps in ci.yml and release.yml and still run, non-blocking, in
+// ci.yml's Quarantine step. Remove the trait when #537 is fixed.
+[Trait("Category", "Quarantine")]
 public class TransmitWaitsTests
 {
     private const int SampleRate = 12000;

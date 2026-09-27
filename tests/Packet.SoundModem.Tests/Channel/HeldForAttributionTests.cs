@@ -36,6 +36,12 @@ namespace Packet.SoundModem.Tests.Channel;
 /// used for is turning the crank - the pump below advances the fake clock in 10 ms steps and the
 /// paced sink waits for it - and no assertion here reads it.</para>
 /// </remarks>
+// QUARANTINED (packet-net/pdn-soundmodem#537): these fail intermittently in the full suite on the
+// self-hosted runner and pass alone, apparently from the VirtualAir harness's fake clock being
+// cranked from several threads (and timer callbacks re-entering from the paced write). They are
+// excluded from the blocking Test steps in ci.yml and release.yml and still run, non-blocking, in
+// ci.yml's Quarantine step. Remove the trait when #537 is fixed.
+[Trait("Category", "Quarantine")]
 public class HeldForAttributionTests
 {
     private const int SampleRate = 12000;
