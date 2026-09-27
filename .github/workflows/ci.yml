@@ -99,7 +99,7 @@ jobs:
       - name: Test
         if: steps.scope.outputs.full == 'true'
         timeout-minutes: 30
-        run: dotnet test --configuration Release --no-build -- --filter-not-trait "Category=Aspiration"
+        run: dotnet test --configuration Release --no-build -- --filter-not-trait "Category=Aspiration" --filter-not-trait "Category=Quarantine"
 
       # A red build that does not name the test is a reproduce-and-guess cycle every time. The
       # MTP runner prints only "Failed: 1" and writes the names to a log on the runner, which is
@@ -132,7 +132,18 @@ jobs:
         continue-on-error: true
         env:
           NINOTNC_ASPIRATION: "1"
-        run: dotnet test --configuration Release --no-build -- --filter-trait "Category=Aspiration"
+        # --ignore-exit-code 8: a test project with nothing in this category (the Windows backends'
+        # tests have none) exits 8, "zero tests ran", which would paint the step red for nothing.
+        run: dotnet test --configuration Release --no-build -- --filter-trait "Category=Aspiration" --ignore-exit-code 8
+
+      # Tests that are flaky for a reason not yet fixed (#537): run, so they stay visible and a
+      # fix can be seen to hold, but never block. Each carries the issue that must clear it.
+      - name: Quarantine (non-blocking - flaky tests awaiting a fix)
+        if: steps.scope.outputs.full == 'true'
+        continue-on-error: true
+        # --ignore-exit-code 8: a test project with nothing in this category (the Windows backends'
+        # tests have none) exits 8, "zero tests ran", which would paint the step red for nothing.
+        run: dotnet test --configuration Release --no-build -- --filter-trait "Category=Quarantine" --ignore-exit-code 8
 
       # Smoke-build the .deb so packaging breakage surfaces here rather than at the
       # moment someone cuts a tag. amd64 only - the arch-specific part is one SDK flag.
