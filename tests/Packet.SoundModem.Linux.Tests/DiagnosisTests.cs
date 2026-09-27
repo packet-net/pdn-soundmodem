@@ -65,6 +65,21 @@ public class DiagnosisTests
     }
 
     [Fact]
+    public void A_pcm_opened_from_a_thread_is_held_by_that_threads_process()
+    {
+        // As found on Debian 13: the kernel records the opening thread, here pipewire's data loop.
+        var tree = new FakeDeviceTree().Aioc()
+            .File("/proc/asound/card0/pcm0c/sub0/status", "state: RUNNING\nowner_pid   : 1301\n")
+            .File("/proc/1301/comm", "data-loop.0\n")
+            .File("/proc/1301/status", "Name:\tdata-loop.0\nUmask:\t0022\nState:\tS (sleeping)\nTgid:\t1234\nNgid:\t0\nPid:\t1301\n")
+            .File("/proc/1234/comm", "pipewire\n");
+        AlsaCard card = Aioc(tree).Card!;
+
+        CardUsers.Holder(tree, card, capture: true).Should().Be("pipewire (pid 1234)");
+        CardUsers.HolderProgram(tree, card, capture: true).Should().Be("pipewire");
+    }
+
+    [Fact]
     public void A_closed_pcm_has_no_holder()
     {
         var tree = new FakeDeviceTree().Aioc().File("/proc/asound/card0/pcm0p/sub0/status", "closed");

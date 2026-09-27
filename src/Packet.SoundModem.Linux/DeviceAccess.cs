@@ -113,10 +113,35 @@ public static class CardUsers
         Owner(tree, card, capture) is int pid ? tree.Read($"/proc/{pid}/comm") ?? $"pid {pid}" : null;
 
     /// <summary>
-    /// <c>owner_pid</c> from <c>/proc/asound/cardN/pcmDc/sub0/status</c>, which reads "closed"
-    /// while nobody has the PCM open.
+    /// The process holding the PCM: <c>owner_pid</c> from
+    /// <c>/proc/asound/cardN/pcmDc/sub0/status</c> (which reads "closed" while nobody has it
+    /// open), taken up to its thread group.
     /// </summary>
-    private static int? Owner(IDeviceTree tree, AlsaCard card, bool capture)
+    /// <remarks>
+    /// The kernel records the task that opened the PCM, and a task is a thread: PipeWire opens its
+    /// devices from a thread called <c>data-loop.0</c>, and a .NET program from one called
+    /// <c>.NET TP Worker</c>. Its <c>comm</c> is the thread's name, which says nothing to an
+    /// operator and does not say "pipewire" to a caller deciding whether to go through PipeWire.
+    /// The thread's <c>Tgid</c> is the process, whose <c>comm</c> is the program.
+    /// </remarks>
+    private static int? Owner(IDeviceTree tree, AlsaCard card, bool capture) =>
+        OwnerTask(tree, card, capture) is int task ? ThreadGroup(tree, task) ?? task : null;
+
+    private static int? ThreadGroup(IDeviceTree tree, int task)
+    {
+        foreach (string line in (tree.Read($"/proc/{task}/status") ?? string.Empty).Split('\n'))
+        {
+            if (line.StartsWith("Tgid:", StringComparison.Ordinal)
+                && int.TryParse(line.AsSpan(5).Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int group))
+            {
+                return group;
+            }
+        }
+
+        return null;
+    }
+
+    private static int? OwnerTask(IDeviceTree tree, AlsaCard card, bool capture)
     {
         ArgumentNullException.ThrowIfNull(card);
         if ((capture ? card.CaptureDevice : card.PlaybackDevice) is not int device)
