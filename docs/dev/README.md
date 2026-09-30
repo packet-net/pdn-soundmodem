@@ -27,5 +27,5 @@ Every file here opens, under its H1, with a status line: whether it is current, 
 | [ms110d/](ms110d/) | MIL-STD-188-110D Appendix D: the transcribed interop tables and their README, the waveform design, and the standard itself under spec/. |
 | [ofdm-fm/](ofdm-fm/) | OFDM-FM design notes: the shipped preset set, how the 8 kHz preset was measured on air, the receive-path findings including what was reverted, and the geometry-signalling work. Carrier sense moved out to [carrier-sense.md](carrier-sense.md), because it turned out not to be about this mode family at all. |
 | [refs/](refs/) | Verbatim transcriptions of other people's specifications. Never edited. |
-| [plans/](plans/) | Plans for work not started: 2G ALE. |
+| [plans/](plans/) | Plans for work not started: 2G ALE, and the sub-threshold FM mode ([plans/low-snr-fm.md](plans/low-snr-fm.md), with the measurements behind it). |
 | [archive/](archive/) | Frozen records of closed work: plans, campaign evidence, handovers and closeouts. Its [README](archive/README.md) states the rules. |
