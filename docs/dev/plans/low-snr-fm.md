@@ -7,20 +7,25 @@ commit that added its IF tap (`ApplyToIf`, branch `claude/low-snr-fm-packet-mode
 against the 0.7.0 package. No mode exists, nothing is in the catalogue, and nothing here has been
 on air. The phases and gates at the end are what would be built if it were taken up.
 
-**Charter.** Get frames through an ordinary FM radio at a carrier-to-noise ratio far below the one
-where its discriminator stops working, so that a station whose path to the network is 20 dB short
-of what every existing FM mode needs can still join it, slowly.
+**Charter.** Get frames through an FM radio at a carrier-to-noise ratio far below the one where
+its discriminator stops working, so that a station whose path to the network is 20 dB short of what
+every existing FM mode needs can still join it, slowly. The station assumed throughout is the one
+this repository is built around: a Tait TM8100 tapped at R1 and T13 through a CM108 interface with
+the passive coupling of [docs/hardware/tait-tm8100-cm108.md](../../hardware/tait-tm8100-cm108.md),
+or the same radio with an SDR on its IF. Microphone and speaker paths are measured once, for the
+record, and not designed for.
 
 **The claim, in one paragraph.** Every FM data mode this repository carries, including the OFDM-FM
 floor at +5.8 dB CNR, is stopped by the same wall: the limiter-discriminator's threshold. Below it
 the discriminator hands up the signal shrunk by `(1 - exp(-cnr))` and buried in clicks, and no
 waveform or code run on that audio can get more than about 12 dB below the wall. But the clicks are
 whole turns of phase, and a receiver that integrates the discriminator's output back into a phase
-and detects there sees them as nothing. Measured: one slow audio-tone MFSK waveform, sent through
-the microphone socket of any radio, decodes to about -6 dB CNR off a speaker, and to about -20 dB
-from a flat discriminator tap or an SDR, with the two within a decibel of each other. That is 12 dB
-and 26 dB below the best FM floor in this repository, at 15 bit/s net, and it is within about a
-decibel of FT8's efficiency per bit, through an FM transmitter.
+and detects there sees them as nothing. Measured: one slow audio-tone MFSK waveform, injected at
+T13, decodes LDPC-coded frames 8 of 8 at -20 dB CNR from an SDR on the IF at 15 bit/s, and 8 of 8 at
+-22 dB at 7.5 bit/s; from the R1 tap through a CM108, once the interface's AC coupling has been
+undone, 7 of 8 at -18 dB. That is 24 to 28 dB below the best FM floor in this repository, and it is
+within about 3 dB of FT8's efficiency per bit, through an FM transmitter. The one thing between the
+R1 tap and the SDR's number is the coupling, and it is a calibration, not a capacitor.
 
 ---
 
@@ -191,8 +196,9 @@ Through a microphone-and-speaker path the phase receiver is dead below 0 dB and 
 inverse is available for a network whose time constant no radio publishes. That path gets the audio
 receiver and nothing better, and the audio receiver gives it -6 dB.
 
-### 3.4 The microphone-and-speaker path
+### 3.4 The microphone-and-speaker path, for the record only
 
+Not a configuration this plan designs for; measured once so the number exists.
 `FmLinkProfile.MicAndSpeaker(2500)`: 300 to 3000 Hz both ways, 750 us emphasis both ways, 8 kHz IF.
 
 | CNR dB | A audio | P phase |
@@ -205,8 +211,9 @@ receiver and nothing better, and the audio receiver gives it -6 dB.
 | -10 | 0.574 | 0.895 |
 | -12 | 0.730 | 0.855 |
 
-An unmodified handheld, then, copies this waveform to about -6 dB: 12 dB below the OFDM-FM floor
-and about 14 dB below AFSK's, with the same transmitter and a receiver that is a Goertzel filter.
+An unmodified handheld would copy this waveform to about -6 dB (coded frames 8 of 8 at -6, 0 of 8
+at -8): 12 dB below the OFDM-FM floor, with a receiver that is a Goertzel filter. It is a free
+by-product of the waveform, not a reason for it.
 
 ### 3.5 Coded frames
 
@@ -216,17 +223,36 @@ tone energies, scaled by the burst's median tone energy (a noise-only line at an
 decoding at) and clipped, which took one iteration to learn: unclipped LLRs of a few hundred make
 the sum-product decoder fail on a codeword with no symbol errors at all. Eight frames per point.
 
-Measured so far (the 100 ms rows are still running as this is written and follow in the next
-revision):
+Frames of 8, R1/T13 Tait narrow profile unless stated:
 
-| Symbol | Net rate | CNR dB | A audio | P phase | S sdr |
-|---|---|---|---|---|---|
-| 50 ms | 30 bit/s | -12 | 0 of 8 | 8 of 8 | 8 of 8 |
-| 50 ms | 30 bit/s | -14 | 0 of 8 | 8 of 8 | 8 of 8 |
-| 50 ms | 30 bit/s | -16 | 0 of 8 | 8 of 8 | 8 of 8 |
+| Symbol | Net rate | CNR dB | A audio | P phase, DC coupled | P phase, 70 Hz coupling undone | S sdr |
+|---|---|---|---|---|---|---|
+| 50 ms | 30 bit/s | -12 | 0 | 8 | | 8 |
+| 50 ms | 30 bit/s | -14 | 0 | 8 | | 8 |
+| 50 ms | 30 bit/s | -16 | 0 | 8 | | 8 |
+| 50 ms | 30 bit/s | -18 | 0 | 0 | | 3 |
+| 100 ms | 15 bit/s | -16 | 0 | 8 | 8 | 8 |
+| 100 ms | 15 bit/s | -18 | 0 | 8 | 7 | 8 |
+| 100 ms | 15 bit/s | -20 | 0 | 4 | 0 | 8 |
+| 100 ms | 15 bit/s | -22 | 0 | 0 | 0 | 0 |
+| 200 ms | 7.5 bit/s | -20 | 0 | 8 | | 8 |
+| 200 ms | 7.5 bit/s | -22 | 0 | 8 | | 8 |
+| 200 ms | 7.5 bit/s | -24 | 0 | 1 | | 7 |
+| 200 ms | 7.5 bit/s | -26 | 0 | 0 | | 0 |
 
-At 50 ms symbols the phase receiver's symbol error rate at -16 dB is 12.6 % and the SDR's 7.1 %,
-and the code clears both: every frame, at 30 bit/s, 24 dB below the OFDM-FM floor.
+With the SDR's carrier 250 Hz off (`--cfo 250`) the 100 ms rows are identical: 8, 8, 0 at -18,
+-20, -22. The code's cliff sits where the symbol error rate passes about 12 % for the SDR and
+about 6 % for the phase receiver, whose errors bunch: the audio-path receiver's residual is not
+white in time the way the SDR's is, and that is worth a look when the LLRs are done properly. Each
+doubling of the symbol moves the SDR's cliff by the 3 dB it should, so the rate is a dial: 30 bit/s
+at -16, 15 at -20, 7.5 at -22, and nothing stops 3.75 at -25 except the oscillators.
+
+The decoder is fussy about its input. M0LTE.FecLdpc's sum-product decoder, fed synthetic LLRs of
+uniform magnitude with 2 % of signs flipped, decodes 50 of 50 at magnitude 2.5, 42 of 50 at 6, and
+0 of 50 at 1 or 0.2, where it runs to its iteration limit with two hundred checks unsatisfied. It
+also keeps state, so one instance shared across parallel bursts corrupts them, which cost an hour and
+looked like a channel result. The probe normalises the max-log LLRs to a mean magnitude of 2.5, which
+is what OFDM-FM's coding layer settled on for the same decoder, and serialises the codec.
 
 ## 4. What the numbers mean at the antenna
 
@@ -237,14 +263,15 @@ that scale, which is where this repository's FM knees also cluster. So, on the s
 | | CNR | At the antenna socket |
 |---|---|---|
 | `ofdm-fm` BPSK 1/2, today's floor | +5.8 dB | about -119 dBm |
-| This waveform, speaker and audio receiver | -6 dB | about -131 dBm |
-| This waveform, flat tap or SDR, phase receiver | -20 dB | about -145 dBm |
+| This waveform, R1 through a CM108 with the coupling undone, 15 bit/s | -18 dB | about -143 dBm |
+| This waveform, SDR on the IF, 15 bit/s | -20 dB | about -145 dBm |
+| This waveform, SDR on the IF, 7.5 bit/s | -22 dB | about -147 dBm |
 
 Site noise moves every row together, not their spacing: at 145 MHz a residential site raises the
 floor by about 12 dB over thermal and a business site by 17, so the dBm figures are for a quiet
 receiver and the decibels between rows are what carry. 26 dB is 20 times the distance in free
 space and about five times over a path losing 35 dB per decade, and it is more than the difference
-between a 5 W handheld on a whip and a 50 W mobile on a colinear.
+between 1 W and a 25 W Tait at full chat.
 
 Per bit, the SDR floor of about -20 dB in 9.75 kHz is -14 dB in 2.5 kHz; at 15 bit/s that is an
 Eb/N0 of about 8 dB, against FT8's 5 dB at 6.1 bit/s. Most of the 3 dB is the four-line combining
@@ -267,18 +294,23 @@ tone instead of four, and about 1.5 dB back. T13 on a Tait has a 3.7 Hz high-pas
 microphone socket has 300 Hz, so a DC shift is not transmittable from the sockets this mode exists
 for. The tones cost 1.5 dB and buy the speaker receiver. Keep the tones.
 
-**Three station configurations, one transmitter.**
+**Two receivers for the station this is built for, one transmitter.** The transmitter is T13 in
+both cases, and the same tones.
 
-1. *Any radio, microphone and speaker.* The audio receiver. Floor about -6 dB. Nothing to build on
-   the radio.
-2. *A flat discriminator tap into a sound card.* The phase receiver, with the coupling undone. Floor
-   about -20 dB, provided the coupling corner is calibrated to 1 to 2 %. That calibration is the
-   piece of this design with no precedent here, and it is gate B2 below.
-3. *An SDR on the IF.* The phase receiver's sideband detector on complex baseband, with the carrier
-   search widened to the radios' combined frequency error (about plus or minus 400 Hz at 145 MHz for
-   1.5 ppm each). Floor about -20 dB, one decibel better than 2, and no coupling to undo. Tapping the
-   IF rather than the antenna keeps the radio's front end and roofing filter in front of an 8-bit ADC,
-   which at a shared site is worth more than the decibel.
+1. *R1 into the CM108 interface.* The phase receiver, with the interface's coupling undone. Frames
+   to -18 dB at 15 bit/s, provided the coupling corner is calibrated to 1 to 2 %. That calibration is
+   the piece of this design with no precedent here, and it is gate B2 below. The interface notes
+   already say the corner is not one component (C1 and C2 on the tail, the dongle's own input
+   capacitor, one pole at 90 Hz or four at 35 both fitting the measurements), which is exactly why it
+   has to be found by the receiver rather than read off the build page.
+2. *An SDR on the IF.* The same sideband detector on complex baseband, with the carrier search
+   widened to the radios' combined frequency error (about plus or minus 400 Hz at 145 MHz for
+   1.5 ppm each). Frames to -20 dB at 15 bit/s and -22 at 7.5, nothing to calibrate, and the radio's
+   front end and IF filter still in front of the SDR's ADC, which at a shared site matters more than
+   the two decibels. Where the mod exists, this is the receiver to build first.
+
+A microphone-and-speaker station gets the plain audio receiver and about -6 dB from the same
+transmission, for free; it is not designed for here.
 
 **Framing.** At 15 bit/s a plain AX.25 UI frame spends 144 bits, nearly ten seconds, on two
 addresses, a control byte and a PID. The mode should carry the IL2P header (104 bits, and already in
@@ -325,21 +357,22 @@ ties them to a radio, exactly as the FM ladders in the roadmap are.
   signalling. Exit: a frame ladder like section 3.5 for each codeword size.
 
 ### B - the station
-- **B1 Speaker path.** `MicAndSpeaker` profile through the audio receiver, with the limiter set
-  (`LimitAtDeviationHz`) rather than peak-scaled, because that is a microphone path. Exit: frames
-  to -6 dB.
-- **B2 Flat tap with a sound card.** The coupling inverse, and its calibration from a burst above
+- **B1 Levels at T13.** The tone at full legal deviation from T13's 0.29 Vp-p per kHz, the
+  receiver's deviation scale calibrated from a burst above threshold. Exit: the modulation index
+  the receiver measures matches the one sent within 5 %.
+- **B2 R1 into the CM108.** The coupling inverse, and its calibration from a burst above
   threshold: a search over corner and pole count maximising the sideband metric, stored per
   station. Exit: through a modelled 70 Hz one-pole and through a modelled four-pole at 35 Hz, both
   calibrated blind, frames to -18 dB. This gate decides whether configuration 2 exists.
-- **B3 SDR path.** `ApplyToIf` plus a carrier offset and an SDR sample-clock offset, the same
-  receiver. Exit: frames to -20 dB at plus or minus 400 Hz.
+- **B3 SDR on the IF.** `ApplyToIf` plus a carrier offset and an SDR sample-clock offset, the same
+  receiver. Exit: frames to -20 dB at 15 bit/s and -22 at 7.5, at plus or minus 400 Hz.
 
 ### C - the radio
 - **C1 A real ladder.** The CNR axis on a real Tait, which is roadmap "Needs Tom" #5 and has been
   the missing calibration of every FM number here: an attenuator between two radios, or the Flex
   and RSP1 rig, RSSI read over CCDI as the independent axis. Exit: the model's -6 and -20 dB rows
-  reproduced within 3 dB on hardware, and the model's knees re-pinned if not.
+  reproduced within 3 dB on hardware (the -18 and -20 dB rows), and the model's knees re-pinned
+  if not.
 - **C2 The tap and the SDR.** Tom's demonstrated IF mod with an SDR, and R1 into a sound card whose
   coupling B2 has calibrated. Exit: a frame off air at a level no other mode here decodes at,
   entered in the ledger.

@@ -83,13 +83,14 @@ OFDM-FM floor at +5.8 dB CNR included, is stopped by the limiter-discriminator's
 plan shows what sits under it: the discriminator shrinks a sub-threshold signal by `(1 - exp(-cnr))`
 and buries it in clicks, so nothing run on its audio gets more than about 12 dB below the wall, but
 the clicks are whole turns of phase and a receiver that integrates the audio back into a phase sees
-them as nothing. Measured through the FM link model with an IF tap added to it: one slow audio-tone
-8-FSK waveform, sent into any radio's microphone socket, decodes LDPC-coded frames to about -6 dB
-CNR off a speaker and to about -18 dB from a flat discriminator tap or an SDR, 12 and 24 dB below
-today's floor, at 15 bit/s. The flat-tap receiver needs the sound card's AC coupling undone to 1 to
-2 %, which is the one untested piece; the SDR path needs nothing. Phases and gates are in the plan;
-the first hardware gate is the same real-radio FM ladder as "Needs Tom" #5, which this makes worth
-more than it was.
+them as nothing. Measured through the FM link model with an IF tap added to it, on the Tait R1/T13
+profile: one slow audio-tone 8-FSK waveform into T13 decodes LDPC-coded frames 8 of 8 at -20 dB CNR
+from an SDR on the IF at 15 bit/s (and at -22 dB at 7.5 bit/s), and 7 of 8 at -18 dB from R1 through
+a CM108 once the interface's AC coupling has been undone, against +5.8 dB today. Undoing the
+coupling needs its corner to 1 to 2 %, which the receiver has to find for itself and which is the
+one untested piece; the SDR path has nothing to calibrate. Phases and gates are in the plan; the
+first hardware gate is the same real-radio FM ladder as "Needs Tom" #5, which this makes worth more
+than it was.
 
 ## Parked
 
