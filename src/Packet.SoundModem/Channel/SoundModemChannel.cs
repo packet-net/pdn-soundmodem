@@ -1703,6 +1703,11 @@ public sealed class SoundModemChannel
     /// or, given <paramref name="only"/>, when the next item is not that one.</summary>
     private TxItem? TakeFrom(object source, TxItem? only = null)
     {
+        if (RefuseIfLeasedOut(source))
+        {
+            return null;
+        }
+
         lock (_txGate)
         {
             if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue) || queue.Count == 0)
@@ -1712,6 +1717,13 @@ public sealed class SoundModemChannel
 
             if (only is not null && !ReferenceEquals(queue.Peek(), only))
             {
+                return null;
+            }
+
+            if (TransmitLease.HolderNow() is int holder && !TransmitLease.IsAttributed(source, holder))
+            {
+                // Taken in the instant since the check above. Nothing leaves the queue for a
+                // transmitter the lease does not cover; the next pass refuses what is left.
                 return null;
             }
 
@@ -2306,26 +2318,78 @@ public sealed class SoundModemChannel
         {
             foreach (object source in _txOrder.ToArray())
             {
-                if (TransmitLease.IsAttributed(source, holder))
+                if (!TransmitLease.IsAttributed(source, holder))
                 {
-                    continue;
-                }
-
-                foreach (TxItem item in _txQueues[source].ToArray())
-                {
-                    if (RemoveLocked(item))
-                    {
-                        // Same reasoning as TakeFrom: never Dispose under this lock.
-                        item.Withdrawal.Unregister();
-                        refused.Add(item);
-                    }
+                    RemoveAllLocked(source, refused);
                 }
             }
 
             _quietOwner = null;
         }
 
-        foreach (TxItem item in refused)
+        RefuseLeased(refused, holder);
+    }
+
+    /// <summary>
+    /// Refuses everything one transmitter has queued, and whatever it has already taken in
+    /// <paramref name="taken"/>, if a lease it does not belong to is held now. True when it did.
+    /// </summary>
+    /// <remarks>
+    /// The last word before the radio keys, and the transmitter's first act on taking anything,
+    /// so that a lease taken while this transmitter was waiting for the channel is honoured: the
+    /// sweep that runs as the lease is taken cannot see a frame the transmitter already has in
+    /// hand.
+    /// </remarks>
+    private bool RefuseIfLeasedOut(object source, IReadOnlyList<TxItem>? taken = null)
+    {
+        List<TxItem> refused = [];
+        int holder;
+        lock (_txGate)
+        {
+            if (TransmitLease.HolderNow() is not int held || TransmitLease.IsAttributed(source, held))
+            {
+                return false;
+            }
+
+            holder = held;
+            if (taken is not null)
+            {
+                refused.AddRange(taken);
+            }
+
+            RemoveAllLocked(source, refused);
+        }
+
+        RefuseLeased(refused, holder);
+        return true;
+    }
+
+    /// <summary>Takes every item one transmitter has queued out of the queue. Call under
+    /// <see cref="_txGate"/>.</summary>
+    private void RemoveAllLocked(object source, List<TxItem> into)
+    {
+        if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue))
+        {
+            return;
+        }
+
+        foreach (TxItem item in queue.ToArray())
+        {
+            if (RemoveLocked(item))
+            {
+                // Same reasoning as TakeFrom: never Dispose under this lock.
+                item.Withdrawal.Unregister();
+                into.Add(item);
+            }
+        }
+
+        _packedRenders.Remove(source);
+    }
+
+    /// <summary>Gives each of <paramref name="items"/> the lease's refusal. Never under the lock.</summary>
+    private void RefuseLeased(List<TxItem> items, int holder)
+    {
+        foreach (TxItem item in items)
         {
             Finish(item);
             Exception refusal = TransmitLease.Refusal(holder);
@@ -2527,9 +2591,21 @@ public sealed class SoundModemChannel
             {
                 if (await TakePackedBurstAsync(source).ConfigureAwait(false) is { Items.Length: > 0 } packed)
                 {
-                    RunPackedKeyup(source, packed, output, ptt);
+                    // The last word before the radio keys: a lease taken while this burst waited
+                    // for the channel or rendered refuses it here, unkeyed.
+                    if (!RefuseIfLeasedOut(source, packed.Items))
+                    {
+                        RunPackedKeyup(source, packed, output, ptt);
+                    }
                 }
 
+                continue;
+            }
+
+            // The last word before the radio keys: a lease taken while this transmitter waited for
+            // the channel refuses everything it has queued here, and nothing keys.
+            if (RefuseIfLeasedOut(source))
+            {
                 continue;
             }
 

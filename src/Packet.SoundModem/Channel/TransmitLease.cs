@@ -66,7 +66,8 @@ public readonly record struct TransmitLeaseGrant(bool Granted, int SubChannel, D
 /// holder that dies stops renewing and normal service comes back on its own within one lease.
 /// The clock is the channel's <see cref="TimeProvider"/>: a timer reports the expiry as it
 /// happens, and every question asked after the expiry instant reads the lease as free whether
-/// or not that timer has fired yet.</para>
+/// or not that timer has fired yet. The length is measured on the clock's monotonic timestamp;
+/// its UTC time is only ever used to tell a person when the lease ends.</para>
 /// </remarks>
 public sealed class TransmitLease
 {
@@ -77,8 +78,15 @@ public sealed class TransmitLease
     private readonly Lock _gate = new();
     private readonly ConditionalWeakTable<object, StrongBox<int>> _attributed = [];
     private int? _holder;
+
+    // The lease is timed on the monotonic clock: _since when it was taken, _renewedAt when it was
+    // last taken or renewed, and _duration from then. A wall clock that steps (NTP, an operator,
+    // a GPS-disciplined source coming back) cannot shorten or lengthen it. _expires is the same
+    // instant in UTC, for saying it to a person and nothing else.
+    private long _since;
+    private long _renewedAt;
+    private TimeSpan _duration;
     private DateTimeOffset _expires;
-    private DateTimeOffset _since;
     private int _renewals;
     private long _refused;
     private ITimer? _expiry;
@@ -145,12 +153,12 @@ public sealed class TransmitLease
         ITimer? stale;
         lock (_gate)
         {
-            DateTimeOffset now = _time.GetUtcNow();
             if (_holder is int holder && holder != subChannel)
             {
                 return new TransmitLeaseGrant(false, holder, _expires, Renewed: false);
             }
 
+            long now = _time.GetTimestamp();
             bool renewing = _holder is not null;
             if (!renewing)
             {
@@ -164,12 +172,14 @@ public sealed class TransmitLease
                 _renewals++;
             }
 
-            _expires = now + duration;
+            _renewedAt = now;
+            _duration = duration;
+            _expires = _time.GetUtcNow() + duration;
             stale = _expiry;
-            _expiry = _time.CreateTimer(_ => ExpireIfDue(), null, duration, Timeout.InfiniteTimeSpan);
+            _expiry = _time.CreateTimer(_ => OnTimer(), null, duration, Timeout.InfiniteTimeSpan);
             change = new TransmitLeaseEvent(
                 renewing ? TransmitLeaseChange.Renewed : TransmitLeaseChange.Taken,
-                subChannel, _expires, now - _since, _renewals, _refused);
+                subChannel, _expires, _time.GetElapsedTime(_since, now), _renewals, _refused);
         }
 
         // Never under the lock: disposing a timer can wait on its clock, and the clock's callback
@@ -184,22 +194,28 @@ public sealed class TransmitLease
         return new TransmitLeaseGrant(true, subChannel, change.Expires, change.Change == TransmitLeaseChange.Renewed);
     }
 
-    /// <summary>Gives the lease back. False when nobody held one.</summary>
-    public bool Release()
+    /// <summary>
+    /// Gives the lease back. False when nobody held one, or when <paramref name="onlyIf"/> names a
+    /// sub-channel that is not the holder - checked and released in one step, so a release that
+    /// arrives late cannot free a lease somebody else has taken since.
+    /// </summary>
+    /// <param name="onlyIf">Release only if this sub-channel holds the lease; null releases
+    /// whoever does.</param>
+    public bool Release(int? onlyIf = null)
     {
         ExpireIfDue();
         TransmitLeaseEvent change;
         ITimer? stale;
         lock (_gate)
         {
-            if (_holder is not int holder)
+            if (_holder is not int holder || (onlyIf is int expected && expected != holder))
             {
                 return false;
             }
 
-            DateTimeOffset now = _time.GetUtcNow();
             change = new TransmitLeaseEvent(
-                TransmitLeaseChange.Released, holder, now, now - _since, _renewals, _refused);
+                TransmitLeaseChange.Released, holder, _time.GetUtcNow(), _time.GetElapsedTime(_since),
+                _renewals, _refused);
             stale = ClearLocked();
         }
 
@@ -254,7 +270,7 @@ public sealed class TransmitLease
     {
         lock (_gate)
         {
-            return _holder is int holder && _time.GetUtcNow() < _expires ? holder : null;
+            return _holder is int holder && !DueLocked() ? holder : null;
         }
     }
 
@@ -262,19 +278,47 @@ public sealed class TransmitLease
     internal bool IsAttributed(object? source, int subChannel) =>
         source is not null && _attributed.TryGetValue(source, out StrongBox<int>? box) && box.Value == subChannel;
 
+    /// <summary>Whether the current lease's time is up, on the monotonic clock. Call under the lock.</summary>
+    private bool DueLocked() => _time.GetElapsedTime(_renewedAt) >= _duration;
+
+    /// <summary>
+    /// The expiry timer. A timer is allowed to fire a little early, and one that does would
+    /// otherwise find the lease not yet due and leave nothing to report the expiry when it is,
+    /// so it re-arms itself for whatever is left.
+    /// </summary>
+    private void OnTimer()
+    {
+        ExpireIfDue();
+        ITimer? stale = null;
+        lock (_gate)
+        {
+            if (_holder is not null && !DueLocked())
+            {
+                TimeSpan left = _duration - _time.GetElapsedTime(_renewedAt);
+                stale = _expiry;
+                _expiry = _time.CreateTimer(
+                    _ => OnTimer(), null, left > TimeSpan.Zero ? left : TimeSpan.FromMilliseconds(1),
+                    Timeout.InfiniteTimeSpan);
+            }
+        }
+
+        stale?.Dispose();
+    }
+
     private void ExpireIfDue()
     {
         TransmitLeaseEvent change;
         ITimer? stale;
         lock (_gate)
         {
-            if (_holder is not int holder || _time.GetUtcNow() < _expires)
+            if (_holder is not int holder || !DueLocked())
             {
                 return;
             }
 
             change = new TransmitLeaseEvent(
-                TransmitLeaseChange.Expired, holder, _expires, _expires - _since, _renewals, _refused);
+                TransmitLeaseChange.Expired, holder, _expires,
+                _time.GetElapsedTime(_since, _renewedAt) + _duration, _renewals, _refused);
             stale = ClearLocked();
         }
 

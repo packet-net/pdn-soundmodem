@@ -181,6 +181,11 @@ internal sealed class TxTestRunner
         // head end's calibration tone) is the one exception, and it says it is the holder's by
         // naming the sub-channel. Anything else that could ask - the page's button, a script
         // that does not know about the lease - names nothing and is refused here.
+        if (request.SubChannel is int named && !_options.Channel.Modems.ContainsKey(named))
+        {
+            return Refuse($"no modem transmits on sub-channel {named}");
+        }
+
         TransmitLease lease = _options.Channel.TransmitLease;
         if (lease.Holder is int holder && request.SubChannel != holder)
         {

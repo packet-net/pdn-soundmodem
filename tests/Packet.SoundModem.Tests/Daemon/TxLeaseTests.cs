@@ -206,4 +206,66 @@ public class TxLeaseTests
         (await granted.Content.ReadAsStringAsync()).Should().Contain("\"held\": true");
         channel.TransmitLease.Holder.Should().Be(3);
     }
+
+    [Fact]
+    public void Something_Held_Back_By_A_Lease_Is_Said_Once_Then_Counted_Each_Minute()
+    {
+        var time = new FakeTimeProvider(Noon);
+        var said = new List<string>();
+        var line = new LeaseQuietLine(time, (holder, more) => said.Add($"{holder}:{more}"));
+
+        for (int i = 0; i < 20; i++)
+        {
+            line.Note(3);
+            time.Advance(TimeSpan.FromSeconds(5));
+        }
+
+        // 100 s of an ARQ session replying every 5 s: the first, then one line a minute later
+        // carrying the eleven held back in between, and the rest still being counted.
+        said.Should().Equal("3:0", "3:11");
+    }
+
+    [Fact]
+    public async Task The_Holders_Own_Ident_Keys_During_Its_Lease_And_Nobody_Elses_Is_Asked()
+    {
+        (SoundModemChannel channel, _) = Station();
+        var holders = new Packet.SoundModem.Ident.StationIdentifier("M0LTE", null, 1500, 20, TimeSpan.FromMinutes(10), 12000);
+        var others = new Packet.SoundModem.Ident.StationIdentifier("M0LTE", null, 1700, 20, TimeSpan.FromMinutes(10), 12000);
+        IdentTransmission.Register(channel, 3, holders);
+        IdentTransmission.Register(channel, 0, others);
+        holders.NoteTransmission();
+        others.NoteTransmission();
+        channel.TransmitLease.Take(3, TimeSpan.FromMinutes(5));
+
+        IdentTransmission.ShouldSend(channel, holders).Should().BeTrue("the mailcast slot identifies on its own modem");
+        IdentTransmission.ShouldSend(channel, others).Should().BeFalse("it stays owed until the lease ends");
+
+        Task refused = IdentTransmission.SendAsync(channel, others);
+        refused.IsFaulted.Should().BeTrue("asked anyway, it is refused rather than queued");
+
+        var output = new Packet.SoundModem.Tests.Channel.FakeAudioOutput(12000);
+        var ptt = new Packet.SoundModem.Tests.Channel.RecordingPtt();
+        channel.Csma.Persistence = 255;
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        Task sent = IdentTransmission.SendAsync(channel, holders);
+        Task transmitter = channel.RunTransmitterAsync(output, ptt, cancellation.Token);
+        try
+        {
+            await sent.WaitAsync(TimeSpan.FromMinutes(1));
+        }
+        finally
+        {
+            await cancellation.CancelAsync();
+            try
+            {
+                await transmitter;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        ptt.Events.Should().StartWith("key");
+        output.WrittenCount.Should().BeGreaterThan(12000, "a CW ident of a callsign is seconds of tone");
+    }
 }

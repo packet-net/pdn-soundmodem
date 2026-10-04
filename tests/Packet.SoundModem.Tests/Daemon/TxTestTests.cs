@@ -36,6 +36,7 @@ public class TxTestTests
         internal Rig(Func<TxTestOptions, TxTestOptions>? settings = null, IPttControl? ptt = null)
         {
             Ptt = ptt ?? new RecordingPtt();
+            _counted = new CountingPtt(Ptt);
             Channel = new SoundModemChannel(Rate, randomSeed: 5);
             Channel.AddModem(0, sink => ModemCatalog.Create("afsk1200", Rate, sink));
             Channel.AddModem(9, _ => Band);
@@ -52,7 +53,7 @@ public class TxTestTests
             };
 
             Runner = new TxTestRunner(settings is null ? options : settings(options));
-            _transmitter = Channel.RunTransmitterAsync(Output, Ptt, _stop.Token);
+            _transmitter = Channel.RunTransmitterAsync(Output, _counted, _stop.Token);
         }
 
         internal SoundModemChannel Channel { get; }
@@ -76,15 +77,15 @@ public class TxTestTests
         /// transmitter loop - so reading the events straight after awaiting the test is racing
         /// them, which passes on an idle machine and fails under suite load.
         /// </summary>
-        internal async Task SettledAsync(int events = 2)
-        {
-            using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            while (Keying.Count < events)
-            {
-                giveUp.Token.ThrowIfCancellationRequested();
-                await Task.Delay(20, giveUp.Token);
-            }
-        }
+        /// <remarks>
+        /// Signalled by the PTT itself as each event is recorded, so nothing here polls or paces
+        /// on the clock. The bound is only there so a broken transmitter fails the test instead of
+        /// hanging the run; it is never what makes the test pass.
+        /// </remarks>
+        internal Task SettledAsync(int events = 2) =>
+            _counted.ReachedAsync(events).WaitAsync(TimeSpan.FromMinutes(2));
+
+        private readonly CountingPtt _counted;
 
         internal List<string> Lines { get; } = [];
 
@@ -132,6 +133,78 @@ public class TxTestTests
         public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds) => [];
 
         public void ResetCarrierState() => FrameDecoded?.Invoke([], default!);
+    }
+
+    /// <summary>
+    /// Passes keying through to the rig's PTT and completes a waiter once the number of events it
+    /// asked for has happened, so a test waits on the keying itself rather than on a poll.
+    /// </summary>
+    private sealed class CountingPtt(IPttControl inner) : IPttControl
+    {
+        private readonly Lock _gate = new();
+        private readonly List<(int Events, TaskCompletionSource Done)> _waiters = [];
+        private int _events;
+
+        public void Key()
+        {
+            try
+            {
+                inner.Key();
+            }
+            finally
+            {
+                Count();
+            }
+        }
+
+        public void Unkey()
+        {
+            try
+            {
+                inner.Unkey();
+            }
+            finally
+            {
+                Count();
+            }
+        }
+
+        internal Task ReachedAsync(int events)
+        {
+            lock (_gate)
+            {
+                if (_events >= events)
+                {
+                    return Task.CompletedTask;
+                }
+
+                var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _waiters.Add((events, done));
+                return done.Task;
+            }
+        }
+
+        private void Count()
+        {
+            List<TaskCompletionSource> ready = [];
+            lock (_gate)
+            {
+                _events++;
+                for (int i = _waiters.Count - 1; i >= 0; i--)
+                {
+                    if (_events >= _waiters[i].Events)
+                    {
+                        ready.Add(_waiters[i].Done);
+                        _waiters.RemoveAt(i);
+                    }
+                }
+            }
+
+            foreach (TaskCompletionSource done in ready)
+            {
+                done.TrySetResult();
+            }
+        }
     }
 
     /// <summary>A radio that will not key - a dead serial lead, or a contended Flex.</summary>
@@ -203,6 +276,18 @@ public class TxTestTests
         fromThePage.Refusal.Should().Contain("sub-channel 0 holds the transmit lease");
         fromAnother.Ran.Should().BeFalse();
         rig.Output.Snapshot().Should().BeEmpty("nothing keyed for either");
+    }
+
+    [Fact]
+    public async Task A_Test_Naming_A_Sub_Channel_With_No_Modem_Is_Refused()
+    {
+        await using var rig = new Rig();
+
+        TxTestOutcome outcome = await rig.Runner.RunAsync(new TxTestRequest(false, 1800, 1) { SubChannel = 7 });
+
+        outcome.Ran.Should().BeFalse();
+        outcome.Refusal.Should().Be("no modem transmits on sub-channel 7");
+        rig.Output.Snapshot().Should().BeEmpty();
     }
 
     [Fact]

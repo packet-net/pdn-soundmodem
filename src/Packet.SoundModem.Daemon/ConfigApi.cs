@@ -46,7 +46,7 @@ internal sealed class ConfigApi
     private Func<IReadOnlyList<Survey.ModemProposal>>? _proposals;
     private TxTestRunner? _txTest;
     private Channel.TransmitLease? _txLease;
-    private Func<int, bool> _txLeaseHasModem = _ => false;
+    private Func<int, bool>? _hasModem;
     private string? _txLeaseCannot;
     private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
     private MixerRuntime? _mixer;
@@ -120,7 +120,7 @@ internal sealed class ConfigApi
     public void ServeTxLease(Channel.TransmitLease lease, Func<int, bool> hasModem, string? cannot)
     {
         _txLease = lease;
-        _txLeaseHasModem = hasModem;
+        _hasModem = hasModem;
         _txLeaseCannot = cannot;
     }
 
@@ -139,7 +139,7 @@ internal sealed class ConfigApi
         }
 
         (int status, JsonObject answer) = TxLeaseApi.Handle(
-            _txLease, context.Request.HttpMethod, body, _txLeaseHasModem, _txLeaseCannot);
+            _txLease, context.Request.HttpMethod, body, _hasModem ?? (_ => false), _txLeaseCannot);
         await RespondJsonAsync(context, status, answer.ToJsonString(Pretty)).ConfigureAwait(false);
     }
 
@@ -209,6 +209,14 @@ internal sealed class ConfigApi
             await RespondAsync(context, 400,
                 "\"twoTone\" and \"stop\" are true or false, \"toneHz\" and \"seconds\" are "
                 + $"numbers, \"subChannel\" a whole number: {wrongType.Message}").ConfigureAwait(false);
+            return;
+        }
+
+        // Checked as /api/txlease checks it: a sub-channel that carries no modem is a caller's
+        // mistake, and a 400 says so before anything is prepared.
+        if (subChannel is int sub && _hasModem is { } hasModem && !hasModem(sub))
+        {
+            await RespondAsync(context, 400, $"no modem transmits on sub-channel {sub}").ConfigureAwait(false);
             return;
         }
 

@@ -213,7 +213,7 @@ public class TransmitLeaseTests
         Task holders = channel.EnqueueTransmit(3, Frame(0x42));
 
         var ptt = new RecordingPtt();
-        using var cancellation = new CancellationTokenSource();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         Task transmitter = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), ptt, cancellation.Token);
         await holders.WaitAsync(TimeSpan.FromSeconds(30));
         await cancellation.CancelAsync();
@@ -229,5 +229,202 @@ public class TransmitLeaseTests
         sent.Should().Equal(3);
         time.GetUtcNow().Should().Be(new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.Zero),
             "nothing here needed the clock to move");
+    }
+
+    /// <summary>A clock whose wall time can be stepped without its monotonic time moving.</summary>
+    private sealed class SteppedWallClock(FakeTimeProvider inner, TimeSpan earlyBy = default) : TimeProvider
+    {
+        public TimeSpan Step { get; set; }
+
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow() + Step;
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            inner.CreateTimer(callback, state, dueTime > earlyBy ? dueTime - earlyBy : dueTime, period);
+    }
+
+    [Fact]
+    public void A_Wall_Clock_Step_Neither_Shortens_Nor_Lengthens_A_Lease()
+    {
+        var fake = new FakeTimeProvider(new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.Zero));
+        var clock = new SteppedWallClock(fake);
+        var channel = new SoundModemChannel(SampleRate, clock, randomSeed: 1);
+        channel.AddModem(3, sink => new Afsk1200Modem(SampleRate, sink));
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+
+        clock.Step = TimeSpan.FromHours(1);
+        channel.TransmitLease.Holder.Should().Be(3, "NTP stepping the clock forward is not the lease running out");
+
+        clock.Step = TimeSpan.FromHours(-1);
+        fake.Advance(TimeSpan.FromSeconds(60));
+        channel.TransmitLease.Holder.Should().BeNull("nor is stepping it back a reason to keep it");
+    }
+
+    [Fact]
+    public void A_Timer_That_Fires_Early_Rearms_So_The_Expiry_Is_Still_Reported()
+    {
+        var fake = new FakeTimeProvider(new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.Zero));
+        var clock = new SteppedWallClock(fake, earlyBy: TimeSpan.FromSeconds(5));
+        var channel = new SoundModemChannel(SampleRate, clock, randomSeed: 1);
+        channel.AddModem(3, sink => new Afsk1200Modem(SampleRate, sink));
+        var changes = new List<TransmitLeaseChange>();
+        channel.TransmitLease.Changed += change => changes.Add(change.Change);
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+
+        fake.Advance(TimeSpan.FromSeconds(55));
+        changes.Should().Equal([TransmitLeaseChange.Taken], "the timer fired five seconds early and found nothing due");
+
+        fake.Advance(TimeSpan.FromSeconds(5));
+        changes.Should().Equal(TransmitLeaseChange.Taken, TransmitLeaseChange.Expired);
+    }
+
+    [Fact]
+    public void A_Release_Naming_Another_Sub_Channel_Frees_Nothing()
+    {
+        (SoundModemChannel channel, _) = Station();
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+
+        channel.TransmitLease.Release(onlyIf: 0).Should().BeFalse("a late release must not free somebody else's lease");
+        channel.TransmitLease.Holder.Should().Be(3);
+        channel.TransmitLease.Release(onlyIf: 3).Should().BeTrue();
+        channel.TransmitLease.Holder.Should().BeNull();
+    }
+
+    /// <summary>A packing modem whose second render is held until the test lets it go.</summary>
+    private sealed class HeldPacker : IModem, IFramePackingModem
+    {
+        private int _renders;
+
+        public ManualResetEventSlim SecondRenderStarted { get; } = new();
+
+        public ManualResetEventSlim ReleaseSecondRender { get; } = new();
+
+        public string Mode => "held-packer";
+
+        public event Action<byte[], FrameQuality>? FrameDecoded
+        {
+            add { }
+            remove { }
+        }
+
+        public bool CarrierDetect => false;
+
+        public bool ChannelBusy => false;
+
+        public FramePacking? Packing { get; set; } =
+            new(TimeSpan.FromSeconds(30), TimeSpan.Zero);
+
+        public void Process(ReadOnlySpan<float> samples)
+        {
+        }
+
+        public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds) => new float[100];
+
+        public void ResetCarrierState()
+        {
+        }
+
+        public int FramesPerBurst(IReadOnlyList<byte[]> frames) => frames.Count;
+
+        public float[] ModulateFrames(IReadOnlyList<byte[]> frames, int txDelayMilliseconds)
+        {
+            if (Interlocked.Increment(ref _renders) == 2)
+            {
+                SecondRenderStarted.Set();
+                ReleaseSecondRender.Wait(TimeSpan.FromMinutes(2));
+            }
+
+            return new float[1000];
+        }
+    }
+
+    /// <summary>Something on the channel the test can make busy, so the transmitter waits, and
+    /// which says when carrier sense has asked it.</summary>
+    private sealed class BusyModem : IModem
+    {
+        private volatile bool _busy = true;
+
+        public ManualResetEventSlim Asked { get; } = new();
+        public string Mode => "busy";
+
+        public event Action<byte[], FrameQuality>? FrameDecoded
+        {
+            add { }
+            remove { }
+        }
+
+        public bool CarrierDetect => false;
+
+        public bool ChannelBusy
+        {
+            get
+            {
+                Asked.Set();
+                return _busy;
+            }
+        }
+
+        public void Clear() => _busy = false;
+
+        public void Process(ReadOnlySpan<float> samples)
+        {
+        }
+
+        public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds) => [];
+
+        public void ResetCarrierState()
+        {
+        }
+    }
+
+    [Fact]
+    public async Task A_Lease_Taken_While_A_Burst_Is_In_Hand_Refuses_It_Before_The_Radio_Keys()
+    {
+        // The window the take-time sweep cannot see: the transmitter has won the channel, taken
+        // the burst off the queue and is rendering it again (its TXDELAY changed while it waited),
+        // and only then is the lease taken. The last check before the key must refuse it.
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 42);
+        var packer = new HeldPacker();
+        var busy = new BusyModem();
+        channel.AddModem(0, _ => packer);
+        channel.AddModem(1, _ => busy);
+        channel.Csma.Persistence = 255;
+        channel.Csma.SlotTimeMilliseconds = 0; // carrier sense re-asks at once, with no clock in it
+
+        var refused = new List<int>();
+        channel.TransmitRejected += (sub, _, _) => { lock (refused) { refused.Add(sub); } };
+        Task frame = channel.EnqueueTransmit(0, Frame(0x41));
+        var ptt = new RecordingPtt();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        Task transmitter = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), ptt, cancellation.Token);
+
+        // Carrier sense is only asked once the first render (TXDELAY 300) is done and the burst is
+        // contending. While the busy channel holds it there, the host changes TXDELAY, so the
+        // burst taken once the channel clears has to be rendered again - and that render is held.
+        // The bounds below fail a broken run; they never pace a passing one.
+        busy.Asked.Wait(TimeSpan.FromMinutes(1)).Should().BeTrue();
+        channel.Csma.TxDelayMilliseconds = 120;
+        busy.Clear();
+        packer.SecondRenderStarted.Wait(TimeSpan.FromMinutes(1)).Should().BeTrue();
+
+        channel.TransmitLease.Take(1, TimeSpan.FromSeconds(60));
+        packer.ReleaseSecondRender.Set();
+
+        Func<Task> waiting = () => frame.WaitAsync(TimeSpan.FromSeconds(30));
+        await waiting.Should().ThrowAsync<InvalidOperationException>();
+        ptt.Events.Should().BeEmpty("nothing keys for a burst the lease does not cover");
+        refused.Should().Equal(0);
+
+        await cancellation.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
     }
 }

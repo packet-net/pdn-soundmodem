@@ -26,7 +26,7 @@ internal static class TxLeaseApi
     /// <summary>What a GET or a malformed request is told about the shape of a good one.</summary>
     internal const string Usage =
         "POST {\"subChannel\": 3, \"seconds\": 60} to take or renew the transmit lease for that "
-        + "sub-channel (at most 300 s at a time), {\"release\": true} to give it back; GET to read it";
+        + "sub-channel (at most 300 s at a time), {\"release\": true, \"subChannel\": 3} to give it back; GET to read it";
 
     /// <summary>Answers one request.</summary>
     /// <param name="lease">The station's lease.</param>
@@ -74,12 +74,15 @@ internal static class TxLeaseApi
 
         if (release)
         {
-            if (subChannel is int named && lease.Holder is int holder && holder != named)
+            // Checked and released in one step, so a release arriving late cannot free a lease
+            // somebody else has taken since. Naming the sub-channel is what makes that so, and
+            // what the head end should always do.
+            bool released = lease.Release(subChannel);
+            if (!released && subChannel is int named && lease.Holder is int holder && holder != named)
             {
                 return (409, Conflict(lease, $"sub-channel {holder} holds the transmit lease, not {named}"));
             }
 
-            bool released = lease.Release();
             JsonObject answer = Describe(lease);
             answer["released"] = released;
             return (200, answer);
@@ -229,4 +232,41 @@ internal sealed class TxLeaseJournal
             : held.TotalMinutes >= 1
                 ? $"{(int)held.TotalMinutes}m{held.Seconds:00}s"
                 : $"{held.TotalSeconds.ToString("0", CultureInfo.InvariantCulture)}s";
+}
+
+/// <summary>
+/// A line said the first time something is held back by the transmit lease, and then at most
+/// once a minute with a count of the repeats, so a service that keeps asking during a fifteen
+/// minute lease (an ARDOP session replying) costs a handful of lines rather than hundreds.
+/// </summary>
+internal sealed class LeaseQuietLine(TimeProvider time, Action<int, int> say)
+{
+    /// <summary>The least time between two lines.</summary>
+    internal static readonly TimeSpan Interval = TimeSpan.FromMinutes(1);
+
+    private readonly Lock _gate = new();
+    private long _saidAt;
+    private bool _said;
+    private int _heldBack;
+
+    /// <summary>Notes one thing held back by <paramref name="holder"/>'s lease.</summary>
+    internal void Note(int holder)
+    {
+        int more;
+        lock (_gate)
+        {
+            if (_said && time.GetElapsedTime(_saidAt) < Interval)
+            {
+                _heldBack++;
+                return;
+            }
+
+            _said = true;
+            _saidAt = time.GetTimestamp();
+            more = _heldBack;
+            _heldBack = 0;
+        }
+
+        say(holder, more);
+    }
 }
