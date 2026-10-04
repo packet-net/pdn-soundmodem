@@ -1146,7 +1146,7 @@ public sealed class SoundModemChannel
             item.Ledger = ledger;
             item.LedgerAtQueue = (long[])ledger.Clone();
             queue.Enqueue(item);
-            _txSignal.TrySetResult();
+            WakeLocked();
         }
 
         if (withdraw.CanBeCanceled)
@@ -1517,10 +1517,28 @@ public sealed class SoundModemChannel
     /// transmission that owns the channel's timing is never held: ARDOP is running the channel
     /// rather than sharing it, and its own ARQ turnarounds are what it is protecting.
     /// </remarks>
-    private object? NextEligibleSource()
+    private object? NextEligibleSource(out TimeSpan? soonest, out long wakes)
+    {
+        soonest = null;
+        var toStart = new List<(object, TxItem[], int)>();
+        object? chosen = NextEligibleSourceCore(ref soonest, toStart, out wakes);
+        StartPackedRenders(toStart);
+        return chosen;
+    }
+
+    /// <summary>The body of <see cref="NextEligibleSource"/>, under the lock.</summary>
+    /// <remarks>
+    /// A packing transmitter is eligible only once its run has gathered and its next burst has
+    /// rendered, and until then it is passed over rather than waited for, so nobody else stands
+    /// behind it. <paramref name="soonest"/> is when a gather ends; a render ending wakes the
+    /// loop by itself.
+    /// </remarks>
+    private object? NextEligibleSourceCore(
+        ref TimeSpan? soonest, List<(object, TxItem[], int)> toStart, out long wakes)
     {
         lock (_txGate)
         {
+            wakes = _wakes;
             // Owning the channel's timing is a claim on the CHANNEL, not just an exemption from
             // the hold, so it is answered before the round robin's turn order. Without this pass
             // an ARDOP burst took its place in the queue behind a packet frame and then waited
@@ -1539,10 +1557,27 @@ public sealed class SoundModemChannel
             foreach (object source in _txOrder)
             {
                 Queue<TxItem> queue = _txQueues[source];
-                if (queue.Count > 0 && (queue.Peek().OwnsTiming || !IsHeldLocked(source)))
+                if (queue.Count == 0 || !(queue.Peek().OwnsTiming || !IsHeldLocked(source)))
                 {
-                    return source;
+                    continue;
                 }
+
+                TxItem head = queue.Peek();
+                if (IsPackedHead(head))
+                {
+                    if (GatherRemainingLocked(head) is { } gathering)
+                    {
+                        soonest = soonest is { } earlier && earlier < gathering ? earlier : gathering;
+                        continue;
+                    }
+
+                    if (!PackedReadyLocked(source, queue, toStart))
+                    {
+                        continue;
+                    }
+                }
+
+                return source;
             }
 
             return null;
@@ -1690,8 +1725,15 @@ public sealed class SoundModemChannel
     }
 
     /// <summary>
-    /// How much longer the frame at the head of a packing modem's queue should wait for the rest
-    /// of its run to arrive, or null when it should contend for the air now.
+    /// Whether an item goes out through the packed path: a sub-channel frame whose modem has
+    /// <see cref="IFramePackingModem.Packing"/> set right now.
+    /// </summary>
+    private static bool IsPackedHead(TxItem item) =>
+        !item.OwnsTiming && item.Frame is not null && item.Packed is { Packer.Packing: not null };
+
+    /// <summary>
+    /// How much longer a packing modem's head frame should wait for the rest of its run to
+    /// arrive, or null when it should contend for the air now. Call under <see cref="_txGate"/>.
     /// </summary>
     /// <remarks>
     /// <para>A host writing a run of frames over KISS hands them over one at a time, and the
@@ -1699,107 +1741,401 @@ public sealed class SoundModemChannel
     /// meant for one burst as a short burst and then the rest. <see cref="FramePacking.Gather"/>
     /// is the modem's answer: measured from when the head frame was queued, so a frame that has
     /// already waited out a busy channel for longer does not wait again, and zero by default.</para>
-    /// <para>Asked before channel access rather than after it, so that once carrier sense finds
-    /// the channel clear the keyup follows straight away, as it does for every other frame.</para>
+    /// <para>A source that is gathering is simply not eligible yet (<see cref="NextEligibleSource"/>),
+    /// so everyone else, and above all ARDOP's timing-critical replies, carries on meanwhile.</para>
     /// </remarks>
-    private TimeSpan? GatherRemaining(object source)
+    private TimeSpan? GatherRemainingLocked(TxItem head)
     {
-        lock (_txGate)
+        if (head.Packed?.Packer.Packing is not { Gather: var gather } || gather <= TimeSpan.Zero)
         {
-            if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue) || queue.Count == 0
-                || queue.Peek() is not { Packed.Packer.Packing.Gather: var gather } head
-                || gather <= TimeSpan.Zero)
-            {
-                return null;
-            }
-
-            TimeSpan left = gather - _time.GetElapsedTime(head.QueuedAt);
-            return left > TimeSpan.Zero ? left : null;
+            return null;
         }
+
+        TimeSpan left = gather - _time.GetElapsedTime(head.QueuedAt);
+        return left > TimeSpan.Zero ? left : null;
     }
 
     /// <summary>
-    /// Takes the frames queued behind <paramref name="first"/> that fit one packed burst with it,
-    /// appending them to <paramref name="burst"/> in queue order.
+    /// A packed burst rendered ahead of its keyup, so the radio is never keyed while it waits for
+    /// audio: a minute of MS110D through a <see cref="FrequencyShiftedModem"/>'s 639-tap filter is
+    /// seconds of DSP.
     /// </summary>
-    /// <remarks>
-    /// The modem is asked how many fit outside the lock, because sizing means encoding every
-    /// candidate, and an enqueue should not wait on that. Only the head of a queue is ever taken,
-    /// and only if it is still the candidate that was sized, so a frame withdrawn or refused in the
-    /// meantime ends the burst early rather than letting a frame that was not sized into it.
-    /// </remarks>
-    private void TakePackable(object source, TxItem first, IFramePackingModem packer, List<TxItem> burst)
+    /// <param name="Head">The queued frame the burst starts with, which is how a render is matched
+    /// to the queue it was made from.</param>
+    /// <param name="TxDelay">The TXDELAY it was rendered with.</param>
+    /// <param name="Result">The frames it carries (the head and those that fit behind it, as they
+    /// stood when it started) and their audio.</param>
+    private sealed record PackedRender(TxItem Head, int TxDelay, Task<PackedAudio> Result);
+
+    /// <summary>A rendered packed burst: its frames, in order, its audio and its trim.</summary>
+    private sealed record PackedAudio(TxItem[] Items, float[] Audio, double Trim);
+
+    /// <summary>
+    /// One render per packing transmitter at most: the burst that is next for it, started as soon
+    /// as its run has gathered and again while the previous burst is on the air. Guarded by
+    /// <see cref="_txGate"/>; the rendering itself happens off the lock, on the thread pool.
+    /// </summary>
+    private readonly Dictionary<object, PackedRender> _packedRenders = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Whether a packing transmitter's next burst is rendered and ready to key for, starting the
+    /// render if nothing has. Call under <see cref="_txGate"/>; what to start is collected in
+    /// <paramref name="toStart"/> and started by the caller once the lock is released.
+    /// </summary>
+    private bool PackedReadyLocked(object source, Queue<TxItem> queue, List<(object, TxItem[], int)> toStart)
     {
-        List<TxItem> candidates = [];
-        lock (_txGate)
+        TxItem head = queue.Peek();
+        int txDelay = Csma.TxDelayMilliseconds;
+        if (_packedRenders.TryGetValue(source, out PackedRender? render))
         {
-            if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue))
+            if (!render.Result.IsCompleted)
             {
-                return;
+                // Still rendering. Whether or not it is for this head, one render at a time: the
+                // modem's upsampler is not shared across threads. Its completion wakes the loop.
+                return false;
             }
 
-            foreach (TxItem queued in queue)
+            if (ReferenceEquals(render.Head, head) && render.TxDelay == txDelay)
             {
-                if (queued.OwnsTiming || queued.Frame is null || queued.Packed is null
-                    || !ReferenceEquals(queued.Packed.Packer, packer)
-                    || candidates.Count >= MaxPackedFramesOffered)
-                {
-                    break;
-                }
-
-                candidates.Add(queued);
+                return true;
             }
         }
 
-        if (candidates.Count == 0)
-        {
-            return;
-        }
+        toStart.Add((source, PackedCandidatesLocked(queue), txDelay));
+        return false;
+    }
 
-        var frames = new List<byte[]>(candidates.Count + 1) { first.Frame! };
-        foreach (TxItem candidate in candidates)
+    /// <summary>The head of a packing queue and the frames behind it that could share its burst.
+    /// Call under <see cref="_txGate"/>.</summary>
+    private static TxItem[] PackedCandidatesLocked(Queue<TxItem> queue)
+    {
+        TxItem head = queue.Peek();
+        var candidates = new List<TxItem>();
+        foreach (TxItem queued in queue)
         {
-            frames.Add(candidate.Frame!);
-        }
-
-        int fit = packer.FramesPerBurst(frames);
-        for (int i = 0; i < fit - 1 && i < candidates.Count; i++)
-        {
-            if (TakeFrom(source, candidates[i]) is not { } next)
+            if (candidates.Count > 0
+                && (queued.OwnsTiming || queued.Frame is null || queued.Packed is null
+                    || !ReferenceEquals(queued.Packed.Packer, head.Packed!.Packer)
+                    || candidates.Count >= MaxPackedFramesOffered))
             {
                 break;
             }
 
-            burst.Add(next);
+            candidates.Add(queued);
+        }
+
+        return [.. candidates];
+    }
+
+    /// <summary>Starts the renders <see cref="PackedReadyLocked"/> asked for.</summary>
+    private void StartPackedRenders(List<(object Source, TxItem[] Candidates, int TxDelay)> toStart)
+    {
+        foreach ((object source, TxItem[] candidates, int txDelay) in toStart)
+        {
+            Task<PackedAudio> result = Task.Run(() => RenderPacked(candidates, txDelay));
+            lock (_txGate)
+            {
+                _packedRenders[source] = new PackedRender(candidates[0], txDelay, result);
+            }
+
+            // Wakes the transmitter however the render ends: a burst that renders is ready to
+            // key for, and one that fails is refused at pickup like any frame the modem refuses.
+            _ = result.ContinueWith(
+                _ =>
+                {
+                    lock (_txGate)
+                    {
+                        WakeLocked();
+                    }
+                },
+                CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
     }
 
     /// <summary>
-    /// Renders a packed burst, trimmed as its first frame asks, and tells every frame in it the
-    /// trim it went out with.
+    /// Sizes and renders one packed burst from <paramref name="candidates"/>, head first.
     /// </summary>
     /// <remarks>
-    /// One trim for the whole burst because it is one transmission: the frames share a carrier.
-    /// The hook is meant for a frame addressed to one station, and a packed burst is a broadcast
-    /// in every case this exists for, where the hook answers zero anyway.
+    /// <para>A modem that fails to size the run sends its head frame alone: the same answer it
+    /// gives for a frame it would refuse, and never a reason to lose the transmitter.</para>
+    /// <para>One trim for the whole burst because it is one transmission: the frames share a
+    /// carrier, and the trim is asked for the head frame when the burst is rendered rather than
+    /// when it keys. The hook is meant for a frame addressed to one station, and a packed burst
+    /// is a broadcast in every case this exists for, where the hook answers zero anyway.</para>
     /// </remarks>
-    private float[] ModulatePacked(List<TxItem> burst, int txDelay)
+    private PackedAudio RenderPacked(TxItem[] candidates, int txDelay)
     {
-        PackedFrame lead = burst[0].Packed!;
-        var frames = new byte[burst.Count][];
-        for (int i = 0; i < burst.Count; i++)
+        PackedFrame lead = candidates[0].Packed!;
+        int fit = 1;
+        if (candidates.Length > 1)
         {
-            frames[i] = burst[i].Frame!;
+            var frames = new byte[candidates.Length][];
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                frames[i] = candidates[i].Frame!;
+            }
+
+            try
+            {
+                fit = Math.Clamp(lead.Packer.FramesPerBurst(frames), 1, candidates.Length);
+            }
+            catch (Exception sizing) when (sizing is not OperationCanceledException)
+            {
+                fit = 1;
+            }
+        }
+
+        TxItem[] items = candidates[..fit];
+        var burst = new byte[fit][];
+        for (int i = 0; i < fit; i++)
+        {
+            burst[i] = items[i].Frame!;
         }
 
         double trim = lead.ChooseTrim();
-        float[] audio = ApplyTransmitTrim(lead.Packer.ModulateFrames(frames, txDelay), trim);
-        foreach (TxItem item in burst)
+        float[] audio = ApplyTransmitTrim(lead.Packer.ModulateFrames(burst, txDelay), trim);
+        return new PackedAudio(items, audio, trim);
+    }
+
+    /// <summary>
+    /// Takes a packing transmitter's next burst off its queue, with its audio, ready to key for;
+    /// or null when there is nothing left to send.
+    /// </summary>
+    /// <remarks>
+    /// The render was made from the queue as it stood a moment ago, so the frames it carries are
+    /// taken only while they are still at the head in the same order. Something taken out of the
+    /// queue in between (a refusal, a redundant frame removed) leaves a shorter run, which is
+    /// rendered again, before the keyup, from what was actually taken. A render that failed is
+    /// refused at the same point, frame by frame, as the modem's refusal of a lone frame always
+    /// has been.
+    /// </remarks>
+    private async Task<PackedAudio?> TakePackedBurstAsync(object source)
+    {
+        PackedRender? render;
+        lock (_txGate)
         {
-            item.Packed!.Applied(trim);
+            _packedRenders.Remove(source, out render);
         }
 
-        return audio;
+        int txDelay = Csma.TxDelayMilliseconds;
+        PackedAudio? rendered = null;
+        Exception? failed = null;
+        TxItem[] wanted;
+        if (render is not null && render.TxDelay == txDelay)
+        {
+            try
+            {
+                rendered = await render.Result.ConfigureAwait(false);
+                wanted = rendered.Items;
+            }
+            catch (Exception failure) when (failure is not OperationCanceledException)
+            {
+                failed = failure;
+                wanted = [render.Head];
+            }
+        }
+        else
+        {
+            lock (_txGate)
+            {
+                wanted = _txQueues.TryGetValue(source, out Queue<TxItem>? queue) && queue.Count > 0
+                    ? PackedCandidatesLocked(queue)
+                    : [];
+            }
+        }
+
+        var taken = new List<TxItem>(wanted.Length);
+        foreach (TxItem item in wanted)
+        {
+            if (TakeFrom(source, item) is not { } next)
+            {
+                break;
+            }
+
+            taken.Add(next);
+        }
+
+        if (taken.Count == 0)
+        {
+            return null;
+        }
+
+        if (failed is null && (rendered is null || taken.Count != rendered.Items.Length))
+        {
+            try
+            {
+                rendered = await Task.Run(() => RenderPacked([.. taken], txDelay)).ConfigureAwait(false);
+                if (rendered.Items.Length != taken.Count)
+                {
+                    // Sized shorter than what was taken (only possible if the modem's limit moved
+                    // in between): the frames it left out go back to the head of the queue.
+                    PutBack(source, taken.Skip(rendered.Items.Length));
+                    taken.RemoveRange(rendered.Items.Length, taken.Count - rendered.Items.Length);
+                }
+            }
+            catch (Exception failure) when (failure is not OperationCanceledException)
+            {
+                failed = failure;
+            }
+        }
+
+        if (failed is not null)
+        {
+            foreach (TxItem refused in taken)
+            {
+                Finish(refused);
+                refused.Done.TrySetException(failed);
+                refused.Rejected?.Invoke(failed);
+            }
+
+            return new PackedAudio([], [], 0);
+        }
+
+        return rendered;
+    }
+
+    /// <summary>Returns frames to the head of their transmitter's queue, in order.</summary>
+    private void PutBack(object source, IEnumerable<TxItem> items)
+    {
+        TxItem[] back = [.. items];
+        if (back.Length == 0)
+        {
+            return;
+        }
+
+        lock (_txGate)
+        {
+            Queue<TxItem> rest = _txQueues.TryGetValue(source, out Queue<TxItem>? queue) ? queue : new Queue<TxItem>();
+            _txQueues[source] = new Queue<TxItem>(back.Concat(rest));
+            if (!_txOrder.Contains(source))
+            {
+                _txOrder.Insert(0, source);
+            }
+
+            if (back[0].Ledger is { } ledger)
+            {
+                _waitLedgers[source] = ledger;
+            }
+
+            WakeLocked();
+        }
+    }
+
+    /// <summary>Tells a waiting transmitter something has changed. Call under <see cref="_txGate"/>.</summary>
+    private void WakeLocked()
+    {
+        _wakes++;
+        _txSignal.TrySetResult();
+    }
+
+    /// <summary>Counts every <see cref="WakeLocked"/>, so the loop can tell whether one happened
+    /// between deciding to wait and starting to.</summary>
+    private long _wakes;
+
+    /// <summary>
+    /// One packed burst, as a keyup of its own: keyed only once its audio exists, and unkeyed
+    /// when it ends, so the next burst goes back through carrier sense like any other
+    /// transmission.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>A keyup per burst, not a keyup per queue.</b> A broadcast can queue a quarter of
+    /// an hour of frames, and one keyup draining it would hold the radio deaf for all of it: no
+    /// receive, no gap for the modem's own Morse ident, nothing for a Flex's PTT arbitration to
+    /// see and no rest for the PA. Ending the keyup after each burst gives all of those their
+    /// turn, and costs one TXDELAY per burst, which on a burst of up to a minute is nothing.</para>
+    /// <para><b>The next burst renders while this one plays.</b> Started before the write, so by
+    /// the time this burst has gone out and the channel has been won again, the next one is
+    /// normally ready: the transmitter never keys the radio and then waits for audio.</para>
+    /// </remarks>
+    private void RunPackedKeyup(object source, PackedAudio burst, IAudioOutput output, IPttControl ptt)
+    {
+        List<TxItem> items = [.. burst.Items];
+        var heldFor = new TimeSpan[items.Count];
+        for (int i = 0; i < items.Count; i++)
+        {
+            Finish(items[i]);
+            heldFor[i] = _time.GetElapsedTime(items[i].QueuedAt);
+        }
+
+        _transmitting = true;
+        EnterWait(WaitSlot.OurTransmission, null);
+        TransmittingChanged?.Invoke(true);
+        bool keyed = false;
+        TimeSpan? quietAfter = null;
+        try
+        {
+            try
+            {
+                ptt.Key();
+                keyed = true;
+            }
+            catch (Exception keyFailure) when (keyFailure is not OperationCanceledException)
+            {
+                foreach (TxItem lost in items)
+                {
+                    lost.Done.TrySetException(keyFailure);
+                    lost.Rejected?.Invoke(keyFailure);
+                }
+
+                FaultEverything(keyFailure);
+                PttFailed?.Invoke(keyFailure);
+                return;
+            }
+
+            try
+            {
+                for (int i = 0; i < items.Count; i++)
+                {
+                    NoteHeldFor(items[i], heldFor[i]);
+                    items[i].Packed!.Applied(burst.Trim);
+                }
+
+                quietAfter = items[^1].QuietAfter;
+
+                // The next burst, if there is one, renders while this one plays.
+                var toStart = new List<(object, TxItem[], int)>();
+                lock (_txGate)
+                {
+                    if (_txQueues.TryGetValue(source, out Queue<TxItem>? queue) && queue.Count > 0
+                        && IsPackedHead(queue.Peek()))
+                    {
+                        PackedReadyLocked(source, queue, toStart);
+                    }
+                }
+
+                StartPackedRenders(toStart);
+                WriteStoppably(output, burst.Audio, null, null, announce: mem => TransmittedAudio?.Invoke(mem));
+                foreach (TxItem sent in items)
+                {
+                    sent.Done.TrySetResult(true);
+                }
+
+                items.Clear();
+                if (Csma.TxTailMilliseconds > 0)
+                {
+                    var tail = new float[SampleRate * Csma.TxTailMilliseconds / 1000];
+                    TransmittedAudio?.Invoke(tail);
+                    output.Write(tail);
+                }
+
+                output.Drain();
+            }
+            catch (Exception deviceFailure) when (deviceFailure is not OperationCanceledException)
+            {
+                foreach (TxItem dying in items)
+                {
+                    dying.Done.TrySetException(deviceFailure);
+                    dying.Rejected?.Invoke(deviceFailure);
+                }
+
+                FaultEverything(deviceFailure);
+                throw;
+            }
+        }
+        finally
+        {
+            EndKeyup(ptt, keyed, source, quietAfter);
+        }
     }
 
     private void OptimizeTransmitQueue(object source)
@@ -1903,6 +2239,7 @@ public sealed class SoundModemChannel
             _txQueues.Clear();
             _txOrder.Clear();
             _waitLedgers.Clear();
+            _packedRenders.Clear();
             foreach (TxItem item in queued)
             {
                 // Same reasoning as TakeFrom: never Dispose under this lock.
@@ -1959,18 +2296,34 @@ public sealed class SoundModemChannel
             while (source is null)
             {
                 cancellation.ThrowIfCancellationRequested();
-                source = NextEligibleSource();
+                source = NextEligibleSource(out TimeSpan? gatherEnds, out long wakes);
                 if (source is null)
                 {
-                    EnterWait(WaitSlot.TurnaroundHold, null);
-
                     // Wait out what is left of the hold rather than polling at slot intervals.
                     // Exact, and safe against a slot time of zero: a host may set one, and
                     // LinBPQ was sending exactly that to this station until its config gained a
                     // SLOTTIME line, which would have made this a busy loop burning a core for
                     // the length of every hold. The channel-access roll below still uses the
                     // operator's slot time, because there it IS the channel-access parameter.
-                    await Delay(RemainingHold(), cancellation).ConfigureAwait(false);
+                    //
+                    // Or the end of a packing modem's gather, if that comes first, or a packed
+                    // burst finishing its render, or anything new being queued: a packing modem
+                    // that is not ready yet is passed over, not waited for, so a frame for anyone
+                    // else must be able to wake this wait.
+                    //
+                    // With neither of those, it is the hold, exactly as before: including a hold
+                    // that ran out between the two questions, which RemainingHold answers with a
+                    // one-millisecond wait rather than a wait for nothing.
+                    bool packing = gatherEnds is not null || PackedRenderPending();
+                    bool holding = !packing || HoldActive();
+                    EnterWait(holding ? WaitSlot.TurnaroundHold : WaitSlot.Unattributed, null);
+                    TimeSpan? until = holding ? RemainingHold() : null;
+                    if (gatherEnds is { } gather && (until is null || gather < until))
+                    {
+                        until = gather;
+                    }
+
+                    await WaitForChangeAsync(wakes, until, cancellation).ConfigureAwait(false);
                     continue;
                 }
 
@@ -1987,15 +2340,6 @@ public sealed class SoundModemChannel
                     source = null;
                     await Delay(InhibitPollInterval, cancellation).ConfigureAwait(false);
                 }
-            }
-
-            // A packing modem may want the rest of a run to arrive before it contends, so the run
-            // goes out as one burst rather than a short one and then the rest. Waited out here,
-            // then the turn is decided again, since something else may have become due meanwhile.
-            if (GatherRemaining(source) is { } gather)
-            {
-                await Delay(gather, cancellation).ConfigureAwait(false);
-                continue;
             }
 
             // Classic p-persistence (AX.25 §6.4): when the channel is clear, roll p; on
@@ -2045,8 +2389,19 @@ public sealed class SoundModemChannel
             // the radio keying up on an empty burst, which is the whole point of being able to
             // take one back. Nothing else removes a queued item, so on every other path this is
             // the item NextEligibleSource just found and the test never fires.
-            if (PeekFrom(source) is null)
+            if (PeekFrom(source) is not { } next)
             {
+                continue;
+            }
+
+            // A packing modem's burst, rendered before the keyup and sent as one of its own.
+            if (IsPackedHead(next))
+            {
+                if (await TakePackedBurstAsync(source).ConfigureAwait(false) is { Items.Length: > 0 } packed)
+                {
+                    RunPackedKeyup(source, packed, output, ptt);
+                }
+
                 continue;
             }
 
@@ -2083,7 +2438,7 @@ public sealed class SoundModemChannel
 
                 // keyupSource stays null until something has actually gone out, so a keyup whose
                 // first frame the modem refuses is still free to be taken by whatever follows.
-                List<TxItem> inFlight = [];
+                TxItem? inFlight = null;
                 try
                 {
                     // ONE TRANSMITTER PER KEYUP, which per-source queues now make structural:
@@ -2112,49 +2467,28 @@ public sealed class SoundModemChannel
                     // still only true while the modem stays the same.
                     while (TakeFrom(source) is { } item)
                     {
-                        // One burst: this item, and on a modem that packs, the frames queued
-                        // behind it that fit with it (IFramePackingModem). Each is still its own
-                        // transmission to its caller - its own answer, wait and announcement -
-                        // and only the audio is shared.
-                        List<TxItem> burst = [item];
-                        if (item.Packed is { Packer: { Packing: not null } packer })
-                        {
-                            TakePackable(source, item, packer, burst);
-                        }
-
-                        inFlight = burst;
-                        // How long the channel held each frame, measured here: the wait ends when
+                        inFlight = item;
+                        Finish(item);
+                        // Subsequent frames in one keyup need only a token preamble.
+                        int txDelay = keyupSource is null ? Csma.TxDelayMilliseconds : 30;
+                        // How long the channel held this frame, measured here: the wait ends when
                         // the transmitter picks the frame up, not when the audio finishes. Taken
                         // before Modulate so that rendering - which can be milliseconds of DSP for
                         // a long burst - is not counted as time spent waiting for the channel.
-                        var heldFor = new TimeSpan[burst.Count];
-                        for (int i = 0; i < burst.Count; i++)
-                        {
-                            Finish(burst[i]);
-                            heldFor[i] = _time.GetElapsedTime(burst[i].QueuedAt);
-                        }
-
-                        // Subsequent frames in one keyup need only a token preamble.
-                        int txDelay = keyupSource is null ? Csma.TxDelayMilliseconds : 30;
+                        TimeSpan heldFor = _time.GetElapsedTime(item.QueuedAt);
                         float[] samples;
                         try
                         {
-                            samples = burst.Count == 1 ? item.Modulate(txDelay) : ModulatePacked(burst, txDelay);
+                            samples = item.Modulate(txDelay);
                         }
                         catch (ArgumentException rejection)
                         {
                             // A frame the modem refuses (oversize for the mode, empty) is
                             // dropped - it must not kill the transmitter loop. The enqueuer's
-                            // task faults so ACKMODE hosts see the loss. A packed burst sizes
-                            // its frames before it takes them, so only a lone frame lands here
-                            // in practice; a burst that did would be refused whole.
-                            foreach (TxItem refused in burst)
-                            {
-                                refused.Done.TrySetException(rejection);
-                                refused.Rejected?.Invoke(rejection);
-                            }
-
-                            inFlight = [];
+                            // task faults so ACKMODE hosts see the loss.
+                            item.Done.TrySetException(rejection);
+                            item.Rejected?.Invoke(rejection);
+                            inFlight = null;
                             continue;
                         }
 
@@ -2164,14 +2498,10 @@ public sealed class SoundModemChannel
                         // dropped never waited for the channel in any sense the operator cares
                         // about, and reporting a wait for it would put a held time on a row that
                         // never existed.
-                        for (int i = 0; i < burst.Count; i++)
-                        {
-                            NoteHeldFor(burst[i], heldFor[i]);
-                        }
-
+                        NoteHeldFor(item, heldFor);
                         // The hold belongs to the LAST thing actually sent, so a keyup that ends
                         // with a frame nobody will answer does not keep the others waiting.
-                        quietAfter = burst[^1].QuietAfter;
+                        quietAfter = item.QuietAfter;
                         // Told before the write, not after it. A real device's Write blocks until its
                         // buffer has room, so a burst longer than the buffer does not return from it
                         // until most of the burst has already played - and a display told afterwards
@@ -2214,12 +2544,8 @@ public sealed class SoundModemChannel
                         // which PcmTransfer recovers (prepare, then retry from the first frame not
                         // yet written) rather than failing the keyup - a gap where the underrun was,
                         // never a lost frame.
-                        foreach (TxItem sent in burst)
-                        {
-                            sent.Done.TrySetResult(true);
-                        }
-
-                        inFlight = [];
+                        item.Done.TrySetResult(true);
+                        inFlight = null;
                     }
 
                     if (Csma.TxTailMilliseconds > 0)
@@ -2241,7 +2567,7 @@ public sealed class SoundModemChannel
                     // complete - and then the fault propagates: the task's owner decides what a
                     // station without a transmitter does, rather than this loop quietly dying
                     // and leaving a healthy-looking receive-only station.
-                    foreach (TxItem dying in inFlight)
+                    if (inFlight is { } dying)
                     {
                         dying.Done.TrySetException(deviceFailure);
                         dying.Rejected?.Invoke(deviceFailure);
@@ -2253,44 +2579,111 @@ public sealed class SoundModemChannel
             }
             finally
             {
-                // Best-effort: an unkey that throws (the radio's session died mid-burst) must
-                // not mask the burst's own result or kill the loop - and after a failed keyup
-                // there is nothing to unkey. The arbitrated Flex PTT additionally suppresses
-                // unkey for a keyup it did not win, so this cannot cut a peer's burst.
-                if (keyed)
-                {
-                    try
-                    {
-                        ptt.Unkey();
-                    }
-                    catch (Exception unkeyFailure) when (unkeyFailure is not OperationCanceledException)
-                    {
-                        PttFailed?.Invoke(unkeyFailure);
-                    }
-                }
-
-                // Receive is still gated: sweep the demodulators clean of our own transmission
-                // BEFORE handing the channel back. The other order re-opened receive first, so
-                // the audio thread could re-enter modem.Process concurrently with this loop's
-                // ResetCarrierState - torn filter and DCD state exactly when the first reply
-                // after our transmission arrives. (IModem documents ResetCarrierState as a call
-                // for while the channel transmits.) TransmittingChanged's own subscribers that
-                // reset receive taps - the id-beacon ghosts - get the same still-gated
-                // guarantee, which is why the event too fires before the gate opens.
-                foreach (IModem modem in _modems.Values)
-                {
-                    modem.ResetCarrierState();
-                }
-
-                // Set before receive reopens, so the window starts at the unkey rather than
-                // wherever this loop next gets scheduled.
-                SetHold(keyed ? keyupSource : null, keyed ? quietAfter : null);
-
-                TransmittingChanged?.Invoke(false);
-                _transmitting = false;
-                EnterWait(WaitSlot.Unattributed, null);
+                EndKeyup(ptt, keyed, keyupSource, quietAfter);
             }
         }
+    }
+
+    /// <summary>
+    /// Ends a keyup: unkeys, clears the demodulators of our own transmission while receive is
+    /// still gated, starts any turnaround hold and hands the channel back.
+    /// </summary>
+    private void EndKeyup(IPttControl ptt, bool keyed, object? keyupSource, TimeSpan? quietAfter)
+    {
+        // Best-effort: an unkey that throws (the radio's session died mid-burst) must
+        // not mask the burst's own result or kill the loop - and after a failed keyup
+        // there is nothing to unkey. The arbitrated Flex PTT additionally suppresses
+        // unkey for a keyup it did not win, so this cannot cut a peer's burst.
+        if (keyed)
+        {
+            try
+            {
+                ptt.Unkey();
+            }
+            catch (Exception unkeyFailure) when (unkeyFailure is not OperationCanceledException)
+            {
+                PttFailed?.Invoke(unkeyFailure);
+            }
+        }
+
+        // Receive is still gated: sweep the demodulators clean of our own transmission
+        // BEFORE handing the channel back. The other order re-opened receive first, so
+        // the audio thread could re-enter modem.Process concurrently with this loop's
+        // ResetCarrierState - torn filter and DCD state exactly when the first reply
+        // after our transmission arrives. (IModem documents ResetCarrierState as a call
+        // for while the channel transmits.) TransmittingChanged's own subscribers that
+        // reset receive taps - the id-beacon ghosts - get the same still-gated
+        // guarantee, which is why the event too fires before the gate opens.
+        foreach (IModem modem in _modems.Values)
+        {
+            modem.ResetCarrierState();
+        }
+
+        // Set before receive reopens, so the window starts at the unkey rather than
+        // wherever this loop next gets scheduled.
+        SetHold(keyed ? keyupSource : null, keyed ? quietAfter : null);
+
+        TransmittingChanged?.Invoke(false);
+        _transmitting = false;
+        EnterWait(WaitSlot.Unattributed, null);
+    }
+
+    /// <summary>Whether a packed burst is rendering, whose end will wake the loop.</summary>
+    private bool PackedRenderPending()
+    {
+        lock (_txGate)
+        {
+            foreach (PackedRender render in _packedRenders.Values)
+            {
+                if (!render.Result.IsCompleted)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>Whether a turnaround hold is keeping somebody quiet right now.</summary>
+    private bool HoldActive()
+    {
+        lock (_txGate)
+        {
+            return _quietOwner is not null
+                && _time.GetElapsedTime(_quietOwnerSince) < MaxTurnaroundHold
+                && _time.GetElapsedTime(_quietFrom) < _quietWindow;
+        }
+    }
+
+    /// <summary>
+    /// Waits until something may have changed: <paramref name="until"/> passes, or anything is
+    /// queued or finishes rendering after <paramref name="seen"/> was read. With no deadline it
+    /// waits for the change alone.
+    /// </summary>
+    private async Task WaitForChangeAsync(long seen, TimeSpan? until, CancellationToken cancellation)
+    {
+        Task changed;
+        lock (_txGate)
+        {
+            if (_wakes != seen)
+            {
+                return;
+            }
+
+            // Replaced under the same lock an enqueue takes, as WaitForWorkAsync does, so a wake
+            // either happened before this (and the count says so) or completes this instance.
+            _txSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            changed = _txSignal.Task;
+        }
+
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        Task deadline = until is { } wait
+            ? Task.Delay(wait < MinimumSchedulerWait ? MinimumSchedulerWait : wait, _time, stop.Token)
+            : Task.Delay(Timeout.InfiniteTimeSpan, stop.Token);
+        await Task.WhenAny(changed, deadline).ConfigureAwait(false);
+        await stop.CancelAsync().ConfigureAwait(false);
+        cancellation.ThrowIfCancellationRequested();
     }
 
     private Task Delay(int milliseconds, CancellationToken cancellation) =>

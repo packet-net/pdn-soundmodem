@@ -140,7 +140,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | `offsetStepHz` | number | by mode | Diversity-bank modes only: Hz between adjacent branches. |
 | `acceptPlainIl2p` | bool | `false` | IL2P+CRC modes only: also pass frames that arrive as plain IL2P with no CRC to the host. |
 | `identify` | object | none | Morse identification for this modem; see [`modems[].identify`](#modemsidentify). |
-| `maxBurstSeconds` | number | none | `ms110d-*` only: frames queued together go out in one burst of up to this many seconds (1 to 120), with one preamble and one EOM, instead of one burst each. A single frame longer than this still goes out on its own. Each frame is still reported and answered (ACKMODE) on its own. Omit it for one frame per burst. |
+| `maxBurstSeconds` | number | none | `ms110d-*` only: frames queued together go out in one burst of up to this many seconds (1 to 120), with one preamble and one EOM, instead of one burst each. Each burst is a keyup of its own, so receive, idents and other modems get a turn between bursts. A single frame longer than this still goes out on its own. Each frame is still reported and acknowledged (ACKMODE) on its own, but a burst's acknowledgements arrive together when it has gone out. Meant for UI broadcast; leave it off on a port that carries connected-mode traffic. Omit it for one frame per burst. |
 | `burstGatherSeconds` | number | `0.5` | With `maxBurstSeconds`: how long the first frame of a run waits for the rest to arrive before the modem contends for the air, so a host writing frames one at a time still fills a burst. 0 to 10. |
 
 Diversity-bank defaults by mode:

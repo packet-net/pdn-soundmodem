@@ -1833,20 +1833,6 @@ public sealed class DaemonConfig
         && !PipeAudio.IsPipe(device);
 
     /// <summary>
-    /// What an <c>alsa</c> section has to say before this station can use it.
-    /// </summary>
-    /// <remarks>
-    /// Refused rather than ignored, the same rule the <c>api</c> section keeps: a mixer block on
-    /// a FlexRadio would silently do nothing, and a setting that silently does nothing is worse
-    /// than one that says so. Exit 2, so systemd's RestartPreventExitStatus=2 stops retrying and
-    /// the journal carries one readable sentence.
-    /// <para>The dB levels themselves are NOT checked here, because nothing at load time knows
-    /// what the card's range is. They are checked against the open card at apply time, where a
-    /// value off the end of the range is journalled with the range and that one control is
-    /// skipped - a warning rather than an exit, because a station must not be stopped from
-    /// receiving by a level it could have carried on at.</para>
-    /// </remarks>
-    /// <summary>
     /// Refuses a burst-packing setting that would not do what it says: on a mode that cannot pack,
     /// out of range, or a gather with nothing to gather for.
     /// </summary>
@@ -1888,6 +1874,20 @@ public sealed class DaemonConfig
         }
     }
 
+    /// <summary>
+    /// What an <c>alsa</c> section has to say before this station can use it.
+    /// </summary>
+    /// <remarks>
+    /// Refused rather than ignored, the same rule the <c>api</c> section keeps: a mixer block on
+    /// a FlexRadio would silently do nothing, and a setting that silently does nothing is worse
+    /// than one that says so. Exit 2, so systemd's RestartPreventExitStatus=2 stops retrying and
+    /// the journal carries one readable sentence.
+    /// <para>The dB levels themselves are NOT checked here, because nothing at load time knows
+    /// what the card's range is. They are checked against the open card at apply time, where a
+    /// value off the end of the range is journalled with the range and that one control is
+    /// skipped - a warning rather than an exit, because a station must not be stopped from
+    /// receiving by a level it could have carried on at.</para>
+    /// </remarks>
     private static void ValidateAlsa(DaemonConfig config, string configPath)
     {
         if (config.Alsa?.Mixer is not AlsaMixerConfig mixer)

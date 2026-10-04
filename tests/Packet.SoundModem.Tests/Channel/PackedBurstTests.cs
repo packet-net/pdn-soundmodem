@@ -166,16 +166,17 @@ public class PackedBurstTests
         (BurstRecorder output, RecordingPtt ptt) = await RunAsync(
             channel, frames.Select(f => channel.EnqueueTransmit(0, f)).ToList());
 
-        IReadOnlyList<float[]> bursts = output.Writes.Take(output.Writes.Count - 1).ToList();
+        // Every packed burst is a keyup of its own, with its own TXDELAY and TX tail, so the
+        // writes alternate burst, tail, burst, tail.
+        List<float[]> bursts = output.Writes.Where((_, i) => i % 2 == 0).ToList();
         bursts.Count.Should().BeInRange(2, 5, "packed, but never past the limit");
-        int first = bursts[0].Length - (SampleRate * 100 / 1000);
-        (first / (double)SampleRate).Should().BeLessThanOrEqualTo(3.0);
-        foreach (float[] later in bursts.Skip(1))
+        foreach (float[] burst in bursts)
         {
-            ((later.Length - (SampleRate * 30 / 1000)) / (double)SampleRate).Should().BeLessThanOrEqualTo(3.0);
+            ((burst.Length - (SampleRate * 100 / 1000)) / (double)SampleRate).Should().BeLessThanOrEqualTo(3.0);
         }
 
-        ptt.Events.Should().Equal("key", "unkey");
+        ptt.Events.Should().HaveCount(2 * bursts.Count, "a keyup per burst, never one for the whole queue");
+        ptt.Events.Should().Equal(Enumerable.Range(0, bursts.Count).SelectMany(_ => new[] { "key", "unkey" }));
         sent.Should().BeEquivalentTo(frames);
         List<byte[]> heard = Decode(output.Writes);
         heard.Should().HaveCount(6);
@@ -199,7 +200,7 @@ public class PackedBurstTests
         refused.Should().ContainSingle().Which.Should().Equal(tooLong);
         completions[2].IsFaulted.Should().BeTrue();
         sent.Should().BeEquivalentTo(new[] { frames[0], frames[1], frames[3] });
-        output.Writes.Should().HaveCount(3, "the two before it in one burst, the one after in another, and the tail");
+        output.Writes.Should().HaveCount(4, "the two before it in one keyup, the one after in another, each with its tail");
     }
 
     [Fact]
@@ -236,5 +237,198 @@ public class PackedBurstTests
         reports.Should().HaveCount(2);
         reports.Should().OnlyContain(r => r.HeldFor == TimeSpan.FromSeconds(2),
             "the gather is time each frame waited, reported per frame");
+    }
+
+    /// <summary>
+    /// A packing modem that renders instantly, says when it renders, and packs as the test tells
+    /// it to - for the scheduling, without the DSP.
+    /// </summary>
+    private sealed class FakePacker : IModem, IFramePackingModem
+    {
+        private int _renders;
+
+        public Func<IReadOnlyList<byte[]>, int> Sizer { get; set; } = frames => frames.Count;
+
+        public Action<int>? Rendering { get; set; }
+
+        public string Mode => "fake-packer";
+
+        public event Action<byte[], FrameQuality>? FrameDecoded
+        {
+            add { }
+            remove { }
+        }
+
+        public bool CarrierDetect => false;
+
+        public bool ChannelBusy => false;
+
+        public FramePacking? Packing { get; set; }
+
+        public void Process(ReadOnlySpan<float> samples)
+        {
+        }
+
+        public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds) => new float[100];
+
+        public void ResetCarrierState()
+        {
+        }
+
+        public int FramesPerBurst(IReadOnlyList<byte[]> frames) => Sizer(frames);
+
+        public float[] ModulateFrames(IReadOnlyList<byte[]> frames, int txDelayMilliseconds)
+        {
+            Rendering?.Invoke(Interlocked.Increment(ref _renders));
+            return new float[1000 * frames.Count];
+        }
+    }
+
+    /// <summary>Hands each write to the test, so it can hold a burst "on the air".</summary>
+    private sealed class HookedOutput(int sampleRate, Action<int> written) : IAudioOutput
+    {
+        public int SampleRate { get; } = sampleRate;
+
+        public void Write(ReadOnlySpan<float> samples) => written(samples.Length);
+
+        public void Drain()
+        {
+        }
+    }
+
+    private sealed class LoggingPtt(List<string> log) : IPttControl
+    {
+        public void Key()
+        {
+            lock (log)
+            {
+                log.Add("key");
+            }
+        }
+
+        public void Unkey()
+        {
+            lock (log)
+            {
+                log.Add("unkey");
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Each_Burst_Is_Rendered_Before_Its_Keyup_And_The_Next_While_It_Plays()
+    {
+        var log = new List<string>();
+        using var secondRenderStarted = new ManualResetEventSlim();
+        var packer = new FakePacker
+        {
+            Sizer = _ => 1, // one frame per burst, so three frames are three bursts
+            Packing = Packing(),
+        };
+        packer.Rendering = n =>
+        {
+            lock (log)
+            {
+                log.Add($"render {n}");
+            }
+
+            if (n == 2)
+            {
+                secondRenderStarted.Set();
+            }
+        };
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 42);
+        channel.AddModem(0, _ => packer);
+        channel.Csma.Persistence = 255;
+        bool overlapped = false;
+        int bursts = 0;
+        var output = new HookedOutput(SampleRate, length =>
+        {
+            if (length == 1000 && Interlocked.Increment(ref bursts) == 1)
+            {
+                // The first burst is "on the air" until the second has started rendering. The
+                // bound is a failure bound, not a pace: the render is started before the write.
+                overlapped = secondRenderStarted.Wait(TimeSpan.FromSeconds(20));
+            }
+        });
+
+        List<Task> sends = Enumerable.Range(1, 3).Select(i => channel.EnqueueTransmit(0, UiFrame(i, 20))).ToList();
+        using var cancellation = new CancellationTokenSource();
+        Task transmitter = channel.RunTransmitterAsync(output, new LoggingPtt(log), cancellation.Token);
+        await Task.WhenAll(sends).WaitAsync(TimeSpan.FromSeconds(30));
+        await cancellation.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        overlapped.Should().BeTrue("the next burst renders while the current one plays");
+        List<string> keys = log.Where(e => e == "key").ToList();
+        keys.Should().HaveCount(3, "each packed burst is a keyup of its own");
+        for (int k = 1; k <= 3; k++)
+        {
+            int nthKey = log.Select((e, i) => (e, i)).Where(x => x.e == "key").ElementAt(k - 1).i;
+            log.IndexOf($"render {k}").Should().BeInRange(0, nthKey - 1,
+                $"burst {k} is rendered before the radio keys for it, never while it waits keyed");
+        }
+    }
+
+    [Fact]
+    public async Task A_Modem_That_Cannot_Size_A_Run_Sends_Its_Frames_One_At_A_Time()
+    {
+        var packer = new FakePacker
+        {
+            Sizer = _ => throw new InvalidOperationException("sizing broke"),
+            Packing = Packing(),
+        };
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 42);
+        channel.AddModem(0, _ => packer);
+        channel.Csma.Persistence = 255;
+
+        List<Task> sends = Enumerable.Range(1, 3).Select(i => channel.EnqueueTransmit(0, UiFrame(i, 20))).ToList();
+        (BurstRecorder output, RecordingPtt ptt) = await RunAsync(channel, sends);
+
+        sends.Should().OnlyContain(s => s.IsCompletedSuccessfully, "the transmitter survives and every frame goes");
+        ptt.Events.Count(e => e == "key").Should().Be(3);
+        output.Writes.Count(w => w.Length == 1000).Should().Be(3, "each frame in a burst of its own");
+    }
+
+    [Fact]
+    public async Task A_Gathering_Modem_Holds_Up_Nobody_Else()
+    {
+        // The clock never moves until the end, so the gather cannot end: whatever goes out before
+        // then went out while it was gathering, not after it.
+        var time = new FakeTimeProvider();
+        var channel = new SoundModemChannel(SampleRate, time, randomSeed: 42);
+        channel.AddModem(0, sink => new Ms110dModem(SampleRate, sink) { Packing = Packing(gatherSeconds: 5) });
+        channel.AddModem(1, sink => new Ms110dModem(SampleRate, sink));
+        channel.Csma.Persistence = 255;
+        channel.Csma.TxDelayMilliseconds = 0;
+        channel.Csma.TxTailMilliseconds = 0;
+
+        Task gathering = channel.EnqueueTransmit(0, UiFrame(1, 40));
+        Task plain = channel.EnqueueTransmit(1, UiFrame(2, 40));
+        Task urgent = channel.EnqueueTransmit(_ => new float[100], ownsChannelTiming: true, source: new object());
+
+        var ptt = new RecordingPtt();
+        using var cancellation = new CancellationTokenSource();
+        Task transmitter = channel.RunTransmitterAsync(new BurstRecorder(SampleRate), ptt, cancellation.Token);
+        await Task.WhenAll(plain, urgent).WaitAsync(TimeSpan.FromSeconds(30));
+        gathering.IsCompleted.Should().BeFalse("its gather has not run out on a clock that has not moved");
+
+        time.Advance(TimeSpan.FromSeconds(5));
+        await gathering.WaitAsync(TimeSpan.FromSeconds(30));
+        await cancellation.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
     }
 }
