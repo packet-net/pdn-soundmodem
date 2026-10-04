@@ -39,7 +39,7 @@ namespace Packet.SoundModem.Modems;
 /// just latency) and processes through fixed scratch chunks, so the steady state allocates
 /// nothing.</para>
 /// </remarks>
-public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFrameSpanSource
+public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFrameSpanSource, IFramePackingModem
 {
     /// <summary>See the type remarks for why this is so much longer than the shifter's default.</summary>
     private const int HilbertTaps = 639;
@@ -201,10 +201,49 @@ public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFram
     }
 
     /// <inheritdoc/>
-    public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds)
-    {
-        float[] burst = _inner.Modulate(ax25Frame, txDelayMilliseconds);
+    public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds) =>
+        Shift(_inner.Modulate(ax25Frame, txDelayMilliseconds));
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The wrapped modem's, forwarded: moving a modem changes where it sits, not how it frames.
+    /// Always null for a wrapped modem that cannot pack, and setting one there is refused.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">Set non-null on a wrapped modem that cannot
+    /// pack frames.</exception>
+    public FramePacking? Packing
+    {
+        get => (_inner as IFramePackingModem)?.Packing;
+        set
+        {
+            if (_inner is IFramePackingModem packer)
+            {
+                packer.Packing = value;
+            }
+            else if (value is not null)
+            {
+                throw new InvalidOperationException($"mode '{Mode}' sends one frame per burst");
+            }
+        }
+    }
+
+    /// <inheritdoc/>
+    public int FramesPerBurst(IReadOnlyList<byte[]> frames) =>
+        _inner is IFramePackingModem packer ? packer.FramesPerBurst(frames) : Math.Min(1, frames.Count);
+
+    /// <inheritdoc/>
+    public float[] ModulateFrames(IReadOnlyList<byte[]> frames, int txDelayMilliseconds)
+    {
+        if (_inner is not IFramePackingModem packer)
+        {
+            throw new InvalidOperationException($"mode '{Mode}' sends one frame per burst");
+        }
+
+        return Shift(packer.ModulateFrames(frames, txDelayMilliseconds));
+    }
+
+    private float[] Shift(float[] burst)
+    {
         // A fresh shifter per burst (no stale tail from the last transmission), fed the burst
         // plus one group delay of zeros so the delayed tail flushes: the FIR delays everything
         // by (taps-1)/2 samples, and without the pad that many samples of burst - the end of

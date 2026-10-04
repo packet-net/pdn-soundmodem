@@ -111,6 +111,8 @@ Design notes, the measured rate ladder and what still limits the waveform are in
 | `ms110d-wn8` | 16QAM r3/4 | **Partial**, caveat - proven on air on a clean channel; the Poor channel is hard-gated in simulation only, because neither rig reaches the +23 dB it would need |
 | `ms110d-wn13` | QPSK r9/16 | **On-air**, caveat - same disciplined-reference condition as wn6 |
 
+Each frame normally goes out as its own burst, with its own preamble. For a station that sends runs of frames, such as a broadcast, set `maxBurstSeconds` on the modem entry and frames queued together share one burst instead, which saves the preamble and the interleaver flush on every frame after the first. Receivers need nothing new. See [`maxBurstSeconds`](reference/config.md#modems).
+
 ## Running several modems at once
 
 A station can have several modems, and they all listen to the same audio at the same time. Each entry takes its own `subChannel`, 0 to 15, which is the KISS sub-channel your node or APRS software addresses it on. Two entries may not share one, and start-up refuses a file where they do. A 12 kHz mode and a 48 kHz mode can sit side by side; the channel then runs at 48 kHz.

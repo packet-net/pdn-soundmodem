@@ -128,6 +128,36 @@ public sealed class ModemConfig
     /// </remarks>
     public IdentifyConfig? Identify { get; set; }
 
+    /// <summary>
+    /// <c>ms110d-*</c> only: send frames that are queued together in one burst, up to this many
+    /// seconds long, rather than one burst per frame. Omit (the default) for one frame per burst.
+    /// </summary>
+    /// <remarks>
+    /// Every MS110D burst pays for a preamble and an interleaver flush, which on a run of frames
+    /// is a large share of the airtime. Packed, the run pays once: one preamble, the frames back
+    /// to back, one EOM. The receiver needs nothing, since it already reads frames out of a
+    /// continuous bit stream. 1 to <see cref="MaxBurstSecondsCeiling"/> seconds; a single frame
+    /// longer than the limit still goes out on its own.
+    /// </remarks>
+    public double? MaxBurstSeconds { get; set; }
+
+    /// <summary>
+    /// With <see cref="MaxBurstSeconds"/>: how long the first frame of a run waits for the rest
+    /// to arrive before the station contends for the air, so a host writing frames one by one
+    /// still fills a burst. Default <see cref="DefaultBurstGatherSeconds"/>; 0 to
+    /// <see cref="BurstGatherSecondsCeiling"/>.
+    /// </summary>
+    public double? BurstGatherSeconds { get; set; }
+
+    /// <summary>The longest packed burst a configuration may ask for.</summary>
+    public const double MaxBurstSecondsCeiling = 120;
+
+    /// <summary>The longest gather a configuration may ask for.</summary>
+    public const double BurstGatherSecondsCeiling = 10;
+
+    /// <summary>The gather a packing modem gets when the configuration does not say.</summary>
+    public const double DefaultBurstGatherSeconds = 0.5;
+
     /// <summary>Keys in this modem entry that the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
@@ -1665,6 +1695,12 @@ public sealed class DaemonConfig
             }
         }
 
+        foreach (ModemConfig packing in config.Modems
+                     .Where(m => m.MaxBurstSeconds is not null || m.BurstGatherSeconds is not null))
+        {
+            ValidatePacking(packing);
+        }
+
         if (config.Modems.Count == 0 && config.Ardop is null)
         {
             config.Modems.Add(new ModemConfig());
@@ -1810,6 +1846,48 @@ public sealed class DaemonConfig
     /// skipped - a warning rather than an exit, because a station must not be stopped from
     /// receiving by a level it could have carried on at.</para>
     /// </remarks>
+    /// <summary>
+    /// Refuses a burst-packing setting that would not do what it says: on a mode that cannot pack,
+    /// out of range, or a gather with nothing to gather for.
+    /// </summary>
+    private static void ValidatePacking(ModemConfig modem)
+    {
+        string invariant(double value) =>
+            value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+
+        if (!modem.Mode.StartsWith("ms110d-", StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"modem {modem.SubChannel} is \"mode\": \"{modem.Mode}\" with \"maxBurstSeconds\" "
+                + "or \"burstGatherSeconds\". Only the ms110d-* modes pack several frames into one "
+                + "burst - remove them from this entry.");
+        }
+
+        if (modem.MaxBurstSeconds is not double max)
+        {
+            throw new InvalidDataException(
+                $"modem {modem.SubChannel} has \"burstGatherSeconds\" without \"maxBurstSeconds\". "
+                + "The gather only matters when frames are packed - add \"maxBurstSeconds\" (for "
+                + "example 60) or remove \"burstGatherSeconds\".");
+        }
+
+        if (!double.IsFinite(max) || max < 1 || max > ModemConfig.MaxBurstSecondsCeiling)
+        {
+            throw new InvalidDataException(
+                $"modem {modem.SubChannel} has \"maxBurstSeconds\": {invariant(max)}. Use 1 to "
+                + $"{invariant(ModemConfig.MaxBurstSecondsCeiling)} seconds, or remove it for one frame per burst.");
+        }
+
+        if (modem.BurstGatherSeconds is double gather
+            && (!double.IsFinite(gather) || gather < 0 || gather > ModemConfig.BurstGatherSecondsCeiling))
+        {
+            throw new InvalidDataException(
+                $"modem {modem.SubChannel} has \"burstGatherSeconds\": {invariant(gather)}. Use 0 to "
+                + $"{invariant(ModemConfig.BurstGatherSecondsCeiling)} seconds; the default is "
+                + $"{invariant(ModemConfig.DefaultBurstGatherSeconds)}.");
+        }
+    }
+
     private static void ValidateAlsa(DaemonConfig config, string configPath)
     {
         if (config.Alsa?.Mixer is not AlsaMixerConfig mixer)

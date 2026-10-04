@@ -140,6 +140,8 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | `offsetStepHz` | number | by mode | Diversity-bank modes only: Hz between adjacent branches. |
 | `acceptPlainIl2p` | bool | `false` | IL2P+CRC modes only: also pass frames that arrive as plain IL2P with no CRC to the host. |
 | `identify` | object | none | Morse identification for this modem; see [`modems[].identify`](#modemsidentify). |
+| `maxBurstSeconds` | number | none | `ms110d-*` only: frames queued together go out in one burst of up to this many seconds (1 to 120), with one preamble and one EOM, instead of one burst each. A single frame longer than this still goes out on its own. Each frame is still reported and answered (ACKMODE) on its own. Omit it for one frame per burst. |
+| `burstGatherSeconds` | number | `0.5` | With `maxBurstSeconds`: how long the first frame of a run waits for the rest to arrive before the modem contends for the air, so a host writing frames one at a time still fills a burst. 0 to 10. |
 
 Diversity-bank defaults by mode:
 
@@ -156,6 +158,7 @@ Rules and refusals:
 
 - A `frequency` on a baseband mode (`fsk9600`, `fsk9600-il2p`, `fsk4800-il2p`, `c4fsk9600`, `c4fsk19200`) is refused: `modem N: mode 'X' occupies the audio band from DC upwards and has no centre frequency to move - drop the frequency override`. Every other mode, including `freedv-*` and `ms110d-*`, accepts one.
 - `acceptPlainIl2p` on a mode that does not run IL2P+CRC is refused: `modem N: mode 'X' does not run IL2P+CRC, so it has no separate plain-IL2P reading to release - drop "acceptPlainIl2p"`. It applies to `afsk300-il2pc`, `afsk1200-il2p`, `bpsk300`, `bpsk300-multi`, `bpsk1200`, `bpsk1200-multi`, `qpsk600`, `qpsk2400`, `qpsk3600`, `fsk9600-il2p`, `fsk4800-il2p`, `c4fsk9600`, `c4fsk19200`, `freedv-*` and `ms110d-*`. With it on, the journal says once per modem that plain IL2P frames are checked by Reed-Solomon alone.
+- `maxBurstSeconds` or `burstGatherSeconds` on a mode other than `ms110d-*` is refused (`Only the ms110d-* modes pack several frames into one burst`), as are a `maxBurstSeconds` outside 1 to 120, a `burstGatherSeconds` outside 0 to 10, and a `burstGatherSeconds` without `maxBurstSeconds`. With packing on, the journal says `modem N: frames queued together share one burst, up to S s (gathering for G s first)`.
 - Two entries with the same `subChannel`: `two modems share "subChannel": N. Each modem needs its own KISS sub-channel (0-15) - renumber one of them.`
 - A `mode` that is not a catalogue mode, `ardop` or a loaded plugin's mode: `modem N: unknown mode 'X'`, followed by `did you mean: ...` for a near miss and a link to the mode list. For a `pluginId:mode` name the second line says whether the plugin is loaded and what it provides.
 - `frequency` and `rfFrequency` on one entry, on USB or LSB: `modem N sets both "frequency" (F) and "rfFrequency" (R). Those say the same thing two ways ... Keep one.` On FM both are allowed; `rfFrequency` is the channel and `frequency` is where the tones sit in its audio.

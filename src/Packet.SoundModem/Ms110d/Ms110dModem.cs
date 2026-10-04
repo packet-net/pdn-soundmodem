@@ -7,8 +7,9 @@ namespace Packet.SoundModem.Ms110d;
 /// <summary>
 /// MIL-STD-188-110D Appendix D 3 kHz serial-tone waveform as an <see cref="IModem"/> -
 /// autobaud HF single-carrier carrying IL2P+CRC-framed AX.25. Each <see cref="Modulate"/>
-/// call emits one App D burst (preamble → data frames → EOM → EOT); receive is fully
-/// autobaud, so one modem instance decodes any Phase A waveform number regardless of its
+/// call emits one App D burst (preamble, data frames, EOM, EOT), and with
+/// <see cref="Packing"/> set, <see cref="ModulateFrames"/> puts several frames in one; receive is
+/// fully autobaud, so one modem instance decodes any Phase A waveform number regardless of its
 /// own transmit setting.
 /// </summary>
 /// <remarks>
@@ -16,9 +17,12 @@ namespace Packet.SoundModem.Ms110d;
 /// <see cref="FreeDvDatacModem"/> does for the FreeDV raw-data layer) the family-standard
 /// pdn convention applies: <see cref="Il2pCodec"/> IL2P+CRC behind the 24-bit IL2P sync
 /// word, no training preamble (<c>preambleBits: 0</c> - the App D preamble already
-/// delimits), one KISS transmission per burst, the EOM terminating it. Decoded block bits
-/// stream through an <see cref="Il2pDeframer"/>, giving frames spanning block boundaries
-/// and per-frame <see cref="FrameQuality"/>.</para>
+/// delimits), the EOM terminating the burst. By default that is one KISS transmission per
+/// burst; with <see cref="Packing"/> set, frames queued together go out as IL2P+CRC frames back
+/// to back in one burst's bit stream, behind one preamble and ahead of one EOM. Decoded block
+/// bits stream through an <see cref="Il2pDeframer"/>, giving frames spanning block boundaries
+/// and per-frame <see cref="FrameQuality"/>, so the receiver needs nothing to read a packed
+/// burst.</para>
 /// <para><b>Rate bridge.</b> Native 9600 Hz (design §4.3: 4 samples/symbol at 2400 Bd);
 /// 48000 = 5 × 9600 bridges integer both ways through <see cref="Decimator"/> /
 /// <see cref="Upsampler"/>. The 12 kHz path is rejected (12000/9600 is not an integer).</para>
@@ -26,7 +30,7 @@ namespace Packet.SoundModem.Ms110d;
 /// App D implementation or off-air recording exists to test against (design §1.2; Q2 -
 /// pdn↔pdn only).</para>
 /// </remarks>
-public sealed class Ms110dModem : IModem, IHardwareControllable
+public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingModem
 {
     /// <summary>Native DSP rate (4 samples/symbol at 2400 Bd).</summary>
     private const int NativeRate = Ms110dModulator.NativeRate;
@@ -41,6 +45,7 @@ public sealed class Ms110dModem : IModem, IHardwareControllable
     private Ms110dModulator _tx;
 
     private Ms110dTxSettings _txSettings;
+    private FramePacking? _packing;
     private readonly Ms110dDemodulator _rx;
     private readonly Il2pReceiver _deframer;
     private readonly EnergyBusyDetector _energyBusy;
@@ -232,10 +237,118 @@ public sealed class Ms110dModem : IModem, IHardwareControllable
     {
         // One read per burst: a concurrent SetTxWaveform applies to the next burst whole.
         Ms110dModulator tx = Volatile.Read(ref _tx);
-        byte[] il2pWire = Il2pCodec.Encode(ax25Frame, appendCrc: true);
-        byte[] bits = Il2pFramer.FrameBits(il2pWire, preambleBits: 0);
-        float[] native = tx.Modulate(bits);
+        byte[] bits = FrameBits(ax25Frame);
+        return Render(tx.Modulate(bits), txDelayMilliseconds);
+    }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// <see cref="FramePacking.MaxBurst"/> must be positive. Read once per burst by the channel,
+    /// so a change applies from the next one.
+    /// </remarks>
+    public FramePacking? Packing
+    {
+        get => Volatile.Read(ref _packing);
+        set
+        {
+            if (value is { } packing && (packing.MaxBurst <= TimeSpan.Zero || packing.Gather < TimeSpan.Zero))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(value), "a packed burst needs a positive length and a gather of zero or more");
+            }
+
+            Volatile.Write(ref _packing, value);
+        }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Sized with the modulator's own <see cref="Ms110dModulator.BurstSeconds"/>, so the count is
+    /// exactly what <see cref="ModulateFrames"/> will render: one preamble, every frame's IL2P+CRC
+    /// bits back to back, and the EOM, rounded up to whole interleaver blocks.
+    /// </remarks>
+    public int FramesPerBurst(IReadOnlyList<byte[]> frames)
+    {
+        ArgumentNullException.ThrowIfNull(frames);
+        if (frames.Count == 0)
+        {
+            return 0;
+        }
+
+        if (Packing is not { } packing)
+        {
+            return 1;
+        }
+
+        Ms110dModulator tx = Volatile.Read(ref _tx);
+        double limit = packing.MaxBurst.TotalSeconds;
+        int bits = 0;
+        int fit = 0;
+        foreach (byte[] frame in frames)
+        {
+            int frameBits;
+            try
+            {
+                frameBits = FrameBits(frame).Length;
+            }
+            catch (ArgumentException)
+            {
+                // A frame IL2P will not carry. It is sent (and refused) on its own, never inside
+                // somebody else's burst.
+                break;
+            }
+
+            if (fit > 0 && tx.BurstSeconds(bits + frameBits) > limit)
+            {
+                break;
+            }
+
+            bits += frameBits;
+            fit++;
+        }
+
+        return Math.Max(1, fit);
+    }
+
+    /// <inheritdoc />
+    public float[] ModulateFrames(IReadOnlyList<byte[]> frames, int txDelayMilliseconds)
+    {
+        ArgumentNullException.ThrowIfNull(frames);
+        if (frames.Count == 0)
+        {
+            throw new ArgumentException("a burst needs at least one frame", nameof(frames));
+        }
+
+        Ms110dModulator tx = Volatile.Read(ref _tx);
+        var encoded = new byte[frames.Count][];
+        int total = 0;
+        for (int i = 0; i < frames.Count; i++)
+        {
+            encoded[i] = FrameBits(frames[i]);
+            total += encoded[i].Length;
+        }
+
+        // Back to back, with nothing between them: each frame's IL2P sync word follows the last
+        // bit of the frame before, which is what the receiver's deframer hunts for anyway.
+        var bits = new byte[total];
+        int at = 0;
+        foreach (byte[] frameBits in encoded)
+        {
+            frameBits.CopyTo(bits, at);
+            at += frameBits.Length;
+        }
+
+        return Render(tx.Modulate(bits), txDelayMilliseconds);
+    }
+
+    /// <summary>One frame's IL2P+CRC wire bits behind the 24-bit sync word, no training
+    /// preamble (the App D preamble already delimits).</summary>
+    private static byte[] FrameBits(ReadOnlySpan<byte> ax25Frame) =>
+        Il2pFramer.FrameBits(Il2pCodec.Encode(ax25Frame, appendCrc: true), preambleBits: 0);
+
+    /// <summary>A native-rate burst with TXDELAY of silence ahead of it, at the channel rate.</summary>
+    private float[] Render(float[] native, int txDelayMilliseconds)
+    {
         int delayNative = NativeRate * Math.Max(0, txDelayMilliseconds) / 1000;
         var burst = new float[delayNative + native.Length];
         native.CopyTo(burst, delayNative);

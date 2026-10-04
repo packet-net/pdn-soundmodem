@@ -477,6 +477,60 @@ public class DaemonConfigTests : IDisposable
         error.Should().Contain("One ARDOP TNC per channel");
     }
 
+    [Fact]
+    public void Burst_Packing_Is_Read_And_Reaches_The_Modem()
+    {
+        string path = WriteConfig("""
+            {"device": "null", "modems": [
+              {"subChannel": 3, "mode": "ms110d-wn4", "maxBurstSeconds": 60, "burstGatherSeconds": 1.5}
+            ]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+        config.Should().NotBeNull(error);
+        config!.Modems[0].MaxBurstSeconds.Should().Be(60);
+        config.Modems[0].BurstGatherSeconds.Should().Be(1.5);
+
+        var lines = new List<string>();
+        var journal = new StationJournal("", lines.Add, lines.Add);
+        var channel = new Packet.SoundModem.Channel.SoundModemChannel(48000);
+        StationFactory.TryAddModems(channel, config.Modems, 48000, null, journal).Should().BeTrue();
+
+        ((Packet.SoundModem.Modems.IFramePackingModem)channel.Modems[3]).Packing.Should().Be(
+            new Packet.SoundModem.Modems.FramePacking(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(1.5)));
+        lines.Should().Contain(l => l.Contains("share one burst, up to 60 s"));
+    }
+
+    [Fact]
+    public void Without_Burst_Packing_An_Ms110d_Modem_Sends_One_Frame_Per_Burst()
+    {
+        string path = WriteConfig("""{"device": "null", "modems": [{"subChannel": 0, "mode": "ms110d-wn4"}]}""");
+        DaemonConfig config = DaemonConfig.TryLoad(path, out string error)!;
+        config.Should().NotBeNull(error);
+
+        var channel = new Packet.SoundModem.Channel.SoundModemChannel(48000);
+        StationFactory.TryAddModems(
+            channel, config.Modems, 48000, null, new StationJournal("", _ => { }, _ => { })).Should().BeTrue();
+        ((Packet.SoundModem.Modems.IFramePackingModem)channel.Modems[0]).Packing.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("\"mode\": \"bpsk300\", \"maxBurstSeconds\": 60", "Only the ms110d-* modes pack")]
+    [InlineData("\"mode\": \"ms110d-wn4\", \"maxBurstSeconds\": 0.5", "Use 1 to 120 seconds")]
+    [InlineData("\"mode\": \"ms110d-wn4\", \"maxBurstSeconds\": 600", "Use 1 to 120 seconds")]
+    [InlineData("\"mode\": \"ms110d-wn4\", \"burstGatherSeconds\": 1", "without \"maxBurstSeconds\"")]
+    [InlineData("\"mode\": \"ms110d-wn4\", \"maxBurstSeconds\": 60, \"burstGatherSeconds\": 30", "Use 0 to 10 seconds")]
+    public void Burst_Packing_That_Would_Not_Do_What_It_Says_Is_Refused(string entry, string says)
+    {
+        string path = WriteConfig($$"""{"device": "null", "modems": [{"subChannel": 2, {{entry}}}]}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("modem 2").And.Contain(says);
+        ShouldGuideTheOperator(error, path);
+    }
+
     [Theory]
     [InlineData(300)]
     [InlineData(2400)]
