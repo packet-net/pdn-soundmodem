@@ -70,7 +70,15 @@ public readonly record struct TxTestPreset(double ToneHz, double DeviationHz)
 /// <param name="TwoTone">True for the two-tone pair, false for the single tone below.</param>
 /// <param name="ToneHz">The single tone, in Hz; ignored when <paramref name="TwoTone"/> is set.</param>
 /// <param name="Seconds">How long to transmit for. Clamped to the cap by whoever runs it.</param>
-public sealed record TxTestRequest(bool TwoTone, double ToneHz, double Seconds);
+public sealed record TxTestRequest(bool TwoTone, double ToneHz, double Seconds)
+{
+    /// <summary>
+    /// The sub-channel the test is made on behalf of, or null for the station as a whole (the
+    /// page's button). While a transmit lease is held a test runs only when this names the
+    /// holder: see <see cref="Channel.SoundModemChannel.TransmitLease"/>.
+    /// </summary>
+    public int? SubChannel { get; init; }
+}
 
 /// <summary>What became of a test, for every page that is open.</summary>
 /// <param name="State">

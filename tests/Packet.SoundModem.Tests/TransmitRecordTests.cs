@@ -69,7 +69,7 @@ public class TransmitRecordTests
             + "payload because an ident is not a frame"),
 
         new("src/Packet.SoundModem.Daemon/TxTest.cs",
-            "source: this",
+            "source: run",
             "the operator's test tone: TxTestOptions.Recorded, which Program.cs turns into "
             + "frameLog.RecordTransmitted with the sentence describing what went out"),
     ];

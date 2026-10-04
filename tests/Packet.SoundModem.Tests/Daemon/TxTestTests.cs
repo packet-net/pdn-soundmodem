@@ -190,6 +190,39 @@ public class TxTestTests
     }
 
     [Fact]
+    public async Task While_A_Lease_Is_Held_A_Test_That_Does_Not_Name_The_Holder_Is_Refused()
+    {
+        await using var rig = new Rig();
+        rig.Channel.TransmitLease.Take(0, TimeSpan.FromMinutes(1));
+
+        TxTestOutcome fromThePage = await rig.Runner.RunAsync(new TxTestRequest(false, 1800, 1));
+        TxTestOutcome fromAnother = await rig.Runner.RunAsync(
+            new TxTestRequest(false, 1800, 1) { SubChannel = 9 });
+
+        fromThePage.Ran.Should().BeFalse();
+        fromThePage.Refusal.Should().Contain("sub-channel 0 holds the transmit lease");
+        fromAnother.Ran.Should().BeFalse();
+        rig.Output.Snapshot().Should().BeEmpty("nothing keyed for either");
+    }
+
+    [Fact]
+    public async Task While_A_Lease_Is_Held_The_Holders_Own_Test_Goes_Out()
+    {
+        // The mailcast head end's calibration tone: it holds the lease for its broadcast modem and
+        // asks for the tone on that modem's behalf.
+        await using var rig = new Rig();
+        rig.Channel.TransmitLease.Take(0, TimeSpan.FromMinutes(1));
+
+        TxTestOutcome outcome = await rig.Runner.RunAsync(
+            new TxTestRequest(false, 1800, 1) { SubChannel = 0 });
+
+        outcome.Ran.Should().BeTrue(outcome.Refusal);
+        await rig.SettledAsync();
+        Amplitude(rig.Output.Snapshot(), 1800).Should().BeApproximately(0.8, 0.02);
+        rig.Records.Should().ContainSingle().Which.SubChannel.Should().Be(0);
+    }
+
+    [Fact]
     public async Task A_Single_Tone_Test_Sends_The_Tone_That_Was_Asked_For()
     {
         await using var rig = new Rig();

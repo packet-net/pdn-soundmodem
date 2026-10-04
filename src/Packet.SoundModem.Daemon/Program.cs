@@ -872,6 +872,10 @@ foreach (ModemConfig modemConfig in modems)
     }
 
     identifiers[subChannel] = identifier;
+
+    // The ident is this modem's own transmission, so it keeps going out while this modem's
+    // sub-channel holds the transmit lease, and waits while anybody else does.
+    channel.TransmitLease.Attribute(identifier, subChannel);
     Console.WriteLine(
         $"modem {subChannel}: identifying as {identifier.Text} in CW @ {tone:F0} Hz"
         // Not on FM, where the tone is a tone on the channel and adding it to one would be the
@@ -3073,6 +3077,17 @@ if (waterfallServer is not null && waterfallConfig?.Public != true)
 }
 
 runtimeApi?.ServeTxTest(txTestRunner);
+
+// The transmit lease (POST /api/txlease): one sub-channel takes the transmitter for a while -
+// pdn-mailcast's daily broadcast - and everyone else's transmissions are refused until it gives it
+// back or stops renewing. The refusals are the channel's own and reach the journal through the
+// rate-limited DROPPED line above; what the lease itself does is journalled here.
+var txLeaseJournal = new TxLeaseJournal(
+    stationJournal,
+    sub => channel.Modems.TryGetValue(sub, out IModem? leased) ? leased.Mode : "no modem");
+channel.TransmitLease.Changed += txLeaseJournal.Note;
+runtimeApi?.ServeTxLease(
+    channel.TransmitLease, sub => channel.Modems.ContainsKey(sub), channel.ReceiveOnlyReason);
 if (txTestRefusal is null)
 {
     stationJournal.Write(
@@ -3116,7 +3131,10 @@ if (identifiers.Count > 0)
 
             foreach ((int sub, StationIdentifier owed) in identifiers)
             {
-                if (!owed.IdentificationDue)
+                // Not even asked while another sub-channel holds the transmit lease: it would be
+                // refused, every five seconds, for the length of the lease. It stays owed and goes
+                // out once the lease ends.
+                if (!owed.IdentificationDue || !channel.TransmitLease.Admits(owed))
                 {
                     continue;
                 }
