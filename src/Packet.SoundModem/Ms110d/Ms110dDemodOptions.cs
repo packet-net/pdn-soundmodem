@@ -97,4 +97,10 @@ public sealed record Ms110dDemodOptions
     /// (evidence/2026-07-26-phase-b41-wn6floor/, ship decision in Amendment 2's ladder:
     /// WN6 6M 57/57 → 35/39 both families with every other point held).</summary>
     public string? TurboNsegMode { get; init; }
+
+    /// <summary>Roll-off of the SRRC receive matched filter, 0.05 to 1. Default 0.35, the
+    /// D.5.1.5 value every MS110D transmitter is assumed to use. A receiver that knows its
+    /// transmitter shapes narrower can match it here; left at 0.35 it still decodes a narrower
+    /// signal, the equalizer absorbing the mismatch (docs/dev/ms110d/evidence/2026-10-04-filter-width/).</summary>
+    public double RollOff { get; init; } = Ms110dModulator.RollOff;
 }

@@ -38,6 +38,7 @@ try
         "score" => ScoreCommand.Run(args[1..]),
         "sim" => SimCommand.Run(args[1..]),
         "sim-stream" => SimStreamCommand.Run(args[1..]),
+        "filter-study" => FilterStudyCommand.Run(args[1..]),
         "oracle" => OracleCommand.Run(args[1..]),
         "replay" => ReplayCommand.Run(args[1..]),
         "ardop-monitor" => ArdopMonitorCommand.Run(args[1..]),
@@ -88,6 +89,9 @@ static int Usage()
         sm-ota sim-stream  continuous-stream datac measurement: N single-packet bursts through ONE
                         channel run, scored packets-received/sent (codec2's MPP currency). Injects a
                         managed WattersonChannel, or emits/decodes int16 for codec2's own `ch`.
+        sm-ota filter-study  MS110D frame loss through a receiver's SSB filter, per transmit
+                        roll-off: Watterson channel, then a crystal or DSP filter model, then
+                        the receiver. No radio. docs/dev/ms110d/evidence/2026-10-04-filter-width/ is its evidence.
         sm-ota oracle   symbol-timing ceiling probe (rx-roadmap workstream 4): decode each burst
                         with the clock the receiver recovers from noise, and again with the clock
                         a noise-free copy of that same burst says is right. The gap bounds what

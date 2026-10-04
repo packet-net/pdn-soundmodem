@@ -35,4 +35,10 @@ public sealed record Ms110dTxSettings
     /// <summary>Linear scale applied to the unit-magnitude symbol stream before pulse
     /// shaping. The default keeps peaks comfortably inside ±1.</summary>
     public float Amplitude { get; init; } = 0.5f;
+
+    /// <summary>SRRC pulse-shaping roll-off, 0.05 to 1. Default 0.35, the D.5.1.5
+    /// recommendation: 2400 Bd x (1 + roll-off) edge to edge, so 3240 Hz at the default and
+    /// 2640 Hz at 0.10. A narrower signal fits a narrower receive filter; the receiver's
+    /// matched filter (<see cref="Ms110dDemodOptions.RollOff"/>) is set separately.</summary>
+    public double RollOff { get; init; } = Ms110dModulator.RollOff;
 }
