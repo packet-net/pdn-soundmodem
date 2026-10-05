@@ -1832,11 +1832,20 @@ public sealed class SoundModemChannel
     {
         foreach ((object source, TxItem[] candidates, int txDelay) in toStart)
         {
-            Task<PackedAudio> result = Task.Run(() => RenderPacked(candidates, txDelay));
+            // Recorded before it starts, so that its completion can never wake a loop that then
+            // finds no render on record and starts a second one alongside it.
+            var result = new Task<PackedAudio>(() => RenderPacked(candidates, txDelay));
             lock (_txGate)
             {
+                if (_packedRenders.TryGetValue(source, out PackedRender? running) && !running.Result.IsCompleted)
+                {
+                    continue;
+                }
+
                 _packedRenders[source] = new PackedRender(candidates[0], txDelay, result);
             }
+
+            result.Start(TaskScheduler.Default);
 
             // Wakes the transmitter however the render ends: a burst that renders is ready to
             // key for, and one that fails is refused at pickup like any frame the modem refuses.

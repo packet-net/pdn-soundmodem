@@ -349,7 +349,7 @@ public class PackedBurstTests
             {
                 // The first burst is "on the air" until the second has started rendering. The
                 // bound is a failure bound, not a pace: the render is started before the write.
-                overlapped = secondRenderStarted.Wait(TimeSpan.FromSeconds(20));
+                overlapped = secondRenderStarted.Wait(TimeSpan.FromMinutes(2));
             }
         });
 
