@@ -329,7 +329,7 @@ public sealed class UberSdrIqClient
 
         if (!resp.IsSuccessStatusCode)
         {
-            throw new UberSdrRefusedException(Explain(resp, parsed, text), (int)resp.StatusCode, parsed);
+            throw new UberSdrConnectionRefusedException(Explain(resp, parsed, text), (int)resp.StatusCode, parsed);
         }
 
         return parsed ?? throw new InvalidDataException("empty /connection response");
@@ -441,9 +441,9 @@ public sealed class UberSdrIqClient
 /// than on a string: <see cref="RefusedForNow"/> is the one that only time lifts, and is the one
 /// where retrying quickly is antisocial rather than merely useless.
 /// </remarks>
-public sealed class UberSdrRefusedException : Exception
+public sealed class UberSdrConnectionRefusedException : Exception
 {
-    internal UberSdrRefusedException(string message, int status, ConnectionResponse? response)
+    internal UberSdrConnectionRefusedException(string message, int status, ConnectionResponse? response)
         : base(message)
     {
         StatusCode = status;
