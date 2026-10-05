@@ -140,3 +140,7 @@ entry off the rotated boundary probe (known-WID-a-priori) is transmitted but not
 late entry works via the repeated preamble; clock-skew tolerance is the slow per-probe
 timing tracker only (WN 0 has none); 8PSK/QAM waveform numbers land in Phases B/C. Validation status: **spec-faithful + mask-passing, not interop-proven** - no
 open App D implementation or off-air recording exists (pdn↔pdn only, design Q2).
+
+## Evidence since
+
+- [evidence/2026-10-04-filter-width](evidence/2026-10-04-filter-width/README.md): what a receiver's SSB filter costs an MS110D signal for each transmit roll-off, and why the broadcast keeps the standard's 0.35.

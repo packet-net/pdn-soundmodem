@@ -1,0 +1,57 @@
+Receive filters (as realised at 9600 Hz):
+  none: no receive filter
+  xtal:300-2700: -6 dB 300-2700 Hz, -60 dB below 0-3271 Hz, shape factor (6/60 dB) 1.48, group delay 0.84-3.98 ms inside -6 dB (+-50 Hz)
+  xtal:200-2900: -6 dB 200-2900 Hz, -60 dB below 0-3511 Hz, shape factor (6/60 dB) 1.45, group delay 0.74-3.74 ms inside -6 dB (+-50 Hz)
+  xtal:150-3150: -6 dB 150-3150 Hz, -60 dB below 0-3793 Hz, shape factor (6/60 dB) 1.43, group delay 0.65-3.52 ms inside -6 dB (+-50 Hz)
+  xtal:600-3000: -6 dB 600-3000 Hz, -60 dB 29-3571 Hz, shape factor (6/60 dB) 1.48, group delay 0.84-3.98 ms inside -6 dB (+-50 Hz)
+  dsp:300-2700: -6 dB 300-2700 Hz, -60 dB 231-2769 Hz, shape factor (6/60 dB) 1.06, group delay flat (linear phase)
+  dsp:200-2900: -6 dB 200-2900 Hz, -60 dB 131-2969 Hz, shape factor (6/60 dB) 1.05, group delay flat (linear phase)
+  dsp:150-3150: -6 dB 150-3150 Hz, -60 dB 81-3219 Hz, shape factor (6/60 dB) 1.05, group delay flat (linear phase)
+  dsp:600-3000: -6 dB 600-3000 Hz, -60 dB 531-3069 Hz, shape factor (6/60 dB) 1.06, group delay flat (linear phase)
+
+Transmit spectra (WN 4 data section, 1800 Hz centre):
+  roll-off 0.35: edge to edge 3240 Hz (180-3420), 99% power 2796 Hz (401-3197), pulse span 16 symbols
+      through xtal:300-2700    keeps -0.87 dB of the signal
+      through xtal:200-2900    keeps -0.51 dB of the signal
+      through xtal:150-3150    keeps -0.30 dB of the signal
+      through xtal:600-3000    keeps -0.56 dB of the signal
+      through dsp:300-2700     keeps -0.63 dB of the signal
+      through dsp:200-2900     keeps -0.26 dB of the signal
+      through dsp:150-3150     keeps -0.05 dB of the signal
+      through dsp:600-3000     keeps -0.32 dB of the signal
+  roll-off 0.25: edge to edge 3000 Hz (300-3300), 99% power 2665 Hz (469-3134), pulse span 24 symbols
+      through xtal:300-2700    keeps -0.86 dB of the signal
+      through xtal:200-2900    keeps -0.47 dB of the signal
+      through xtal:150-3150    keeps -0.27 dB of the signal
+      through xtal:600-3000    keeps -0.47 dB of the signal
+      through dsp:300-2700     keeps -0.62 dB of the signal
+      through dsp:200-2900     keeps -0.22 dB of the signal
+      through dsp:150-3150     keeps -0.02 dB of the signal
+      through dsp:600-3000     keeps -0.23 dB of the signal
+  roll-off 0.15: edge to edge 2760 Hz (420-3180), 99% power 2489 Hz (558-3047), pulse span 38 symbols
+      through xtal:300-2700    keeps -0.86 dB of the signal
+      through xtal:200-2900    keeps -0.44 dB of the signal
+      through xtal:150-3150    keeps -0.25 dB of the signal
+      through xtal:600-3000    keeps -0.39 dB of the signal
+      through dsp:300-2700     keeps -0.61 dB of the signal
+      through dsp:200-2900     keeps -0.20 dB of the signal
+      through dsp:150-3150     keeps -0.00 dB of the signal
+      through dsp:600-3000     keeps -0.15 dB of the signal
+  roll-off 0.10: edge to edge 2640 Hz (480-3120), 99% power 2438 Hz (581-3019), pulse span 56 symbols
+      through xtal:300-2700    keeps -0.86 dB of the signal
+      through xtal:200-2900    keeps -0.44 dB of the signal
+      through xtal:150-3150    keeps -0.25 dB of the signal
+      through xtal:600-3000    keeps -0.36 dB of the signal
+      through dsp:300-2700     keeps -0.61 dB of the signal
+      through dsp:200-2900     keeps -0.19 dB of the signal
+      through dsp:150-3150     keeps 0.00 dB of the signal
+      through dsp:600-3000     keeps -0.12 dB of the signal
+  roll-off 0.05: edge to edge 2520 Hz (540-3060), 99% power 2400 Hz (600-3000), pulse span 64 symbols
+      through xtal:300-2700    keeps -0.86 dB of the signal
+      through xtal:200-2900    keeps -0.43 dB of the signal
+      through xtal:150-3150    keeps -0.25 dB of the signal
+      through xtal:600-3000    keeps -0.33 dB of the signal
+      through dsp:300-2700     keeps -0.61 dB of the signal
+      through dsp:200-2900     keeps -0.19 dB of the signal
+      through dsp:150-3150     keeps 0.00 dB of the signal
+      through dsp:600-3000     keeps -0.09 dB of the signal

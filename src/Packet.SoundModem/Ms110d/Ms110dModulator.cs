@@ -18,16 +18,22 @@ public sealed class Ms110dModulator
     /// <summary>Native DSP rate: 9600 Hz = 4 samples/symbol at 2400 Bd.</summary>
     public const int NativeRate = 9600;
 
-    /// <summary>SRRC roll-off (D.5.1.5 recommended 0.35 - pinned here; see OBW tests).</summary>
+    /// <summary>SRRC roll-off D.5.1.5 recommends, 0.35, and the default for both the transmit
+    /// shaping (<see cref="Ms110dTxSettings.RollOff"/>) and the receive matched filter
+    /// (<see cref="Ms110dDemodOptions.RollOff"/>); the OBW tests pin it.</summary>
     public const double RollOff = 0.35;
 
-    private const int PulseSpanSymbols = 16;   // ±8 symbols
+    /// <summary>Narrowest roll-off either end accepts. Below it the pulse would need a span of
+    /// hundreds of symbols to stay band-limited.</summary>
+    public const double MinRollOff = 0.05;
+
     private const int SamplesPerSymbol = 4;
 
-    private static readonly float[] Pulse = DesignPulse();
+    private static readonly float[] DefaultPulse = DesignPulse(RollOff);
 
     private readonly Ms110dTxSettings _settings;
     private readonly Ms110dMode _mode;
+    private readonly float[] _pulse;
 
     /// <summary>Creates a transmitter for one waveform configuration.</summary>
     public Ms110dModulator(Ms110dTxSettings settings)
@@ -39,6 +45,9 @@ public sealed class Ms110dModulator
         {
             throw new ArgumentException("constraint length must be 7 or 9", nameof(settings));
         }
+
+        ValidateRollOff(settings.RollOff, nameof(settings));
+        _pulse = settings.RollOff == RollOff ? DefaultPulse : DesignPulse(settings.RollOff);
     }
 
     /// <summary>The mode row this transmitter is configured for.</summary>
@@ -48,7 +57,7 @@ public sealed class Ms110dModulator
     public float[] Modulate(ReadOnlySpan<byte> payloadBits)
     {
         Cf[] symbols = BuildSymbols(payloadBits);
-        return Shape(symbols, _settings.Amplitude);
+        return Shape(symbols, _settings.Amplitude, _pulse);
     }
 
     /// <summary>Builds the full burst symbol stream (unit-magnitude, one entry per 2400 Bd
@@ -187,19 +196,19 @@ public sealed class Ms110dModulator
         }
     }
 
-    private static float[] Shape(Cf[] symbols, float amplitude)
+    private static float[] Shape(Cf[] symbols, float amplitude, float[] pulse)
     {
-        int length = (symbols.Length * SamplesPerSymbol) + Pulse.Length;
+        int length = (symbols.Length * SamplesPerSymbol) + pulse.Length;
         var re = new float[length];
         var im = new float[length];
         for (int n = 0; n < symbols.Length; n++)
         {
             Cf s = symbols[n] * amplitude;
             int start = n * SamplesPerSymbol;
-            for (int k = 0; k < Pulse.Length; k++)
+            for (int k = 0; k < pulse.Length; k++)
             {
-                re[start + k] += s.Re * Pulse[k];
-                im[start + k] += s.Im * Pulse[k];
+                re[start + k] += s.Re * pulse[k];
+                im[start + k] += s.Im * pulse[k];
             }
         }
 
@@ -214,16 +223,44 @@ public sealed class Ms110dModulator
         return audio;
     }
 
-    private static float[] DesignPulse()
+    /// <summary>Throws unless <paramref name="rollOff"/> is in [<see cref="MinRollOff"/>, 1].</summary>
+    internal static void ValidateRollOff(double rollOff, string paramName)
     {
-        int taps = (PulseSpanSymbols * SamplesPerSymbol) + 1;
+        if (!(rollOff >= MinRollOff && rollOff <= 1.0))
+        {
+            throw new ArgumentException(
+                $"SRRC roll-off must be between {MinRollOff} and 1 (got {rollOff})", paramName);
+        }
+    }
+
+    /// <summary>Pulse span in symbols for a roll-off. 16 (+-8 symbols) at the standard's 0.35 and
+    /// wider, so the default waveform is unchanged; a narrower roll-off has a slower-decaying
+    /// pulse tail, so the span grows in proportion (capped at 64) to keep the truncation
+    /// sidelobes at roughly the 0.35 pulse's level instead of spilling outside the band.</summary>
+    internal static int PulseSpanSymbols(double rollOff)
+    {
+        if (rollOff >= RollOff)
+        {
+            return 16;
+        }
+
+        int span = (int)Math.Ceiling(16 * RollOff / rollOff);
+        span += span & 1;
+        return Math.Min(span, 64);
+    }
+
+    /// <summary>The unit-energy SRRC pulse at 4 samples/symbol for a roll-off; shared by the
+    /// receiver's matched filter.</summary>
+    internal static float[] DesignPulse(double rollOff)
+    {
+        int taps = (PulseSpanSymbols(rollOff) * SamplesPerSymbol) + 1;
         var pulse = new float[taps];
         double centre = (taps - 1) / 2.0;
         double energy = 0;
         for (int i = 0; i < taps; i++)
         {
             double t = (i - centre) / SamplesPerSymbol;
-            pulse[i] = (float)FilterDesign.RootRaisedCosine(t, RollOff);
+            pulse[i] = (float)FilterDesign.RootRaisedCosine(t, rollOff);
             energy += pulse[i] * pulse[i];
         }
 

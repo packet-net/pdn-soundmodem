@@ -213,7 +213,8 @@ public sealed class Ms110dDemodulator
     public Ms110dDemodulator(Ms110dDemodOptions? options = null)
     {
         _options = options ?? new Ms110dDemodOptions();
-        _rxPulse = RxPulse();
+        Ms110dModulator.ValidateRollOff(_options.RollOff, nameof(options));
+        _rxPulse = Ms110dModulator.DesignPulse(_options.RollOff);
         _rxFilterRe = new FirFilter(_rxPulse);
         _rxFilterIm = new FirFilter(_rxPulse);
 
@@ -4585,29 +4586,5 @@ public sealed class Ms110dDemodulator
         _bestMetric = 0;
         _bestStart = -1;
         _terminate = false;
-    }
-
-    private static float[] RxPulse()
-    {
-        const int span = 16;
-        const int sps = 4;
-        int taps = (span * sps) + 1;
-        var pulse = new float[taps];
-        double centre = (taps - 1) / 2.0;
-        double energy = 0;
-        for (int i = 0; i < taps; i++)
-        {
-            double t = (i - centre) / sps;
-            pulse[i] = (float)FilterDesign.RootRaisedCosine(t, Ms110dModulator.RollOff);
-            energy += pulse[i] * pulse[i];
-        }
-
-        float norm = (float)(1.0 / Math.Sqrt(energy));
-        for (int i = 0; i < taps; i++)
-        {
-            pulse[i] *= norm;
-        }
-
-        return pulse;
     }
 }
