@@ -70,6 +70,19 @@ public class PackedBurstTests
         return (channel, modem!);
     }
 
+    /// <summary>Runs a fake clock forward in 50 ms steps until cancelled.</summary>
+    private static void Crank(FakeTimeProvider time, CancellationToken cancellation) =>
+        _ = Task.Run(
+            async () =>
+            {
+                while (!cancellation.IsCancellationRequested)
+                {
+                    VirtualAir.Tick(time, TimeSpan.FromMilliseconds(50));
+                    await Task.Delay(1, CancellationToken.None);
+                }
+            },
+            CancellationToken.None);
+
     private static FramePacking Packing(double maxSeconds = 30, double gatherSeconds = 0) =>
         new(TimeSpan.FromSeconds(maxSeconds), TimeSpan.FromSeconds(gatherSeconds));
 
@@ -221,8 +234,13 @@ public class PackedBurstTests
         // The fake clock has not moved, so the gather cannot have run out: nothing has keyed.
         output.Writes.Should().BeEmpty();
 
-        time.Advance(TimeSpan.FromSeconds(2));
-        await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(30));
+        // Then the clock runs. Cranked rather than jumped: the transmitter sets its wait for the
+        // gather's end on its own thread, and a single jump taken before it has done so would be
+        // a jump nothing was waiting for.
+        using var crank = new CancellationTokenSource();
+        Crank(time, crank.Token);
+        await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromMinutes(1));
+        await crank.CancelAsync();
         await cancellation.CancelAsync();
         try
         {
@@ -235,7 +253,7 @@ public class PackedBurstTests
         output.Writes.Should().HaveCount(2, "both frames in one burst, then the tail");
         ptt.Events.Should().Equal("key", "unkey");
         reports.Should().HaveCount(2);
-        reports.Should().OnlyContain(r => r.HeldFor == TimeSpan.FromSeconds(2),
+        reports.Should().OnlyContain(r => r.HeldFor >= TimeSpan.FromSeconds(2),
             "the gather is time each frame waited, reported per frame");
     }
 
@@ -420,8 +438,11 @@ public class PackedBurstTests
         await Task.WhenAll(plain, urgent).WaitAsync(TimeSpan.FromSeconds(30));
         gathering.IsCompleted.Should().BeFalse("its gather has not run out on a clock that has not moved");
 
-        time.Advance(TimeSpan.FromSeconds(5));
-        await gathering.WaitAsync(TimeSpan.FromSeconds(30));
+        // Cranked rather than jumped, for the reason the gather test above gives.
+        using var crank = new CancellationTokenSource();
+        Crank(time, crank.Token);
+        await gathering.WaitAsync(TimeSpan.FromMinutes(1));
+        await crank.CancelAsync();
         await cancellation.CancelAsync();
         try
         {
