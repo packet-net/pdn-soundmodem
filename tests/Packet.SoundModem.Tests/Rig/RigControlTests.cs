@@ -49,7 +49,10 @@ public sealed class RigControlTests : IAsyncDisposable
     {
         var rig = new RigControl(new RigControlOptions
         {
-            ReplyTimeout = replyTimeout ?? TimeSpan.FromSeconds(3),
+            // Real socket waits, so generous unless a test is about the timeout itself: a busy CI
+            // runner has taken longer than 3 s to answer the fake rigctld.
+            ReplyTimeout = replyTimeout ?? TimeSpan.FromSeconds(30),
+            ConnectTimeout = TimeSpan.FromSeconds(30),
             RestoreFile = persist ? RestorePath : null,
             TransmitPending = () => _pending,
             Endpoint = endpoint ?? _fake.Endpoint,
