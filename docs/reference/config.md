@@ -30,7 +30,7 @@ configuration error in /etc/pdn-soundmodem/soundmodem.json
   Every setting is documented at https://github.com/packet-net/pdn-soundmodem/blob/main/docs/reference/config.md
 ```
 
-The same frame carries `no such file: <path>`, `no such directory: <dir>`, `permission denied reading the file`, `the file is empty`, ``the file contains only `null` - there is nothing to configure from`` and `not valid JSON - line L, position P: <detail>` (counted from 1, as an editor does). The frame is used for every refusal raised while the file is read, which is everything `DaemonConfig` checks: the file-level errors above, `bind`, the port claims, sub-channels and the `rfFrequency` rules, `txTest`, `modemPlugins`, `alsa`, `flex.transmitFilterHighHz`, `deadFeed`, the sideband kinds, `monitor` and `publish`, plus the `publish.audioRate` divisor check, which waits for the modems. Refusals raised later in start-up are one or two bare lines on stderr with exit 2 and no recovery text: an unknown mode and the mode rules under `modems`, every `identify` refusal, `ptt`, `captureRate`, `ubersdr`, `flex.txPowerWatts` and the sideband contradiction, ARDOP given twice via `--ardop`, the band plan, the page's port and settings, `api`, `frameLog`, `survey`, `rawCapture`, and a monitor's own start-up checks. Where a section below says a line is a warning, start-up continues.
+The same frame carries `no such file: <path>`, `no such directory: <dir>`, `permission denied reading the file`, `the file is empty`, ``the file contains only `null` - there is nothing to configure from`` and `not valid JSON - line L, position P: <detail>` (counted from 1, as an editor does). The frame is used for every refusal raised while the file is read, which is everything `DaemonConfig` checks: the file-level errors above, `bind`, the port claims, sub-channels and the `rfFrequency` rules, `txTest`, `modemPlugins`, `alsa`, `flex.transmitFilterHighHz`, `rig`, `deadFeed`, the sideband kinds, `monitor` and `publish`, plus the `publish.audioRate` divisor check, which waits for the modems. Refusals raised later in start-up are one or two bare lines on stderr with exit 2 and no recovery text: an unknown mode and the mode rules under `modems`, every `identify` refusal, `ptt`, `captureRate`, `ubersdr`, `flex.txPowerWatts` and the sideband contradiction, ARDOP given twice via `--ardop`, the band plan, the page's port and settings, `api`, `frameLog`, `survey`, `rawCapture`, and a monitor's own start-up checks. Where a section below says a line is a warning, start-up continues.
 
 Exit status 1 is different: hardware the file names but the machine does not have (a sound card that has not enumerated, a `/dev/hidraw0` that is not there, a radio still booting) exits 1 with a message naming the key and the file, and the service keeps retrying every five seconds.
 
@@ -53,13 +53,14 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | `modemPlugins` | array | `[]` | Assemblies outside the package that provide extra modes. |
 | `polyglot` | array | `[]` | KISS ports that overlay several modems, sending each frame in the mode its next hop was last heard in. |
 | `polyglotPort` | int | absent: none | Shorthand for one `polyglot` port over every packet modem, the first as the default. |
-| `ptt` | object | absent: no keying line | How the radio is keyed: `serial` or `cm108`. |
+| `ptt` | object | absent: no keying line | How the radio is keyed: `serial`, `cm108` or `rigctld`. |
 | `carrierSense` | object | absent: read from the audio | Read carrier sense from the radio's own squelch and signal meter over its control cable. Strongly recommended on FM. |
 | `txTest` | object | enabled, 5 s, cap 30 s | Bounds on the operator's two-tone and single-tone transmitter test. |
 | `alsa` | object | absent: levels left alone | The sound card's mixer levels. |
 | `paging` | object | absent: off | The POCSAG paging endpoint. |
 | `ardop` | object | absent: off | Legacy way to start the ARDOP virtual TNC; a modem entry with `"mode": "ardop"` is the current form. |
 | `flex` | object | absent: defaults | Slice parameters for a headless FlexRadio. |
+| `rig` | object | absent: no rig control | A radio controlled through Hamlib's rigctld: the band plan's dial, a rigctld PTT and tuning windows. |
 | `ubersdr` | object | absent: defaults | Stream parameters for a public UberSDR web receiver. |
 | `waterfall` | object | absent: no page | The station page: spectrum, waterfall, frames, links, and the HTTP listener that `api` and `metrics` share. |
 | `monitor` | object | absent: not a monitor | Turns the process into a monitor site fronting many web receivers. Exclusive with `device`. |
@@ -240,13 +241,14 @@ The short form: every packet modem in `modems` goes behind port 8120, the first 
 
 | Key | Type | Default | What it is |
 |---|---|---|---|
-| `type` | string | `"serial"` | `"serial"` for an RTS or DTR line, `"cm108"` for the GPIO on a CM108-class interface. |
+| `type` | string | `"serial"` | `"serial"` for an RTS or DTR line, `"cm108"` for the GPIO on a CM108-class interface, `"rigctld"` for Hamlib's `T 1` and `T 0` through the [`rig`](#rig) section. |
 | `device` | string | `""` | The device path: `/dev/ttyUSB0` for serial, `/dev/hidraw0` for CM108. |
 | `line` | string | `"rts"` | Serial only: `"rts"` or `"dtr"`. |
 | `gpio` | int | `3` | CM108 only: the GPIO pin. |
 
 - Omit the whole section for a radio keyed by VOX, or one that has no keying line. A FlexRadio keys itself and a web receiver has no transmitter.
-- Refused: a `type` other than `serial` or `cm108` (`unknown ptt type 'X'`); any `ptt` with a `flex:` device (`--device flex: keys the radio itself; remove the conflicting --ptt (serial:/cm108:)`); any `ptt` with a `ubersdr:` device (`--device ubersdr: is a receive-only station ... Remove "ptt".`).
+- `"rigctld"` takes no other key here; it keys through the `rig` section's rigctld and is refused without one (`"ptt": {"type": "rigctld"} keys the radio through the "rig" section's rigctld, and this file has no "rig" section`). It is config-file only; the `--ptt` flag has no form for it.
+- Refused: a `type` other than `serial`, `cm108` or `rigctld` (`unknown ptt type 'X'`); any `ptt` with a `flex:` device (`--device flex: keys the radio itself; remove the conflicting --ptt (serial:/cm108:)`); any `ptt` with a `ubersdr:` device (`--device ubersdr: is a receive-only station ... Remove "ptt".`).
 - A device that cannot be opened exits 1, with the file, the key, an `ls` to run and the udev note for `/dev/hidraw*`, and the service retries. The [`--ptt` flag](command-line.md#station-flags) replaces this section.
 - Without a `ptt` the transmitter test is refused: `tx test: unavailable - no "ptt" is configured, so this daemon does not key the radio`.
 
@@ -386,6 +388,34 @@ A station with no serial link to its radio, or one that is not a Tait, reads car
 - With a band plan, a stated `frequency` is superseded and warned about: `flex: WARNING - the slice frequency you set (F) is superseded by the band plan, which computed D`. The modem sets the slice, the transmit filter high cut and the slice receive filter from the plan and says so.
 - A modem outside the radio's transmit or receive filter is a warning naming the modem, its edges and the filter; it is clipped or deaf, not refused.
 - `ptt` and `alsa.mixer` are refused with a `flex:` device.
+
+## `rig`
+
+```json
+{ "rig": { "rigctld": "127.0.0.1:4532", "mode": "PKTUSB" }, "ptt": { "type": "rigctld" } }
+```
+
+A radio controlled through Hamlib's `rigctld`, for any device but `flex:` and `ubersdr:`. Absent, nothing talks to a rig and the station is as it always was.
+
+| Key | Type | Default | What it is |
+|---|---|---|---|
+| `rigctld` | string | `"127.0.0.1:4532"` | Where rigctld listens: `host:port`, `host` for port 4532, or `[v6address]:port`. |
+| `required` | bool | `false` | Stop at start-up (exit 1, so the service retries) when rigctld does not answer, rather than warn and carry on. |
+| `mode` | string | absent: `USB`, `LSB` or `FM` from the band plan | The Hamlib mode the band plan sets, such as `PKTUSB` for a rig that takes data-jack audio only in a data mode. |
+| `passbandHz` | int | absent: the plan's passband width, 2400 Hz | The passband the band plan asks for; `0` is the rig's normal width for the mode. |
+
+- At start-up the modem connects, unkeys the radio if `ptt` is `rigctld`, and journals what the rig is on: `rig: rigctld at 127.0.0.1:4532: 7.049450 MHz USB (2400 Hz passband)`.
+- With a band plan (modems placed by `rfFrequency`) it sets the mode and passband, then the dial: `rig: setting the rig to 7.049450 MHz USB (2400 Hz passband) from the band plan`. Without one the dial is never touched. After a reconnect that finds the rig somewhere else, it is set back to the plan.
+- A passband the rig will not take falls back to its normal width, with a `rig: WARNING - the rig would not take a 2400 Hz passband` line; one it sets differently is warned about with what it reports. A dial it refuses is a warning naming where to set the rig by hand.
+- A rigctld that does not answer is a warning, `rig: WARNING - cannot reach rigctld at ...`, and is retried every 1 to 30 seconds. One that goes away mid-session is the same, `rig: WARNING - lost rigctld at ...; reconnecting`. Anything owed while it was away (an unkey, a restore, the plan's dial) is done as soon as it answers.
+- The modem polls the rig every 5 seconds, except while a frame is waiting to go, and journals a dial or mode changed outside it, at most once a minute.
+- A rig that answers with an error (switched off: `RPRT -5`) is treated like a missing rigctld: one warning, then retried quietly until it answers.
+- rigctld started with `--vfo` is not supported: the station says so (`rigctld was started with --vfo, which this station does not speak`) and keeps retrying. Start it without `--vfo`.
+- With `ptt` `rigctld`, the `T 1` round trip over CAT (often 20 to 100 ms, more on a slow serial link) comes out of TXDELAY, because the preamble starts as soon as rigctld answers. Allow for it if the far end misses the start of your frames.
+- A `T 1` that fails is followed at once by `T 0`. An unkey rigctld does not confirm is retried every second with a warning each time, and nothing is keyed or retuned until it goes.
+- Refused: `rig` with a `flex:` or `ubersdr:` device; a `rigctld` that is not `host:port`; a `mode` outside `USB`, `PKTUSB`, `LSB`, `PKTLSB`, `FM`, `FMN`, `PKTFM`, `PKTFMN` (other Hamlib modes are for tuning windows only), or one that disagrees with `sideband`; a `passbandHz` below 0 or above 20000.
+- `POST /api/rig/tune` and `GET /api/rig` need an [`api`](#api) key; see [rig tuning windows](ports-and-endpoints.md#rig-tuning-windows).
+- The rigctld connection has no authentication, which is rigctld's own design. Keep it on loopback or a trusted network.
 
 ## `ubersdr`
 
@@ -664,7 +694,7 @@ Per-device defaults, used for whichever key is absent:
 | Key | Where | What it does |
 |---|---|---|
 | `sideband` | top level | `"usb"`, `"lsb"` or `"fm"`. Which arithmetic turns an RF frequency into an audio one. |
-| `dialFrequency` | top level | Pins the dial in Hz. Absent, the modem chooses one, prints it, and on a headless Flex or a web receiver sets it. |
+| `dialFrequency` | top level | Pins the dial in Hz. Absent, the modem chooses one, prints it, and on a headless Flex, a web receiver or a rig with a `rig` section sets it. |
 | `rfFrequency` | each `modems[]` entry | The modem's place on the band in absolute Hz. All entries or none. |
 
 The arithmetic, per sideband:

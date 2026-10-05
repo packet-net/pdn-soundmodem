@@ -89,6 +89,18 @@ The `hidrawN` in the path it prints is your node, so `/sys/class/hidraw/hidraw0/
 ptt: cm108 /dev/hidraw0 (gpio 3)
 ```
 
+### Through rigctld
+
+```json
+{ "rig": {}, "ptt": { "type": "rigctld" } }
+```
+
+The radio is keyed over its CAT port with Hamlib's `T 1` and `T 0`, so no PTT lead is needed. It needs the `rig` section, see [Other radios through Hamlib](#other-radios-through-hamlib). The CAT round trip comes out of TXDELAY, so a slow serial link may need a longer TXDELAY from your host.
+
+```
+ptt: rigctld 127.0.0.1:4532 (T 1 to key, T 0 to unkey)
+```
+
 ### VOX
 
 Leave the `ptt` section out and the modem keys nothing. The radio's own VOX trips on the transmit audio instead.
@@ -149,6 +161,45 @@ After a transmission the page header shows forward power and SWR, see [07-statio
 
 Every key is in [`flex`](reference/config.md#flex), and the four override flags are under [FlexRadio flags](reference/command-line.md#flexradio-flags).
 
+## Other radios through Hamlib
+
+Any radio Hamlib can drive (most HF rigs from the last twenty years) can have its dial set by the modem, be keyed over CAT, and be retuned for a while and put back. The modem talks to Hamlib's `rigctld`, so start that first:
+
+```sh
+sudo apt install libhamlib-utils
+rigctl -l | grep -i 7300            # find your rig's model number
+rigctld -m 3073 -r /dev/ttyUSB0     # 3073 is an IC-7300
+```
+
+Then add a `rig` section. On its own it looks for rigctld on this machine at port 4532:
+
+```json
+{ "rig": {} }
+```
+
+At start-up the journal says what the rig is on:
+
+```
+rig: rigctld at 127.0.0.1:4532: 7.049450 MHz USB (2400 Hz passband)
+```
+
+With your modems placed by `rfFrequency`, the modem sets the dial and mode from the band plan, as it does on a Flex, instead of asking you to:
+
+```
+rig: setting the rig to 7.049450 MHz USB (2400 Hz passband) from the band plan
+```
+
+Without `rfFrequency` the dial is left where you put it.
+
+- Many rigs only take audio from their data jack in a data mode. Set `"mode": "PKTUSB"` (or `PKTLSB`) for that.
+- The modem asks for a 2400 Hz passband, the window the band plan assumes. If your rig will not set it, the journal says so; `"passbandHz": 0` leaves the rig on its normal width.
+- If rigctld is not running, the journal warns and the station carries on without it, trying again in the background. `"required": true` makes the station wait for it instead.
+- Start rigctld without `--vfo`; the modem does not speak that form.
+
+`POST /api/rig/tune` retunes the rig for a while and always puts it back, for listening to something outside your passband, such as pdn-mailcast's bulletins. While it is retuned the station does not transmit. See [rig tuning windows](reference/ports-and-endpoints.md#rig-tuning-windows).
+
+Every key is in [`rig`](reference/config.md#rig).
+
 ## A web receiver
 
 With no antenna at all, point `device` at a public UberSDR web receiver and the station receives over the internet. It is receive only: no `ptt`, no transmitter test, and frames sent to it over KISS are dropped. Every modem needs an `rfFrequency`, or `dialFrequency` must be set, so the receiver knows where to tune. [09-web-receivers.md](09-web-receivers.md) covers the rest.
@@ -162,7 +213,7 @@ sudo systemctl restart pdn-soundmodem
 journalctl -u pdn-soundmodem -n 30 --no-pager
 ```
 
-You want one `audio:` line naming your device, and one `ptt:` line if you configured one. VOX and Flex stations have none.
+You want one `audio:` line naming your device, and one `ptt:` line if you configured one. VOX and Flex stations have none. With a `rig` section there is also a `rig:` line naming what the rig is on.
 
 ## If it did not
 
@@ -171,6 +222,8 @@ You want one `audio:` line naming your device, and one `ptt:` line if you config
 `cannot open the cm108 PTT device "..."` with `Access to the path '/dev/hidraw0' is denied.` under it means the udev rule is missing or has the wrong IDs. Add it, replug, restart.
 
 `--device flex: keys the radio itself; remove the conflicting --ptt (serial:/cm108:)` means what it says. Delete the `ptt` section. The same goes for `ubersdr:`, which has no transmitter.
+
+`rig: WARNING - cannot reach rigctld at ...` means rigctld is not running, or is on another port. Start it, and the station picks it up within half a minute.
 
 `cannot reach the FlexRadio "..."` means the radio is off, still booting, or on another network. `ping` the address, or open SmartSDR.
 
@@ -183,4 +236,4 @@ Anything else in the journal is in [12-troubleshooting.md](12-troubleshooting.md
 - [07-station-page.md](07-station-page.md) for the mixer, the meters and the transmitter test in the browser.
 - [08-hf.md](08-hf.md) for SSB, band plans and where the dial goes.
 - [hardware/tait-tm8100-cm108.md](hardware/tait-tm8100-cm108.md) for wiring an interface to a TM8100.
-- [reference/config.md](reference/config.md) for `device`, `ptt`, `alsa`, `flex` and `ubersdr` key by key.
+- [reference/config.md](reference/config.md) for `device`, `ptt`, `alsa`, `flex`, `rig` and `ubersdr` key by key.

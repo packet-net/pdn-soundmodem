@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Modems;
+using Packet.SoundModem.Rig;
 
 namespace Packet.SoundModem.Daemon;
 
@@ -50,6 +51,7 @@ internal sealed class ConfigApi
     private string? _txLeaseCannot;
     private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
     private MixerRuntime? _mixer;
+    private RigControl? _rig;
     private string _mixerWhyNot = "this station has no sound-card mixer";
 
     /// <summary>One mixer change at a time; see the wait in <see cref="MixerAsync"/>.</summary>
@@ -121,6 +123,32 @@ internal sealed class ConfigApi
         _txLease = channel;
         _hasModem = channel.Modems.ContainsKey;
         _txLeaseCannot = cannot;
+    }
+
+    // ---------------------------------------------------------------- rig
+    /// <summary>
+    /// Serves the station's rig at <c>/api/rig</c> and <c>/api/rig/tune</c>. See <see cref="RigApi"/>.
+    /// Without it both answer 404, saying the station has no <c>rig</c> section.
+    /// </summary>
+    public void ServeRig(RigControl rig) => _rig = rig;
+
+    private async Task RigAsync(HttpListenerContext context, string path)
+    {
+        if (_rig is null)
+        {
+            await RespondAsync(context, 404,
+                "this station has no \"rig\" section, so it controls no rig").ConfigureAwait(false);
+            return;
+        }
+
+        string body;
+        using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
+        {
+            body = await reader.ReadToEndAsync().ConfigureAwait(false);
+        }
+
+        (int status, JsonObject answer) = RigApi.Handle(_rig, path, context.Request.HttpMethod, body);
+        await RespondJsonAsync(context, status, answer.ToJsonString(Pretty)).ConfigureAwait(false);
     }
 
     private async Task TxLeaseAsync(HttpListenerContext context)
@@ -460,7 +488,8 @@ internal sealed class ConfigApi
     /// </param>
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
-        if (path is not ("/api/config" or "/api/proposals" or "/api/txtest" or "/api/txlease" or "/api/mixer"))
+        if (path is not ("/api/config" or "/api/proposals" or "/api/txtest" or "/api/txlease" or "/api/mixer"
+            or "/api/rig" or "/api/rig/tune"))
         {
             return false;
         }
@@ -493,6 +522,12 @@ internal sealed class ConfigApi
         if (path is "/api/txtest")
         {
             await GuardedAsync(context, () => TxTestAsync(context)).ConfigureAwait(false);
+            return true;
+        }
+
+        if (path is "/api/rig" or "/api/rig/tune")
+        {
+            await GuardedAsync(context, () => RigAsync(context, path)).ConfigureAwait(false);
             return true;
         }
 
