@@ -220,4 +220,103 @@ public class TurnaroundHoldTests
         {
         }
     }
+
+    /// <summary>A fake clock that says when something starts waiting on it.</summary>
+    private sealed class WatchedClock(FakeTimeProvider inner) : TimeProvider
+    {
+        private TaskCompletionSource<TimeSpan> _waited = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<TimeSpan> NextWait => Volatile.Read(ref _waited).Task;
+
+        public void Rearm() => Volatile.Write(ref _waited, new(TaskCreationOptions.RunContinuationsAsynchronously));
+
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            ITimer timer = inner.CreateTimer(callback, state, dueTime, period);
+            if (dueTime > TimeSpan.Zero && dueTime != Timeout.InfiniteTimeSpan)
+            {
+                Volatile.Read(ref _waited).TrySetResult(dueTime);
+            }
+
+            return timer;
+        }
+    }
+
+    /// <summary>Records the length of everything the transmitter writes, in order.</summary>
+    private sealed class LengthRecorder(int sampleRate) : IAudioOutput
+    {
+        public List<int> Lengths { get; } = [];
+
+        public int SampleRate { get; } = sampleRate;
+
+        public void Write(ReadOnlySpan<float> samples)
+        {
+            lock (Lengths)
+            {
+                Lengths.Add(samples.Length);
+            }
+        }
+
+        public void Drain()
+        {
+        }
+    }
+
+    [Fact]
+    public async Task The_Holds_Owner_Does_Not_Jump_A_Frame_Already_Waiting_Out_Its_Hold()
+    {
+        // The order a node's two ports get the air in. During a hold the transmitter sleeps until
+        // the hold ends, so a new frame from the link that owns the hold waits too, and when the
+        // hold ends the frame that was already waiting goes first. On a frozen clock: nothing can
+        // end the hold until the test advances it, so the order is the scheduler's alone.
+        var fake = new FakeTimeProvider();
+        var clock = new WatchedClock(fake);
+        var channel = new SoundModemChannel(SampleRate, clock, randomSeed: 42);
+        channel.AddModem(0, sink => new Afsk300MultiModem(SampleRate, sink, Afsk300Framing.Il2pCrc, 850, 5));
+        channel.AddModem(2, sink => new BpskMultiModem(SampleRate, sink, crc: true, 2150, baud: 300, offsetPairs: 4));
+        channel.Csma.Persistence = 255;
+        channel.QuietAfterTransmit = (_, frame) =>
+            Ax25ReplyExpectation.ExpectsReply(frame) ? channel.TurnaroundHold : null;
+
+        var output = new LengthRecorder(SampleRate);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        Task firstPoll = channel.EnqueueTransmit(2, Poll());
+        Task transmitter = channel.RunTransmitterAsync(output, new RecordingPtt(), cancellation.Token);
+        await firstPoll.WaitAsync(TimeSpan.FromMinutes(1));
+
+        // The other port's frame, much longer than a poll so its burst is easy to tell apart.
+        clock.Rearm();
+        byte[] waiting = [.. Broadcast(), .. new byte[60]];
+        Task other = channel.EnqueueTransmit(0, waiting);
+        TimeSpan hold = await clock.NextWait.WaitAsync(TimeSpan.FromMinutes(1));
+        hold.Should().BeGreaterThan(TimeSpan.Zero, "the transmitter is now sleeping out the hold");
+
+        // The owner's next poll, during the hold. It must stay queued: the clock is frozen, so
+        // nothing correct can send it. The second here is a window for a wrong scheduler to show
+        // itself in, not a pace - a correct one cannot fail this however loaded the box is.
+        Task secondPoll = channel.EnqueueTransmit(2, Poll());
+        await Task.WhenAny(secondPoll, Task.Delay(TimeSpan.FromSeconds(1), CancellationToken.None));
+        secondPoll.IsCompleted.Should().BeFalse("a new frame from the hold's owner waits for the hold too");
+        fake.Advance(channel.TurnaroundHold + TimeSpan.FromMilliseconds(100));
+        await Task.WhenAll(other, secondPoll).WaitAsync(TimeSpan.FromMinutes(1));
+        await cancellation.CancelAsync();
+        await Ignore(transmitter);
+
+        int tail = SampleRate * channel.Csma.TxTailMilliseconds / 1000;
+        List<int> bursts;
+        lock (output.Lengths)
+        {
+            bursts = output.Lengths.Where(length => length != tail).ToList();
+        }
+
+        bursts.Should().HaveCount(3);
+        bursts[1].Should().BeGreaterThan(bursts[2],
+            "the other port's frame was waiting first, so it goes first once the hold ends");
+    }
 }

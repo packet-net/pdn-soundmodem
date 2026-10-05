@@ -98,6 +98,8 @@ modem 0: SETHW ignored - the modem on port 0 has no hardware settings
 
 An ACKMODE frame's payload is `id_lo id_hi data...`. The data is transmitted as a data frame would be, and once its audio has been handed to the sound card (at most one card buffer, 120 ms, before it has finished playing; the keyup is still holding the channel) the two id bytes come back to the host that sent them, alone, in a command `12` frame under the port's own sub-channel (0 on a per-modem or polyglot port). An id with no data is acknowledged at once. A frame the channel refuses gets no acknowledgement; the journal carries the `DROPPED` line.
 
+On a modem with [`maxBurstSeconds`](config.md#modems) set, frames sent together share one burst. Each is still acknowledged on its own, but the acknowledgements for one burst all arrive together, once the whole burst has been handed to the card, which can be up to `maxBurstSeconds` after the first frame starts. A host that wants its frames packed should write a burst's worth at a time; the modem waits `burstGatherSeconds` after the first for the rest to arrive. Packing is for UI broadcast such as pdn-mailcast. Don't put connected-mode (AX.25 I-frame) traffic on a packing port: its timers expect each frame to go out and be answered on its own.
+
 ### Quality frames
 
 With `--quality-frames` on the command line (there is no config key), every data frame delivered to a port is followed by a command `7` frame on the same sub-channel carrying UTF-8 JSON. Keys are present only when the modem measured them. A frame the station decoded and held back from hosts gets no quality frame.

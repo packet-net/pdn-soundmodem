@@ -214,6 +214,33 @@ internal static class StationFactory
             }
 
             journal.Write($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");
+            if (modemConfig.MaxBurstSeconds is double maxBurst)
+            {
+                double gather = modemConfig.BurstGatherSeconds ?? ModemConfig.DefaultBurstGatherSeconds;
+                if (channel.Modems[subChannel] is not IFramePackingModem packer)
+                {
+                    journal.WriteError(
+                        $"modem {subChannel}: mode '{mode}' sends one frame per burst - drop \"maxBurstSeconds\"");
+                    return false;
+                }
+
+                try
+                {
+                    packer.Packing = new FramePacking(
+                        TimeSpan.FromSeconds(maxBurst), TimeSpan.FromSeconds(gather));
+                }
+                catch (Exception refused) when (refused is ArgumentException or InvalidOperationException)
+                {
+                    journal.WriteError($"modem {subChannel}: mode '{mode}' will not pack frames");
+                    journal.WriteError($"  {refused.Message}");
+                    return false;
+                }
+
+                journal.Write(
+                    $"modem {subChannel}: frames queued together share one burst, up to {maxBurst:0.###} s "
+                    + $"(gathering for {gather:0.###} s first)");
+            }
+
             if (mode.StartsWith("ms110d-wn", StringComparison.Ordinal)
                 && int.TryParse(mode.AsSpan("ms110d-wn".Length), out int wn)
                 && Packet.SoundModem.Ms110d.Ms110dModem.PoorStatusNote(wn) is { } poorNote)
