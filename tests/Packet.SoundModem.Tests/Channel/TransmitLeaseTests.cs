@@ -642,11 +642,24 @@ public class TransmitLeaseTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         Task transmitter = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), ptt, cancellation.Token);
 
-        // The first time carrier sense finds the channel busy starts the wait; one slot's timer is
-        // then pending, and moving the clock past the limit lets that slot end with the wait over.
+        // The first time carrier sense finds the channel busy starts the wait. The clock is then
+        // cranked rather than jumped: each slot's wait is set on the transmitter's own thread, and
+        // a jump taken before one was set would be a jump nothing was waiting for.
+        frame.IsCompleted.Should().BeFalse("the channel is busy and the clock has not moved");
         await busy.Asked.Task.WaitAsync(TimeSpan.FromMinutes(1));
-        time.Advance(TimeSpan.FromSeconds(31));
+        using var crank = new CancellationTokenSource();
+        _ = Task.Run(
+            async () =>
+            {
+                while (!crank.IsCancellationRequested)
+                {
+                    VirtualAir.Tick(time, TimeSpan.FromMilliseconds(100));
+                    await Task.Delay(1, CancellationToken.None);
+                }
+            },
+            CancellationToken.None);
         await frame.WaitAsync(TimeSpan.FromMinutes(1));
+        await crank.CancelAsync();
         await cancellation.CancelAsync();
         try
         {
