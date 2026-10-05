@@ -431,4 +431,101 @@ public class PackedBurstTests
         {
         }
     }
+
+    /// <summary>A modem that holds the channel busy until told, and logs every time carrier
+    /// sense asks it.</summary>
+    private sealed class LoggingBusyModem(List<string> log) : IModem
+    {
+        private volatile bool _busy = true;
+
+        public TaskCompletionSource Asked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public string Mode => "busy";
+
+        public event Action<byte[], FrameQuality>? FrameDecoded
+        {
+            add { }
+            remove { }
+        }
+
+        public bool CarrierDetect => false;
+
+        public bool ChannelBusy
+        {
+            get
+            {
+                lock (log)
+                {
+                    log.Add(_busy ? "asked busy" : "asked clear");
+                }
+
+                Asked.TrySetResult();
+                return _busy;
+            }
+        }
+
+        public void Clear() => _busy = false;
+
+        public void Process(ReadOnlySpan<float> samples)
+        {
+        }
+
+        public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds) => [];
+
+        public void ResetCarrierState()
+        {
+        }
+    }
+
+    [Fact]
+    public async Task A_Burst_That_Must_Be_Rendered_Again_Is_Rendered_Before_Carrier_Sense_Not_After()
+    {
+        // TXDELAY changes while the burst waits out a busy channel, so the audio it was rendered
+        // with is stale by the time the channel clears. It must be rendered again and the channel
+        // asked again afterwards: a render after the last check would key on an old reading.
+        var log = new List<string>();
+        var packer = new FakePacker { Packing = Packing() };
+        packer.Rendering = n =>
+        {
+            lock (log)
+            {
+                log.Add($"render {n}");
+            }
+        };
+        var busy = new LoggingBusyModem(log);
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 42);
+        channel.AddModem(0, _ => packer);
+        channel.AddModem(1, _ => busy);
+        channel.Csma.Persistence = 255;
+        channel.Csma.SlotTimeMilliseconds = 0;
+
+        Task send = channel.EnqueueTransmit(0, UiFrame(1, 20));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        Task transmitter = channel.RunTransmitterAsync(new BurstRecorder(SampleRate), new LoggingPtt(log), cancellation.Token);
+        await busy.Asked.Task.WaitAsync(TimeSpan.FromMinutes(1));
+        channel.Csma.TxDelayMilliseconds = 120;
+        busy.Clear();
+        await send.WaitAsync(TimeSpan.FromMinutes(1));
+        await cancellation.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        List<string> events;
+        lock (log)
+        {
+            events = [.. log];
+        }
+
+        int key = events.IndexOf("key");
+        int secondRender = events.IndexOf("render 2");
+        secondRender.Should().BeGreaterThan(-1, "the stale burst is rendered again");
+        secondRender.Should().BeLessThan(key);
+        events.FindLastIndex(key, e => e == "asked clear").Should().BeGreaterThan(secondRender,
+            "the channel is asked again after the render, so the keyup follows a fresh reading");
+    }
 }

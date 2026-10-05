@@ -1902,55 +1902,65 @@ public sealed class SoundModemChannel
         }
 
         double trim = lead.ChooseTrim();
-        float[] audio = ApplyTransmitTrim(lead.Packer.ModulateFrames(burst, txDelay), trim);
-        return new PackedAudio(items, audio, trim);
+        float[] modulated;
+
+        // One render at a time per modem whatever the bookkeeping says: a modem's resampler
+        // carries state from one burst to the next and is not safe across threads.
+        lock (RenderGate(lead.Packer))
+        {
+            modulated = lead.Packer.ModulateFrames(burst, txDelay);
+        }
+
+        return new PackedAudio(items, ApplyTransmitTrim(modulated, trim), trim);
     }
+
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, object> _renderGates = [];
+
+    private object RenderGate(IFramePackingModem packer) => _renderGates.GetValue(packer, _ => new object());
 
     /// <summary>
     /// Takes a packing transmitter's next burst off its queue, with its audio, ready to key for;
-    /// or null when there is nothing left to send.
+    /// or null when there is nothing ready to send, in which case the loop goes round again.
     /// </summary>
     /// <remarks>
-    /// The render was made from the queue as it stood a moment ago, so the frames it carries are
-    /// taken only while they are still at the head in the same order. Something taken out of the
-    /// queue in between (a refusal, a redundant frame removed) leaves a shorter run, which is
-    /// rendered again, before the keyup, from what was actually taken. A render that failed is
-    /// refused at the same point, frame by frame, as the modem's refusal of a lone frame always
-    /// has been.
+    /// <para>The render was made from the queue as it stood a moment ago, so the frames it carries
+    /// are taken only while they are still at the head in the same order. If part of the run has
+    /// left the queue since (a refusal, a redundant frame removed), or TXDELAY has changed, what
+    /// was taken goes back and the burst is rendered again before it contends. It is never
+    /// rendered here: that would key the radio seconds after carrier sense said the channel was
+    /// clear.</para>
+    /// <para>A render that failed is refused here, frame by frame, as the modem's refusal of a
+    /// lone frame always has been.</para>
     /// </remarks>
     private async Task<PackedAudio?> TakePackedBurstAsync(object source)
     {
         PackedRender? render;
         lock (_txGate)
         {
-            _packedRenders.Remove(source, out render);
+            _packedRenders.TryGetValue(source, out render);
+            if (render is not null && render.Result.IsCompleted)
+            {
+                _packedRenders.Remove(source);
+            }
         }
 
-        int txDelay = Csma.TxDelayMilliseconds;
+        if (render is null || !render.Result.IsCompleted || render.TxDelay != Csma.TxDelayMilliseconds)
+        {
+            return null;
+        }
+
         PackedAudio? rendered = null;
         Exception? failed = null;
         TxItem[] wanted;
-        if (render is not null && render.TxDelay == txDelay)
+        try
         {
-            try
-            {
-                rendered = await render.Result.ConfigureAwait(false);
-                wanted = rendered.Items;
-            }
-            catch (Exception failure) when (failure is not OperationCanceledException)
-            {
-                failed = failure;
-                wanted = [render.Head];
-            }
+            rendered = await render.Result.ConfigureAwait(false);
+            wanted = rendered.Items;
         }
-        else
+        catch (Exception failure) when (failure is not OperationCanceledException)
         {
-            lock (_txGate)
-            {
-                wanted = _txQueues.TryGetValue(source, out Queue<TxItem>? queue) && queue.Count > 0
-                    ? PackedCandidatesLocked(queue)
-                    : [];
-            }
+            failed = failure;
+            wanted = [render.Head];
         }
 
         var taken = new List<TxItem>(wanted.Length);
@@ -1969,25 +1979,6 @@ public sealed class SoundModemChannel
             return null;
         }
 
-        if (failed is null && (rendered is null || taken.Count != rendered.Items.Length))
-        {
-            try
-            {
-                rendered = await Task.Run(() => RenderPacked([.. taken], txDelay)).ConfigureAwait(false);
-                if (rendered.Items.Length != taken.Count)
-                {
-                    // Sized shorter than what was taken (only possible if the modem's limit moved
-                    // in between): the frames it left out go back to the head of the queue.
-                    PutBack(source, taken.Skip(rendered.Items.Length));
-                    taken.RemoveRange(rendered.Items.Length, taken.Count - rendered.Items.Length);
-                }
-            }
-            catch (Exception failure) when (failure is not OperationCanceledException)
-            {
-                failed = failure;
-            }
-        }
-
         if (failed is not null)
         {
             foreach (TxItem refused in taken)
@@ -1998,6 +1989,12 @@ public sealed class SoundModemChannel
             }
 
             return new PackedAudio([], [], 0);
+        }
+
+        if (taken.Count != wanted.Length)
+        {
+            PutBack(source, taken);
+            return null;
         }
 
         return rendered;
@@ -2248,7 +2245,16 @@ public sealed class SoundModemChannel
             _txQueues.Clear();
             _txOrder.Clear();
             _waitLedgers.Clear();
-            _packedRenders.Clear();
+
+            // Finished renders only. A running one keeps its record until it ends, so nothing
+            // queued afterwards starts a second render of the same modem alongside it.
+            foreach (object rendering in _packedRenders.Keys.ToArray())
+            {
+                if (_packedRenders[rendering].Result.IsCompleted)
+                {
+                    _packedRenders.Remove(rendering);
+                }
+            }
             foreach (TxItem item in queued)
             {
                 // Same reasoning as TakeFrom: never Dispose under this lock.
@@ -2320,11 +2326,20 @@ public sealed class SoundModemChannel
                     // that is not ready yet is passed over, not waited for, so a frame for anyone
                     // else must be able to wake this wait.
                     //
-                    // With neither of those, it is the hold, exactly as before: including a hold
-                    // that ran out between the two questions, which RemainingHold answers with a
-                    // one-millisecond wait rather than a wait for nothing.
+                    // With neither of those it is the hold alone, waited out exactly as it always
+                    // was: asleep until it ends, deaf to new frames. That is load-bearing for the
+                    // order ports get the air in. A new frame from the link that owns the hold
+                    // waits too, so the frame another port had already queued goes first when
+                    // the hold ends.
                     bool packing = gatherEnds is not null || PackedRenderPending();
-                    bool holding = !packing || HoldActive();
+                    if (!packing)
+                    {
+                        EnterWait(WaitSlot.TurnaroundHold, null);
+                        await Delay(RemainingHold(), cancellation).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    bool holding = HoldActive();
                     EnterWait(holding ? WaitSlot.TurnaroundHold : WaitSlot.Unattributed, null);
                     TimeSpan? until = holding ? RemainingHold() : null;
                     if (gatherEnds is { } gather && (until is null || gather < until))
