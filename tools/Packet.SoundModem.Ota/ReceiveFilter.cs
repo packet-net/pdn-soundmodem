@@ -231,9 +231,13 @@ internal sealed class ReceiveFilter
         // skirt (a crystal's lower -60 dB point can sit below 0 Hz audio).
         double centre = (LowHz + HighHz) / 2;
         string lower = lo60 <= 1 ? "below 0" : lo60.ToString("0", CultureInfo.InvariantCulture);
+        string delay = Kind == ReceiveFilterKind.Dsp
+            ? "group delay flat (linear phase)"
+            : string.Create(CultureInfo.InvariantCulture,
+                $"group delay {gdMin:0.00}-{gdMax:0.00} ms inside -6 dB (+-50 Hz)");
         return string.Create(CultureInfo.InvariantCulture,
             $"{Name}: -6 dB {lo6:0}-{hi6:0} Hz, -60 dB {lower}-{hi60:0} Hz, shape factor (6/60 dB) "
-            + $"{2 * (hi60 - centre) / (hi6 - lo6):0.00}, group delay {gdMin:0.00}-{gdMax:0.00} ms inside -6 dB (+-50 Hz)");
+            + $"{2 * (hi60 - centre) / (hi6 - lo6):0.00}, {delay}");
     }
 
     /// <summary>The outermost frequencies where the gain falls through <paramref name="db"/>.</summary>
