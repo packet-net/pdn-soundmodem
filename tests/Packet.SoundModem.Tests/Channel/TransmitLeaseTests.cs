@@ -293,62 +293,17 @@ public class TransmitLeaseTests
         channel.TransmitLease.Holder.Should().BeNull();
     }
 
-    /// <summary>A packing modem whose second render is held until the test lets it go.</summary>
-    private sealed class HeldPacker : IModem, IFramePackingModem
+    /// <summary>A modem that tells carrier sense the channel is clear, and runs the test's hook
+    /// the first time it does, before the transmitter can act on the answer.</summary>
+    private sealed class ClearingModem(Action onFirstClear) : IModem
     {
-        private int _renders;
+        private int _asked;
 
-        public TaskCompletionSource SecondRenderStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public volatile bool Armed;
 
-        public ManualResetEventSlim ReleaseSecondRender { get; } = new();
+        public bool Fired => Volatile.Read(ref _asked) == 1;
 
-        public string Mode => "held-packer";
-
-        public event Action<byte[], FrameQuality>? FrameDecoded
-        {
-            add { }
-            remove { }
-        }
-
-        public bool CarrierDetect => false;
-
-        public bool ChannelBusy => false;
-
-        public FramePacking? Packing { get; set; } =
-            new(TimeSpan.FromSeconds(30), TimeSpan.Zero);
-
-        public void Process(ReadOnlySpan<float> samples)
-        {
-        }
-
-        public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds) => new float[100];
-
-        public void ResetCarrierState()
-        {
-        }
-
-        public int FramesPerBurst(IReadOnlyList<byte[]> frames) => frames.Count;
-
-        public float[] ModulateFrames(IReadOnlyList<byte[]> frames, int txDelayMilliseconds)
-        {
-            if (Interlocked.Increment(ref _renders) == 2)
-            {
-                SecondRenderStarted.TrySetResult();
-                ReleaseSecondRender.Wait(TimeSpan.FromMinutes(2));
-            }
-
-            return new float[1000];
-        }
-    }
-
-    /// <summary>Something on the channel the test can make busy, so the transmitter waits, and
-    /// which says when carrier sense has asked it.</summary>
-    private sealed class BusyModem : IModem
-    {
-        private volatile bool _busy = true;
-
-        public TaskCompletionSource Asked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public string Mode => "busy";
+        public string Mode => "clearing";
 
         public event Action<byte[], FrameQuality>? FrameDecoded
         {
@@ -362,12 +317,14 @@ public class TransmitLeaseTests
         {
             get
             {
-                Asked.TrySetResult();
-                return _busy;
+                if (Armed && Interlocked.Exchange(ref _asked, 1) == 0)
+                {
+                    onFirstClear();
+                }
+
+                return false;
             }
         }
-
-        public void Clear() => _busy = false;
 
         public void Process(ReadOnlySpan<float> samples)
         {
@@ -380,44 +337,71 @@ public class TransmitLeaseTests
         }
     }
 
-    [Fact]
-    public async Task A_Lease_Taken_While_A_Burst_Is_In_Hand_Refuses_It_Before_The_Radio_Keys()
+    /// <summary>A packing modem that renders instantly.</summary>
+    private sealed class QuickPacker : IModem, IFramePackingModem
     {
-        // The window the take-time sweep cannot see: the transmitter has won the channel, taken
-        // the burst off the queue and is rendering it again (its TXDELAY changed while it waited),
-        // and only then is the lease taken. The last check before the key must refuse it.
-        var channel = new SoundModemChannel(SampleRate, randomSeed: 42);
-        var packer = new HeldPacker();
-        var busy = new BusyModem();
-        channel.AddModem(0, _ => packer);
-        channel.AddModem(1, _ => busy);
-        channel.Csma.Persistence = 255;
-        channel.Csma.SlotTimeMilliseconds = 0; // carrier sense re-asks at once, with no clock in it
+        public string Mode => "quick-packer";
 
-        var refused = new List<int>();
-        channel.TransmitRejected += (sub, _, _) => { lock (refused) { refused.Add(sub); } };
+        public event Action<byte[], FrameQuality>? FrameDecoded
+        {
+            add { }
+            remove { }
+        }
+
+        public bool CarrierDetect => false;
+
+        public bool ChannelBusy => false;
+
+        public FramePacking? Packing { get; set; } = new(TimeSpan.FromSeconds(30), TimeSpan.Zero);
+
+        public void Process(ReadOnlySpan<float> samples)
+        {
+        }
+
+        public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds) => new float[100];
+
+        public void ResetCarrierState()
+        {
+        }
+
+        public int FramesPerBurst(IReadOnlyList<byte[]> frames) => frames.Count;
+
+        public float[] ModulateFrames(IReadOnlyList<byte[]> frames, int txDelayMilliseconds) => new float[1000];
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_Lease_Taken_As_The_Channel_Clears_Is_Honoured_Before_The_Radio_Keys(bool packing)
+    {
+        // The latest moment a lease can arrive: carrier sense is answering "clear" for a frame
+        // that is about to key. Whatever the transmitter already holds or still has queued, the
+        // radio must not key for a sub-channel the lease does not cover.
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 42);
+        if (packing)
+        {
+            channel.AddModem(0, _ => new QuickPacker());
+        }
+        else
+        {
+            channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        }
+
+        var clearing = new ClearingModem(() => channel.TransmitLease.Take(1, TimeSpan.FromSeconds(60)));
+        channel.AddModem(1, _ => clearing);
+        channel.Csma.Persistence = 255;
+
         Task frame = channel.EnqueueTransmit(0, Frame(0x41));
+        frame.IsCompleted.Should().BeFalse("queued before any lease exists");
+        clearing.Armed = true;
         var ptt = new RecordingPtt();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         Task transmitter = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), ptt, cancellation.Token);
 
-        // Carrier sense is only asked once the first render (TXDELAY 300) is done and the burst is
-        // contending. While the busy channel holds it there, the host changes TXDELAY, so the
-        // burst taken once the channel clears has to be rendered again - and that render is held.
-        // Awaited rather than blocked on, so a busy thread pool is not made busier by this test,
-        // and the bounds below fail a broken run; they never pace a passing one.
-        await busy.Asked.Task.WaitAsync(TimeSpan.FromMinutes(2));
-        channel.Csma.TxDelayMilliseconds = 120;
-        busy.Clear();
-        await packer.SecondRenderStarted.Task.WaitAsync(TimeSpan.FromMinutes(2));
-
-        channel.TransmitLease.Take(1, TimeSpan.FromSeconds(60));
-        packer.ReleaseSecondRender.Set();
-
-        Func<Task> waiting = () => frame.WaitAsync(TimeSpan.FromSeconds(30));
+        Func<Task> waiting = () => frame.WaitAsync(TimeSpan.FromMinutes(1));
         await waiting.Should().ThrowAsync<InvalidOperationException>();
-        ptt.Events.Should().BeEmpty("nothing keys for a burst the lease does not cover");
-        refused.Should().Equal(0);
+        clearing.Fired.Should().BeTrue("the lease arrived from inside carrier sense");
+        ptt.Events.Should().BeEmpty("nothing keys for a frame the lease does not cover");
 
         await cancellation.CancelAsync();
         try

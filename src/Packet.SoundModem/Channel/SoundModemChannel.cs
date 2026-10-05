@@ -2383,7 +2383,12 @@ public sealed class SoundModemChannel
             }
         }
 
-        _packedRenders.Remove(source);
+        // A render still running keeps its record: it is what stops a second render of the same
+        // modem starting alongside it (see PackedReadyLocked).
+        if (_packedRenders.TryGetValue(source, out PackedRender? render) && render.Result.IsCompleted)
+        {
+            _packedRenders.Remove(source);
+        }
     }
 
     /// <summary>Gives each of <paramref name="items"/> the lease's refusal. Never under the lock.</summary>
