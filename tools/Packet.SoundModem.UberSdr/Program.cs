@@ -68,7 +68,7 @@ try
     return 0;
 }
 catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or HttpRequestException
-                           or IOException or UberSdrRefusedException)
+                           or IOException or UberSdrConnectionRefusedException)
 {
     Console.Error.WriteLine($"error: {ex.Message}");
     return 1;

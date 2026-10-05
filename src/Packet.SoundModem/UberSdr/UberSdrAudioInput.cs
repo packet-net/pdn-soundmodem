@@ -161,6 +161,8 @@ public sealed class UberSdrAudioInput : IUberSdrSession
     /// </summary>
     /// <exception cref="InvalidOperationException">The receiver refused the connection or the
     /// requested IQ mode; the message is written for an operator to act on.</exception>
+    /// <exception cref="UberSdrRefusedException">The receiver refused the first connection with
+    /// HTTP 429 (rate limited or out of daily quota): wait and try again later.</exception>
     public static Task<UberSdrAudioInput> OpenAsync(
         UberSdrEndpoint endpoint,
         UberSdrTuning tuning,

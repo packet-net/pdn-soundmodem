@@ -1,11 +1,5 @@
 namespace Packet.SoundModem.UberSdr;
 
-/// <summary>The receiver answered and said no for now - HTTP 429 on the stream upgrade.
-/// Carries no blame: quota and rate limits are the receiver's to enforce, and the right
-/// response is a long wait, not a restart.</summary>
-internal sealed class UberSdrRefusedException(string message, Exception inner)
-    : Exception(message, inner);
-
 /// <summary>How the last connection attempt or session ended, as far as pacing the next
 /// attempt is concerned.</summary>
 internal enum UberSdrReconnectOutcome
