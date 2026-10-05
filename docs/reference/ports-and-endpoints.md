@@ -98,7 +98,7 @@ modem 0: SETHW ignored - the modem on port 0 has no hardware settings
 
 An ACKMODE frame's payload is `id_lo id_hi data...`. The data is transmitted as a data frame would be, and once its audio has been handed to the sound card (at most one card buffer, 120 ms, before it has finished playing; the keyup is still holding the channel) the two id bytes come back to the host that sent them, alone, in a command `12` frame under the port's own sub-channel (0 on a per-modem or polyglot port). An id with no data is acknowledged at once. A frame the channel refuses gets no acknowledgement; the journal carries the `DROPPED` line.
 
-On a modem with [`maxBurstSeconds`](config.md#modems) set, frames sent together share one burst. Each is still acknowledged on its own, but the acknowledgements for one burst all arrive together, once the whole burst has been handed to the card, which can be up to `maxBurstSeconds` after the first frame starts. A host that wants its frames packed should write a burst's worth at a time; the modem waits `burstGatherSeconds` after the first for the rest to arrive. Packing is for UI broadcast such as pdn-mailcast. Don't put connected-mode (AX.25 I-frame) traffic on a packing port: its timers expect each frame to go out and be answered on its own.
+On a modem with [`maxBurstSeconds`](config.md#modems) set, frames sent together share one burst. Each is still acknowledged on its own, but the acknowledgements for one burst all arrive together, once the whole burst has been handed to the card, which can be up to `maxBurstSeconds` after the first frame starts. A host that wants its frames packed should write a burst's worth at a time; the modem waits `burstGatherSeconds` after the first for the rest to arrive. Packing is for runs of UI frames such as pdn-mailcast's. Don't put connected-mode (AX.25 I-frame) traffic on a packing port: its timers expect each frame to go out and be answered on its own.
 
 ### Quality frames
 
@@ -246,7 +246,7 @@ Run outside systemd, an applied configuration stops the modem rather than restar
 
 ### The transmit lease
 
-A lease gives one sub-channel the radio's transmitter for a while, so a broadcast can run on a station that also serves ordinary packet traffic. pdn-mailcast's head end uses it for its daily slot: it takes a 60 s lease for its own modem, renews it every 30 s, and releases it at the end, naming its sub-channel so a late release can never free somebody else's lease.
+A lease gives one sub-channel the radio's transmitter for a while, so a scheduled transmission can run on a station that also serves ordinary packet traffic. pdn-mailcast's head end uses it for its daily slot: it takes a 60 s lease for its own modem, renews it every 30 s, and releases it at the end, naming its sub-channel so a late release can never free somebody else's lease.
 
 - One lease at a time. `seconds` defaults to 60 and is capped at 300; ask again before it runs out to renew it.
 - While it is held, frames for every other sub-channel are refused the moment they arrive, never queued, so nothing stale goes out afterwards and AX.25 simply retries. Frames other modems had already queued are refused when the lease is taken. Refusals reach the journal as the usual rate-limited `DROPPED` line, `sub-channel N holds the transmit lease, so other transmissions are refused until it ends`; an ACKMODE frame refused this way is not acknowledged.
