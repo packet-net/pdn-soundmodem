@@ -65,11 +65,25 @@ public sealed class MailcastRetuneTests : IAsyncDisposable
             Time = _time,
             Plan = Plan,
             RestoreFile = RestorePath,
+            // Generous, because these are real socket waits: a busy CI runner once took longer
+            // than the default 3 s to answer the first connection.
+            ConnectTimeout = TimeSpan.FromSeconds(30),
+            ReplyTimeout = TimeSpan.FromSeconds(30),
         });
         rig.Journal += _journal.Enqueue;
         rig.Problem += _journal.Enqueue;
         _rigs.Add(rig);
-        (await rig.StartAsync(CancellationToken.None)).Should().BeTrue();
+        if (!await rig.StartAsync(CancellationToken.None))
+        {
+            // Not this test's subject: let the rig's own backoff bring it up on the fake clock.
+            for (int look = 0; look < 2000 && !rig.Connected; look++)
+            {
+                _time.Advance(TimeSpan.FromSeconds(1));
+                await Task.Delay(5);
+            }
+        }
+
+        await Eventually(() => rig.Connected && !rig.HoldsTransmitter && _fake.DialHz == Plan.DialHz, "the rig is up on the station's own dial");
         return rig;
     }
 
