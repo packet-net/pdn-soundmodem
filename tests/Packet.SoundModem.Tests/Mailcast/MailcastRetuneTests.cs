@@ -280,7 +280,9 @@ public sealed class MailcastRetuneTests : IAsyncDisposable
         await Eventually(() => retuner.Listening, "the window is open");
 
         // A lease outranks the inhibit, so its holder's frames get as far as the PTT, which refuses them.
-        channel.TransmitLease.Take(0, TimeSpan.FromSeconds(60)).Granted.Should().BeTrue();
+        // Long enough (the lease caps it at five minutes) that no stall between the 50 ms clock
+        // steps below can let it lapse.
+        channel.TransmitLease.Take(0, TimeSpan.FromMinutes(30)).Granted.Should().BeTrue();
         Task leased = channel.EnqueueTransmit(0, MailcastSlotAudio.Ui("GB7RDG", "MCAST", "x"u8));
         await Pump(() => leased.IsCompleted, "the lease holder's frame answered");
         Func<Task> leasedWait = () => leased;
