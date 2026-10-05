@@ -149,6 +149,14 @@ public sealed class ModemConfig
     /// </summary>
     public double? BurstGatherSeconds { get; set; }
 
+    /// <summary>
+    /// <c>ms110d-*</c> only: the transmit level, the scale on the symbol stream before pulse
+    /// shaping, above 0 and at most 1. Absent means the modem's default of 0.5, which peaks at
+    /// about 0.38 of full scale (the waveform's peak-to-average ratio is about 6.5 dB); 1.0 peaks
+    /// at about 0.75, close to the transmit test tone's 0.8.
+    /// </summary>
+    public double? TxAmplitude { get; set; }
+
     /// <summary>The longest packed burst a configuration may ask for.</summary>
     public const double MaxBurstSecondsCeiling = 120;
 
@@ -1699,6 +1707,24 @@ public sealed class DaemonConfig
                      .Where(m => m.MaxBurstSeconds is not null || m.BurstGatherSeconds is not null))
         {
             ValidatePacking(packing);
+        }
+
+        foreach (ModemConfig levelled in config.Modems.Where(m => m.TxAmplitude is not null))
+        {
+            double level = levelled.TxAmplitude!.Value;
+            if (!levelled.Mode.StartsWith("ms110d-", StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    $"modem {levelled.SubChannel} is \"mode\": \"{levelled.Mode}\" with \"txAmplitude\". "
+                    + "Only the ms110d-* modes take a transmit level - remove it from this entry.");
+            }
+            if (!double.IsFinite(level) || level <= 0 || level > 1)
+            {
+                throw new InvalidDataException(
+                    $"modem {levelled.SubChannel} has \"txAmplitude\": "
+                    + level.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
+                    + ". Use a level above 0 and at most 1 (1.0 peaks at about 0.75 of full scale), or remove it for the default 0.5.");
+            }
         }
 
         if (config.Modems.Count == 0 && config.Ardop is null)

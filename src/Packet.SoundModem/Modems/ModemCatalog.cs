@@ -55,6 +55,8 @@ public static class ModemCatalog
     /// <param name="AcceptPlainIl2p">Plain-IL2P tolerance (validated against the row).</param>
     /// <param name="SecondDetector">Ensemble second detector for the bpsk banks (validated
     /// against the mode in <see cref="Create"/>).</param>
+    /// <param name="TxAmplitude">MS110D transmit level (validated against the mode in
+    /// <see cref="Create"/>); null for the modem's default.</param>
     private readonly record struct ModemBuild(
         int DspRate,
         Action<byte[]> FrameReceived,
@@ -63,7 +65,8 @@ public static class ModemCatalog
         double? OffsetStepHz,
         PskDetector Detector,
         bool AcceptPlainIl2p,
-        PskDetector? SecondDetector);
+        PskDetector? SecondDetector,
+        double? TxAmplitude);
 
     /// <summary>One mode, wholly: every fact the catalogue can be asked, next to the
     /// factory that must agree with it.</summary>
@@ -103,7 +106,9 @@ public static class ModemCatalog
         DefaultCentreHz: 1800, RunsIl2pCrc: true, NinoPskIdBeacon: false,
         b => new Ms110dModem(
             b.DspRate, b.FrameReceived,
-            new Ms110dTxSettings { WaveformNumber = waveform },
+            b.TxAmplitude is double amplitude
+                ? new Ms110dTxSettings { WaveformNumber = waveform, Amplitude = (float)amplitude }
+                : new Ms110dTxSettings { WaveformNumber = waveform },
             acceptPlainIl2p: b.AcceptPlainIl2p));
 
     private static ModeDescriptor FreeDv(
@@ -470,6 +475,18 @@ public static class ModemCatalog
                 nameof(options));
         }
 
+        if (options.TxAmplitude is double txAmplitude)
+        {
+            if (!mode.StartsWith("ms110d-", StringComparison.Ordinal))
+            {
+                throw new ArgumentException($"a transmit amplitude applies to the ms110d-* modes only, not '{mode}'", nameof(options));
+            }
+            if (!double.IsFinite(txAmplitude) || txAmplitude <= 0 || txAmplitude > 1)
+            {
+                throw new ArgumentException($"transmit amplitude {txAmplitude} is not above 0 and at most 1", nameof(options));
+            }
+        }
+
         IModem modem = descriptor.Factory(new ModemBuild(
             dspRate,
             frameReceived,
@@ -478,7 +495,8 @@ public static class ModemCatalog
             options.OffsetStepHz,
             options.Detector ?? DefaultDetectorFor(mode),
             acceptPlainIl2p,
-            options.SecondDetector));
+            options.SecondDetector,
+            options.TxAmplitude));
 
         // Asked-for centre equal to the native one included: Wrap returns the bare modem then,
         // so a config that spells out the default is bit-identical to one that omits it.

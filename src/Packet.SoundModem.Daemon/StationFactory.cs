@@ -200,7 +200,8 @@ internal static class StationFactory
                         OffsetPairs: modemConfig.OffsetPairs,
                         OffsetStepHz: modemConfig.OffsetStepHz,
                         Detector: detectorOverride,
-                        AcceptPlainIl2p: modemConfig.AcceptPlainIl2p)));
+                        AcceptPlainIl2p: modemConfig.AcceptPlainIl2p,
+                        TxAmplitude: modemConfig.TxAmplitude)));
             }
             catch (Exception failure) when (failure is ArgumentException or InvalidOperationException)
             {
