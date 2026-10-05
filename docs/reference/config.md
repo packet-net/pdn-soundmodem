@@ -515,7 +515,7 @@ Rules and refusals:
 - Refused: `api` without a `waterfall` section (`"api" is served on the waterfall's HTTP listener, and this station has no "waterfall" section - add one, or remove "api"`); `api` on a station run without `--config` (`"api" needs a --config file to read back and to write changes to`).
 - `POST /api/config` takes a whole document, validates it with the same checks as start-up, and restarts the process onto it for one run; `?persist=true` writes it to the config file, the only time the modem writes that file. The mechanics are under [the API](ports-and-endpoints.md#the-api-under-api).
 - The start-up journal names the endpoints: `api: configuration over http://.../api/config (key required)`, and `api: modem proposals over .../api/proposals` when `survey.propose` is on.
-- `POST /api/txlease` gives one sub-channel the transmitter for up to five minutes at a time, renewable, and refuses every other sub-channel's transmissions until it is released or runs out. It is for a broadcast that shares the radio with ordinary traffic; there is nothing to configure. See [the transmit lease](ports-and-endpoints.md#the-transmit-lease).
+- `POST /api/txlease` gives one sub-channel the transmitter for up to five minutes at a time, renewable, and refuses every other sub-channel's transmissions until it is released or runs out. It is for a broadcast that shares the radio with ordinary traffic; there is nothing to configure. A modem with `identify` sends a closing ident when its lease ends. See [the transmit lease](ports-and-endpoints.md#the-transmit-lease).
 
 ## `frameLog`
 

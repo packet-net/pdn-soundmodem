@@ -3101,8 +3101,8 @@ var txLeaseJournal = new TxLeaseJournal(
     stationJournal,
     sub => channel.Modems.TryGetValue(sub, out IModem? leased) ? leased.Mode : "no modem");
 channel.TransmitLease.Changed += txLeaseJournal.Note;
-runtimeApi?.ServeTxLease(
-    channel.TransmitLease, sub => channel.Modems.ContainsKey(sub), channel.ReceiveOnlyReason);
+channel.TransmitLease.CarrierWaitCutShort += txLeaseJournal.NoteCarrierWaitCutShort;
+runtimeApi?.ServeTxLease(channel, channel.ReceiveOnlyReason);
 if (txTestRefusal is null)
 {
     stationJournal.Write(
@@ -3131,6 +3131,58 @@ if (identifiers.Count > 0)
         }
     };
 
+    // One identification, sent and written down. Also what a transmit lease closes with: as the
+    // lease is released or runs out, the holder's modem identifies before anyone else may key
+    // (Ofcom wants an ident at the end of a transmission), if it has transmitted since it last did.
+    async Task IdentifyAsync(int sub, StationIdentifier owed)
+    {
+        try
+        {
+            await IdentTransmission.SendAsync(channel, owed).ConfigureAwait(false);
+
+            // Stamped only on success: an ident the radio refused was not sent, and
+            // clearing the debt for it would mean the station quietly stopped identifying.
+            owed.NoteIdentified();
+            Console.WriteLine($"id[{sub}] {owed.Text} in CW");
+
+            // And written down where transmissions are written down, on the same terms as
+            // the operator's test tone. An ident keys the radio, and until now it left
+            // nothing behind but that console line: a station could identify every ten
+            // minutes all afternoon and have no record of having transmitted at all
+            // (#473). It is not a frame, so the payload is the sentence describing what
+            // went out; the callsign is ours to state rather than parse out of prose, so
+            // the row is attributed the way an ARDOP one is.
+            byte[] identRecord =
+                System.Text.Encoding.ASCII.GetBytes(owed.TransmissionRecord);
+
+            // Where the ident actually lands on the band, which is not the modem's own
+            // centre: the dial plus its tone on USB, minus it on LSB. Null without a band
+            // plan, there being no dial to add to, and null on FM, where the channel is
+            // the RF and there is no arithmetic to do - the same rule the start-up line
+            // and the operator page already follow.
+            double? identRfHz = bandPlan is not null && !bandPlan.IsFm
+                ? bandPlan.IsUpperSideband
+                    ? bandPlan.DialHz + owed.ToneHz
+                    : bandPlan.DialHz - owed.ToneHz
+                : null;
+
+            waterfallServer?.ReportTransmittedFrame(
+                sub,
+                Packet.SoundModem.Waterfall.WaterfallWebServer.IdentTransmissionMode,
+                owed.Callsign, to: null, identRecord.Length);
+            frameLog?.RecordTransmitted(
+                sub, identRecord,
+                Packet.SoundModem.Waterfall.WaterfallWebServer.IdentTransmissionMode,
+                owed.ToneHz, identRfHz);
+        }
+        catch (Exception refused) when (refused is InvalidOperationException or ArgumentException)
+        {
+            Console.Error.WriteLine($"id[{sub}]: identification dropped - {refused.Message}");
+        }
+    }
+
+    channel.TransmitLease.Closing = IdentTransmission.Closing(identifiers, IdentifyAsync);
+
     _ = Task.Run(async () =>
     {
         while (!cancellation.IsCancellationRequested)
@@ -3151,49 +3203,7 @@ if (identifiers.Count > 0)
                     continue;
                 }
 
-                try
-                {
-                    await IdentTransmission.SendAsync(channel, owed).ConfigureAwait(false);
-
-                    // Stamped only on success: an ident the radio refused was not sent, and
-                    // clearing the debt for it would mean the station quietly stopped identifying.
-                    owed.NoteIdentified();
-                    Console.WriteLine($"id[{sub}] {owed.Text} in CW");
-
-                    // And written down where transmissions are written down, on the same terms as
-                    // the operator's test tone. An ident keys the radio, and until now it left
-                    // nothing behind but that console line: a station could identify every ten
-                    // minutes all afternoon and have no record of having transmitted at all
-                    // (#473). It is not a frame, so the payload is the sentence describing what
-                    // went out; the callsign is ours to state rather than parse out of prose, so
-                    // the row is attributed the way an ARDOP one is.
-                    byte[] identRecord =
-                        System.Text.Encoding.ASCII.GetBytes(owed.TransmissionRecord);
-
-                    // Where the ident actually lands on the band, which is not the modem's own
-                    // centre: the dial plus its tone on USB, minus it on LSB. Null without a band
-                    // plan, there being no dial to add to, and null on FM, where the channel is
-                    // the RF and there is no arithmetic to do - the same rule the start-up line
-                    // and the operator page already follow.
-                    double? identRfHz = bandPlan is not null && !bandPlan.IsFm
-                        ? bandPlan.IsUpperSideband
-                            ? bandPlan.DialHz + owed.ToneHz
-                            : bandPlan.DialHz - owed.ToneHz
-                        : null;
-
-                    waterfallServer?.ReportTransmittedFrame(
-                        sub,
-                        Packet.SoundModem.Waterfall.WaterfallWebServer.IdentTransmissionMode,
-                        owed.Callsign, to: null, identRecord.Length);
-                    frameLog?.RecordTransmitted(
-                        sub, identRecord,
-                        Packet.SoundModem.Waterfall.WaterfallWebServer.IdentTransmissionMode,
-                        owed.ToneHz, identRfHz);
-                }
-                catch (Exception refused) when (refused is InvalidOperationException or ArgumentException)
-                {
-                    Console.Error.WriteLine($"id[{sub}]: identification dropped - {refused.Message}");
-                }
+                await IdentifyAsync(sub, owed).ConfigureAwait(false);
             }
         }
     });

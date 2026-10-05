@@ -254,6 +254,17 @@ public sealed class SoundModemChannel
         _frameLevel = new FrameLevelMonitor(sampleRate);
         TransmitLease = new TransmitLease(_time);
         TransmitLease.TakenInternal += RefuseOutsideLease;
+        TransmitLease.EndingInternal += (holder, how) =>
+        {
+            // A lease that ran out was not given back: its holder stopped renewing, most likely
+            // because it died, and whatever it had queued is a broadcast nobody is running any
+            // more. It must not go out into normal service, so it goes with the lease. A release
+            // keeps its queue unless it asks otherwise (DropQueued).
+            if (how == TransmitLeaseChange.Expired)
+            {
+                DropQueued(holder, ExpiredDropReason);
+            }
+        };
         _constellationSink = constellationSink;
         // Read once, here, and never again: a station's receive path does not change under it
         // while it runs.
@@ -2296,6 +2307,52 @@ public sealed class SoundModemChannel
         }
     }
 
+    /// <summary>What a frame dropped by <see cref="DropQueued(int)"/> is refused with.</summary>
+    public const string DroppedByHolderReason =
+        "dropped by the transmit lease holder before it was sent";
+
+    /// <summary>What a frame dropped as its holder's lease ran out is refused with.</summary>
+    public const string ExpiredDropReason =
+        "dropped because the transmit lease ran out before it was sent";
+
+    /// <summary>
+    /// Takes every frame still queued for <paramref name="subChannel"/>'s modem off the queue and
+    /// refuses it, and says how many there were. A burst already keyed finishes; nothing else of
+    /// that sub-channel's (its Morse ident, say) is touched.
+    /// </summary>
+    /// <remarks>
+    /// For a broadcast that is abandoned part way: the frames it queued must not go out later as
+    /// a burst nobody is running. Each is refused through <see cref="TransmitRejected"/> with one
+    /// fixed sentence, as a lease's refusals are, so a KISS ACKMODE host gets no ack for it, the
+    /// same as for any refused frame.
+    /// </remarks>
+    public int DropQueued(int subChannel) => DropQueued(subChannel, DroppedByHolderReason);
+
+    private int DropQueued(int subChannel, string reason)
+    {
+        if (!_modems.TryGetValue(subChannel, out IModem? modem))
+        {
+            return 0;
+        }
+
+        List<TxItem> dropped = [];
+        lock (_txGate)
+        {
+            RemoveAllLocked(modem, dropped);
+        }
+
+        foreach (TxItem item in dropped)
+        {
+            Finish(item);
+            var refusal = new InvalidOperationException(reason);
+            item.Rejected?.Invoke(refusal);
+            item.Done.TrySetException(refusal);
+            _ = item.Done.Task.Exception;
+        }
+
+        return dropped.Count;
+    }
+
     /// <summary>
     /// Refuses everything queued that does not belong to a lease just taken, and lifts any
     /// turnaround hold, so the holder's traffic is next on the air.
@@ -2546,6 +2603,9 @@ public sealed class SoundModemChannel
             // channel discipline against ARQ turnaround budgets, and the busy it would be
             // deferring to is partly its own signal - at a shifted centre it sits inside a
             // packet modem's passband and asserts that modem's busy detector.
+            // When this transmitter started finding the channel busy, for a lease that bounds how
+            // long its holder waits (TransmitLease.MaxCarrierWait).
+            long? busySince = null;
             while (!(PeekFrom(source) is { OwnsTiming: true }))
             {
                 // A burst that owns the channel's timing may have been queued while we were
@@ -2565,6 +2625,24 @@ public sealed class SoundModemChannel
                 // station-wide answer cost GB7RDG.
                 if (ChannelBusyFor(source, out int asserted))
                 {
+                    // The lease holder's transmissions may be told to stop waiting: a slot booked
+                    // for a time goes out after its limit rather than not at all. Nobody else's,
+                    // and nobody's without a lease that asks for it.
+                    if (TransmitLease.CarrierWaitFor(source) is { } limit)
+                    {
+                        busySince ??= _time.GetTimestamp();
+                        TimeSpan waited = _time.GetElapsedTime(busySince.Value);
+                        if (waited >= limit)
+                        {
+                            if (TransmitLease.HolderNow() is int holder)
+                            {
+                                TransmitLease.NoteCarrierWaitCutShort(holder, waited);
+                            }
+
+                            break;
+                        }
+                    }
+
                     EnterWait(WaitSlot.ChannelBusy, source, asserted);
                     await Delay(Csma.SlotTimeMilliseconds, cancellation).ConfigureAwait(false);
                     continue;

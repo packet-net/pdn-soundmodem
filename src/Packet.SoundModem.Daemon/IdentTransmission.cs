@@ -47,4 +47,16 @@ internal static class IdentTransmission
         // rather than lengthening somebody else's - the station is deaf for whatever it appends
         // itself to.
         source: owed);
+
+    /// <summary>
+    /// What a transmit lease closes with (<see cref="TransmitLease.Closing"/>): the holder's own
+    /// ident, if its modem identifies and has transmitted since it last did, sent through
+    /// <paramref name="identify"/>; nothing otherwise. Ofcom wants an ident at the end of a
+    /// transmission, and the lease is held until it has gone so nobody else keys first.
+    /// </summary>
+    internal static Func<int, Task?> Closing(
+        IReadOnlyDictionary<int, StationIdentifier> identifiers, Func<int, StationIdentifier, Task> identify) =>
+        holder => identifiers.TryGetValue(holder, out StationIdentifier? owed) && owed.TransmittedSinceIdentification
+            ? identify(holder, owed)
+            : null;
 }

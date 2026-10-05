@@ -23,23 +23,28 @@ internal static class TxLeaseApi
     /// <summary>How long a lease lasts when the request does not say.</summary>
     internal const double DefaultSeconds = 60;
 
+    /// <summary>The longest carrier wait a lease may set.</summary>
+    internal const double MaxCarrierWaitCeiling = 300;
+
     /// <summary>What a GET or a malformed request is told about the shape of a good one.</summary>
     internal const string Usage =
         "POST {\"subChannel\": 3, \"seconds\": 60} to take or renew the transmit lease for that "
-        + "sub-channel (at most 300 s at a time), {\"release\": true, \"subChannel\": 3} to give it back; GET to read it";
+        + "sub-channel (at most 300 s at a time, optionally with \"maxCarrierWaitSeconds\"), "
+        + "{\"release\": true, \"subChannel\": 3} to give it back, \"dropQueued\": true with or "
+        + "without a release to drop its unsent frames; GET to read it";
 
     /// <summary>Answers one request.</summary>
-    /// <param name="lease">The station's lease.</param>
+    /// <param name="channel">The station's channel, whose lease and carrier sense these are.</param>
     /// <param name="method">The HTTP method.</param>
     /// <param name="body">The request body, possibly empty.</param>
-    /// <param name="hasModem">Whether a sub-channel carries a modem that can transmit.</param>
     /// <param name="cannot">Why this station cannot transmit at all, or null.</param>
     internal static (int Status, JsonObject Answer) Handle(
-        TransmitLease lease, string method, string body, Func<int, bool> hasModem, string? cannot)
+        SoundModemChannel channel, string method, string body, string? cannot)
     {
+        TransmitLease lease = channel.TransmitLease;
         if (method == "GET")
         {
-            return (200, Describe(lease));
+            return (200, Describe(channel));
         }
 
         if (method != "POST")
@@ -58,33 +63,53 @@ internal static class TxLeaseApi
         }
 
         bool release;
+        bool dropQueued;
         int? subChannel;
         double seconds;
+        double? maxCarrierWait;
         try
         {
             release = asked?["release"]?.GetValue<bool>() == true;
+            dropQueued = asked?["dropQueued"]?.GetValue<bool>() == true;
             subChannel = asked?["subChannel"]?.GetValue<int>();
             seconds = asked?["seconds"]?.GetValue<double>() ?? DefaultSeconds;
+            maxCarrierWait = asked?["maxCarrierWaitSeconds"]?.GetValue<double>();
         }
         catch (Exception wrongType) when (wrongType is InvalidOperationException or FormatException)
         {
             return (400, Error(
-                $"\"subChannel\" is a whole number, \"seconds\" a number and \"release\" true or false: {wrongType.Message}"));
+                "\"subChannel\" is a whole number, \"seconds\" and \"maxCarrierWaitSeconds\" numbers, "
+                + $"\"release\" and \"dropQueued\" true or false: {wrongType.Message}"));
         }
 
-        if (release)
+        if (release || dropQueued)
         {
-            // Checked and released in one step, so a release arriving late cannot free a lease
-            // somebody else has taken since. Naming the sub-channel is what makes that so, and
-            // what the head end should always do.
-            bool released = lease.Release(subChannel);
-            if (!released && subChannel is int named && lease.Holder is int holder && holder != named)
+            int? holder = lease.Holder;
+            if (subChannel is int named && holder is int held && held != named)
             {
-                return (409, Conflict(lease, $"sub-channel {holder} holds the transmit lease, not {named}"));
+                return (409, Conflict(channel, $"sub-channel {held} holds the transmit lease, not {named}"));
             }
 
-            JsonObject answer = Describe(lease);
-            answer["released"] = released;
+            if (!release && holder is null)
+            {
+                return (409, Conflict(channel, "no transmit lease is held, so there is nothing of its to drop"));
+            }
+
+            // Dropped first, so the closing ident a release may send is the last thing of the
+            // holder's to go out, with nothing of the abandoned broadcast behind it.
+            int dropped = dropQueued && holder is int dropping ? channel.DropQueued(dropping) : 0;
+            bool released = release && lease.Release(subChannel ?? holder);
+            JsonObject answer = Describe(channel);
+            if (release)
+            {
+                answer["released"] = released;
+            }
+
+            if (dropQueued)
+            {
+                answer["dropped"] = dropped;
+            }
+
             return (200, answer);
         }
 
@@ -98,7 +123,7 @@ internal static class TxLeaseApi
             return (409, Error(cannot));
         }
 
-        if (!hasModem(sub))
+        if (!channel.Modems.ContainsKey(sub))
         {
             return (400, Error($"no modem transmits on sub-channel {sub}"));
         }
@@ -108,24 +133,40 @@ internal static class TxLeaseApi
             return (400, Error("\"seconds\" must be more than 0"));
         }
 
-        double max = TransmitLease.MaxDuration.TotalSeconds;
-        bool capped = seconds > max;
-        TransmitLeaseGrant grant = lease.Take(sub, TimeSpan.FromSeconds(Math.Min(seconds, max)));
-        if (!grant.Granted)
+        if (maxCarrierWait is double wait && (!double.IsFinite(wait) || wait < 1 || wait > MaxCarrierWaitCeiling))
         {
-            return (409, Conflict(lease, $"sub-channel {grant.SubChannel} holds the transmit lease until {Utc(grant.Expires)}"));
+            return (400, Error(
+                $"\"maxCarrierWaitSeconds\" must be 1 to {MaxCarrierWaitCeiling:0}, or left out for ordinary carrier sense"));
         }
 
-        JsonObject granted = Describe(lease);
+        double max = TransmitLease.MaxDuration.TotalSeconds;
+        bool capped = seconds > max;
+        TransmitLeaseGrant grant = lease.Take(
+            sub, TimeSpan.FromSeconds(Math.Min(seconds, max)),
+            maxCarrierWait is double limit ? TimeSpan.FromSeconds(limit) : null);
+        if (!grant.Granted)
+        {
+            return (409, Conflict(
+                channel,
+                lease.IsClosing
+                    ? $"sub-channel {grant.SubChannel}'s lease is ending and sending its closing ident"
+                    : $"sub-channel {grant.SubChannel} holds the transmit lease until {Utc(grant.Expires)}"));
+        }
+
+        JsonObject granted = Describe(channel);
         granted["renewed"] = grant.Renewed;
         granted["seconds"] = Math.Min(seconds, max);
         granted["capped"] = capped;
         return (200, granted);
     }
 
-    /// <summary>The lease as it stands: who holds it and until when.</summary>
-    internal static JsonObject Describe(TransmitLease lease)
+    /// <summary>
+    /// The lease as it stands - who holds it, until when, and how - and the channel as carrier
+    /// sense sees it right now, so a caller can decide without trying to transmit.
+    /// </summary>
+    internal static JsonObject Describe(SoundModemChannel channel)
     {
+        TransmitLease lease = channel.TransmitLease;
         int? holder = lease.Holder;
         DateTimeOffset? expires = lease.Expires;
         return new JsonObject
@@ -133,12 +174,18 @@ internal static class TxLeaseApi
             ["held"] = holder is not null,
             ["subChannel"] = holder,
             ["expires"] = expires is { } at ? Utc(at) : null,
+            ["closing"] = lease.IsClosing,
+            ["maxCarrierWaitSeconds"] = lease.MaxCarrierWait?.TotalSeconds,
+            // For the holder's own passband when there is one, the whole station otherwise: the
+            // same question the transmitter asks before it keys.
+            ["channelBusy"] = holder is int sub ? channel.ChannelBusyFor(sub) : channel.ChannelBusy,
+            ["carrierDetect"] = channel.CarrierDetect,
         };
     }
 
-    private static JsonObject Conflict(TransmitLease lease, string why)
+    private static JsonObject Conflict(SoundModemChannel channel, string why)
     {
-        JsonObject answer = Describe(lease);
+        JsonObject answer = Describe(channel);
         answer["refused"] = why;
         return answer;
     }
@@ -173,6 +220,13 @@ internal sealed class TxLeaseJournal
         _journal = journal;
         _describe = describe;
     }
+
+    /// <summary>Says that the holder's transmission went after waiting its lease's limit for a
+    /// clear channel.</summary>
+    internal void NoteCarrierWaitCutShort(int subChannel, TimeSpan waited) =>
+        _journal.Write(
+            $"tx lease: sub-channel {subChannel} ({_describe(subChannel)}) transmitted after "
+            + $"{Span(waited)} without a clear channel (maxCarrierWaitSeconds)");
 
     /// <summary>Writes the line, if any, one lease change deserves.</summary>
     internal void Note(TransmitLeaseEvent change)
@@ -217,8 +271,8 @@ internal sealed class TxLeaseJournal
             case TransmitLeaseChange.Expired:
                 _journal.Write(
                     $"tx lease: {who} stopped renewing and its lease ran out at "
-                    + $"{TxLeaseApi.Utc(change.Expires)}, after {Span(change.HeldFor)}; "
-                    + $"{Refused(change.Refused)}; normal service resumes");
+                    + $"{TxLeaseApi.Utc(change.Expires)}, after {Span(change.HeldFor)}; its unsent "
+                    + $"frames were dropped; {Refused(change.Refused)}; normal service resumes");
                 break;
         }
     }

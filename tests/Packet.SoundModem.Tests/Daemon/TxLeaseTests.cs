@@ -26,7 +26,7 @@ public class TxLeaseTests
     }
 
     private static (int Status, JsonObject Answer) Post(SoundModemChannel channel, string body, string? cannot = null) =>
-        TxLeaseApi.Handle(channel.TransmitLease, "POST", body, channel.Modems.ContainsKey, cannot);
+        TxLeaseApi.Handle(channel, "POST", body, cannot);
 
     [Fact]
     public void A_Lease_Is_Taken_And_Renewed_With_Its_Expiry_In_The_Answer()
@@ -80,8 +80,7 @@ public class TxLeaseTests
         (SoundModemChannel channel, _) = Station();
         Post(channel, """{"subChannel": 3}""");
 
-        (int getStatus, JsonObject held) = TxLeaseApi.Handle(
-            channel.TransmitLease, "GET", "", channel.Modems.ContainsKey, null);
+        (int getStatus, JsonObject held) = TxLeaseApi.Handle(channel, "GET", "", null);
         getStatus.Should().Be(200);
         held["held"]!.GetValue<bool>().Should().BeTrue();
 
@@ -160,7 +159,8 @@ public class TxLeaseTests
         time.Advance(TimeSpan.FromSeconds(60));
         lines[^1].Should().Be(
             "tx lease: sub-channel 3 (mode3) stopped renewing and its lease ran out at "
-            + "2026-10-04T12:16:00Z, after 1m00s; 0 transmissions from others refused; normal service resumes");
+            + "2026-10-04T12:16:00Z, after 1m00s; its unsent frames were dropped; "
+            + "0 transmissions from others refused; normal service resumes");
 
         lines.Should().OnlyContain(l => l.All(c => c < 0x80), "journal lines are plain ASCII");
     }
@@ -173,7 +173,7 @@ public class TxLeaseTests
         var api = new ConfigApi(
             key, "/nonexistent/soundmodem.json", "/nonexistent/pending.json",
             runningJson: () => "{}", ephemeralInForce: false, requestRestart: () => { });
-        api.ServeTxLease(channel.TransmitLease, channel.Modems.ContainsKey, cannot: null);
+        api.ServeTxLease(channel, cannot: null);
 
         int port = FreePorts.Next();
         using var listener = new HttpListener();
@@ -267,5 +267,112 @@ public class TxLeaseTests
 
         ptt.Events.Should().StartWith("key");
         output.WrittenCount.Should().BeGreaterThan(12000, "a CW ident of a callsign is seconds of tone");
+    }
+
+    [Fact]
+    public void Drop_Queued_Drops_The_Holders_Unsent_Frames_With_Or_Without_A_Release()
+    {
+        (SoundModemChannel channel, _) = Station();
+        Post(channel, """{"subChannel": 3}""");
+        channel.EnqueueTransmit(3, new byte[20]);
+        channel.EnqueueTransmit(3, new byte[20]);
+
+        (int status, JsonObject dropped) = Post(channel, """{"dropQueued": true}""");
+        status.Should().Be(200);
+        dropped["dropped"]!.GetValue<int>().Should().Be(2);
+        dropped["held"]!.GetValue<bool>().Should().BeTrue("dropping is not releasing");
+
+        channel.EnqueueTransmit(3, new byte[20]);
+        (status, JsonObject both) = Post(channel, """{"release": true, "dropQueued": true, "subChannel": 3}""");
+        status.Should().Be(200);
+        both["dropped"]!.GetValue<int>().Should().Be(1);
+        both["released"]!.GetValue<bool>().Should().BeTrue();
+        channel.TransmitLease.Holder.Should().BeNull();
+    }
+
+    [Fact]
+    public void Drop_Queued_With_No_Lease_Or_For_Someone_Else_Is_Refused()
+    {
+        (SoundModemChannel channel, _) = Station();
+        Post(channel, """{"dropQueued": true}""").Status.Should().Be(409);
+
+        Post(channel, """{"subChannel": 3}""");
+        Post(channel, """{"dropQueued": true, "subChannel": 0}""").Status.Should().Be(409);
+    }
+
+    [Fact]
+    public void The_Answer_Says_Whether_The_Channel_Is_Busy_Right_Now()
+    {
+        (SoundModemChannel channel, _) = Station();
+
+        JsonObject idle = TxLeaseApi.Handle(channel, "GET", "", null).Answer;
+        idle["channelBusy"]!.GetValue<bool>().Should().BeFalse("nothing is on a channel that has heard no audio");
+        idle["carrierDetect"]!.GetValue<bool>().Should().BeFalse();
+
+        JsonObject taken = Post(channel, """{"subChannel": 3, "maxCarrierWaitSeconds": 30}""").Answer;
+        taken.ContainsKey("channelBusy").Should().BeTrue("the head end decides on this without keying");
+        taken["maxCarrierWaitSeconds"]!.GetValue<double>().Should().Be(30);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("0.5")]
+    [InlineData("301")]
+    [InlineData("\"30\"")]
+    public void A_Carrier_Wait_Out_Of_Range_Is_A_400(string wait)
+    {
+        (SoundModemChannel channel, _) = Station();
+
+        Post(channel, $$"""{"subChannel": 3, "maxCarrierWaitSeconds": {{wait}}}""").Status.Should().Be(400);
+        channel.TransmitLease.Holder.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task A_Released_Lease_Closes_With_The_Holders_Ident_Before_Anyone_Else_Keys()
+    {
+        (SoundModemChannel channel, _) = Station();
+        channel.Csma.Persistence = 255;
+        var holders = new Packet.SoundModem.Ident.StationIdentifier("M0LTE", null, 1500, 20, TimeSpan.FromMinutes(10), 12000);
+        var quiet = new Packet.SoundModem.Ident.StationIdentifier("M0LTE", null, 1700, 20, TimeSpan.FromMinutes(10), 12000);
+        var identifiers = new Dictionary<int, Packet.SoundModem.Ident.StationIdentifier> { [3] = holders, [0] = quiet };
+        IdentTransmission.Register(channel, 3, holders);
+        IdentTransmission.Register(channel, 0, quiet);
+        holders.NoteTransmission();
+        Task? identSent = null;
+        channel.TransmitLease.Closing = IdentTransmission.Closing(
+            identifiers, (_, owed) => identSent = IdentTransmission.SendAsync(channel, owed));
+
+        // A modem that has not transmitted since its last ident owes no closing one.
+        IdentTransmission.Closing(identifiers, (_, _) => Task.CompletedTask)(0).Should().BeNull();
+
+        var released = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        channel.TransmitLease.Changed += change =>
+        {
+            if (change.Change == TransmitLeaseChange.Released)
+            {
+                released.TrySetResult();
+            }
+        };
+        channel.TransmitLease.Take(3, TimeSpan.FromMinutes(5));
+        channel.TransmitLease.Release(onlyIf: 3).Should().BeTrue();
+        identSent.Should().NotBeNull("the holder transmitted, so it closes with its ident");
+        channel.EnqueueTransmit(0, new byte[20]).IsFaulted.Should().BeTrue("still held while the ident goes");
+
+        var ptt = new Packet.SoundModem.Tests.Channel.RecordingPtt();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        Task transmitter = channel.RunTransmitterAsync(new Packet.SoundModem.Tests.Channel.FakeAudioOutput(12000), ptt, cancellation.Token);
+        await identSent!.WaitAsync(TimeSpan.FromMinutes(1));
+        await released.Task.WaitAsync(TimeSpan.FromMinutes(1));
+        await cancellation.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        ptt.Events.Should().StartWith("key");
+        channel.TransmitLease.Holder.Should().BeNull();
     }
 }

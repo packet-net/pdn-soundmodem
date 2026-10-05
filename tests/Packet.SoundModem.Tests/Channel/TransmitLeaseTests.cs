@@ -412,4 +412,265 @@ public class TransmitLeaseTests
         {
         }
     }
+
+    /// <summary>Completes when the lease reports <paramref name="change"/>; the end of a closing
+    /// lease is reported from its own continuation, so a test awaits it rather than reads it.</summary>
+    private static Task Reported(TransmitLease lease, TransmitLeaseChange change)
+    {
+        var seen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lease.Changed += reported =>
+        {
+            if (reported.Change == change)
+            {
+                seen.TrySetResult();
+            }
+        };
+        return seen.Task;
+    }
+
+    [Fact]
+    public async Task A_Closing_Transmission_Keeps_The_Lease_Until_It_Has_Gone()
+    {
+        (SoundModemChannel channel, _) = Station();
+        var ident = new TaskCompletionSource();
+        int? askedFor = null;
+        channel.TransmitLease.Closing = holder =>
+        {
+            askedFor = holder;
+            return ident.Task;
+        };
+        var changes = new List<TransmitLeaseChange>();
+        channel.TransmitLease.Changed += change => changes.Add(change.Change);
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+        Task released = Reported(channel.TransmitLease, TransmitLeaseChange.Released);
+
+        channel.TransmitLease.Release(onlyIf: 3).Should().BeTrue();
+
+        askedFor.Should().Be(3);
+        channel.TransmitLease.IsClosing.Should().BeTrue();
+        channel.TransmitLease.Holder.Should().Be(3, "nobody else keys until the closing ident has gone");
+        channel.EnqueueTransmit(0, Frame(0x41)).IsFaulted.Should().BeTrue();
+        channel.TransmitLease.Take(0, TimeSpan.FromSeconds(60)).Granted.Should().BeFalse();
+        changes.Should().Equal(TransmitLeaseChange.Taken);
+
+        ident.SetResult();
+        await released.WaitAsync(TimeSpan.FromMinutes(1));
+        changes.Should().Equal(TransmitLeaseChange.Taken, TransmitLeaseChange.Released);
+        channel.TransmitLease.Holder.Should().BeNull();
+        channel.TransmitLease.IsClosing.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_Closing_Transmission_That_Never_Goes_Lets_The_Lease_Go_After_The_Timeout()
+    {
+        (SoundModemChannel channel, FakeTimeProvider time) = Station();
+        channel.TransmitLease.Closing = _ => new TaskCompletionSource().Task;
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+        Task released = Reported(channel.TransmitLease, TransmitLeaseChange.Released);
+        channel.TransmitLease.Release();
+
+        time.Advance(TransmitLease.ClosingTimeout - TimeSpan.FromSeconds(1));
+        channel.TransmitLease.Holder.Should().Be(3);
+
+        time.Advance(TimeSpan.FromSeconds(1));
+        await released.WaitAsync(TimeSpan.FromMinutes(1));
+        channel.TransmitLease.Holder.Should().BeNull("a busy channel cannot hold everyone off for ever");
+    }
+
+    [Fact]
+    public async Task An_Expiring_Lease_Closes_Too_And_Reports_The_Expiry_After_It()
+    {
+        (SoundModemChannel channel, FakeTimeProvider time) = Station();
+        var ident = new TaskCompletionSource();
+        channel.TransmitLease.Closing = _ => ident.Task;
+        var changes = new List<TransmitLeaseChange>();
+        channel.TransmitLease.Changed += change => changes.Add(change.Change);
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+        Task expired = Reported(channel.TransmitLease, TransmitLeaseChange.Expired);
+
+        time.Advance(TimeSpan.FromSeconds(60));
+        channel.TransmitLease.IsClosing.Should().BeTrue();
+        channel.TransmitLease.Holder.Should().Be(3);
+
+        ident.SetResult();
+        await expired.WaitAsync(TimeSpan.FromMinutes(1));
+        changes.Should().Equal(TransmitLeaseChange.Taken, TransmitLeaseChange.Expired);
+        channel.TransmitLease.Holder.Should().BeNull();
+    }
+
+    [Fact]
+    public void A_Lease_With_Nothing_To_Close_With_Ends_At_Once()
+    {
+        (SoundModemChannel channel, _) = Station();
+        channel.TransmitLease.Closing = _ => null;
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+
+        channel.TransmitLease.Release().Should().BeTrue();
+        channel.TransmitLease.Holder.Should().BeNull();
+    }
+
+    [Fact]
+    public void Drop_Queued_Takes_The_Sub_Channels_Unsent_Frames_And_Nothing_Else()
+    {
+        (SoundModemChannel channel, _) = Station();
+        var refused = new List<(int Sub, string Why)>();
+        channel.TransmitRejected += (sub, _, why) => { lock (refused) { refused.Add((sub, why.Message)); } };
+        object ident = new();
+        channel.TransmitLease.Attribute(ident, 3);
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+
+        Task[] frames = [channel.EnqueueTransmit(3, Frame(0x41)), channel.EnqueueTransmit(3, Frame(0x42))];
+        Task identTask = channel.EnqueueTransmit(_ => new float[100], source: ident);
+
+        channel.DropQueued(3).Should().Be(2);
+
+        refused.Should().HaveCount(2);
+        refused.Should().OnlyContain(r => r.Sub == 3 && r.Why == SoundModemChannel.DroppedByHolderReason);
+        identTask.IsCompleted.Should().BeFalse("the ident is not one of the broadcast's frames");
+        channel.DropQueued(3).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task A_Lease_That_Runs_Out_Drops_Its_Holders_Unsent_Frames_So_They_Never_Key()
+    {
+        // A head end that died mid-slot: its frames are still queued, its renewals have stopped.
+        (SoundModemChannel channel, FakeTimeProvider time) = Station();
+        var refused = new List<string>();
+        channel.TransmitRejected += (_, _, why) => { lock (refused) { refused.Add(why.Message); } };
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+        Task[] frames = [channel.EnqueueTransmit(3, Frame(0x41)), channel.EnqueueTransmit(3, Frame(0x42))];
+
+        time.Advance(TimeSpan.FromSeconds(60));
+
+        refused.Should().Equal(SoundModemChannel.ExpiredDropReason, SoundModemChannel.ExpiredDropReason);
+
+        // Normal service resumes with nothing of the dead broadcast left to send.
+        var ptt = new RecordingPtt();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        Task normal = channel.EnqueueTransmit(0, Frame(0x43));
+        Task transmitter = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), ptt, cancellation.Token);
+        await normal.WaitAsync(TimeSpan.FromMinutes(1));
+        foreach (Task frame in frames)
+        {
+            Func<Task> waiting = () => frame.WaitAsync(TimeSpan.FromMinutes(1));
+            await waiting.Should().ThrowAsync<InvalidOperationException>();
+        }
+
+        await cancellation.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        ptt.Events.Should().Equal(["key", "unkey"], "one keyup, for the frame queued after the lease, and none for the dead one's");
+    }
+
+    [Fact]
+    public void A_Released_Lease_Keeps_Its_Queue()
+    {
+        (SoundModemChannel channel, _) = Station();
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+        Task frame = channel.EnqueueTransmit(3, Frame(0x41));
+
+        channel.TransmitLease.Release();
+
+        frame.IsCompleted.Should().BeFalse("a graceful release drops nothing unless asked to");
+    }
+
+    /// <summary>Busy whenever carrier sense asks, and says when it first has after being armed.</summary>
+    private sealed class AlwaysBusyModem : IModem
+    {
+        public volatile bool Armed;
+
+        public TaskCompletionSource Asked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public string Mode => "always-busy";
+
+        public event Action<byte[], FrameQuality>? FrameDecoded
+        {
+            add { }
+            remove { }
+        }
+
+        public bool CarrierDetect => false;
+
+        public bool ChannelBusy
+        {
+            get
+            {
+                if (Armed)
+                {
+                    Asked.TrySetResult();
+                }
+
+                return true;
+            }
+        }
+
+        public void Process(ReadOnlySpan<float> samples)
+        {
+        }
+
+        public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds) => [];
+
+        public void ResetCarrierState()
+        {
+        }
+    }
+
+    [Fact]
+    public async Task A_Lease_With_A_Carrier_Wait_Sends_The_Holders_Frame_Once_It_Runs_Out()
+    {
+        var time = new FakeTimeProvider();
+        var channel = new SoundModemChannel(SampleRate, time, randomSeed: 42);
+        var busy = new AlwaysBusyModem();
+        channel.AddModem(3, sink => new Afsk1200Modem(SampleRate, sink));
+        channel.AddModem(1, _ => busy);
+        channel.Csma.Persistence = 255;
+        channel.Csma.SlotTimeMilliseconds = 100;
+        var cut = new List<(int Sub, TimeSpan Waited)>();
+        channel.TransmitLease.CarrierWaitCutShort += (sub, waited) => cut.Add((sub, waited));
+        channel.TransmitLease.Take(3, TimeSpan.FromMinutes(5), maxCarrierWait: TimeSpan.FromSeconds(30));
+        channel.TransmitLease.MaxCarrierWait.Should().Be(TimeSpan.FromSeconds(30));
+
+        Task frame = channel.EnqueueTransmit(3, Frame(0x41));
+        busy.Armed = true;
+        var ptt = new RecordingPtt();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        Task transmitter = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), ptt, cancellation.Token);
+
+        // The first time carrier sense finds the channel busy starts the wait; one slot's timer is
+        // then pending, and moving the clock past the limit lets that slot end with the wait over.
+        await busy.Asked.Task.WaitAsync(TimeSpan.FromMinutes(1));
+        time.Advance(TimeSpan.FromSeconds(31));
+        await frame.WaitAsync(TimeSpan.FromMinutes(1));
+        await cancellation.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        ptt.Events.Should().StartWith("key");
+        cut.Should().ContainSingle().Which.Sub.Should().Be(3);
+        cut[0].Waited.Should().BeGreaterThanOrEqualTo(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public void A_Renewal_Without_A_Carrier_Wait_Keeps_The_One_It_Had()
+    {
+        (SoundModemChannel channel, _) = Station();
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(30));
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+        channel.TransmitLease.MaxCarrierWait.Should().Be(TimeSpan.FromSeconds(30));
+
+        channel.TransmitLease.Release();
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+        channel.TransmitLease.MaxCarrierWait.Should().BeNull("a new lease starts with ordinary carrier sense");
+    }
 }

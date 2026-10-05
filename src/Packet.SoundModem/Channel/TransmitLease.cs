@@ -68,11 +68,23 @@ public readonly record struct TransmitLeaseGrant(bool Granted, int SubChannel, D
 /// happens, and every question asked after the expiry instant reads the lease as free whether
 /// or not that timer has fired yet. The length is measured on the clock's monotonic timestamp;
 /// its UTC time is only ever used to tell a person when the lease ends.</para>
+/// <para><b>It can close with a word of its own.</b> A host that sets <see cref="Closing"/> is
+/// asked, as a lease is released or runs out, for something the holder must send before anyone
+/// else may transmit: a station's closing Morse ident. The lease stays held, for that and
+/// nothing else of anybody's, until it has gone or <see cref="ClosingTimeout"/> has passed.</para>
+/// <para><b>Carrier sense can be bounded.</b> With <see cref="MaxCarrierWait"/> set, the holder's
+/// transmissions wait at most that long for a clear channel and then go anyway, so a slot booked
+/// for a time is not lost to a frequency that never quite clears. Unset, carrier sense is as it
+/// always is.</para>
 /// </remarks>
 public sealed class TransmitLease
 {
     /// <summary>The longest one take or renewal may ask for.</summary>
     public static readonly TimeSpan MaxDuration = TimeSpan.FromMinutes(5);
+
+    /// <summary>The longest a lease stays held after its release or expiry while its
+    /// <see cref="Closing"/> transmission waits to go out.</summary>
+    public static readonly TimeSpan ClosingTimeout = TimeSpan.FromSeconds(60);
 
     private readonly TimeProvider _time;
     private readonly Lock _gate = new();
@@ -90,18 +102,42 @@ public sealed class TransmitLease
     private int _renewals;
     private long _refused;
     private ITimer? _expiry;
+    private TimeSpan? _maxCarrierWait;
+
+    // Set while a released or expired lease waits for its closing transmission: still held, for
+    // the holder's closing word alone, and nobody can take it until it has gone.
+    private bool _closing;
 
     internal TransmitLease(TimeProvider time) => _time = time;
 
     /// <summary>
     /// Raised on every change, outside any lock, on the thread that caused it: the caller of
-    /// <see cref="Take"/> or <see cref="Release"/>, or the clock's timer for an expiry.
+    /// <see cref="Take"/> or <see cref="Release"/>, or the clock's timer for an expiry. A lease
+    /// with a <see cref="Closing"/> transmission reports its release or expiry once that has gone.
     /// </summary>
     public event Action<TransmitLeaseEvent>? Changed;
+
+    /// <summary>
+    /// Raised when one of the holder's transmissions stops waiting for a clear channel because
+    /// <see cref="MaxCarrierWait"/> ran out, with the sub-channel and how long it waited.
+    /// </summary>
+    public event Action<int, TimeSpan>? CarrierWaitCutShort;
 
     /// <summary>Raised inside the channel when a lease is taken, before <see cref="Changed"/>, so
     /// that everything already queued for anyone else is refused before the holder is told.</summary>
     internal event Action? TakenInternal;
+
+    /// <summary>Raised inside the channel as a lease starts to end, before any closing
+    /// transmission, so the channel can drop a dead holder's queued frames.</summary>
+    internal event Action<int, TransmitLeaseChange>? EndingInternal;
+
+    /// <summary>
+    /// Asked, as a lease is released or runs out, for something its holder must transmit before
+    /// the transmitter is handed back: the sub-channel in, the transmission's task out, or null
+    /// for nothing. Until that task ends, or <see cref="ClosingTimeout"/> passes, the lease stays
+    /// held. Null (the default) releases at once.
+    /// </summary>
+    public Func<int, Task?>? Closing { get; set; }
 
     /// <summary>The sub-channel holding the lease, or null when nobody does.</summary>
     public int? Holder
@@ -109,10 +145,7 @@ public sealed class TransmitLease
         get
         {
             ExpireIfDue();
-            lock (_gate)
-            {
-                return _holder;
-            }
+            return HolderNow();
         }
     }
 
@@ -130,17 +163,53 @@ public sealed class TransmitLease
     }
 
     /// <summary>
+    /// How long the holder's transmissions wait for a clear channel before going anyway, or null
+    /// for ordinary carrier sense; null too when nobody holds the lease.
+    /// </summary>
+    public TimeSpan? MaxCarrierWait
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _holder is null ? null : _maxCarrierWait;
+            }
+        }
+    }
+
+    /// <summary>Whether a released or expired lease is waiting for its closing transmission.</summary>
+    public bool IsClosing
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _closing;
+            }
+        }
+    }
+
+    /// <summary>
     /// Takes the lease for <paramref name="subChannel"/>, or renews it if that sub-channel holds
-    /// it already. Refused (not granted) while another sub-channel holds one.
+    /// it already. Refused (not granted) while another sub-channel holds one, or while a lease is
+    /// closing.
     /// </summary>
     /// <param name="subChannel">The sub-channel whose traffic may keep transmitting.</param>
     /// <param name="duration">How long from now; capped at <see cref="MaxDuration"/>.</param>
-    /// <exception cref="ArgumentOutOfRangeException">A duration of zero or less.</exception>
-    public TransmitLeaseGrant Take(int subChannel, TimeSpan duration)
+    /// <param name="maxCarrierWait">See <see cref="MaxCarrierWait"/>. On a renewal, null keeps
+    /// what the lease already had.</param>
+    /// <exception cref="ArgumentOutOfRangeException">A duration, or a carrier wait, of zero or
+    /// less.</exception>
+    public TransmitLeaseGrant Take(int subChannel, TimeSpan duration, TimeSpan? maxCarrierWait = null)
     {
         if (duration <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(duration), "a lease must last some time");
+        }
+
+        if (maxCarrierWait is { } wait && wait <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxCarrierWait), "a carrier wait must be some time");
         }
 
         if (duration > MaxDuration)
@@ -153,7 +222,7 @@ public sealed class TransmitLease
         ITimer? stale;
         lock (_gate)
         {
-            if (_holder is int holder && holder != subChannel)
+            if (_holder is int holder && (holder != subChannel || _closing))
             {
                 return new TransmitLeaseGrant(false, holder, _expires, Renewed: false);
             }
@@ -166,10 +235,12 @@ public sealed class TransmitLease
                 _since = now;
                 _renewals = 0;
                 _refused = 0;
+                _maxCarrierWait = maxCarrierWait;
             }
             else
             {
                 _renewals++;
+                _maxCarrierWait = maxCarrierWait ?? _maxCarrierWait;
             }
 
             _renewedAt = now;
@@ -197,30 +268,33 @@ public sealed class TransmitLease
     /// <summary>
     /// Gives the lease back. False when nobody held one, or when <paramref name="onlyIf"/> names a
     /// sub-channel that is not the holder - checked and released in one step, so a release that
-    /// arrives late cannot free a lease somebody else has taken since.
+    /// arrives late cannot free a lease somebody else has taken since. With a
+    /// <see cref="Closing"/> transmission to send, the lease is let go once it has gone; see
+    /// <see cref="IsClosing"/>.
     /// </summary>
     /// <param name="onlyIf">Release only if this sub-channel holds the lease; null releases
     /// whoever does.</param>
     public bool Release(int? onlyIf = null)
     {
         ExpireIfDue();
-        TransmitLeaseEvent change;
-        ITimer? stale;
+        int holder;
         lock (_gate)
         {
-            if (_holder is not int holder || (onlyIf is int expected && expected != holder))
+            if (_holder is not int held || (onlyIf is int expected && expected != held))
             {
                 return false;
             }
 
-            change = new TransmitLeaseEvent(
-                TransmitLeaseChange.Released, holder, _time.GetUtcNow(), _time.GetElapsedTime(_since),
-                _renewals, _refused);
-            stale = ClearLocked();
+            if (_closing)
+            {
+                return true;
+            }
+
+            holder = held;
+            _closing = true;
         }
 
-        stale?.Dispose();
-        Changed?.Invoke(change);
+        Close(holder, TransmitLeaseChange.Released);
         return true;
     }
 
@@ -262,21 +336,37 @@ public sealed class TransmitLease
     }
 
     /// <summary>
-    /// The holder as of this instant, an expired lease reading as free, without reporting the
-    /// expiry. For the channel's check under its own queue lock, where raising
-    /// <see cref="Changed"/> would run a host's handler inside that lock.
+    /// The holder as of this instant, an expired lease reading as free (unless it is closing),
+    /// without reporting the expiry. For the channel's check under its own queue lock, where
+    /// raising <see cref="Changed"/> would run a host's handler inside that lock.
     /// </summary>
     internal int? HolderNow()
     {
         lock (_gate)
         {
-            return _holder is int holder && !DueLocked() ? holder : null;
+            return _holder is int holder && (_closing || !DueLocked()) ? holder : null;
         }
     }
 
     /// <summary>Whether <paramref name="source"/> is attributed to <paramref name="subChannel"/>.</summary>
     internal bool IsAttributed(object? source, int subChannel) =>
         source is not null && _attributed.TryGetValue(source, out StrongBox<int>? box) && box.Value == subChannel;
+
+    /// <summary>The carrier wait that applies to a transmission queued under
+    /// <paramref name="source"/>: the lease's, if it belongs to the holder, else none.</summary>
+    internal TimeSpan? CarrierWaitFor(object source)
+    {
+        lock (_gate)
+        {
+            return _holder is int holder && _maxCarrierWait is { } wait && IsAttributed(source, holder)
+                ? wait
+                : null;
+        }
+    }
+
+    /// <summary>Tells the host a carrier wait was cut short.</summary>
+    internal void NoteCarrierWaitCutShort(int subChannel, TimeSpan waited) =>
+        CarrierWaitCutShort?.Invoke(subChannel, waited);
 
     /// <summary>Whether the current lease's time is up, on the monotonic clock. Call under the lock.</summary>
     private bool DueLocked() => _time.GetElapsedTime(_renewedAt) >= _duration;
@@ -292,7 +382,7 @@ public sealed class TransmitLease
         ITimer? stale = null;
         lock (_gate)
         {
-            if (_holder is not null && !DueLocked())
+            if (_holder is not null && !_closing && !DueLocked())
             {
                 TimeSpan left = _duration - _time.GetElapsedTime(_renewedAt);
                 stale = _expiry;
@@ -307,30 +397,92 @@ public sealed class TransmitLease
 
     private void ExpireIfDue()
     {
-        TransmitLeaseEvent change;
-        ITimer? stale;
+        int holder;
         lock (_gate)
         {
-            if (_holder is not int holder || !DueLocked())
+            if (_holder is not int held || _closing || !DueLocked())
             {
                 return;
             }
 
-            change = new TransmitLeaseEvent(
-                TransmitLeaseChange.Expired, holder, _expires,
-                _time.GetElapsedTime(_since, _renewedAt) + _duration, _renewals, _refused);
-            stale = ClearLocked();
+            holder = held;
+            _closing = true;
+        }
+
+        Close(holder, TransmitLeaseChange.Expired);
+    }
+
+    /// <summary>
+    /// Ends a lease that has been marked closing: sends its closing transmission if the host has
+    /// one, then lets it go and reports it.
+    /// </summary>
+    private void Close(int holder, TransmitLeaseChange how)
+    {
+        ITimer? stale;
+        lock (_gate)
+        {
+            // The expiry timer has nothing left to do: the lease is ending one way or the other.
+            stale = _expiry;
+            _expiry = null;
         }
 
         stale?.Dispose();
-        Changed?.Invoke(change);
+        EndingInternal?.Invoke(holder, how);
+        Task? closing = null;
+        try
+        {
+            closing = Closing?.Invoke(holder);
+        }
+        catch (Exception refused) when (refused is not OperationCanceledException)
+        {
+            // A host that cannot say what to send has nothing to send; the lease ends anyway.
+        }
+
+        if (closing is null)
+        {
+            Finish(holder, how);
+            return;
+        }
+
+        _ = FinishAfterAsync(closing, holder, how);
     }
 
-    private ITimer? ClearLocked()
+    private async Task FinishAfterAsync(Task closing, int holder, TransmitLeaseChange how)
     {
-        ITimer? stale = _expiry;
-        _holder = null;
-        _expiry = null;
-        return stale;
+        using var stop = new CancellationTokenSource();
+        Task bound = Task.Delay(ClosingTimeout, _time, stop.Token);
+        try
+        {
+            await Task.WhenAny(closing, bound).ConfigureAwait(false);
+        }
+        finally
+        {
+            await stop.CancelAsync().ConfigureAwait(false);
+            _ = closing.Exception;
+            Finish(holder, how);
+        }
+    }
+
+    private void Finish(int holder, TransmitLeaseChange how)
+    {
+        TransmitLeaseEvent change;
+        lock (_gate)
+        {
+            if (_holder != holder || !_closing)
+            {
+                return;
+            }
+
+            DateTimeOffset at = how == TransmitLeaseChange.Expired ? _expires : _time.GetUtcNow();
+            TimeSpan held = how == TransmitLeaseChange.Expired
+                ? _time.GetElapsedTime(_since, _renewedAt) + _duration
+                : _time.GetElapsedTime(_since);
+            change = new TransmitLeaseEvent(how, holder, at, held, _renewals, _refused);
+            _holder = null;
+            _closing = false;
+            _maxCarrierWait = null;
+        }
+
+        Changed?.Invoke(change);
     }
 }

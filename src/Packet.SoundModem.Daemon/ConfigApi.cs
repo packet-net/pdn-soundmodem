@@ -45,7 +45,7 @@ internal sealed class ConfigApi
     private readonly string _configPath;
     private Func<IReadOnlyList<Survey.ModemProposal>>? _proposals;
     private TxTestRunner? _txTest;
-    private Channel.TransmitLease? _txLease;
+    private Channel.SoundModemChannel? _txLease;
     private Func<int, bool>? _hasModem;
     private string? _txLeaseCannot;
     private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
@@ -114,13 +114,12 @@ internal sealed class ConfigApi
     /// <summary>
     /// Serves the channel's transmit lease at <c>/api/txlease</c>. See <see cref="TxLeaseApi"/>.
     /// </summary>
-    /// <param name="lease">The station channel's lease.</param>
-    /// <param name="hasModem">Whether a sub-channel carries a modem a lease could be for.</param>
+    /// <param name="channel">The station's channel, whose lease it is.</param>
     /// <param name="cannot">Why this station cannot transmit at all, or null.</param>
-    public void ServeTxLease(Channel.TransmitLease lease, Func<int, bool> hasModem, string? cannot)
+    public void ServeTxLease(Channel.SoundModemChannel channel, string? cannot)
     {
-        _txLease = lease;
-        _hasModem = hasModem;
+        _txLease = channel;
+        _hasModem = channel.Modems.ContainsKey;
         _txLeaseCannot = cannot;
     }
 
@@ -139,7 +138,7 @@ internal sealed class ConfigApi
         }
 
         (int status, JsonObject answer) = TxLeaseApi.Handle(
-            _txLease, context.Request.HttpMethod, body, _hasModem ?? (_ => false), _txLeaseCannot);
+            _txLease, context.Request.HttpMethod, body, _txLeaseCannot);
         await RespondJsonAsync(context, status, answer.ToJsonString(Pretty)).ConfigureAwait(false);
     }
 
