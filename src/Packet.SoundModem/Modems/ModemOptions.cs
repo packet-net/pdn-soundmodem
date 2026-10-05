@@ -35,10 +35,15 @@ namespace Packet.SoundModem.Modems;
 /// Only the PSK banks have the machinery; supplying it for any other mode throws, so a
 /// measurement that asks for an ensemble can never silently not get one (and the MLSE stage
 /// is BPSK-only, so a qpsk bank refuses that one). Null ⇒ the single-detector bank.</param>
+/// <param name="TxAmplitude">Transmit level for the <c>ms110d-*</c> modes: the scale on the
+/// unit-magnitude symbol stream before pulse shaping, above 0 and at most 1. Null ⇒
+/// <see cref="Ms110d.Ms110dTxSettings.Amplitude"/>'s default (0.5, which peaks at about 0.38 of
+/// full scale); 1.0 peaks at about 0.75. Supplying it for any other mode throws.</param>
 public readonly record struct ModemOptions(
     double? CentreFrequencyHz = null,
     int? OffsetPairs = null,
     double? OffsetStepHz = null,
     PskDetector? Detector = null,
     bool? AcceptPlainIl2p = null,
-    PskDetector? SecondDetector = null);
+    PskDetector? SecondDetector = null,
+    double? TxAmplitude = null);
