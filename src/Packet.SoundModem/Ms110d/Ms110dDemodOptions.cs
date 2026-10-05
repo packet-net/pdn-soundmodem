@@ -28,6 +28,12 @@ public enum Ms110dBurstEndReason
 
     /// <summary>Probe correlation collapsed / signal disappeared mid-burst.</summary>
     SignalLost,
+
+    /// <summary>The mini-probes were indistinguishable from noise for a whole presence window
+    /// (4 s): there is no signal under the lock, whatever the equalizer makes of it. The exit
+    /// that lets go of a burst too weak to decode once it has ended (issue #553,
+    /// docs/dev/ms110d/signal-absent.md). DFE modes only; WN 0 has no probes.</summary>
+    SignalAbsent,
 }
 
 /// <summary>Autobaud result: what the WID + downcount announced.</summary>
@@ -48,7 +54,9 @@ public sealed record Ms110dRxBlock(int Index, byte[] Bits);
 /// bits when no EOM was seen.</param>
 /// <param name="Reason">Which D.5.4.5 exit ended the burst.</param>
 /// <param name="Blocks">Input-data blocks decoded.</param>
-public sealed record Ms110dBurst(byte[] PayloadBits, Ms110dBurstEndReason Reason, int Blocks);
+/// <param name="Lock">What the preamble announced for the burst, if it got that far.</param>
+public sealed record Ms110dBurst(
+    byte[] PayloadBits, Ms110dBurstEndReason Reason, int Blocks, Ms110dLockInfo? Lock = null);
 
 /// <summary>
 /// Receiver options - the RX half of the D.5.4.6 remote-control parameter list. Any

@@ -110,7 +110,18 @@ public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingMo
                 _deframer.PushBit(bit);
             }
         };
-        _rx.BurstCompleted += _ => _deframer.Reset();
+        _rx.BurstCompleted += burst =>
+        {
+            _deframer.Reset();
+            if (burst.Reason == Ms110dBurstEndReason.SignalAbsent)
+            {
+                LocksReleased++;
+                string wn = burst.Lock is { } locked ? $"wn{locked.WaveformNumber}" : "burst";
+                LockReleased?.Invoke(
+                    $"ms110d: let go of a {wn} lock with no signal left on it " +
+                    $"({Ms110dDemodulator.PresenceWindowSeconds:0} s of noise-only mini-probes, {burst.Blocks} blocks read); listening afresh");
+            }
+        };
         _energyBusy = new EnergyBusyDetector(NativeRate);
         _busyBandpass = new FirFilter(FilterDesign.BandPass(180, 3420, NativeRate, 96));
         if (sampleRate != NativeRate)
@@ -207,6 +218,19 @@ public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingMo
             + "the 1E-5 mask; on 2026-08-03 16QAM did not carry over a 48 W NVIS path",
         _ => null,
     };
+
+    /// <summary>
+    /// Fires once each time the receiver lets go of a lock because its mini-probes have shown
+    /// no signal for a whole window (issue #553): a burst too weak to read was acquired and
+    /// has ended, or its signal faded out for good. One plain-ASCII line for the host's
+    /// journal. Raised on the thread calling <see cref="Process"/>, after
+    /// <see cref="CarrierDetect"/> has dropped.
+    /// </summary>
+    public event Action<string>? LockReleased;
+
+    /// <summary>How many times <see cref="LockReleased"/> has fired since construction.
+    /// <see cref="ResetCarrierState"/> does not clear it.</summary>
+    public int LocksReleased { get; private set; }
 
     /// <inheritdoc />
     public bool CarrierDetect => _rx.CarrierDetect;

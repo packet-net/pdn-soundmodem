@@ -155,6 +155,23 @@ public sealed class Ms110dDemodulator
     private int _collapsedProbes;
     private bool _collapseArmed;
 
+    // Signal-absent release (issue #553, docs/dev/ms110d/signal-absent.md). Each frame's
+    // mini-probe is matched-filtered against the raw received symbols over a lag window, and
+    // the coherent energy found beyond what noise alone puts there is averaged over the last
+    // PresenceWindowSeconds of frames. Noise-only, that average sits at zero with a standard
+    // deviation of about sqrt(lags / frames) (independent unit-exponential lags; measured a
+    // little under it); the lock is released when it falls below PresenceSigmas of those.
+    // It reads the ring through the receiver's carrier and timing but writes no receiver
+    // state, so until it fires the receiver is bit-identical to one without it.
+    internal const double PresenceWindowSeconds = 4.0;
+    private const double PresenceSigmas = 4.0;
+    private double[] _presenceRing = [];
+    private int _presenceFrames;
+    private double _presenceSum;
+    private double _presenceThreshold;
+    private long _presenceProbeChip;
+    private Cf[] _presenceProbe = [];
+
     // Tracking state (WN 0).
     private Wid0WalshModem? _walsh;
     private long _symbolChip;
@@ -463,6 +480,12 @@ public sealed class Ms110dDemodulator
     /// decision-directed tracking collapsed and was restarted from the probe alone.</summary>
     public int CollapseResolves { get; private set; }
 
+    /// <summary>Locks released because the mini-probes showed no signal for a whole presence
+    /// window (<see cref="Ms110dBurstEndReason.SignalAbsent"/>, issue #553; since
+    /// construction/Reset). Zero on every decodable burst; one per weak burst that was
+    /// acquired but could not be read, counted when the receiver lets go of it.</summary>
+    public int SignalAbsentReleases { get; private set; }
+
     /// <summary>Bursts whose input AGC fired (issue #101 - the receive level fell below the
     /// dead-zone floor and was normalized up). Zero on every nominal-or-stronger burst, so a
     /// zero total across a mask point proves the AGC was a strict no-op there (masks
@@ -533,6 +556,7 @@ public sealed class Ms110dDemodulator
         TurboSkipped = 0;
         CollapseResolves = 0;
         AgcResolves = 0;
+        SignalAbsentReleases = 0;
         MfbOffered = 0;
         MfbSelected = 0;
         EndBurst();
@@ -1493,6 +1517,7 @@ public sealed class Ms110dDemodulator
         _badProbes = 0;
         _collapsedProbes = 0;
         _collapseArmed = true;
+        StartPresenceWindow(_mode!);
         _frameChip = _dataStartChip + k;
         _frameInBlock = 0;
     }
@@ -1955,6 +1980,12 @@ public sealed class Ms110dDemodulator
 
         TrackProbeTiming(probeChip, probe);
 
+        // The probe one frame back: every lag of it is resident however the input was cut
+        // into blocks (this frame's own probe may not have its last lags written yet), so
+        // the statistic, and the release, do not depend on the caller's block size.
+        double presence = ProbePresence(_presenceProbeChip, _presenceProbe);
+        _presenceProbeChip = probeChip;
+        _presenceProbe = probe;
         FrameDiagnostics?.Invoke(
             $"frame@{_frameChip}: gain={probeGain:F3} ref={_probeGainRef:F3} mse={mse / mode.K:F3} " +
             $"tau={_tau:F3} omega={_omega:E2} bad={_badProbes} " +
@@ -1965,7 +1996,8 @@ public sealed class Ms110dDemodulator
             // the residual the re-anchor removed (or coasted on below the 0.10 floor),
             // and the slerp's common rotation φ for the data span that follows.
             $"phase={probePhase.Arg():F3} anchor={postPhase.Abs() / statRows:F3}@{postPhase.Arg():F3} " +
-            $"phi={(tapRotation.Cnorm() > 1e-12 ? tapRotation.Arg() : 0f):F3}");
+            $"phi={(tapRotation.Cnorm() > 1e-12 ? tapRotation.Arg() : 0f):F3} " +
+            $"presence={presence:F2}/{_presenceThreshold:F2}");
 
         if (probeGain < Math.Max(0.10, 0.45 * _probeGainRef))
         {
@@ -1996,6 +2028,13 @@ public sealed class Ms110dDemodulator
             _collapseArmed = true;
         }
 
+        if (SignalAbsent(presence))
+        {
+            SignalAbsentReleases++;
+            CompleteBurst(Ms110dBurstEndReason.SignalAbsent);
+            return;
+        }
+
         _blockFrameChips.Add(_frameChip);
         _frameChip += mode.U + mode.K;
         _frameInBlock++;
@@ -2005,6 +2044,97 @@ public sealed class Ms110dDemodulator
             FinishBlock();
             _blockFrameChips.Clear();
         }
+    }
+
+    /// <summary>Sizes the signal-absent window for the locked mode (issue #553): as many
+    /// frames as span <see cref="PresenceWindowSeconds"/>, and the release line
+    /// <see cref="PresenceSigmas"/> noise standard deviations of the window mean above
+    /// zero.</summary>
+    private void StartPresenceWindow(Ms110dMode mode)
+    {
+        int frames = (int)Math.Ceiling(PresenceWindowSeconds * Ms110dTables.SymbolRate / (mode.U + mode.K));
+        _presenceRing = new double[frames];
+        _presenceFrames = 0;
+        _presenceSum = 0;
+        _presenceThreshold = PresenceSigmas * Math.Sqrt(PresenceLags(mode.K) / (double)frames);
+
+        // The first frame scores the probe that ends the preamble (unshifted, design §2.4).
+        _presenceProbeChip = _dataStartChip;
+        _presenceProbe = MiniProbe.Get(mode.K, boundary: false);
+    }
+
+    /// <summary>Symbol lags the probe matched filter searches: half a probe base period
+    /// either side of the cursor (±6, ±7 and ±12 for K = 24, 32 and 48). It covers the
+    /// D.6.1 Poor rig's 2 ms echo (4.8 symbols) on either side of whichever path the cursor
+    /// locked to, and stays inside one base period so the periodic probe cannot alias a
+    /// path onto a second lag.</summary>
+    private static int PresenceLags(int k)
+    {
+        return (2 * ((MiniProbe.Sequence(k).Base.Length - 1) / 2)) + 1;
+    }
+
+    /// <summary>
+    /// How much more coherent mini-probe energy the received symbols hold than noise alone
+    /// would put there (issue #553). For each lag d of <see cref="PresenceLags"/> the K
+    /// received symbols from probe start + d are correlated with the known probe, and each
+    /// lag's |c_d|² is normalized by K times the mean received power over the span, so on
+    /// noise every lag contributes a unit-mean exponential and the sum, less the lag count,
+    /// is zero-mean whatever the level. A signal at symbol SNR s adds about K·s/(1+s) of
+    /// its channel energy that falls inside the window. Read straight from the ring with
+    /// the receiver's own timing and carrier, but independent of the equalizer, its
+    /// reference levels and the AGC (the ratio is scale-free), which is what lets it see
+    /// noise as noise after the DFE has adapted itself to that noise.
+    /// </summary>
+    private double ProbePresence(long probeChip, Cf[] probe)
+    {
+        int k = probe.Length;
+        int lags = PresenceLags(k);
+        int first = -(lags - 1) / 2;
+        int span = k + lags - 1;
+        Span<Cf> received = stackalloc Cf[span];
+        double power = 0;
+        for (int i = 0; i < span; i++)
+        {
+            received[i] = ReadChip(probeChip + first + i);
+            power += received[i].Cnorm();
+        }
+
+        power /= span;
+        if (power <= 0)
+        {
+            return 0;
+        }
+
+        double energy = 0;
+        for (int d = 0; d < lags; d++)
+        {
+            var c = Cf.Zero;
+            for (int i = 0; i < k; i++)
+            {
+                c += received[i + d] * probe[i].Conj();
+            }
+
+            energy += c.Cnorm();
+        }
+
+        return (energy / (k * power)) - lags;
+    }
+
+    /// <summary>Folds one frame's presence into the window; true once the window is full
+    /// and its mean has fallen below the noise line.</summary>
+    private bool SignalAbsent(double presence)
+    {
+        int slot = _presenceFrames % _presenceRing.Length;
+        if (_presenceFrames >= _presenceRing.Length)
+        {
+            _presenceSum -= _presenceRing[slot];
+        }
+
+        _presenceRing[slot] = presence;
+        _presenceSum += presence;
+        _presenceFrames++;
+        return _presenceFrames >= _presenceRing.Length &&
+            _presenceSum / _presenceRing.Length < _presenceThreshold;
     }
 
     /// <summary>Trajectory fraction of data symbol <paramref name="u"/> between the
@@ -4552,8 +4682,9 @@ public sealed class Ms110dDemodulator
     private void EmitBurst(byte[] payload, Ms110dBurstEndReason reason)
     {
         int blocks = _blockIndex;
+        Ms110dLockInfo? lockInfo = _lock;
         EndBurst();
-        BurstCompleted?.Invoke(new Ms110dBurst(payload, reason, blocks));
+        BurstCompleted?.Invoke(new Ms110dBurst(payload, reason, blocks, lockInfo));
     }
 
     private void EndBurst()
