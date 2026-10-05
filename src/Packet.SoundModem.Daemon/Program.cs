@@ -178,6 +178,7 @@ if (mixerShow is not null)
 var modems = new List<ModemConfig>();
 List<PolyglotConfig> polyglotPorts = [];
 PttConfig? pttConfig = null;
+RigConfig? rigConfig = null;
 CarrierSenseConfig? carrierSenseConfig = null;
 AlsaConfig? alsaConfig = null;
 PagingConfig? paging = null;
@@ -246,6 +247,7 @@ if (configPath is not null)
     modems = config.Modems;
     polyglotPorts = config.Polyglot;
     pttConfig = config.Ptt;
+    rigConfig = config.Rig;
     carrierSenseConfig = config.CarrierSense;
     alsaConfig = config.Alsa;
     paging = config.Paging;
@@ -610,7 +612,8 @@ if (deviceIsUberSdr && receiveDialHz is null)
 
 if (bandPlan is not null)
 {
-    BandPlanner.Report(bandPlan, Console.Out, radioIsSelfTuning: flexIsHeadless || deviceIsUberSdr);
+    BandPlanner.Report(
+        bandPlan, Console.Out, radioIsSelfTuning: flexIsHeadless || deviceIsUberSdr || rigConfig is not null);
     foreach (string warning in bandPlan.Warnings)
     {
         Console.Error.WriteLine($"band plan: WARNING - {warning}");
@@ -2296,6 +2299,51 @@ if (benchTxTest is null && paging is not null)
 }
 await using var pagingLifetime = pagingServer;
 
+// Rig control through Hamlib's rigctld (the "rig" section): the band plan's dial, a rigctld PTT
+// and the tuning windows /api/rig/tune opens. Started before the audio and the PTT, because a
+// rigctld PTT keys through it, and so the dial is set before the station starts listening. A
+// rigctld that does not answer is a warning and is retried in the background, unless
+// "rig"."required" says it is worth stopping for. Absent, nothing talks to a rig, as before.
+RigControl? rig = null;
+if (rigConfig is not null)
+{
+    RigctldEndpoint rigEndpoint = RigctldEndpoint.TryParse(rigConfig.Rigctld, out _)!;
+    // The band plan's dial, in the plan's own sideband, with the plan's passband width unless the
+    // operator said otherwise. No plan, no dial: a station placed by audio centre keeps whatever
+    // the operator tuned the rig to, exactly as it would without this section.
+    RigTuning? rigPlan = bandPlan is null
+        ? null
+        : new RigTuning(
+            (long)Math.Round(bandPlan.DialHz),
+            rigConfig.Mode?.ToUpperInvariant() ?? RigModes.ForSideband(bandPlan.Sideband),
+            rigConfig.PassbandHz ?? (bandPlan.IsFm ? 0 : (int)Math.Round(bandPlan.Window.WidthHz)));
+    rig = new RigControl(new RigControlOptions
+    {
+        Endpoint = rigEndpoint,
+        Say = stationJournal.Write,
+        Warn = stationJournal.WriteError,
+        KeysThroughRig = pttConfig?.Type == "rigctld",
+        Plan = rigPlan,
+    });
+    if (rigPlan is null)
+    {
+        Console.WriteLine("rig: no band plan (no \"rfFrequency\"), so the dial is left where the rig has it");
+    }
+
+    bool rigAnswered = await rig.StartAsync(cancellation.Token);
+    if (!rigAnswered && rigConfig.Required)
+    {
+        Console.Error.WriteLine(
+            $"rig: rigctld at {rigEndpoint} did not answer, and \"rig\".\"required\" is true in "
+            + $"{configPath}. Start rigctld (rigctld -m <model> -r <port>), or set \"required\" to "
+            + "false to run without it. The service keeps retrying.");
+        await rig.DisposeAsync();
+        return 1;
+    }
+}
+
+await using var rigLifetime = rig;
+
 // Audio + PTT: a FlexRadio DAX triplet (--device flex:…), an UberSDR web receiver's IQ stream
 // (--device ubersdr:…, receive only), or an ALSA card. Each surfaces through the same
 // IAudioInput/IAudioOutput/IPttControl the channel already speaks, so KISS packet, POCSAG
@@ -2793,6 +2841,10 @@ else
                 ptt = new Cm108Ptt(pttConfig.Device, gpio);
                 Console.WriteLine($"ptt: cm108 {pttConfig.Device} (gpio {gpio})");
                 break;
+            case "rigctld" when rig is not null:
+                ptt = rig.KeyingPtt();
+                Console.WriteLine($"ptt: rigctld {rig.Endpoint} (T 1 to key, T 0 to unkey)");
+                break;
             default:
                 Console.Error.WriteLine($"unknown ptt type '{pttConfig.Type}'");
                 return 2;
@@ -3007,7 +3059,19 @@ await using var flexLifetime = flex;
 // holds the PA" on an arbitrated radio, or a dead PTT lead anywhere else.
 channel.PttFailed += failure => Console.Error.WriteLine($"ptt: {failure.Message}");
 
-Task transmitter = channel.RunTransmitterAsync(playback, ptt, cancellation.Token);
+// A rig's tuning window holds the transmitter: the dial is somewhere this station's modems are
+// not, so a frame sent then would land on the wrong frequency. Ordinary frames wait behind the
+// inhibit (composed over whatever is already installed, never instead of it) and the PTT itself
+// refuses a keyup for anything that gets past it. Installed only with a "rig" section, so a
+// station without one is exactly as it was.
+if (rig is not null)
+{
+    Func<bool>? priorInhibit = channel.TransmitInhibit;
+    RigControl holding = rig;
+    channel.TransmitInhibit = () => (priorInhibit?.Invoke() ?? false) || holding.HoldsTransmitter;
+}
+
+Task transmitter = channel.RunTransmitterAsync(playback, rig?.Guard(ptt) ?? ptt, cancellation.Token);
 
 // A transmitter that dies (the output device failed mid-keyup) must stop the daemon, not
 // leave it running as a healthy-looking receive-only station for the rest of the process's
@@ -3103,6 +3167,12 @@ var txLeaseJournal = new TxLeaseJournal(
 channel.TransmitLease.Changed += txLeaseJournal.Note;
 channel.TransmitLease.CarrierWaitCutShort += txLeaseJournal.NoteCarrierWaitCutShort;
 runtimeApi?.ServeTxLease(channel, channel.ReceiveOnlyReason);
+if (rig is not null && runtimeApi is not null && waterfallServer is not null)
+{
+    runtimeApi.ServeRig(rig);
+    Console.WriteLine(
+        $"api: rig control over {waterfallServer.Url}api/rig and api/rig/tune (key required)");
+}
 if (txTestRefusal is null)
 {
     stationJournal.Write(

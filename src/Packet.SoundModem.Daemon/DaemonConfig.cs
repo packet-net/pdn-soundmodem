@@ -444,7 +444,7 @@ public sealed class CarrierSenseConfig
 
 public sealed class PttConfig
 {
-    /// <summary>"serial" or "cm108" (omit the whole section for VOX).</summary>
+    /// <summary>"serial", "cm108" or "rigctld" (omit the whole section for VOX).</summary>
     public string Type { get; set; } = "serial";
 
     /// <summary>Device path (/dev/ttyUSB0, /dev/hidraw0).</summary>
@@ -455,6 +455,43 @@ public sealed class PttConfig
 
     /// <summary>CM108 GPIO pin (default 3).</summary>
     public int? Gpio { get; set; }
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
+/// <summary>
+/// A radio controlled through Hamlib's rigctld, for a station whose radio is not a FlexRadio.
+/// </summary>
+/// <remarks>
+/// With this section the daemon connects to rigctld, journals what the rig is on, sets the dial
+/// and mode from the band plan when the modems are placed by <c>rfFrequency</c>, can key the radio
+/// with <c>"ptt": {"type": "rigctld"}</c>, and serves <c>/api/rig</c>. Without it nothing talks to
+/// a rig, as before. See <see cref="RigControl"/>.
+/// </remarks>
+public sealed class RigConfig
+{
+    /// <summary>Where rigctld listens, <c>host:port</c>.</summary>
+    public string Rigctld { get; set; } = RigctldEndpoint.Default;
+
+    /// <summary>
+    /// When true, a rigctld that cannot be reached at start-up stops the station (exit 1, so
+    /// systemd retries) rather than being a warning.
+    /// </summary>
+    public bool Required { get; set; }
+
+    /// <summary>
+    /// The Hamlib mode the band plan sets, when plain USB, LSB or FM is not the one the rig's data
+    /// jack wants (PKTUSB on many rigs). It has to agree with the band plan's sideband.
+    /// </summary>
+    public string? Mode { get; set; }
+
+    /// <summary>
+    /// The passband the band plan asks the rig for, in Hz. Absent: the plan's own passband width
+    /// (2400 Hz for the ordinary 300-2700 Hz window). 0: the rig's normal width for the mode.
+    /// </summary>
+    public int? PassbandHz { get; set; }
 
     /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
@@ -1498,6 +1535,10 @@ public sealed class DaemonConfig
     /// <summary>PTT control; null = VOX / none.</summary>
     public PttConfig? Ptt { get; set; }
 
+    /// <summary>A radio controlled through Hamlib's rigctld; null = no rig control, as before.
+    /// See <see cref="RigConfig"/>.</summary>
+    public RigConfig? Rig { get; set; }
+
     /// <summary>
     /// Carrier sense read from the radio rather than inferred from the audio; null leaves the
     /// station on the audio-derived answer, which is what it has always had and which is wrong on
@@ -1798,6 +1839,8 @@ public sealed class DaemonConfig
             }
         }
 
+        ValidateRig(config);
+
         // "modemPlugins": null deserialises to a null list, not to the property initialiser, and
         // every read below would then throw where an operator expects a message about their file.
         config.ModemPlugins ??= [];
@@ -1823,6 +1866,75 @@ public sealed class DaemonConfig
         ValidateKissFrames(config);
         config.Warnings = CollectWarnings(config);
         return config;
+    }
+
+    /// <summary>
+    /// Refuses a <c>rig</c> section, or a rigctld PTT, that cannot do what it says.
+    /// </summary>
+    private static void ValidateRig(DaemonConfig config)
+    {
+        bool rigctldPtt = string.Equals(config.Ptt?.Type, "rigctld", StringComparison.Ordinal);
+        if (config.Rig is not { } rig)
+        {
+            if (rigctldPtt)
+            {
+                throw new InvalidDataException(
+                    "\"ptt\": {\"type\": \"rigctld\"} keys the radio through the \"rig\" section's "
+                    + "rigctld, and this file has no \"rig\" section. Add \"rig\": {} (it looks for "
+                    + $"rigctld at {RigctldEndpoint.Default}), or \"rig\": {{\"rigctld\": \"host:port\"}}.");
+            }
+
+            return;
+        }
+
+        if (FlexRadio.FlexDevice.IsFlex(config.Device))
+        {
+            throw new InvalidDataException(
+                $"\"rig\" is set and \"device\" is \"{config.Device}\". A FlexRadio is tuned and keyed "
+                + "over its own API, so it needs no rigctld - remove \"rig\".");
+        }
+
+        if (UberSdrDevice.IsUberSdr(config.Device))
+        {
+            throw new InvalidDataException(
+                $"\"rig\" is set and \"device\" is \"{config.Device}\", a web receiver, which is tuned "
+                + "by the band plan itself and has no rig to control - remove \"rig\".");
+        }
+
+        if (RigctldEndpoint.TryParse(rig.Rigctld, out string why) is null)
+        {
+            throw new InvalidDataException(
+                $"\"rig\".\"rigctld\" is \"{rig.Rigctld}\": {why}. Write it as host:port, for example "
+                + $"\"{RigctldEndpoint.Default}\", or leave it out for that default.");
+        }
+
+        if (rig.Mode is string mode)
+        {
+            if (!RigModes.IsKnown(mode))
+            {
+                throw new InvalidDataException(
+                    $"\"rig\".\"mode\" is \"{mode}\", which is not a mode this station asks a rig for. "
+                    + $"Use one of {RigModes.List}, or leave it out for plain USB, LSB or FM.");
+            }
+
+            string? implies = RigModes.SidebandOf(mode);
+            if (implies is null || !string.Equals(implies, config.Sideband, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException(
+                    $"\"rig\".\"mode\" is \"{mode}\", "
+                    + (implies is null ? "which is not a sideband or FM mode" : $"which is {implies.ToUpperInvariant()}")
+                    + $", and \"sideband\" is \"{config.Sideband}\". The band plan sets this mode, so the "
+                    + "two have to agree: change one of them.");
+            }
+        }
+
+        if (rig.PassbandHz is int passband && passband is < 0 or > 20_000)
+        {
+            throw new InvalidDataException(
+                $"\"rig\".\"passbandHz\" is {passband}. That is the receive filter width in Hz the band "
+                + "plan asks the rig for - use 0 for the rig's normal width, a width such as 2400 or "
+                + "3000, or leave it out for the plan's own.");
+        }
     }
 
     /// <summary>
@@ -2680,6 +2792,7 @@ public sealed class DaemonConfig
         Unknown("rawCapture", config.RawCapture?.UnknownSettings);
         Unknown("deadFeed", config.DeadFeed?.UnknownSettings);
         Unknown("ptt", config.Ptt?.UnknownSettings);
+        Unknown("rig", config.Rig?.UnknownSettings);
         Unknown("carrierSense", config.CarrierSense?.UnknownSettings);
         Unknown("txTest", config.TxTest.UnknownSettings);
         Unknown("paging", config.Paging?.UnknownSettings);

@@ -200,7 +200,7 @@ The `waterfall` section (or `--waterfall PORT`) serves these routes on `waterfal
 | any path with a WebSocket upgrade | the live stream; the page itself opens `ws` |
 | `/survey/<file>` | one survey capture from `survey.path`, `audio/wav` or `application/json`; only with a `survey` section |
 | `/metrics`, `/metrics/frames` | see [Metrics](#metrics); only with a `metrics` section |
-| `/api/config`, `/api/proposals`, `/api/txtest`, `/api/mixer` | see [The API](#the-api-under-api); 404 without an `api.key`, except the mixer exception |
+| `/api/config`, `/api/proposals`, `/api/txtest`, `/api/txlease`, `/api/mixer`, `/api/rig`, `/api/rig/tune` | see [The API](#the-api-under-api); 404 without an `api.key`, except the mixer exception |
 
 A capture name is served only when it is 1 to 128 characters of lower-case letters, digits, hyphens and dots, contains no `..`, ends in `.wav` or `.json`, and names a file inside the survey directory. Anything else is a 404.
 
@@ -228,6 +228,9 @@ The key is presented as `Authorization: Bearer KEY` or `X-API-Key: KEY`; `X-API-
 | `/api/mixer` | `GET` | required, or none with `enableAudioControls` | none | `available` true, `card`, `controls` (every control name), `playbackCard` and `playbackControls` (the transmit card and its controls, the same as `card` and `controls` unless [`playbackDevice`](config.md#two-cards-capturedevice-and-playbackdevice) puts transmit on another card), `capture` and `playback` (each null when the card has no such control, else `control`, `decibels`, `dbRange` as `min`, `max` and `mutesBelowMin` or null on a card with no dB scale, `percent`, and `source` as `config`, `state` or `none`), `agc` and `micBoost` (each null or `control`, `on` and `forcedOff`, always true), `summary` and `journal` (the start-up lines); `{"available": false, "why": "..."}` on a station with no sound card |
 | `/api/mixer` | `POST` | required, or none with `enableAudioControls` | `{"captureGainDb": 6, "playbackDb": -8}`, either or both | 200 with the read-back plus `applied`, `persisted`, `warn`, `stateFile` and `note`; 400 for a level outside the card's range or a removed key; 409 on a station with no mixer |
 | `/api/mixer?persist=false` | `POST` | as above | as above | the card is set for this run and nothing is written |
+| `/api/rig` | `GET` | required | none | the rig's state: `{"rigctld": "host:port", "connected": bool, "dialHz", "mode", "passbandHz" (as last read, null before the first), "keyed": bool, "pttThroughRig": bool, "transmitHeld": bool, "window": null or {"owner", "dialHz", "mode", "passbandHz", "expires", "restoreTo": {"dialHz", "mode", "passbandHz"}}, "restoreOwed": null or the same shape as restoreTo, "problem": the last error or null}`; 404 without a [`rig`](config.md#rig) section |
+| `/api/rig/tune` | `POST` | required | `{"dialHz": 7052000, "mode": "USB", "seconds": 60}`, optionally with `"passbandHz"` (default 0, the rig's normal width); `{"release": true}` to put the rig back now | 200 with the rig's state plus `"renewed"`, `"seconds"` and `"capped"`, or `"released"` for a release; 409 with `refused` while the transmitter is keyed, while rigctld is not connected, or while something inside the station holds a window; 400 for a missing or fractional `dialHz`, a missing `mode` or one this station does not know (the Hamlib names: `USB`, `PKTUSB`, `LSB`, `FM`, `AM`, `CW` and the like), or `seconds` of 0 or less; 500 with `failed` when the rig refuses the tuning or rigctld goes away part way |
+| `/api/rig/tune` | `GET` | required | none | the same as `GET /api/rig` |
 | any other method | | | | 405 with a one-line hint |
 
 A keyless `POST /api/mixer` from a browser is refused with 403 unless its `Origin` header names the host the request arrived on; a request with no `Origin`, or one presenting the key, is allowed.
@@ -241,6 +244,7 @@ What a change does to the running station:
 | `POST /api/mixer` | applied to the card at once with no restart, and written to the mixer state file so the next start-up sets it again. The config file is never written; a level it pins wins at the next start-up (see [`alsa`](config.md#alsa)), and the answer says so with `"warn": true` |
 | `POST /api/txtest` | keys the transmitter for the test and answers when it is over |
 | `POST /api/txlease` | holds the transmitter for one sub-channel until the expiry; see below |
+| `POST /api/rig/tune` | retunes the rig and holds the transmitter until the window ends and the rig is put back; see [rig tuning windows](#rig-tuning-windows) |
 
 Run outside systemd, an applied configuration stops the modem rather than restarting it; the journal warns at start-up when no `INVOCATION_ID` is present.
 
@@ -267,6 +271,24 @@ tx lease: sub-channel 3 (ms110d-wn4) still holds the transmitter after 5m00s (10
 tx lease: sub-channel 3 (ms110d-wn4) released the transmitter after 15m02s; 7 transmissions from others refused; normal service resumes
 tx lease: sub-channel 3 (ms110d-wn4) stopped renewing and its lease ran out at 2026-10-04T12:16:00Z, after 15m30s; its unsent frames were dropped; 7 transmissions from others refused; normal service resumes
 tx lease: sub-channel 3 (ms110d-wn4) transmitted after 30s without a clear channel (maxCarrierWaitSeconds)
+```
+
+### Rig tuning windows
+
+With a [`rig`](config.md#rig) section, `POST /api/rig/tune` tunes the rig somewhere else for a while and then puts it back. It is for hearing something outside the station's own passband, such as pdn-mailcast's bulletins on 7.0538 MHz (USB dial 7.052 MHz) on a station that works packet elsewhere on 40 m.
+
+- `seconds` defaults to 60 and is capped at 300. POST again before it ends to renew it, with the same or a new `dialHz` and `mode`; the rig still goes back to where it was before the first request.
+- The rig is put back when the window ends, when it is released, and when the station stops. If rigctld is not there at that moment, the restore is owed and done as soon as it answers.
+- The rig is never retuned while the transmitter is keyed: a request then is a 409, so ask again a moment later.
+- While the rig is retuned, and until it is put back, the station does not transmit, because its modems would land on the wrong frequency. Frames wait, as they do behind an ARDOP session, and are dropped if they wait more than 30 s; anything that does not wait (an ARDOP burst) is refused at the PTT with a `ptt:` line. Receiving carries on, on the new frequency.
+- One window at a time. The API's own requests share one window; a window opened by a feature inside the station is refused with a 409 rather than taken over.
+
+The journal says when the rig is retuned and put back:
+
+```
+rig: tuned to 7.052000 MHz USB (normal passband) for the API until 2026-10-05T18:48:41Z; transmissions are held until it is put back to 7.050100 MHz USB (2400 Hz passband)
+rig: the window on 7.052000 MHz USB (normal passband) for the API has ended (its time ran out)
+rig: put back to 7.050100 MHz USB (2400 Hz passband); transmissions resume
 ```
 
 ## Metrics
