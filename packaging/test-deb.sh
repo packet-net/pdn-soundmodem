@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: AGPL-3.0-or-later AND GPL-3.0-or-later
-# AGPL-3.0-or-later except the template-unit lines Tom Wardill contributed (GPL-3.0-or-later).
-# See LICENSING.md.
-#
 # Acceptance test for the pdn-soundmodem .deb, run in throwaway containers.
 #
 #   packaging/build-deb.sh 0.0.0-test amd64

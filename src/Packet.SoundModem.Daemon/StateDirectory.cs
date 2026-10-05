@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Contributed by Tom Wardill under GPL-3.0-or-later. See LICENSING.md.
-
 namespace Packet.SoundModem.Daemon;
 
 /// <summary>

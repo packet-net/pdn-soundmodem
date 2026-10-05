@@ -19,8 +19,8 @@
 
   <PropertyGroup>
     <!-- This repo is AGPL-3.0-or-later (see COPYING), with some files kept GPL-3.0-or-later
-         or GPL-3.0-only because they derive from third-party GPL code or were written by
-         another contributor; LICENSING.md lists them. A package that contains any of those
+         or GPL-3.0-only because they derive from third-party GPL code; LICENSING.md lists
+         them. A package that contains any of those
          files says so in its own PackageLicenseExpression (Packet.SoundModem.csproj does).
          Never change this to a permissive licence; see CLAUDE.md § Licence rules. -->
     <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>

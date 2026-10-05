@@ -2,7 +2,7 @@
 
 pdn-soundmodem as a whole is licensed under the **GNU Affero General Public License, version 3 or later** (AGPL-3.0-or-later). The text is in [COPYING](COPYING).
 
-A small number of files are not Tom's to relicense, so they stay under the **GNU General Public License, version 3 or later** (GPL-3.0-or-later), and one stays GPL-3.0-only. Either they carry material derived from someone else's GPL program, or someone other than Tom wrote them and has not agreed to a change. They are all listed below with the reason. The GPLv3 text is in [LICENSES/GPL-3.0.txt](LICENSES/GPL-3.0.txt).
+A small number of files carry material derived from someone else's GPL program, so they are not Tom's to relicense. They stay under the **GNU General Public License, version 3 or later** (GPL-3.0-or-later), and one stays GPL-3.0-only. They are all listed below with the reason. The GPLv3 text is in [LICENSES/GPL-3.0.txt](LICENSES/GPL-3.0.txt).
 
 The two licences are designed to be combined. Section 13 of GPLv3 and section 13 of AGPLv3 each allow a GPLv3 work and an AGPLv3 work to be linked into one program and conveyed together. Each part keeps its own licence, and the AGPL's network clause (section 13: users who interact with the program over a network must be offered its source) applies to the combination. pdn-soundmodem serves a web page and an HTTP API, so in practice the program you build or install is used under AGPL terms, network clause included.
 
@@ -12,7 +12,7 @@ The two licences are designed to be combined. Section 13 of GPLv3 and section 13
 2. A file listed on this page is under the licence given here. This covers files that do not carry a header, such as documentation.
 3. Every other file is AGPL-3.0-or-later.
 
-`AGPL-3.0-or-later AND GPL-3.0-or-later` marks a file that is mostly AGPL but contains some GPL lines: each licence applies to its own lines.
+A header joining two licences with `AND` marks a file that contains material under both; each licence applies to its own lines.
 
 ## Files that stay GPL because they derive from third-party GPL code
 
@@ -35,24 +35,9 @@ The two licences are designed to be combined. Section 13 of GPLv3 and section 13
 
 Dire Wolf and MMDVM-TNC are GPL-2.0-or-later and are used here under their "or later" clause as GPL-3.0-or-later.
 
-## Files that stay GPL because someone else wrote them
+## Contributions from other authors
 
-Tom Wardill contributed the `pdn-soundmodem@` systemd template unit on 2026-09-14 (PR #477, commits `159bf32` and `60a7175`). His contribution was made under GPL-3.0-or-later and stays that way unless he agrees to relicense it. If he does, these headers become AGPL-3.0-or-later and this section goes.
-
-| File | Licence | His part |
-|---|---|---|
-| `src/Packet.SoundModem.Daemon/StateDirectory.cs` | GPL-3.0-or-later | The whole file |
-| `tests/Packet.SoundModem.Tests/Daemon/StateDirectoryTests.cs` | GPL-3.0-or-later | The whole file |
-| `packaging/pdn-soundmodem@.service` | GPL-3.0-or-later | The whole file |
-| `packaging/build-deb.sh` | AGPL-3.0-or-later AND GPL-3.0-or-later | Installing the template unit and the maintainer-script handling of its instances |
-| `packaging/test-deb.sh` | AGPL-3.0-or-later AND GPL-3.0-or-later | The template-unit and instance checks |
-| `src/Packet.SoundModem.Daemon/DaemonConfig.cs` | AGPL-3.0-or-later AND GPL-3.0-or-later | The state-directory defaults for the frame log, survey and raw capture paths |
-| `src/Packet.SoundModem.Daemon/ConfigApi.cs` | AGPL-3.0-or-later AND GPL-3.0-or-later | Two lines placing the pending config in the state directory |
-| `src/Packet.SoundModem.Daemon/MixerStateFile.cs` | AGPL-3.0-or-later AND GPL-3.0-or-later | Two lines placing the mixer state file in the state directory |
-| `.github/workflows/release.yml` | AGPL-3.0-or-later AND GPL-3.0-or-later | The check that the template unit is in the package |
-| `docs/01-install.md` | AGPL-3.0-or-later AND GPL-3.0-or-later | The template-instance example commands |
-| `docs/reference/config.md` | AGPL-3.0-or-later AND GPL-3.0-or-later | The state-directory defaults in three path rows |
-| `docs/reference/files.md` | AGPL-3.0-or-later AND GPL-3.0-or-later | The template unit, state directory and "More than one modem" text |
+Tom Wardill contributed the `pdn-soundmodem@` systemd template unit on 2026-09-14 (PR #477, commits `159bf32` and `60a7175`), originally under GPL-3.0-or-later. Tom Wardill agreed on 2026-10-05, relayed by Tom M0LTE, to relicense that contribution under AGPL-3.0-or-later, so those files (`StateDirectory.cs`, its test, `packaging/pdn-soundmodem@.service` and his lines in the packaging scripts, daemon config code, release workflow and docs) are AGPL-3.0-or-later like the rest of the repository.
 
 Everyone else who has committed to this repository is Tom (as Tom Fanning or M0LTE) or Claude working for him.
 
@@ -75,7 +60,7 @@ These files mention a GPL program, or sit in a PROVENANCE row that does, but tak
 
 ## Other licences in the tree
 
-- `samples/ardop/gen-reference-vectors.c` contains functions copied verbatim from ardopcf, MIT, Copyright (c) 2014-2024 Rick Muething, John Wiseman, Peter LaRue. That material stays MIT.
+- `samples/ardop/gen-reference-vectors.c` (`AGPL-3.0-or-later AND MIT`) contains three functions copied verbatim from ardopcf (`GenCRC16`, `GenCRC8`, `ComputeTypeParity`), MIT, Copyright (c) 2014-2024 Rick Muething, John Wiseman, Peter LaRue; the file carries ardopcf's MIT notice and those functions stay MIT. It is kept because it is the documented generator of `ardop-reference-vectors.txt`, which `M0LTE.Ardop`'s tests still use.
 - Recordings and fixtures under `samples/` and `tests/**/Fixtures/` are data captured from radios or produced by other programs. This page does not relicense them.
 - Dependencies keep their own licences. `M0LTE.Il2p` and `M0LTE.FmChannel` are GPL-3.0-or-later; `M0LTE.Ardop`, `M0LTE.Dsp`, `M0LTE.Fec`, `M0LTE.FecLdpc`, `M0LTE.Flex`, `M0LTE.Ofdm`, `M0LTE.Pocsag`, `M0LTE.Radio.Audio`, `Packet.Ax25` and `Packet.Core` are AGPL-3.0-or-later; the .NET runtime and the other NuGet dependencies are MIT, Apache-2.0 or BSD.
 
@@ -89,5 +74,5 @@ These files mention a GPL program, or sit in a PROVENANCE row that does, but tak
 
 - New code is AGPL-3.0-or-later and needs no header.
 - Code derived from a GPL source gets that source's licence (GPL-3.0-or-later where the source allows "or later", otherwise what it does allow), an `SPDX-License-Identifier` header, a row on this page and a provenance comment naming the source file and function.
-- A contribution from anyone other than Tom stays under the licence it was offered under until its author agrees otherwise; list it here.
+- A contribution from anyone other than Tom stays under the licence it was offered under until its author agrees otherwise; list it here, and record the agreement when it comes.
 - Never copy code from this repository into an MIT-licensed package, and never let an MIT-licensed package depend on this one.

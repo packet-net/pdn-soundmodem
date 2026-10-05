@@ -16,9 +16,8 @@ it. Open work is tracked in one place, [docs/dev/roadmap.md](docs/dev/roadmap.md
 ## Licence rules (hard)
 
 - This repo is **AGPL-3.0-or-later** as a whole (COPYING). Files derived from third-party
-  GPL code (Dire Wolf, QtSoundModem/UZ7HO, MMDVM-TNC, ka9q_ubersdr) and files contributed by
-  anyone other than Tom stay **GPL-3.0-or-later** (one, the ka9q_ubersdr port, GPL-3.0-only);
-  each carries an `SPDX-License-Identifier` header and is listed with its reason in
+  GPL code (Dire Wolf, QtSoundModem/UZ7HO, MMDVM-TNC, ka9q_ubersdr) stay
+  **GPL-3.0-or-later** (one, the ka9q_ubersdr port, GPL-3.0-only); each carries an `SPDX-License-Identifier` header and is listed with its reason in
   [LICENSING.md](LICENSING.md). GPLv3 §13 / AGPLv3 §13 allow the combination; AGPL's
   network clause applies to the whole. Never relicense one of those files.
 - **New code is AGPL-3.0-or-later** and needs no header, unless it is derived from a GPL

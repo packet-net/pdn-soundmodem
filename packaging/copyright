@@ -7,8 +7,7 @@ Comment:
  .NET dependencies and the .NET runtime.
  .
  The program as a whole is AGPL-3.0-or-later. The files listed below with
- GPL-3+ or GPL-3 derive from third-party GPL code or were contributed by
- another author, and keep that licence. GPLv3 section 13 and AGPLv3 section 13
+ GPL-3+ or GPL-3 derive from third-party GPL code and keep that licence. GPLv3 section 13 and AGPLv3 section 13
  allow the two to be combined and conveyed together: each part keeps its own
  licence, and the AGPL's network clause (section 13) applies to the
  combination. pdn-soundmodem serves a web page and an HTTP API, so the program
@@ -30,6 +29,7 @@ Comment:
 
 Files: *
 Copyright: 2026 Tom Fanning M0LTE and Packet.NET contributors
+ 2026 Tom Wardill
 License: AGPL-3+
 
 Files: src/Packet.SoundModem/Modems/AfskDemodulator.cs
@@ -71,28 +71,6 @@ License: GPL-3
 Comment: A direct port of ka9q_ubersdr's clients/iq-recorder/pcm_decoder.go.
  Upstream ships the GPLv3 text without an "or later" statement, so this file
  is GPL-3.0-only.
-
-Files: src/Packet.SoundModem.Daemon/StateDirectory.cs
- tests/Packet.SoundModem.Tests/Daemon/StateDirectoryTests.cs
- packaging/pdn-soundmodem@.service
-Copyright: 2026 Tom Wardill
-License: GPL-3+
-Comment: Contributed under GPL-3.0-or-later (pdn-soundmodem PR #477).
-
-Files: packaging/build-deb.sh
- packaging/test-deb.sh
- src/Packet.SoundModem.Daemon/DaemonConfig.cs
- src/Packet.SoundModem.Daemon/ConfigApi.cs
- src/Packet.SoundModem.Daemon/MixerStateFile.cs
- .github/workflows/release.yml
- docs/01-install.md
- docs/reference/config.md
- docs/reference/files.md
-Copyright: 2026 Tom Fanning M0LTE
- 2026 Tom Wardill
-License: AGPL-3+ and GPL-3+
-Comment: AGPL-3.0-or-later, except the lines Tom Wardill contributed for the
- template unit (pdn-soundmodem PR #477), which are GPL-3.0-or-later.
 
 License: AGPL-3+
  This program is free software: you can redistribute it and/or modify it under
