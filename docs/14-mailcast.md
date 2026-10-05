@@ -23,6 +23,8 @@ Using QtSoundModem rather than pdn-soundmodem? This page is not for you. Run pdn
 
 Only `bbs.password` is needed; everything else above is the default. `type` is `"fbb"` for Linux FBB. Every key is in [`mailcast`](reference/config.md#mailcast).
 
+The receiver is an MS110D modem, so with this section the station's channel runs at 48 kHz, as it does with any `ms110d-*` modem. That costs some CPU on a small machine. A station that retunes for it only runs the receiver while the rig is on the mailcast dial.
+
 Restart the service, and the journal says where the receiver listens:
 
 ```
@@ -33,7 +35,7 @@ mailcast: delivering rebuilt bulletins to LinBPQ at 127.0.0.1:8011 as Q0CAST; st
 
 ## Where it listens
 
-The signal is centred on 7.0538 MHz, 1.8 kHz above a USB dial of 7.052 MHz, and fills 7.0522 to 7.0554 MHz. There are two ways your station can hear it.
+The signal is centred on 7.0538 MHz, 1.8 kHz above a USB dial of 7.052 MHz, and fills 7.0524 to 7.0552 MHz. There are two ways your station can hear it.
 
 **Your passband already reaches it.** Nothing is retuned, and the receiver listens all the time beside your other modems. This is the case when:
 
@@ -42,14 +44,14 @@ The signal is centred on 7.0538 MHz, 1.8 kHz above a USB dial of 7.052 MHz, and 
 - a web receiver's SSB window (`ubersdr.ssbLowHz` to `ssbHighHz`) covers it;
 - your radio is on 7.052 MHz USB already.
 
-**It does not.** Set `"retune": true` and add a [`rig`](reference/config.md#rig) section, and the rig is retuned to 7.052 MHz USB from 1 minute before each of GB7RDG's slots to 12 minutes after, then put back:
+**It does not.** Set `"retune": true` and add a [`rig`](reference/config.md#rig) section, and the rig is retuned to 7.052 MHz USB (asking for a 3000 Hz passband, or the rig's normal width if it will not set that) from 1 minute before each of GB7RDG's slots to 12 minutes after, then put back:
 
 ```
 mailcast: rig on 7.052 MHz USB for the 12:00 UTC slot until 12:12 UTC; nothing is transmitted until it is put back
 mailcast: the 12:00 UTC slot's listening window has ended; the rig goes back
 ```
 
-While the rig is away your station sends nothing at all: frames from your node wait and are dropped after 30 s (AX.25 simply retries), idents wait, and ARDOP, the transmitter test and a transmit lease are refused. That is about 13 minutes an hour in daylight, so think about what else uses the radio. A station stopped in the middle of a window puts the rig back when it next starts, before it sends anything.
+While the rig is away your station sends nothing at all: frames from your node wait and are dropped after 30 s (AX.25 simply retries), idents wait, the transmitter test waits up to 60 s for the channel and then gives up, and ARDOP and a transmit lease are refused. That is about 13 minutes an hour in daylight, so think about what else uses the radio. A station stopped in the middle of a window puts the rig back when it next starts, before it sends anything.
 
 Neither? The station will not start, and says why and what to change.
 

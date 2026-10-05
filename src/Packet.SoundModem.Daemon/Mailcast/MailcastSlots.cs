@@ -40,9 +40,6 @@ internal sealed class MailcastSlots
         _heard = heard;
     }
 
-    /// <summary>Raised when GB7RDG's directory gives a timetable other than the one in use.</summary>
-    internal event Action<SlotTimetable>? TimetableChanged;
-
     /// <summary>The timetable in use.</summary>
     internal SlotTimetable Timetable
     {
@@ -96,7 +93,6 @@ internal sealed class MailcastSlots
         }
 
         _log($"mailcast: GB7RDG's directory gives its slots as {Describe(timetable)}; using that");
-        TimetableChanged?.Invoke(timetable);
     }
 
     /// <summary>A mailcast frame was decoded.</summary>

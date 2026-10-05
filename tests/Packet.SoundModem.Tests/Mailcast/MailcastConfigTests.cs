@@ -87,6 +87,22 @@ public sealed class MailcastConfigTests : IDisposable
         error.Should().Contain(why);
     }
 
+    [Theory]
+    [InlineData("command")]
+    [InlineData("type")]
+    [InlineData("host")]
+    [InlineData("login")]
+    [InlineData("password")]
+    public void A_Null_Bbs_Setting_Is_Refused_By_Name_Not_Thrown(string key)
+    {
+        string bbs = key == "password" ? """{"password": null}""" : $$"""{"password": "x", "{{key}}": null}""";
+
+        (DaemonConfig? config, string error) = Load($$$"""{"device": "null", "mailcast": {"bbs": {{{bbs}}}}}""");
+
+        config.Should().BeNull();
+        error.Should().Contain($"\"mailcast\".\"bbs\".\"{key}\" is null");
+    }
+
     [Fact]
     public void A_Monitor_Is_Told_It_Has_No_Bbs_To_Deliver_To()
     {
@@ -107,6 +123,45 @@ public sealed class MailcastConfigTests : IDisposable
         error.Should().BeEmpty();
         config!.Warnings.Should().Contain(w => w.StartsWith("mailcast: \"dial\" is not a setting", StringComparison.Ordinal));
         config.Warnings.Should().Contain(w => w.StartsWith("mailcast bbs: \"pasword\" is not a setting", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Redaction_Matches_Keys_Whatever_Their_Case_As_The_File_Is_Read()
+    {
+        string redacted = ConfigApi.Redact(
+            """{"Mailcast": {"BBS": {"Password": "pick-one"}}, "API": {"Key": "k3y"}, "Publish": {"TOKEN": "t0k"}}""");
+
+        redacted.Should().NotContain("pick-one").And.NotContain("k3y").And.NotContain("t0k");
+        redacted.Should().Contain("\"Password\": \"(set, not shown)\"");
+    }
+
+    [Fact]
+    public void The_Api_Refuses_A_Station_That_Could_Not_Hear_The_Signal_Before_It_Restarts_Onto_It()
+    {
+        string asPath = Path.Combine(_dir.FullName, "soundmodem.json");
+
+        string? why = ConfigApi.Validate("""{"device": "null", "mailcast": {"bbs": {"password": "x"}}}""", asPath);
+
+        why.Should().Contain("is outside what this station hears");
+        ConfigApi.Validate(
+            """{"device": "null", "dialFrequency": 7052000, "mailcast": {"bbs": {"password": "x"}}}""", asPath)
+            .Should().BeNull("a radio on the mailcast dial hears it");
+        Directory.Exists(Path.Combine(_dir.FullName, "mailcast")).Should().BeTrue("the state directory was checked by writing to it");
+    }
+
+    [Fact]
+    public void The_Api_Refuses_A_State_Directory_That_Cannot_Be_Written()
+    {
+        string notAFolder = Path.Combine(_dir.FullName, "a-file");
+        File.WriteAllText(notAFolder, "");
+        string json = $$$"""
+            {"device": "null", "dialFrequency": 7052000,
+             "mailcast": {"bbs": {"password": "x"}, "stateDirectory": "{{{Path.Combine(notAFolder, "mailcast")}}}"}}
+            """;
+
+        string? why = ConfigApi.Validate(json, Path.Combine(_dir.FullName, "soundmodem.json"));
+
+        why.Should().StartWith("mailcast: cannot keep its state in").And.Contain("\"mailcast\".\"stateDirectory\"");
     }
 
     [Fact]

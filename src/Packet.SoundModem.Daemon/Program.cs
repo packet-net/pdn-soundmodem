@@ -785,6 +785,12 @@ MailcastReceiver? mailcast = null;
 if (mailcastConfig is not null && mailcastPlacement is not null)
 {
     string mailcastDirectory = mailcastConfig.StateDirectoryFor(MailcastStation.StationStateDirectory(configPath));
+    if (MailcastStation.StateDirectoryProblem(mailcastDirectory) is string unwritable)
+    {
+        Console.Error.WriteLine(unwritable);
+        return 2;
+    }
+
     try
     {
         mailcast = MailcastReceiver.Create(

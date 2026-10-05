@@ -266,6 +266,7 @@ internal sealed class MailcastDelivery
 
         var byBid = bulletins.ToDictionary(b => b.Bid, StringComparer.OrdinalIgnoreCase);
         bool later = false;
+        string? storeFailure = null;
         foreach (MailcastOutcome outcome in session.Outcomes)
         {
             Bulletin bulletin = byBid[outcome.Bid];
@@ -279,8 +280,10 @@ internal sealed class MailcastDelivery
                     }
                     catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                     {
-                        // It stays in the outbox and is offered again; the BBS answers FS -.
-                        _log($"mailcast: WARNING - cannot take {MailcastOnAir.Ascii(bulletin.Bid)} out of the outbox: {MailcastOnAir.Ascii(e.Message)}");
+                        // It stays in the outbox and would be offered again at once, the BBS
+                        // answering FS - every time: a failure, waited out like one, so a store
+                        // that cannot be written (a read-only SD card) is not a tight loop.
+                        storeFailure ??= $"cannot take {MailcastOnAir.Ascii(bulletin.Bid)} out of the outbox: {MailcastOnAir.Ascii(e.Message)}";
                     }
 
                     _log($"mailcast: bbs: {MailcastOnAir.Ascii(bulletin.Bid)} {Words(record.Verdict)}{(record.Detail is null ? "" : ": " + MailcastOnAir.Ascii(record.Detail))}");
@@ -302,14 +305,17 @@ internal sealed class MailcastDelivery
                 + "The login should have no forwarding routes (TO, AT or HR) on the BBS.");
         }
 
+        string? failure = session.Failure ?? storeFailure;
         LastSession = _time.GetUtcNow();
-        LastFailure = session.Failure;
+        LastFailure = failure;
         SessionFinished?.Invoke(session);
-        if (session.Failure is not null)
+        if (failure is not null)
         {
             TimeSpan delay = Backoff[Math.Min(_failures, Backoff.Count - 1)];
             _failures++;
-            _log($"mailcast: bbs: {MailcastOnAir.Ascii(session.Failure)}. Trying again in {Words(delay)}.");
+            _log(session.Failure is null
+                ? $"mailcast: WARNING - {failure}. Trying again in {Words(delay)}."
+                : $"mailcast: bbs: {MailcastOnAir.Ascii(failure)}. Trying again in {Words(delay)}.");
             return delay;
         }
 

@@ -105,6 +105,17 @@ public sealed class MailcastConfig
             + "needs at least {\"bbs\": {\"password\": \"...\"}} (LinBPQ on 127.0.0.1:8011 as Q0CAST "
             + "unless you say otherwise).");
 
+        foreach ((string key, string? value) in (ReadOnlySpan<(string, string?)>)
+            [("type", bbs.Type), ("host", bbs.Host), ("login", bbs.Login), ("password", bbs.Password), ("command", bbs.Command)])
+        {
+            if (value is null)
+            {
+                throw new InvalidDataException(
+                    $"\"mailcast\".\"bbs\".\"{key}\" is null. Give it a value, or leave it out for the default"
+                    + (key == "password" ? "; the password has none and is required." : "."));
+            }
+        }
+
         if (!bbs.IsLinBpq && !bbs.IsFbb)
         {
             throw new InvalidDataException(

@@ -28,6 +28,9 @@ internal sealed class MailcastRetuner
     /// <summary>Who the rig's windows are opened for, in its journal lines.</summary>
     internal const string Owner = "mailcast";
 
+    /// <summary>The passband the rig is asked for on the mailcast dial.</summary>
+    internal const int PassbandHz = 3000;
+
     /// <summary>How often an open window is renewed.</summary>
     internal static readonly TimeSpan RenewEvery = TimeSpan.FromMinutes(1);
 
@@ -58,15 +61,14 @@ internal sealed class MailcastRetuner
     {
         _rig = rig;
         string mode = rigMode is not null && RigModes.SidebandOf(rigMode) == "usb" ? rigMode.ToUpperInvariant() : "USB";
-        _tuning = new RigTuning((long)Math.Round(config.DialHz), mode, 0);
+        // A 3000 Hz passband, which holds nearly all of the signal; a rig that will not set it is
+        // left on its normal width, with a warning, by the rig control itself.
+        _tuning = new RigTuning((long)Math.Round(config.DialHz), mode, PassbandHz);
         _timetable = timetable;
         _time = time;
         _log = log;
         rig.Changed += state => SetListening(state.Window is { Owner: Owner });
     }
-
-    /// <summary>Raised when the rig goes onto the mailcast dial (true) or leaves it (false).</summary>
-    internal event Action<bool>? ListeningChanged;
 
     /// <summary>For tests: raised each time the loop has set its timer on the clock.</summary>
     internal event Action? Waiting;
@@ -104,74 +106,29 @@ internal sealed class MailcastRetuner
     {
         DateTimeOffset? saidRefusalFor = null;
         DateTimeOffset? tunedFor = null;
+        string? saidFailure = null;
         try
         {
             while (!cancellation.IsCancellationRequested)
             {
-                DateTimeOffset now = _time.GetUtcNow();
-                if (WindowAt(now, _timetable()) is not { } window)
+                try
                 {
-                    _state = "no slot of GB7RDG's runs in the coming year by its timetable";
-                    await DelayAsync(ClockCheck, cancellation).ConfigureAwait(false);
-                    continue;
+                    (saidRefusalFor, tunedFor) = await StepAsync(saidRefusalFor, tunedFor, cancellation).ConfigureAwait(false);
                 }
-
-                if (now < window.Opens)
+                catch (Exception e) when (!cancellation.IsCancellationRequested)
                 {
-                    if (tunedFor is not null)
+                    // Whatever it was, retuning carries on: a loop that died here would leave the
+                    // station deaf to every later slot without a word. Said once per new reason.
+                    string why = MailcastOnAir.Ascii(e.Message);
+                    if (why != saidFailure)
                     {
-                        Ended(tunedFor.Value);
-                        tunedFor = null;
+                        saidFailure = why;
+                        _log($"mailcast: WARNING - the retuning loop failed ({why}); trying again in {RetryEvery.TotalSeconds:F0} s");
                     }
 
-                    _state = string.Create(CultureInfo.InvariantCulture,
-                        $"waiting for the {window.Slot.UtcDateTime:HH:mm} UTC slot; the rig is retuned at {window.Opens.UtcDateTime:HH:mm} UTC");
-                    await DelayAsync(Shorter(window.Opens - now, ClockCheck), cancellation).ConfigureAwait(false);
-                    continue;
+                    _state = "retuning failed: " + why;
+                    await DelayAsync(RetryEvery, cancellation).ConfigureAwait(false);
                 }
-
-                if (tunedFor is { } previous && previous != window.Slot)
-                {
-                    Ended(previous);
-                    tunedFor = null;
-                }
-
-                TimeSpan left = window.Closes - now;
-                RigTuneResult result = _rig.Tune(_tuning, Shorter(left, RigControl.MaxWindow), Owner);
-                if (result.Granted)
-                {
-                    if (tunedFor is null)
-                    {
-                        tunedFor = window.Slot;
-                        _log(string.Create(CultureInfo.InvariantCulture,
-                            $"mailcast: rig on {MailcastOnAir.Mhz(_tuning.DialHz)} MHz {_tuning.Mode} for the {window.Slot.UtcDateTime:HH:mm} UTC slot "
-                            + $"until {window.Closes.UtcDateTime:HH:mm} UTC; nothing is transmitted until it is put back"));
-                    }
-
-                    SetListening(true);
-                    _state = string.Create(CultureInfo.InvariantCulture,
-                        $"on {MailcastOnAir.Mhz(_tuning.DialHz)} MHz for the {window.Slot.UtcDateTime:HH:mm} UTC slot until {window.Closes.UtcDateTime:HH:mm} UTC");
-                    await DelayAsync(Shorter(left, RenewEvery), cancellation).ConfigureAwait(false);
-                    if (_time.GetUtcNow() >= window.Closes)
-                    {
-                        Ended(window.Slot);
-                        tunedFor = null;
-                    }
-
-                    continue;
-                }
-
-                tunedFor = null;
-                _state = string.Create(CultureInfo.InvariantCulture,
-                    $"the {window.Slot.UtcDateTime:HH:mm} UTC slot is on, but the rig could not be retuned: {result.Why}");
-                if (saidRefusalFor != window.Slot)
-                {
-                    saidRefusalFor = window.Slot;
-                    _log(string.Create(CultureInfo.InvariantCulture,
-                        $"mailcast: WARNING - cannot retune the rig for the {window.Slot.UtcDateTime:HH:mm} UTC slot yet ({result.Why}); trying again every {RetryEvery.TotalSeconds:F0} s"));
-                }
-
-                await DelayAsync(Shorter(left, RetryEvery), cancellation).ConfigureAwait(false);
             }
         }
         finally
@@ -181,6 +138,79 @@ internal sealed class MailcastRetuner
             SetListening(false);
         }
     }
+
+    /// <summary>One look at the clock and what follows from it; returns the slot a refusal was
+    /// last said for and the slot the rig is tuned for.</summary>
+    private async Task<(DateTimeOffset? SaidRefusalFor, DateTimeOffset? TunedFor)> StepAsync(
+        DateTimeOffset? saidRefusalFor, DateTimeOffset? tunedFor, CancellationToken cancellation)
+    {
+        DateTimeOffset now = _time.GetUtcNow();
+        if (WindowAt(now, _timetable()) is not { } window)
+        {
+            _state = "no slot of GB7RDG's runs in the coming year by its timetable";
+            await DelayAsync(ClockCheck, cancellation).ConfigureAwait(false);
+            return (saidRefusalFor, tunedFor);
+        }
+
+        if (now < window.Opens)
+        {
+            if (tunedFor is not null)
+            {
+                Ended(tunedFor.Value);
+                tunedFor = null;
+            }
+
+            _state = string.Create(CultureInfo.InvariantCulture,
+                $"waiting for the {window.Slot.UtcDateTime:HH:mm} UTC slot; the rig is retuned at {window.Opens.UtcDateTime:HH:mm} UTC");
+            await DelayAsync(Shorter(window.Opens - now, ClockCheck), cancellation).ConfigureAwait(false);
+            return (saidRefusalFor, tunedFor);
+        }
+
+        if (tunedFor is { } previous && previous != window.Slot)
+        {
+            Ended(previous);
+            tunedFor = null;
+        }
+
+        TimeSpan left = window.Closes - now;
+        RigTuneResult result = _rig.Tune(_tuning, Shorter(left, RigControl.MaxWindow), Owner);
+        if (result.Granted)
+        {
+            if (tunedFor is null)
+            {
+                tunedFor = window.Slot;
+                _log(string.Create(CultureInfo.InvariantCulture,
+                    $"mailcast: rig on {MailcastOnAir.Mhz(_tuning.DialHz)} MHz {_tuning.Mode} for the {window.Slot.UtcDateTime:HH:mm} UTC slot "
+                    + $"until {window.Closes.UtcDateTime:HH:mm} UTC; nothing is transmitted until it is put back"));
+            }
+
+            SetListening(true);
+            _state = string.Create(CultureInfo.InvariantCulture,
+                $"on {MailcastOnAir.Mhz(_tuning.DialHz)} MHz for the {window.Slot.UtcDateTime:HH:mm} UTC slot until {window.Closes.UtcDateTime:HH:mm} UTC");
+            await DelayAsync(Shorter(left, RenewEvery), cancellation).ConfigureAwait(false);
+            if (_time.GetUtcNow() >= window.Closes)
+            {
+                Ended(window.Slot);
+                tunedFor = null;
+            }
+
+            return (saidRefusalFor, tunedFor);
+        }
+
+        tunedFor = null;
+        _state = string.Create(CultureInfo.InvariantCulture,
+            $"the {window.Slot.UtcDateTime:HH:mm} UTC slot is on, but the rig could not be retuned: {result.Why}");
+        if (saidRefusalFor != window.Slot)
+        {
+            saidRefusalFor = window.Slot;
+            _log(string.Create(CultureInfo.InvariantCulture,
+                $"mailcast: WARNING - cannot retune the rig for the {window.Slot.UtcDateTime:HH:mm} UTC slot yet ({result.Why}); trying again every {RetryEvery.TotalSeconds:F0} s"));
+        }
+
+        await DelayAsync(Shorter(left, RetryEvery), cancellation).ConfigureAwait(false);
+        return (saidRefusalFor, tunedFor);
+    }
+
 
     private void Ended(DateTimeOffset slot)
     {
@@ -198,7 +228,6 @@ internal sealed class MailcastRetuner
         }
 
         _listening = listening;
-        ListeningChanged?.Invoke(listening);
     }
 
     private static TimeSpan Shorter(TimeSpan a, TimeSpan b) => a < b ? (a < TimeSpan.Zero ? TimeSpan.Zero : a) : b;

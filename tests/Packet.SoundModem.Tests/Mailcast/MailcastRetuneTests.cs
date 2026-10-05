@@ -123,6 +123,22 @@ public sealed class MailcastRetuneTests : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Moves the fake clock on 50 ms at a time until <paramref name="condition"/> holds, for the
+    /// channel's own waits (its carrier-sense slots and inhibit polls run on the same clock).
+    /// Bounded by a count of looks, not by a time.
+    /// </summary>
+    private async Task Pump(Func<bool> condition, string what)
+    {
+        for (int look = 0; look < 4000 && !condition(); look++)
+        {
+            _time.Advance(TimeSpan.FromMilliseconds(50));
+            await Task.Delay(1);
+        }
+
+        condition().Should().BeTrue(what);
+    }
+
     private static async Task Eventually(Func<bool> condition, string what)
     {
         for (int look = 0; look < 4000 && !condition(); look++)
@@ -184,7 +200,7 @@ public sealed class MailcastRetuneTests : IAsyncDisposable
         RigControl rig = await StartedRig();
         MailcastRetuner retuner = Retuner(rig, rigMode: "PKTUSB");
 
-        retuner.Tuning.Should().Be(new RigTuning(7_052_000, "PKTUSB", 0));
+        retuner.Tuning.Should().Be(new RigTuning(7_052_000, "PKTUSB", 3000));
         await AdvanceTo(Slot - TimeSpan.FromMinutes(1));
         await Eventually(() => _fake.Mode == "PKTUSB" && _fake.DialHz == 7_052_000, "in PKTUSB");
     }
@@ -193,7 +209,7 @@ public sealed class MailcastRetuneTests : IAsyncDisposable
     public async Task Every_Source_Of_Transmission_Is_Held_While_The_Rig_Is_On_The_Mailcast_Dial()
     {
         RigControl rig = await StartedRig();
-        var channel = new SoundModemChannel(12000, randomSeed: 3);
+        var channel = new SoundModemChannel(12000, _time, randomSeed: 3);
         channel.AddModem(0, sink => ModemCatalog.Create("afsk1200", 12000, sink));
         channel.Csma.Persistence = 255;
         channel.TransmitInhibitTimeout = TimeSpan.FromMinutes(30);
@@ -223,12 +239,14 @@ public sealed class MailcastRetuneTests : IAsyncDisposable
             Channel = channel,
             Journal = new StationJournal("", _journal.Enqueue, _journal.Enqueue),
             ChannelWait = TimeSpan.FromMinutes(30),
+            Time = _time,
         });
         Task<TxTestOutcome> test = tests.RunAsync(new Packet.SoundModem.Waterfall.TxTestRequest(true, 0, 0.5));
 
         // An ARDOP burst owns the channel's timing and passes the inhibit: refused at the key.
         Task ardop = channel.EnqueueTransmit(_ => new float[1200], rejected: null, ownsChannelTiming: true);
-        Func<Task> ardopWait = () => ardop.WaitAsync(TimeSpan.FromSeconds(60));
+        await Pump(() => ardop.IsCompleted, "the ARDOP burst answered");
+        Func<Task> ardopWait = () => ardop;
         (await ardopWait.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*tuned to 7.052000 MHz USB*for mailcast*");
 
         kiss.IsCompleted.Should().BeFalse("held, not sent and not dropped");
@@ -240,8 +258,9 @@ public sealed class MailcastRetuneTests : IAsyncDisposable
         // The window ends and the rig goes back: everything held goes out, on the right frequency.
         await AdvanceTo(Slot + TimeSpan.FromMinutes(12));
         await Eventually(() => !rig.HoldsTransmitter, "put back");
-        await Task.WhenAll(kiss, ident, page).WaitAsync(TimeSpan.FromSeconds(60));
-        (await test.WaitAsync(TimeSpan.FromSeconds(60))).Ran.Should().BeTrue();
+        await Pump(() => kiss.IsCompleted && ident.IsCompleted && page.IsCompleted && test.IsCompleted, "everything held has gone");
+        await Task.WhenAll(kiss, ident, page);
+        (await test).Ran.Should().BeTrue();
         line.Keys.Should().BeGreaterThanOrEqualTo(4);
         line.KeyedWhileHeld.Should().Be(0, "nothing keyed while the rig was retuned or owed its restore");
         line.KeyedOffPlan.Should().Be(0, "nothing keyed with the rig anywhere but the station's own dial");
@@ -251,7 +270,7 @@ public sealed class MailcastRetuneTests : IAsyncDisposable
     public async Task The_Transmit_Lease_Holder_Is_Refused_At_The_Key_While_The_Rig_Is_Retuned()
     {
         RigControl rig = await StartedRig();
-        var channel = new SoundModemChannel(12000, randomSeed: 3);
+        var channel = new SoundModemChannel(12000, _time, randomSeed: 3);
         channel.AddModem(0, sink => ModemCatalog.Create("afsk1200", 12000, sink));
         channel.Csma.Persistence = 255;
         var line = new WatchedLine(() => rig.HoldsTransmitter, () => _fake.DialHz);
@@ -263,7 +282,8 @@ public sealed class MailcastRetuneTests : IAsyncDisposable
         // A lease outranks the inhibit, so its holder's frames get as far as the PTT, which refuses them.
         channel.TransmitLease.Take(0, TimeSpan.FromSeconds(60)).Granted.Should().BeTrue();
         Task leased = channel.EnqueueTransmit(0, MailcastSlotAudio.Ui("GB7RDG", "MCAST", "x"u8));
-        Func<Task> leasedWait = () => leased.WaitAsync(TimeSpan.FromSeconds(60));
+        await Pump(() => leased.IsCompleted, "the lease holder's frame answered");
+        Func<Task> leasedWait = () => leased;
 
         (await leasedWait.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*for mailcast*");
         line.Keys.Should().Be(0);
@@ -336,6 +356,26 @@ public sealed class MailcastRetuneTests : IAsyncDisposable
         await receiver.Intake.DrainAsync(CancellationToken.None);
         receiver.Intake.FramesHeard.Should().Be(1);
         receiver.Status()["retune"]!["listening"]!.GetValue<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task One_Failure_Does_Not_End_Retuning()
+    {
+        RigControl rig = await StartedRig();
+        int asked = 0;
+        var config = new MailcastConfig { Bbs = new MailcastBbsConfig { Password = "x" }, Retune = true };
+        var retuner = new MailcastRetuner(
+            rig, config, null,
+            () => ++asked == 1 ? throw new InvalidOperationException("the timetable could not be read") : MailcastOnAir.DefaultTimetable,
+            _time, _journal.Enqueue);
+        _retuners.Add(retuner);
+        _running.Add(Task.Run(() => retuner.RunAsync(_stop.Token)));
+
+        await Eventually(() => retuner.State.StartsWith("retuning failed", StringComparison.Ordinal), "the failure is shown");
+        _journal.Should().ContainSingle(line => line == "mailcast: WARNING - the retuning loop failed (the timetable could not be read); trying again in 5 s");
+
+        await AdvanceTo(Slot - TimeSpan.FromMinutes(1));
+        await Eventually(() => retuner.Listening && _fake.DialHz == 7_052_000, "retuning carried on");
     }
 
     /// <summary>A PTT line that notes, at each keyup, whether the rig said to hold and where it was.</summary>

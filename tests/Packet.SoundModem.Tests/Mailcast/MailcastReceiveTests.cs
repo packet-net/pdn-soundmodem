@@ -208,6 +208,44 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
     }
 
     [Fact]
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+    public async Task An_Outbox_That_Cannot_Be_Written_Is_A_Failure_Waited_Out_Not_A_Tight_Loop()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "read-only folders are set with Unix modes");
+        Assert.SkipWhen(Environment.UserName == "root", "root can delete from a read-only folder");
+        MailcastReceiver receiver = Receiver();
+        foreach (byte[] frame in MailcastSlotAudio.Frames())
+        {
+            receiver.Intake.Offer(frame);
+        }
+
+        await receiver.Intake.DrainAsync(CancellationToken.None);
+        string outbox = Path.Combine(_dir.FullName, "store", "outbox");
+        File.SetUnixFileMode(outbox, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            _ = receiver.RunAsync(_stop.Token);
+            await Eventually(() => receiver.Delivery.NextAttempt is not null, "the session ended and a retry is set");
+
+            receiver.Delivery.NextAttempt.Should().Be(_time.GetUtcNow() + MailcastDelivery.Backoff[0]);
+            receiver.Delivery.LastFailure.Should().Contain("out of the outbox");
+            receiver.Intake.Pending().Should().HaveCount(2);
+            _bbs.Logins.Should().ContainSingle("nothing is offered again until the wait is over");
+            _journal.Should().Contain(line => line.StartsWith("mailcast: WARNING - cannot take ", StringComparison.Ordinal)
+                && line.EndsWith("Trying again in 30 s.", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.SetUnixFileMode(outbox, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        // Once the store can be written again, the next session clears it: the BBS has them.
+        _time.Advance(MailcastDelivery.Backoff[0]);
+        await Eventually(() => receiver.Intake.Pending().Count == 0, "the outbox cleared after the wait");
+        _bbs.Taken.Should().HaveCount(2, "the BBS answered FS - the second time, and took nothing twice");
+    }
+
+    [Fact]
     public async Task Other_Stations_Frames_Are_Not_Taken_For_Mailcast()
     {
         MailcastReceiver receiver = Receiver();
