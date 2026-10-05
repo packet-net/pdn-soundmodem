@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Stays GPL-3.0-only: a direct port from ka9q_ubersdr (GPL-3.0, no "or later"). See LICENSING.md.
+
 using System.Buffers.Binary;
 using ZstdSharp;
 
@@ -18,8 +21,8 @@ public readonly record struct PcmPacket(
 /// <summary>
 /// Decodes ka9q_ubersdr binary PCM/IQ packets (the <c>pcm</c> / <c>pcm-zstd</c> WebSocket
 /// wire format). Direct port of <c>clients/iq-recorder/pcm_decoder.go</c>
-/// (<c>DecodePCMBinary</c>) from https://github.com/madpsy/ka9q_ubersdr (GPL-3.0), which is
-/// compatible with this repo's GPL-3.0-or-later. See docs/dev/archive/ms110d/ota-capture-client-plan.md
+/// (<c>DecodePCMBinary</c>) from https://github.com/madpsy/ka9q_ubersdr (GPL-3.0), so this file
+/// stays GPL-3.0-only inside the AGPL-3.0-or-later whole (LICENSING.md). See docs/dev/archive/ms110d/ota-capture-client-plan.md
 /// for the documented protocol.
 ///
 /// <para>Hybrid header strategy (after zstd decompression, if any):</para>

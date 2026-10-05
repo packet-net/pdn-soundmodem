@@ -124,7 +124,7 @@ hardware transmit timeout is the belt to that braces.
 
 ## Licence
 
-AGPL-3.0-or-later. See `NOTICE` for what is in the bundle and under which licence: the modem
-core and the IL2P codec are GPL-3.0-or-later inside an AGPL-3.0-or-later combination, which is
-what GPLv3 section 13 provides for. Anything that imports this package forms a combined work
+AGPL-3.0-or-later. See `NOTICE` for what is in the bundle and under which licence: the IL2P
+codec and some files of the modem core are GPL-3.0-or-later inside an AGPL-3.0-or-later
+combination, which is what GPLv3 section 13 provides for. Anything that imports this package forms a combined work
 under those terms.

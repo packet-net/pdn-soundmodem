@@ -18,11 +18,12 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <!-- This repo is GPL-3.0-or-later (see COPYING): it contains work derived from
-         QtSoundModem (GPLv3+, © Andrei Kopanchuk UZ7HO, ported by John Wiseman G8BPQ)
-         and Dire Wolf (GPL-2.0-or-later, © John Langner WB2OSZ). Do not change this
-         to a permissive licence; see CLAUDE.md § Licence rules. -->
-    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <!-- This repo is AGPL-3.0-or-later (see COPYING), with some files kept GPL-3.0-or-later
+         or GPL-3.0-only because they derive from third-party GPL code or were written by
+         another contributor; LICENSING.md lists them. A package that contains any of those
+         files says so in its own PackageLicenseExpression (Packet.SoundModem.csproj does).
+         Never change this to a permissive licence; see CLAUDE.md § Licence rules. -->
+    <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
     <Authors>Tom Fanning M0LTE and Packet.NET contributors</Authors>
     <Company>Packet.NET</Company>
     <Copyright>Copyright © 2026 Tom Fanning and Packet.NET contributors</Copyright>

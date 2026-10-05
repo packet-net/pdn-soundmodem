@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Stays GPL: MMDVM-TNC wire format, and Dire Wolf's DPLL constant. See LICENSING.md.
+
 using M0LTE.Dsp;
 using Packet.SoundModem.CarrierSense;
 using M0LTE.Il2p;

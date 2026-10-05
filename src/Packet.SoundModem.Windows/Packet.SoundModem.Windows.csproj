@@ -15,9 +15,9 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- LibraryImport's generated marshalling and the HIDP_CAPS fixed buffer. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <!-- This library is AGPL-3.0-or-later, unlike the GPL-3.0-or-later core it builds on
-         (GPLv3 section 13 permits the combination). New code, written for the Windows app;
-         nothing in it is derived from QtSoundModem or Dire Wolf. -->
+    <!-- This library is AGPL-3.0-or-later. New code, written for the Windows app; none of the
+         GPL-only files LICENSING.md lists is in it, so unlike the core package its licence
+         needs no GPL term. -->
     <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
   </PropertyGroup>
 

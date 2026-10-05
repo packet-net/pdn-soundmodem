@@ -5,16 +5,16 @@ Status: current as of 2026-09-17. Describes how the daemon loads a modem that is
 The trigger was an audio-band OFDM modem that has to live outside this repository while the station
 still has to be able to run it. Its research record and its implementation both live with it, in a
 repository of their own; nothing about that waveform is documented here, which is the same rule the
-mechanism exists to serve. Not for licence reasons: this repository is GPL-3.0-or-later and must
+mechanism exists to serve. Not for licence reasons: this repository is AGPL-3.0-or-later (with GPL parts) and must
 stay buildable and distributable by anyone who clones it, so it cannot contain, reference or build
 against something we are not free to ship. The unsettled implementation goes outside; only the
 contract stays in.
 
 ## The problem
 
-This repository is GPL-3.0-or-later and intends to stay that way. A modem whose provenance is
-unsettled cannot be a source file here, cannot be a `PackageReference` here, and cannot be
-mentioned in this repository's build graph at all - because a GPL work that requires a
+This repository is AGPL-3.0-or-later, with GPL-3.0-or-later parts (see LICENSING.md). A modem
+whose provenance is unsettled cannot be a source file here, cannot be a `PackageReference` here,
+and cannot be mentioned in this repository's build graph at all - because a GPL work that requires a
 non-distributable component in order to build is a work nobody else can build.
 
 At the same time the deployment reality is a single daemon on a station, and an operator wants

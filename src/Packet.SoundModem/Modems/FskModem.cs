@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Stays GPL: Dire Wolf demod_9600 lineage. See LICENSING.md.
+
 using M0LTE.Dsp;
 using Packet.SoundModem.Hdlc;
 using M0LTE.Il2p;

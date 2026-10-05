@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Stays GPL: takes UZ7HO/QtSoundModem's decoder bank and emphasis set. See LICENSING.md.
+
 using Packet.SoundModem.Hdlc;
 using Packet.SoundModem.Audio;
 

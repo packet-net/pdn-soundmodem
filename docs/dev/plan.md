@@ -7,7 +7,7 @@ read it before substantive work; the decisions in its §Decisions bind this repo
 
 ## Decisions (Tom, 2026-07-14)
 
-- Separate GPL-3.0-or-later repo (this one); packet.net consumes via NuGet (`pdn-soundmodem`).
+- Separate repo (this one), AGPL-3.0-or-later with GPL-3.0-or-later parts (LICENSING.md); packet.net consumes via NuGet (`pdn-soundmodem`).
 - Phase 1 modes: **300 BPSK IL2P+CRC + 1200 AFSK**; QPSK 2400/3600 + 9600 GFSK follow with
   NinoTNC-interop exit gates.
 - **QtSM-style multiplex channel model**: up to 4 logical modems per audio side, KISS

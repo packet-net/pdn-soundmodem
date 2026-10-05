@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later AND GPL-3.0-or-later
+# AGPL-3.0-or-later except the template-unit check Tom Wardill contributed (GPL-3.0-or-later).
+# See LICENSING.md.
+
 name: release
 
 # The release pipeline for a `v*` tag: test, then build the pdn-soundmodem NuGet packages

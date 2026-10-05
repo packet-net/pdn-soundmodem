@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Stays GPL: tag table and match tolerance from Dire Wolf. See LICENSING.md.
+
 using M0LTE.Fec;
 using Packet.SoundModem.Hdlc;
 

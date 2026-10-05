@@ -16,9 +16,9 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- LibraryImport's generated marshalling for realpath and access. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <!-- AGPL-3.0-or-later, as the Windows library is and unlike the GPL-3.0-or-later core it
-         builds on (GPLv3 section 13 permits the combination). New code, written for the Linux
-         app; nothing in it is derived from QtSoundModem or Dire Wolf. -->
+    <!-- AGPL-3.0-or-later, as the Windows library is. New code, written for the Linux app;
+         none of the GPL-only files LICENSING.md lists is in it, so unlike the core package its
+         licence needs no GPL term. -->
     <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
   </PropertyGroup>
 

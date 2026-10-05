@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later AND GPL-3.0-or-later
+// AGPL-3.0-or-later except the lines Tom Wardill contributed (GPL-3.0-or-later). See LICENSING.md.
+
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;

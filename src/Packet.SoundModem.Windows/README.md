@@ -31,10 +31,9 @@ M0LTE/altmixer, where they were measured against real CM108 and AIOC devices; se
 
 ## Licence
 
-**AGPL-3.0-or-later**, unlike the GPL-3.0-or-later core. It is new code written for a Windows
-application and derived from nothing in QtSoundModem or Dire Wolf; GPLv3 section 13 permits the
-combination, on the same footing as the AGPL `M0LTE.Flex` and `Packet.Ax25` dependencies the core
-already has.
+**AGPL-3.0-or-later**. It is new code written for a Windows application and derived from nothing
+in QtSoundModem or Dire Wolf, so none of the GPL-only files [LICENSING.md](../../LICENSING.md)
+lists is in it.
 
 ## Builds everywhere, runs on Windows
 

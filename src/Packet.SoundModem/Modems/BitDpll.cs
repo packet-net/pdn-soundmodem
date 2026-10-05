@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Stays GPL: Dire Wolf's DPLL design and constant. See LICENSING.md.
+
 namespace Packet.SoundModem.Modems;
 
 /// <summary>

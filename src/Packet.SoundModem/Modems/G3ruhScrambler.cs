@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Stays GPL: bit-exact from Dire Wolf. See LICENSING.md.
+
 namespace Packet.SoundModem.Modems;
 
 /// <summary>
