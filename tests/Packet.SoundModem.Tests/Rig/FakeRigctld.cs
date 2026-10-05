@@ -2,9 +2,9 @@ using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using Packet.SoundModem.Daemon;
+using Packet.SoundModem.Rig;
 
-namespace Packet.SoundModem.Tests.Daemon;
+namespace Packet.SoundModem.Tests.Rig;
 
 /// <summary>
 /// An in-process rigctld: a TCP listener on a loopback port the OS chose, speaking the plain text
@@ -57,6 +57,22 @@ internal sealed class FakeRigctld : IAsyncDisposable
 
     /// <summary>Answer every <c>F</c> with RPRT -11.</summary>
     internal bool RefusesFrequency { get; set; }
+
+    /// <summary>Answer every read with RPRT -5, as a rig that is switched off does.</summary>
+    internal bool RigOff { get; set; }
+
+    /// <summary>Answer <c>\chk_vfo</c> with 1, as a rigctld started with <c>--vfo</c> does.</summary>
+    internal bool VfoMode { get; set; }
+
+    /// <summary>Answer <c>T 1</c> with RPRT -9 (and key the rig anyway, the worst case).</summary>
+    internal bool RefusesKey { get; set; }
+
+    /// <summary>Answer <c>T 0</c> with RPRT -9 and leave the rig keyed.</summary>
+    internal bool RefusesUnkey { get; set; }
+
+    /// <summary>A command (by its first word) that, when it arrives, closes the connection
+    /// without an answer and without acting on it, once.</summary>
+    internal string? DieOn { get; set; }
 
     /// <summary>The passband an <c>M mode 0</c> sets.</summary>
     internal int NormalPassbandHz { get; set; } = 2400;
@@ -152,6 +168,12 @@ internal sealed class FakeRigctld : IAsyncDisposable
                 lock (_gate)
                 {
                     _commands.Add((number, command));
+                    if (DieOn is string dying && command.Split(' ')[0] == dying)
+                    {
+                        DieOn = null;
+                        client.Client.LingerState = new LingerOption(true, 0);
+                        break;
+                    }
                 }
 
                 byte[] reply = Encoding.ASCII.GetBytes(Answer(command));
@@ -177,8 +199,15 @@ internal sealed class FakeRigctld : IAsyncDisposable
         string[] parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         lock (_gate)
         {
+            if (RigOff && parts is ["f"] or ["m"] or ["t"])
+            {
+                return "RPRT -5\n";
+            }
+
             switch (parts)
             {
+                case ["\\chk_vfo"]:
+                    return VfoMode ? "1\n" : "0\n";
                 case ["f"]:
                     return string.Create(CultureInfo.InvariantCulture, $"{DialHz}\n");
                 case ["m"]:
@@ -206,8 +235,13 @@ internal sealed class FakeRigctld : IAsyncDisposable
                         : passband;
                     return "RPRT 0\n";
                 case ["T", string on]:
+                    if (on == "0" && RefusesUnkey)
+                    {
+                        return "RPRT -9\n";
+                    }
+
                     Ptt = on != "0";
-                    return "RPRT 0\n";
+                    return on != "0" && RefusesKey ? "RPRT -9\n" : "RPRT 0\n";
                 default:
                     return "RPRT -4\n";
             }

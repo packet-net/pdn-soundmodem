@@ -8,6 +8,7 @@ using Packet.SoundModem.CarrierSense;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
+using Packet.SoundModem.Rig;
 using M0LTE.Dsp;
 using Packet.SoundModem.Dsp;
 using Packet.SoundModem.FlexRadio;
@@ -2320,11 +2321,15 @@ if (rigConfig is not null)
     rig = new RigControl(new RigControlOptions
     {
         Endpoint = rigEndpoint,
-        Say = stationJournal.Write,
-        Warn = stationJournal.WriteError,
         KeysThroughRig = pttConfig?.Type == "rigctld",
         Plan = rigPlan,
+        // A window's restore target is written down while it is open, so a station killed
+        // mid-window puts the rig back at its next start-up before it transmits anything.
+        RestoreFile = RigStation.RestoreFilePath(configPath),
+        TransmitPending = () => channel.TransmitQueued,
     });
+    rig.Journal += stationJournal.Write;
+    rig.Problem += stationJournal.WriteError;
     if (rigPlan is null)
     {
         Console.WriteLine("rig: no band plan (no \"rfFrequency\"), so the dial is left where the rig has it");

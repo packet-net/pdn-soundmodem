@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.UberSdr;
+using Packet.SoundModem.Rig;
 
 namespace Packet.SoundModem.Daemon;
 
@@ -1928,7 +1929,7 @@ public sealed class DaemonConfig
             }
         }
 
-        if (rig.PassbandHz is int passband && passband is < 0 or > 20_000)
+        if (rig.PassbandHz is int passband && (passband < 0 || passband > RigModes.MaxPassbandHz))
         {
             throw new InvalidDataException(
                 $"\"rig\".\"passbandHz\" is {passband}. That is the receive filter width in Hz the band "

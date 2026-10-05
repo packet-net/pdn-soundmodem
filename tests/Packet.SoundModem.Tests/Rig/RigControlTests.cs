@@ -6,9 +6,10 @@ using M0LTE.Radio.Audio;
 using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
+using Packet.SoundModem.Rig;
 using Packet.SoundModem.Modems;
 
-namespace Packet.SoundModem.Tests.Daemon;
+namespace Packet.SoundModem.Tests.Rig;
 
 /// <summary>
 /// Rig control through rigctld, against <see cref="FakeRigctld"/>: connecting and reading the rig,
@@ -24,7 +25,12 @@ public sealed class RigControlTests : IAsyncDisposable
     private readonly FakeTimeProvider _time = new(Noon);
     private readonly ConcurrentQueue<string> _said = new();
     private readonly ConcurrentQueue<string> _warned = new();
+    private readonly ConcurrentQueue<RigState> _changes = new();
     private readonly List<RigControl> _rigs = [];
+    private readonly string _dir = Directory.CreateTempSubdirectory("pdnsm-rig").FullName;
+    private volatile bool _pending;
+
+    private string RestorePath => Path.Combine(_dir, RigRestoreFile.Name);
 
     public async ValueTask DisposeAsync()
     {
@@ -34,26 +40,32 @@ public sealed class RigControlTests : IAsyncDisposable
         }
 
         await _fake.DisposeAsync();
+        Directory.Delete(_dir, recursive: true);
     }
 
-    private RigControl Rig(bool keysThroughRig = false, RigTuning? plan = null, RigctldEndpoint? endpoint = null)
+    private RigControl Rig(
+        bool keysThroughRig = false, RigTuning? plan = null, RigctldEndpoint? endpoint = null,
+        bool persist = false)
     {
         var rig = new RigControl(new RigControlOptions
         {
+            RestoreFile = persist ? RestorePath : null,
+            TransmitPending = () => _pending,
             Endpoint = endpoint ?? _fake.Endpoint,
             Time = _time,
-            Say = _said.Enqueue,
-            Warn = _warned.Enqueue,
             KeysThroughRig = keysThroughRig,
             Plan = plan,
         });
+        rig.Journal += _said.Enqueue;
+        rig.Problem += _warned.Enqueue;
+        rig.Changed += _changes.Enqueue;
         _rigs.Add(rig);
         return rig;
     }
 
-    private async Task<RigControl> Started(bool keysThroughRig = false, RigTuning? plan = null)
+    private async Task<RigControl> Started(bool keysThroughRig = false, RigTuning? plan = null, bool persist = false)
     {
-        RigControl rig = Rig(keysThroughRig, plan);
+        RigControl rig = Rig(keysThroughRig, plan, persist: persist);
         (await rig.StartAsync(CancellationToken.None)).Should().BeTrue();
         return rig;
     }
@@ -227,8 +239,9 @@ public sealed class RigControlTests : IAsyncDisposable
         rig.Snapshot().Keyed.Should().BeFalse("the station's own idea of keyed is cleared whatever the command does");
 
         // The radio is still keyed (rigctld never got the T 0) until a new connection's first act.
-        await Eventually(() => !_fake.Ptt && _fake.Connections == 2, "the reconnect should unkey the radio");
-        _fake.Commands.First(c => c.Connection == 2).Command.Should().Be("T 0");
+        await Eventually(() => !_fake.Ptt && _fake.Connections == 2, "the reconnect should unkey the radio", TimeSpan.FromSeconds(1));
+        _fake.Commands.Where(c => c.Connection == 2).Select(c => c.Command).Take(2)
+            .Should().Equal(["\\chk_vfo", "T 0"], "after checking it can be spoken to, the unkey is the first thing a new connection does");
         _warned.Should().Contain(w => w.Contains("lost rigctld") && w.Contains("may still be keyed"));
         _said.Should().Contain("rig: unkeyed the radio, which had been keyed when rigctld went away");
     }
@@ -555,6 +568,221 @@ public sealed class RigControlTests : IAsyncDisposable
         RigApi.Handle(rig, "/api/rig/tune", "POST", "not json").Status.Should().Be(400);
         RigApi.Handle(rig, "/api/rig", "POST", "").Status.Should().Be(405);
         _fake.Sets.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task A_Rig_That_Is_Switched_Off_Is_A_Warning_And_Is_Picked_Up_When_It_Comes_On()
+    {
+        // rigctld answers, the rig behind it does not: every read is RPRT -5.
+        _fake.RigOff = true;
+        RigControl rig = Rig(plan: new RigTuning(7_049_450, "USB", 2400));
+
+        (await rig.StartAsync(CancellationToken.None)).Should().BeFalse();
+        rig.Connected.Should().BeFalse();
+        _warned.Should().ContainSingle(w => w.Contains("the rig did not") && w.Contains("RPRT -5"));
+
+        // Still retrying, quietly, with the backoff.
+        await Eventually(() => _fake.Connections >= 3, "the watch keeps trying", TimeSpan.FromSeconds(1));
+        _warned.Should().HaveCount(1);
+
+        _fake.RigOff = false;
+        await Eventually(() => rig.Connected && _fake.DialHz == 7_049_450, "the rig is picked up", TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task A_Rig_Switched_Off_Mid_Session_Does_Not_Stop_The_Watch()
+    {
+        RigControl rig = await Started(keysThroughRig: true);
+        _fake.RigOff = true;
+        await Eventually(() => rig.Snapshot().LastProblem is not null, "the poll should notice", TimeSpan.FromSeconds(5));
+
+        // The watch is alive: it still acts on what is owed.
+        _fake.RigOff = false;
+        _fake.Kill();
+        await Eventually(() => _fake.Connections == 2 && rig.Connected, "and still reconnects", TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task A_Rigctld_Started_With_Vfo_Is_Refused_Saying_Why()
+    {
+        _fake.VfoMode = true;
+        RigControl rig = Rig();
+
+        (await rig.StartAsync(CancellationToken.None)).Should().BeFalse();
+
+        _warned.Should().ContainSingle(w => w.Contains("--vfo"));
+        _fake.Sets.Should().BeEmpty("nothing is sent to a rigctld this station cannot speak to");
+    }
+
+    [Fact]
+    public async Task A_Refused_Keyup_Is_Unkeyed_At_Once()
+    {
+        RigControl rig = await Started(keysThroughRig: true);
+        _fake.RefusesKey = true;
+
+        Action key = rig.KeyingPtt().Key;
+
+        key.Should().Throw<RigctldException>();
+        _fake.Ptt.Should().BeFalse("a T 1 that was refused may still have keyed the rig, so T 0 follows at once");
+        _fake.Sets.Should().EndWith(["T 1", "T 0"]);
+        rig.HoldsTransmitter.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task An_Unkey_That_Is_Refused_Is_Owed_Retried_Every_Second_And_Holds_Everything_Until_It_Goes()
+    {
+        RigControl rig = await Started(keysThroughRig: true);
+        IPttControl ptt = rig.KeyingPtt();
+        ptt.Key();
+        _fake.RefusesUnkey = true;
+
+        Action unkey = ptt.Unkey;
+        unkey.Should().Throw<RigctldException>();
+
+        rig.Snapshot().UnkeyOwed.Should().BeTrue();
+        rig.HoldsTransmitter.Should().BeTrue();
+        Action keyAgain = ptt.Key;
+        keyAgain.Should().Throw<TransmitterHeldException>().WithMessage("*unkey has not been confirmed*");
+        rig.Tune(new RigTuning(7_052_000, "USB", 0), TimeSpan.FromSeconds(60), "mailcast")
+            .Why.Should().Contain("unkey has not been confirmed");
+
+        await Eventually(() => _warned.Count(w => w.Contains("the unkey was refused")) >= 3, "retried", TimeSpan.FromSeconds(1));
+        _fake.Ptt.Should().BeTrue();
+
+        _fake.RefusesUnkey = false;
+        await Eventually(() => !rig.HoldsTransmitter, "the next retry unkeys", TimeSpan.FromSeconds(1));
+        _fake.Ptt.Should().BeFalse();
+        _said.Should().Contain(s => s.StartsWith("rig: unkeyed the radio after", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_First_Tune_That_Loses_Rigctld_Part_Way_Owes_The_Restore()
+    {
+        RigControl rig = await Started();
+        _fake.DieOn = "F";
+
+        RigTuneResult result = rig.Tune(new RigTuning(7_052_000, "LSB", 0), TimeSpan.FromSeconds(60), "mailcast");
+
+        result.Outcome.Should().Be(RigTuneOutcome.Failed);
+        _fake.Mode.Should().Be("LSB", "the mode went before the connection did");
+        rig.Snapshot().RestoreOwed.Should().Be(new RigTuning(14_074_000, "USB", 2400));
+        rig.HoldsTransmitter.Should().BeTrue();
+
+        await Eventually(() => !rig.HoldsTransmitter, "the reconnect puts it back", TimeSpan.FromSeconds(1));
+        _fake.Mode.Should().Be("USB");
+        _fake.DialHz.Should().Be(14_074_000);
+    }
+
+    [Fact]
+    public async Task An_Open_Window_Writes_Its_Restore_Target_Down_And_Removes_It_Once_Put_Back()
+    {
+        RigControl rig = await Started(persist: true);
+
+        RigTuneResult result = rig.Tune(new RigTuning(7_052_000, "USB", 0), TimeSpan.FromSeconds(60), "mailcast");
+
+        RigRestoreFile.Read(RestorePath, _fake.Endpoint, out _).Should().Be(new RigTuning(14_074_000, "USB", 2400));
+        result.Window!.Dispose();
+        File.Exists(RestorePath).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_Station_Killed_Mid_Window_Puts_The_Rig_Back_At_Start_Up_Before_The_Band_Plan()
+    {
+        // What a SIGKILL during a window leaves behind: the rig on the window's frequency, and the file.
+        RigRestoreFile.Write(RestorePath, _fake.Endpoint, new RigTuning(7_049_450, "USB", 2400));
+        _fake.DialHz = 7_052_000;
+        _fake.Accepting = false;
+        RigControl rig = Rig(plan: new RigTuning(7_049_450, "USB", 2400), persist: true);
+
+        (await rig.StartAsync(CancellationToken.None)).Should().BeFalse();
+        rig.HoldsTransmitter.Should().BeTrue("nothing is sent until the rig is back where it belongs");
+        _said.Should().Contain(s => s.Contains("stopped during a tuning window last time"));
+
+        _fake.Accepting = true;
+        await Eventually(() => !rig.HoldsTransmitter, "the restore is done on connecting", TimeSpan.FromSeconds(1));
+        _fake.DialHz.Should().Be(7_049_450);
+        File.Exists(RestorePath).Should().BeFalse();
+        _fake.Sets.Should().StartWith(["M USB 2400", "F 7049450"]);
+    }
+
+    [Fact]
+    public async Task A_Restore_File_For_Another_Rigctld_Is_Ignored()
+    {
+        RigRestoreFile.Write(RestorePath, new RigctldEndpoint("10.0.0.9", 4532), new RigTuning(3_582_000, "LSB", 0));
+
+        RigControl rig = await Started(persist: true);
+
+        rig.HoldsTransmitter.Should().BeFalse();
+        _fake.Sets.Should().BeEmpty();
+        _warned.Should().ContainSingle(w => w.Contains("is for the rigctld at 10.0.0.9:4532"));
+        File.Exists(RestorePath).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_Dial_Moved_By_Hand_Is_Said_At_Most_Once_A_Minute()
+    {
+        await Started();
+
+        _fake.DialHz = 14_075_000;
+        await Eventually(() => _said.Any(s => s.Contains("changed outside")), "the first change is said", TimeSpan.FromSeconds(5));
+        _fake.DialHz = 14_076_000;
+        await Eventually(() => _fake.Commands.Count(c => c.Command == "f") >= 4, "polled again", TimeSpan.FromSeconds(5));
+        _said.Count(s => s.Contains("changed outside")).Should().Be(1);
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        _fake.DialHz = 14_077_000;
+        await Eventually(() => _said.Count(s => s.Contains("changed outside")) == 2, "a minute later it is said again", TimeSpan.FromSeconds(5));
+        _said.Should().Contain(s => s.Contains("14.077000 MHz") && s.Contains("1 more changes since the last line"));
+    }
+
+    [Fact]
+    public async Task No_Poll_Is_Made_While_A_Transmission_Is_Queued()
+    {
+        await Started();
+        int reads = _fake.Commands.Count(c => c.Command == "f");
+        _pending = true;
+
+        for (int i = 0; i < 10; i++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(5));
+            await Task.Delay(5);
+        }
+
+        _fake.Commands.Count(c => c.Command == "f").Should().Be(reads);
+        _pending = false;
+        await Eventually(() => _fake.Commands.Count(c => c.Command == "f") > reads, "polls resume", TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Changes_Are_Raised_As_The_Connection_And_A_Window_Come_And_Go()
+    {
+        RigControl rig = await Started();
+        _changes.Should().ContainSingle(c => c.Connected && c.Window == null);
+
+        RigTuneResult window = rig.Tune(new RigTuning(7_052_000, "USB", 0), TimeSpan.FromSeconds(60), "mailcast");
+        _changes.Last().Window.Should().BeSameAs(window.Window);
+
+        window.Window!.Dispose();
+        _changes.Last().Window.Should().BeNull();
+        _changes.Last().RestoreOwed.Should().BeNull();
+        _changes.Last().Tuning!.DialHz.Should().Be(14_074_000);
+
+        _fake.Accepting = false;
+        _fake.Kill();
+        await Eventually(() => !_changes.Last().Connected, "a drop is raised", TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task A_Huge_Number_Of_Seconds_Is_Capped_Rather_Than_Overflowing()
+    {
+        RigControl rig = await Started();
+
+        (int status, JsonObject answer) = RigApi.Handle(
+            rig, "/api/rig/tune", "POST", """{"dialHz": 7052000, "mode": "USB", "seconds": 1e300}""");
+
+        status.Should().Be(200);
+        answer["capped"]!.GetValue<bool>().Should().BeTrue();
+        answer["seconds"]!.GetValue<double>().Should().Be(300);
     }
 
     [Theory]

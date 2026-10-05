@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Modems;
+using Packet.SoundModem.Rig;
 
 namespace Packet.SoundModem.Daemon;
 

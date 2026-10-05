@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Packet.SoundModem.Rig;
 
 namespace Packet.SoundModem.Daemon;
 
@@ -106,8 +107,16 @@ internal static class RigApi
             return (400, Error("\"seconds\" must be more than 0"));
         }
 
+        // Clamped before it becomes a TimeSpan, which a number like 1e300 would overflow; anything
+        // over the cap is still reported as capped.
+        double clamped = Math.Min(seconds, RigControl.MaxWindow.TotalSeconds * 2);
+        if (dial > 100_000_000_000)
+        {
+            return (400, Error($"{dial} Hz is not a dial frequency"));
+        }
+
         RigTuneResult result = rig.Tune(
-            new RigTuning((long)dial, mode, passbandHz), TimeSpan.FromSeconds(seconds), Owner);
+            new RigTuning((long)dial, mode, passbandHz), TimeSpan.FromSeconds(clamped), Owner);
         switch (result.Outcome)
         {
             case RigTuneOutcome.Invalid:
@@ -151,7 +160,7 @@ internal static class RigApi
             ["passbandHz"] = state.Tuning?.PassbandHz,
             ["keyed"] = state.Keyed,
             ["pttThroughRig"] = state.KeysThroughRig,
-            ["transmitHeld"] = state.Window is not null || state.RestoreOwed is not null,
+            ["transmitHeld"] = rig.HoldsTransmitter,
             ["window"] = state.Window is { } window
                 ? new JsonObject
                 {
@@ -164,6 +173,7 @@ internal static class RigApi
                 }
                 : null,
             ["restoreOwed"] = state.RestoreOwed is { } owed ? Tuning(owed) : null,
+            ["unkeyOwed"] = state.UnkeyOwed,
             ["problem"] = state.LastProblem,
         };
     }

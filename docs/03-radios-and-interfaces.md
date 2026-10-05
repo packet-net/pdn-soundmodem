@@ -95,7 +95,7 @@ ptt: cm108 /dev/hidraw0 (gpio 3)
 { "rig": {}, "ptt": { "type": "rigctld" } }
 ```
 
-The radio is keyed over its CAT port with Hamlib's `T 1` and `T 0`, so no PTT lead is needed. It needs the `rig` section, see [Other radios through Hamlib](#other-radios-through-hamlib).
+The radio is keyed over its CAT port with Hamlib's `T 1` and `T 0`, so no PTT lead is needed. It needs the `rig` section, see [Other radios through Hamlib](#other-radios-through-hamlib). The CAT round trip comes out of TXDELAY, so a slow serial link may need a longer TXDELAY from your host.
 
 ```
 ptt: rigctld 127.0.0.1:4532 (T 1 to key, T 0 to unkey)
@@ -194,6 +194,7 @@ Without `rfFrequency` the dial is left where you put it.
 - Many rigs only take audio from their data jack in a data mode. Set `"mode": "PKTUSB"` (or `PKTLSB`) for that.
 - The modem asks for a 2400 Hz passband, the window the band plan assumes. If your rig will not set it, the journal says so; `"passbandHz": 0` leaves the rig on its normal width.
 - If rigctld is not running, the journal warns and the station carries on without it, trying again in the background. `"required": true` makes the station wait for it instead.
+- Start rigctld without `--vfo`; the modem does not speak that form.
 
 `POST /api/rig/tune` retunes the rig for a while and always puts it back, for listening to something outside your passband, such as pdn-mailcast's bulletins. While it is retuned the station does not transmit. See [rig tuning windows](reference/ports-and-endpoints.md#rig-tuning-windows).
 

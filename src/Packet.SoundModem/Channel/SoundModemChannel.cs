@@ -2193,7 +2193,7 @@ public sealed class SoundModemChannel
                     lost.Rejected?.Invoke(keyFailure);
                 }
 
-                FaultEverything(keyFailure);
+                FaultAfterKeyFailure(source, keyFailure);
                 PttFailed?.Invoke(keyFailure);
                 return;
             }
@@ -2537,6 +2537,49 @@ public sealed class SoundModemChannel
         }
     }
 
+    /// <summary>
+    /// What a keyup that would not key costs: everything queued for a broken keying path, but
+    /// only this transmitter's queue for a <see cref="TransmitterHeldException"/>, whose radio is
+    /// fine and is only not to be keyed right now.
+    /// </summary>
+    private void FaultAfterKeyFailure(object source, Exception reason)
+    {
+        if (reason is not TransmitterHeldException)
+        {
+            FaultEverything(reason);
+            return;
+        }
+
+        List<TxItem> refused = [];
+        lock (_txGate)
+        {
+            RemoveAllLocked(source, refused);
+        }
+
+        foreach (TxItem item in refused)
+        {
+            Finish(item);
+            item.Rejected?.Invoke(reason);
+            item.Done.TrySetException(reason);
+            _ = item.Done.Task.Exception;
+        }
+    }
+
+    /// <summary>
+    /// Whether any transmission is queued and not yet on the air. A cheap look, for a caller that
+    /// would rather not start something slow just as the transmitter is about to key.
+    /// </summary>
+    public bool TransmitQueued
+    {
+        get
+        {
+            lock (_txGate)
+            {
+                return _txQueues.Count > 0;
+            }
+        }
+    }
+
     /// <summary>Fails every queued transmission - a keyup or a device that has died takes them all.</summary>
     private void FaultEverything(Exception reason)
     {
@@ -2794,7 +2837,7 @@ public sealed class SoundModemChannel
                     // one: the answer is definite, the frames are lost, and the loop survives
                     // to try the next keyup. FlexTxContendedException lands here by design -
                     // "another station holds the PA" is an outcome, not a broken radio.
-                    FaultEverything(keyFailure);
+                    FaultAfterKeyFailure(source, keyFailure);
                     PttFailed?.Invoke(keyFailure);
                     continue;
                 }

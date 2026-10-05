@@ -408,7 +408,11 @@ A radio controlled through Hamlib's `rigctld`, for any device but `flex:` and `u
 - With a band plan (modems placed by `rfFrequency`) it sets the mode and passband, then the dial: `rig: setting the rig to 7.049450 MHz USB (2400 Hz passband) from the band plan`. Without one the dial is never touched. After a reconnect that finds the rig somewhere else, it is set back to the plan.
 - A passband the rig will not take falls back to its normal width, with a `rig: WARNING - the rig would not take a 2400 Hz passband` line; one it sets differently is warned about with what it reports. A dial it refuses is a warning naming where to set the rig by hand.
 - A rigctld that does not answer is a warning, `rig: WARNING - cannot reach rigctld at ...`, and is retried every 1 to 30 seconds. One that goes away mid-session is the same, `rig: WARNING - lost rigctld at ...; reconnecting`. Anything owed while it was away (an unkey, a restore, the plan's dial) is done as soon as it answers.
-- The modem polls the rig every 5 seconds and journals a dial or mode changed outside it.
+- The modem polls the rig every 5 seconds, except while a frame is waiting to go, and journals a dial or mode changed outside it, at most once a minute.
+- A rig that answers with an error (switched off: `RPRT -5`) is treated like a missing rigctld: one warning, then retried quietly until it answers.
+- rigctld started with `--vfo` is not supported: the station says so (`rigctld was started with --vfo, which this station does not speak`) and keeps retrying. Start it without `--vfo`.
+- With `ptt` `rigctld`, the `T 1` round trip over CAT (often 20 to 100 ms, more on a slow serial link) comes out of TXDELAY, because the preamble starts as soon as rigctld answers. Allow for it if the far end misses the start of your frames.
+- A `T 1` that fails is followed at once by `T 0`. An unkey rigctld does not confirm is retried every second with a warning each time, and nothing is keyed or retuned until it goes.
 - Refused: `rig` with a `flex:` or `ubersdr:` device; a `rigctld` that is not `host:port`; a `mode` outside `USB`, `PKTUSB`, `LSB`, `PKTLSB`, `FM`, `FMN`, `PKTFM`, `PKTFMN` (other Hamlib modes are for tuning windows only), or one that disagrees with `sideband`; a `passbandHz` below 0 or above 20000.
 - `POST /api/rig/tune` and `GET /api/rig` need an [`api`](#api) key; see [rig tuning windows](ports-and-endpoints.md#rig-tuning-windows).
 - The rigctld connection has no authentication, which is rigctld's own design. Keep it on loopback or a trusted network.
