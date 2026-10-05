@@ -98,7 +98,9 @@ internal static class TxLeaseApi
             // Dropped first, so the closing ident a release may send is the last thing of the
             // holder's to go out, with nothing of the abandoned broadcast behind it.
             int dropped = dropQueued && holder is int dropping ? channel.DropQueued(dropping) : 0;
-            bool released = release && lease.Release(subChannel ?? holder);
+            // Released only when a holder was actually read, and only that one: never a bare
+            // Release() that would free whoever happens to hold it by the time it runs.
+            bool released = release && holder is int releasing && lease.Release(subChannel ?? releasing);
             JsonObject answer = Describe(channel);
             if (release)
             {
@@ -146,11 +148,14 @@ internal static class TxLeaseApi
             maxCarrierWait is double limit ? TimeSpan.FromSeconds(limit) : null);
         if (!grant.Granted)
         {
-            return (409, Conflict(
-                channel,
-                lease.IsClosing
-                    ? $"sub-channel {grant.SubChannel}'s lease is ending and sending its closing ident"
-                    : $"sub-channel {grant.SubChannel} holds the transmit lease until {Utc(grant.Expires)}"));
+            string why = !lease.IsClosing
+                ? $"sub-channel {grant.SubChannel} holds the transmit lease until {Utc(grant.Expires)}"
+                : grant.SubChannel == sub
+                    ? "this lease is closing: it was released or ran out and its closing ident is "
+                        + "going out. It cannot be renewed; take a new one once \"closing\" reads false"
+                    : $"sub-channel {grant.SubChannel}'s lease is closing and sending its closing ident; "
+                        + "try again once \"closing\" reads false";
+            return (409, Conflict(channel, why));
         }
 
         JsonObject granted = Describe(channel);

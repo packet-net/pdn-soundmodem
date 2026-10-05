@@ -686,4 +686,92 @@ public class TransmitLeaseTests
         channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
         channel.TransmitLease.MaxCarrierWait.Should().BeNull("a new lease starts with ordinary carrier sense");
     }
+
+    private static async Task RunUntil(SoundModemChannel channel, RecordingPtt ptt, params Task[] settled)
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        Task transmitter = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), ptt, cancellation.Token);
+        foreach (Task task in settled)
+        {
+            try
+            {
+                await task.WaitAsync(TimeSpan.FromMinutes(1));
+            }
+            catch (InvalidOperationException)
+            {
+                // Refused, which is what most of these are waiting for.
+            }
+        }
+
+        await cancellation.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    [Fact]
+    public async Task A_Drop_That_Lands_As_A_Burst_Is_Taken_Refuses_The_Burst_Too()
+    {
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 42);
+        channel.AddModem(3, _ => new QuickPacker());
+        channel.Csma.Persistence = 255;
+        channel.TransmitLease.Take(3, TimeSpan.FromMinutes(5));
+        var refused = new List<string>();
+        channel.TransmitRejected += (_, _, why) => { lock (refused) { refused.Add(why.Message); } };
+        int drops = 0;
+        channel.TakingPackedBurst = () =>
+        {
+            if (Interlocked.Increment(ref drops) == 1)
+            {
+                channel.DropQueued(3);
+            }
+        };
+
+        Task first = channel.EnqueueTransmit(3, Frame(0x41));
+        Task second = channel.EnqueueTransmit(3, Frame(0x42));
+        var ptt = new RecordingPtt();
+        await RunUntil(channel, ptt, first, second);
+
+        first.IsFaulted.Should().BeTrue();
+        second.IsFaulted.Should().BeTrue();
+        refused.Should().OnlyContain(r => r == SoundModemChannel.DroppedByHolderReason);
+        ptt.Events.Should().BeEmpty("a dropped burst is neither put back nor keyed");
+    }
+
+    [Fact]
+    public async Task A_Lease_That_Runs_Out_As_Its_Burst_Is_Taken_Refuses_The_Burst_Before_It_Keys()
+    {
+        var time = new FakeTimeProvider();
+        var channel = new SoundModemChannel(SampleRate, time, randomSeed: 42);
+        channel.AddModem(3, _ => new QuickPacker());
+        channel.Csma.Persistence = 255;
+        channel.TransmitLease.Closing = _ => new TaskCompletionSource().Task; // an ident still to go
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+        int taken = 0;
+        channel.TakingPackedBurst = () =>
+        {
+            // The head end died: its lease runs out at the moment its burst is in hand.
+            if (Interlocked.Increment(ref taken) == 1)
+            {
+                time.Advance(TimeSpan.FromSeconds(60));
+            }
+        };
+
+        Task burst = channel.EnqueueTransmit(3, Frame(0x41));
+        var ptt = new RecordingPtt();
+        await RunUntil(channel, ptt, burst);
+
+        Func<Task> waiting = () => burst;
+        (await waiting.Should().ThrowAsync<InvalidOperationException>())
+            .Which.Message.Should().Be(SoundModemChannel.ExpiredDropReason);
+        ptt.Events.Should().BeEmpty("a dead head end's burst never follows its lease out");
+        channel.TransmitLease.IsClosing.Should().BeTrue();
+
+        channel.EnqueueTransmit(3, Frame(0x42)).IsFaulted.Should().BeTrue(
+            "nor does anything it queues while its lease closes");
+    }
 }

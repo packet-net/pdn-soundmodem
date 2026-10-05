@@ -15,6 +15,10 @@ namespace Packet.SoundModem.Daemon;
 /// </remarks>
 internal static class IdentTransmission
 {
+    /// <summary>Each identifier's ident while it is queued or going out, so a closing ident and
+    /// the periodic one never queue twice.</summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<StationIdentifier, Task> Queued = [];
+
     /// <summary>Makes <paramref name="identifier"/> part of <paramref name="subChannel"/>'s
     /// traffic for the transmit lease.</summary>
     internal static void Register(SoundModemChannel channel, int subChannel, StationIdentifier identifier) =>
@@ -26,7 +30,11 @@ internal static class IdentTransmission
     /// poll came round for the length of the lease; it stays owed and goes once the lease ends.
     /// </summary>
     internal static bool ShouldSend(SoundModemChannel channel, StationIdentifier owed) =>
-        owed.IdentificationDue && channel.TransmitLease.Admits(owed);
+        owed.IdentificationDue && channel.TransmitLease.Admits(owed) && Pending(owed) is null;
+
+    /// <summary>The ident this identifier has queued or on the air, or null.</summary>
+    internal static Task? Pending(StationIdentifier owed) =>
+        Queued.TryGetValue(owed, out Task? queued) && !queued.IsCompleted ? queued : null;
 
     /// <summary>
     /// Queues one identification. Queued like anything else, so it waits out a busy channel and
@@ -34,8 +42,9 @@ internal static class IdentTransmission
     /// silence: an SSB transmitter radiates nothing without audio, which is exactly what the PTT
     /// settling time wants.
     /// </summary>
-    internal static Task SendAsync(SoundModemChannel channel, StationIdentifier owed) =>
-        channel.EnqueueTransmit(txDelay =>
+    internal static Task SendAsync(SoundModemChannel channel, StationIdentifier owed)
+    {
+        Task sent = channel.EnqueueTransmit(txDelay =>
         {
             float[] tone = owed.Render();
             int lead = (int)Math.Round(txDelay / 1000.0 * channel.SampleRate);
@@ -47,6 +56,9 @@ internal static class IdentTransmission
         // rather than lengthening somebody else's - the station is deaf for whatever it appends
         // itself to.
         source: owed);
+        Queued.AddOrUpdate(owed, sent);
+        return sent;
+    }
 
     /// <summary>
     /// What a transmit lease closes with (<see cref="TransmitLease.Closing"/>): the holder's own
@@ -56,7 +68,20 @@ internal static class IdentTransmission
     /// </summary>
     internal static Func<int, Task?> Closing(
         IReadOnlyDictionary<int, StationIdentifier> identifiers, Func<int, StationIdentifier, Task> identify) =>
-        holder => identifiers.TryGetValue(holder, out StationIdentifier? owed) && owed.TransmittedSinceIdentification
-            ? identify(holder, owed)
-            : null;
+        holder =>
+        {
+            if (!identifiers.TryGetValue(holder, out StationIdentifier? owed))
+            {
+                return null;
+            }
+
+            // The periodic ident is already queued: that one closes the lease, and a second
+            // would only be the same callsign twice.
+            if (Pending(owed) is { } queued)
+            {
+                return queued;
+            }
+
+            return owed.TransmittedSinceIdentification ? identify(holder, owed) : null;
+        };
 }

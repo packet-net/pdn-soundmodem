@@ -1166,6 +1166,10 @@ public sealed class SoundModemChannel
             {
                 leasedOut = TransmitLease.Refusal(holder);
             }
+            else if (IsExpiredHoldersModemLocked(source))
+            {
+                leasedOut = new InvalidOperationException(ExpiredDropReason);
+            }
             else
             {
                 if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue))
@@ -2021,6 +2025,13 @@ public sealed class SoundModemChannel
             return null;
         }
 
+        long dropsBefore;
+        lock (_txGate)
+        {
+            dropsBefore = _drops.TryGetValue(source, out (long Epoch, string Reason) seen) ? seen.Epoch : 0;
+        }
+
+
         PackedAudio? rendered = null;
         Exception? failed = null;
         TxItem[] wanted;
@@ -2051,6 +2062,25 @@ public sealed class SoundModemChannel
             return null;
         }
 
+        TakingPackedBurst?.Invoke();
+
+        // Dropped while it was being taken: the drop could not see frames already in hand, and
+        // they must go the way the rest of the queue went, not back into it or onto the air.
+        string? droppedFor = null;
+        lock (_txGate)
+        {
+            if (_drops.TryGetValue(source, out (long Epoch, string Reason) now) && now.Epoch != dropsBefore)
+            {
+                droppedFor = now.Reason;
+            }
+        }
+
+        if (droppedFor is not null)
+        {
+            RefuseWith(taken, droppedFor);
+            return new PackedAudio([], [], 0);
+        }
+
         if (failed is not null)
         {
             foreach (TxItem refused in taken)
@@ -2071,6 +2101,10 @@ public sealed class SoundModemChannel
 
         return rendered;
     }
+
+    /// <summary>For tests: called once a packed burst has been taken off its queue and before it
+    /// keys, the one moment a drop or an expiry can land with the burst in hand.</summary>
+    internal Action? TakingPackedBurst { get; set; }
 
     /// <summary>Returns frames to the head of their transmitter's queue, in order.</summary>
     private void PutBack(object source, IEnumerable<TxItem> items)
@@ -2328,6 +2362,10 @@ public sealed class SoundModemChannel
     /// </remarks>
     public int DropQueued(int subChannel) => DropQueued(subChannel, DroppedByHolderReason);
 
+    /// <summary>How many times each modem's queue has been dropped, and why it last was. Guarded
+    /// by <see cref="_txGate"/>.</summary>
+    private readonly Dictionary<object, (long Epoch, string Reason)> _drops = new(ReferenceEqualityComparer.Instance);
+
     private int DropQueued(int subChannel, string reason)
     {
         if (!_modems.TryGetValue(subChannel, out IModem? modem))
@@ -2339,17 +2377,14 @@ public sealed class SoundModemChannel
         lock (_txGate)
         {
             RemoveAllLocked(modem, dropped);
+
+            // So a burst being taken off this queue as it is dropped, which the removal above
+            // cannot see, is refused rather than put back or keyed (TakePackedBurstAsync).
+            long epoch = _drops.TryGetValue(modem, out (long Epoch, string Reason) last) ? last.Epoch : 0;
+            _drops[modem] = (epoch + 1, reason);
         }
 
-        foreach (TxItem item in dropped)
-        {
-            Finish(item);
-            var refusal = new InvalidOperationException(reason);
-            item.Rejected?.Invoke(refusal);
-            item.Done.TrySetException(refusal);
-            _ = item.Done.Task.Exception;
-        }
-
+        RefuseWith(dropped, reason);
         return dropped.Count;
     }
 
@@ -2403,6 +2438,27 @@ public sealed class SoundModemChannel
         int holder;
         lock (_txGate)
         {
+            if (IsExpiredHoldersModemLocked(source))
+            {
+                // A lease that ran out: its holder's burst in hand goes nowhere, so a dead head
+                // end's last burst cannot follow its lease out, and the closing ident is next.
+                if (taken is not null)
+                {
+                    refused.AddRange(taken);
+                }
+
+                RemoveAllLocked(source, refused);
+            }
+        }
+
+        if (refused.Count > 0)
+        {
+            RefuseWith(refused, ExpiredDropReason);
+            return true;
+        }
+
+        lock (_txGate)
+        {
             if (TransmitLease.HolderNow() is not int held || TransmitLease.IsAttributed(source, held))
             {
                 return false;
@@ -2419,6 +2475,26 @@ public sealed class SoundModemChannel
 
         RefuseLeased(refused, holder);
         return true;
+    }
+
+    /// <summary>Whether <paramref name="source"/> is the modem of a holder whose lease ran out.
+    /// Call under <see cref="_txGate"/> (or not; it takes only the lease's own lock).</summary>
+    private bool IsExpiredHoldersModemLocked(object source) =>
+        TransmitLease.ExpiringHolderNow() is int expired
+        && _modems.TryGetValue(expired, out IModem? modem)
+        && ReferenceEquals(modem, source);
+
+    /// <summary>Refuses each of <paramref name="items"/> with one sentence. Never under the lock.</summary>
+    private static void RefuseWith(List<TxItem> items, string reason)
+    {
+        foreach (TxItem item in items)
+        {
+            Finish(item);
+            var refusal = new InvalidOperationException(reason);
+            item.Rejected?.Invoke(refusal);
+            item.Done.TrySetException(refusal);
+            _ = item.Done.Task.Exception;
+        }
     }
 
     /// <summary>Takes every item one transmitter has queued out of the queue. Call under

@@ -375,4 +375,52 @@ public class TxLeaseTests
         ptt.Events.Should().StartWith("key");
         channel.TransmitLease.Holder.Should().BeNull();
     }
+
+    [Fact]
+    public void A_Closing_Lease_Waits_For_A_Periodic_Ident_Already_Queued_Rather_Than_Queue_Another()
+    {
+        (SoundModemChannel channel, _) = Station();
+        var holders = new Packet.SoundModem.Ident.StationIdentifier("M0LTE", null, 1500, 20, TimeSpan.FromMinutes(10), 12000);
+        IdentTransmission.Register(channel, 3, holders);
+        holders.NoteTransmission();
+        Task periodic = IdentTransmission.SendAsync(channel, holders); // queued; nothing is transmitting
+        int identified = 0;
+        Func<int, Task?> closing = IdentTransmission.Closing(
+            new Dictionary<int, Packet.SoundModem.Ident.StationIdentifier> { [3] = holders },
+            (_, _) =>
+            {
+                identified++;
+                return Task.CompletedTask;
+            });
+
+        closing(3).Should().BeSameAs(periodic, "the lease closes on the ident already on its way");
+        identified.Should().Be(0);
+        IdentTransmission.ShouldSend(channel, holders).Should().BeFalse("one queued ident at a time");
+    }
+
+    [Fact]
+    public void Renewing_A_Lease_That_Is_Closing_Says_So()
+    {
+        (SoundModemChannel channel, _) = Station();
+        channel.TransmitLease.Closing = _ => new TaskCompletionSource().Task;
+        Post(channel, """{"subChannel": 3}""");
+        Post(channel, """{"release": true, "subChannel": 3}""").Answer["closing"]!.GetValue<bool>().Should().BeTrue();
+
+        (int status, JsonObject answer) = Post(channel, """{"subChannel": 3, "seconds": 60}""");
+
+        status.Should().Be(409);
+        answer["closing"]!.GetValue<bool>().Should().BeTrue();
+        answer["refused"]!.GetValue<string>().Should().StartWith("this lease is closing");
+    }
+
+    [Fact]
+    public void A_Release_With_No_Lease_Releases_Nothing()
+    {
+        (SoundModemChannel channel, _) = Station();
+
+        (int status, JsonObject answer) = Post(channel, """{"release": true}""");
+
+        status.Should().Be(200);
+        answer["released"]!.GetValue<bool>().Should().BeFalse();
+    }
 }

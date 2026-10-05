@@ -107,6 +107,7 @@ public sealed class TransmitLease
     // Set while a released or expired lease waits for its closing transmission: still held, for
     // the holder's closing word alone, and nobody can take it until it has gone.
     private bool _closing;
+    private TransmitLeaseChange _closingHow;
 
     internal TransmitLease(TimeProvider time) => _time = time;
 
@@ -292,6 +293,7 @@ public sealed class TransmitLease
 
             holder = held;
             _closing = true;
+            _closingHow = TransmitLeaseChange.Released;
         }
 
         Close(holder, TransmitLeaseChange.Released);
@@ -345,6 +347,25 @@ public sealed class TransmitLease
         lock (_gate)
         {
             return _holder is int holder && (_closing || !DueLocked()) ? holder : null;
+        }
+    }
+
+    /// <summary>
+    /// The holder of a lease that ran out and is sending its closing ident, or null. Its own
+    /// frames are not let through any more: a holder that stopped renewing is gone, and only its
+    /// closing ident may still go out. Includes an expiry that is due but not yet reported.
+    /// </summary>
+    internal int? ExpiringHolderNow()
+    {
+        lock (_gate)
+        {
+            if (_holder is not int holder)
+            {
+                return null;
+            }
+
+            return _closing ? (_closingHow == TransmitLeaseChange.Expired ? holder : null)
+                : DueLocked() ? holder : null;
         }
     }
 
@@ -407,6 +428,7 @@ public sealed class TransmitLease
 
             holder = held;
             _closing = true;
+            _closingHow = TransmitLeaseChange.Expired;
         }
 
         Close(holder, TransmitLeaseChange.Expired);
