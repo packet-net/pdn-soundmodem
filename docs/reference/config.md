@@ -61,6 +61,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | `ardop` | object | absent: off | Legacy way to start the ARDOP virtual TNC; a modem entry with `"mode": "ardop"` is the current form. |
 | `flex` | object | absent: defaults | Slice parameters for a headless FlexRadio. |
 | `rig` | object | absent: no rig control | A radio controlled through Hamlib's rigctld: the band plan's dial, a rigctld PTT and tuning windows. |
+| `mailcast` | object | absent: off | The built-in pdn-mailcast receiver: hear GB7RDG's bulletins on 40 m and forward them into your BBS. |
 | `ubersdr` | object | absent: defaults | Stream parameters for a public UberSDR web receiver. |
 | `waterfall` | object | absent: no page | The station page: spectrum, waterfall, frames, links, and the HTTP listener that `api` and `metrics` share. |
 | `monitor` | object | absent: not a monitor | Turns the process into a monitor site fronting many web receivers. Exclusive with `device`. |
@@ -416,6 +417,39 @@ A radio controlled through Hamlib's `rigctld`, for any device but `flex:` and `u
 - Refused: `rig` with a `flex:` or `ubersdr:` device; a `rigctld` that is not `host:port`; a `mode` outside `USB`, `PKTUSB`, `LSB`, `PKTLSB`, `FM`, `FMN`, `PKTFM`, `PKTFMN` (other Hamlib modes are for tuning windows only), or one that disagrees with `sideband`; a `passbandHz` below 0 or above 20000.
 - `POST /api/rig/tune` and `GET /api/rig` need an [`api`](#api) key; see [rig tuning windows](ports-and-endpoints.md#rig-tuning-windows).
 - The rigctld connection has no authentication, which is rigctld's own design. Keep it on loopback or a trusted network.
+
+## `mailcast`
+
+```json
+{ "mailcast": { "bbs": { "type": "linBpq", "port": 8011, "password": "pick-one" }, "retune": true } }
+```
+
+The built-in [pdn-mailcast](../14-mailcast.md) receiver. Absent, there is none. Present, the station runs an MS110D receive modem on the mailcast signal beside its own modems, rebuilds the packet mail bulletins GB7RDG sends to `MCAST`, and forwards each into the BBS by FBB B1F as a forwarding partner. It never transmits, has no KISS port, takes no mail from the BBS, and delivers no other kind of content.
+
+| Key | Type | Default | What it is |
+|---|---|---|---|
+| `bbs` | object | required | Where the BBS is and how to log in; the keys below. |
+| `dialKHz` | number | `7052.0` | The USB dial in kHz the signal is heard on; its centre is 1.8 kHz above. 1800 to 30000. |
+| `stateDirectory` | string | absent: `mailcast/` in the state directory | Where the pieces, the rebuilt bulletins (`store/`) and the record of deliveries (`deliveries.jsonl`) are kept. |
+| `retune` | bool | `false` | When the station's passband does not reach the signal, retune the rig to `dialKHz` USB from 1 minute before each slot to 12 minutes after. Needs a [`rig`](#rig) section. |
+
+`bbs`:
+
+| Key | Type | Default | What it is |
+|---|---|---|---|
+| `type` | string | `"linBpq"` | `"linBpq"` for LinBPQ's mail on its Telnet port's `FBBPORT`, or `"fbb"` for Linux FBB. |
+| `host` | string | `"127.0.0.1"` | The BBS's address. |
+| `port` | int | `8011` | LinBPQ's `FBBPORT`, or FBB's telnet port. |
+| `login` | string | `"Q0CAST"` | The receiver's own login on the BBS, set up as a BBS forwarding partner; never your callsign or GB7RDG. FBB is sent `.Q0CAST`, asking for a binary session. |
+| `password` | string | required | The login's password. Never logged, never served; `GET /api/config` reads it as `(set, not shown)`. |
+| `command` | string | `"BBS"` | LinBPQ only: the node command that reaches the mail application. |
+
+- Where it listens is decided at start-up. A station whose passband already holds the whole signal (a headless Flex slice within reach, whose receive filter is opened to it; a band plan, `dialFrequency` or web receiver window that covers it; or a dial of `dialKHz` itself) listens there all the time. Otherwise, with `retune` and a `rig` section, the rig is retuned around each slot through the rig's [tuning windows](ports-and-endpoints.md#rig-tuning-windows), and nothing is transmitted until it is put back. Otherwise the station refuses to start: `mailcast: the signal on 7.0524 to 7.0552 MHz is outside what this station hears. ...`, saying what to change.
+- The slots are GB7RDG's own (hourly on the hour, in daylight from 2 hours after sunrise to 30 minutes before sunset at IO91lk) until its directory is heard; from then on, the directory's.
+- The channel runs at 48 kHz, as it does with any `ms110d-*` modem.
+- A rebuilt bulletin stays in the outbox until the BBS has answered for it, and is offered again after a failure (30 s, then up to 30 minutes apart) or 10 minutes after the BBS says "later". Mail the BBS offers back is answered "later", and the journal warns.
+- Refused: no `bbs` section; an empty `password`; a `type` other than `linBpq` or `fbb`; a `port` outside 1 to 65535; an empty `host`; a `login` that is not one word; a `password` or `command` over more than one line; a `dialKHz` outside 1800 to 30000; an empty `stateDirectory`; `mailcast` in a `monitor` configuration; and, at start-up, a station that cannot hear the signal and cannot retune for it, or an FM station.
+- Not on a `--two-tone` or `--tone` run.
 
 ## `ubersdr`
 

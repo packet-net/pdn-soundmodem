@@ -1,4 +1,5 @@
 using M0LTE.Radio.Audio;
+using Packet.SoundModem.Channel;
 using Packet.SoundModem.Rig;
 
 namespace Packet.SoundModem.Daemon;
@@ -76,6 +77,22 @@ internal static class RigStation
             ? throw new InvalidOperationException(
                 "this rig keys through rigctld, so a second keying line beside it would key the radio twice")
         : new RigPtt(rig, inner);
+
+    /// <summary>
+    /// Makes <paramref name="channel"/> hold every transmission while this rig is retuned or owed
+    /// its restore, and returns <paramref name="ptt"/> guarded by it. Ordinary frames wait behind
+    /// the channel's inhibit (composed over whatever is already installed, never instead of it),
+    /// and anything that gets past the inhibit - a burst that owns the channel's timing, the
+    /// transmit lease holder's frames, which the lease lets past it - is refused at the PTT,
+    /// unkeyed. That is every source the station has: KISS ports, ARDOP, idents, paging, the
+    /// transmitter test and the lease all reach the air through this channel and this PTT.
+    /// </summary>
+    internal static IPttControl HoldTransmissions(this RigControl rig, SoundModemChannel channel, IPttControl ptt)
+    {
+        Func<bool>? prior = channel.TransmitInhibit;
+        channel.TransmitInhibit = () => (prior?.Invoke() ?? false) || rig.HoldsTransmitter;
+        return rig.Guard(ptt);
+    }
 
     /// <summary>Where a window's restore target is written down: the state directory under
     /// systemd, else beside the config file, the same as the mixer state file.</summary>

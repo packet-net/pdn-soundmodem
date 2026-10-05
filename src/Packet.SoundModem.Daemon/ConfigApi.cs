@@ -318,8 +318,8 @@ internal sealed class ConfigApi
     private const string Hidden = "(set, not shown)";
 
     /// <summary>
-    /// The configuration with <c>api.key</c> and <c>publish.token</c> blanked, for serving back to
-    /// a caller.
+    /// The configuration with <c>api.key</c>, <c>publish.token</c> and
+    /// <c>mailcast.bbs.password</c> blanked, for serving back to a caller.
     /// </summary>
     /// <remarks>
     /// <para>The caller already knows the key - they just presented it - so this is not keeping a
@@ -345,6 +345,14 @@ internal sealed class ConfigApi
             if (root?["publish"] is JsonObject publish && publish.ContainsKey("token"))
             {
                 publish["token"] = Hidden;
+                redacted = true;
+            }
+
+            if (root?["mailcast"] is JsonObject mailcast
+                && mailcast["bbs"] is JsonObject bbs
+                && bbs.ContainsKey("password"))
+            {
+                bbs["password"] = Hidden;
                 redacted = true;
             }
 

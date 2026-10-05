@@ -17,6 +17,9 @@
     <!-- The frame log's store. -->
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
+    <!-- The built-in pdn-mailcast receiver (src/Packet.SoundModem.Daemon/Mailcast). -->
+    <PackageReference Include="M0LTE.Mailcast.Core" />
+    <PackageReference Include="M0LTE.Mailcast.Fbb" />
   </ItemGroup>
 
   <ItemGroup>
