@@ -1,5 +1,5 @@
 using System.Globalization;
-using Mailcast.Core;
+using Packet.Mailcast;
 
 namespace Packet.SoundModem.Daemon;
 

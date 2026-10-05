@@ -73,26 +73,53 @@ public sealed class MailcastRetuneTests : IAsyncDisposable
         return rig;
     }
 
+    private readonly List<MailcastRetuner> _retuners = [];
+
     private MailcastRetuner Retuner(RigControl rig, string? rigMode = null)
     {
         var config = new MailcastConfig { Bbs = new MailcastBbsConfig { Password = "x" }, Retune = true };
         var retuner = new MailcastRetuner(rig, config, rigMode, () => MailcastOnAir.DefaultTimetable, _time, _journal.Enqueue);
+        _retuners.Add(retuner);
         _running.Add(Task.Run(() => retuner.RunAsync(_stop.Token)));
         return retuner;
     }
 
     /// <summary>
-    /// Moves the fake clock on to <paramref name="until"/> in 5 s steps, giving the rig and the
-    /// retuner a moment between steps; a renewal has four minutes of fake time to land in before
-    /// a window of five would run out, so nothing here depends on how quickly they react.
+    /// Moves the fake clock on to <paramref name="until"/> in steps of at most 5 s, and never past
+    /// a retuner's next timer until it has acted on that one and set the next: so a renewal always
+    /// lands before the rig's own five-minute window could run out, however slowly the machine
+    /// is running.
     /// </summary>
     private async Task AdvanceTo(DateTimeOffset until)
     {
+        foreach (MailcastRetuner retuner in _retuners)
+        {
+            await Eventually(() => retuner.NextWake > DateTimeOffset.MinValue, "the retuner has set its first timer");
+        }
+
         while (_time.GetUtcNow() < until)
         {
-            TimeSpan step = until - _time.GetUtcNow();
-            _time.Advance(step < TimeSpan.FromSeconds(5) ? step : TimeSpan.FromSeconds(5));
-            await Task.Delay(2);
+            DateTimeOffset now = _time.GetUtcNow();
+            DateTimeOffset next = now + TimeSpan.FromSeconds(5);
+            foreach (MailcastRetuner retuner in _retuners)
+            {
+                if (retuner.NextWake > now && retuner.NextWake < next)
+                {
+                    next = retuner.NextWake;
+                }
+            }
+
+            _time.SetUtcNow(next < until ? next : until);
+            foreach (MailcastRetuner retuner in _retuners)
+            {
+                DateTimeOffset due = retuner.NextWake;
+                if (due <= _time.GetUtcNow())
+                {
+                    await Eventually(() => retuner.NextWake != due, "the retuner acted on its timer");
+                }
+            }
+
+            await Task.Delay(1);
         }
     }
 

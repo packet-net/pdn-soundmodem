@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using Mailcast.Core;
+using Packet.Mailcast;
 using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
@@ -8,7 +8,7 @@ using Packet.SoundModem.Modems;
 namespace Packet.SoundModem.Tests.Mailcast;
 
 /// <summary>
-/// The built-in receiver end to end, without a radio: a slot rendered from Mailcast.Core's own
+/// The built-in receiver end to end, without a radio: a slot rendered from Packet.Mailcast's own
 /// scheduler and modulated with the MS110D modem, heard on a station's channel beside its own
 /// modem, rebuilt in the store and forwarded into a fake FBB BBS. Every clock is a fake one; the
 /// only real waiting is for the fake BBS's socket, bounded by a count of looks, not by a time.
@@ -159,7 +159,7 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
     public async Task A_Bulletin_The_Bbs_Already_Has_Leaves_The_Outbox_And_Mail_It_Offers_Back_Is_Left_With_It()
     {
         _bbs.Known["1001_GB7ABC"] = true;
-        _bbs.Queued.Add(new Bbs.Fbb.FbbOutboundMessage
+        _bbs.Queued.Add(new Packet.Fbb.FbbOutboundMessage
         {
             MessageType = 'P', From = "G8ABC", AtBbs = "GB7TST", To = "Q0CAST", Bid = "9_GB7TST", Title = "hello",
             Body = "R:261005/1100Z 9@GB7TST\r\n\r\nhi\r\n"u8.ToArray(),
@@ -175,7 +175,7 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
         await Eventually(() => receiver.Intake.Pending().Count == 0 && !_bbs.ReverseAnswers.IsEmpty, "a session ran");
 
         _bbs.Taken.Select(t => t.Bid).Should().Equal("2002_GB7XYZ");
-        _bbs.ReverseAnswers.Should().Equal([Bbs.Fbb.FsAnswerKind.Defer], "the receiver never takes mail, and never says it has it");
+        _bbs.ReverseAnswers.Should().Equal([Packet.Fbb.FsAnswerKind.Defer], "the receiver never takes mail, and never says it has it");
         _journal.Should().Contain(line => line.Contains("1001_GB7ABC rejected by the BBS: it already has this BID"));
         _journal.Should().Contain(line => line.Contains("WARNING - the BBS tried to send the receiver's login 1 message(s)"));
     }

@@ -2,8 +2,8 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using Bbs.Fbb;
-using Mailcast.Core;
+using Packet.Fbb;
+using Packet.Mailcast;
 using Packet.SoundModem.Modems;
 
 namespace Packet.SoundModem.Tests.Mailcast;
@@ -14,7 +14,7 @@ internal sealed record TakenMessage(string Bid, string Title, string Body);
 /// <summary>
 /// A BBS on a loopback port that answers like LinBPQ's FBBPORT: it reads the user, the password
 /// and the application command, then forwards as the answering partner, with the FBB session
-/// from M0LTE.Mailcast.Fbb.
+/// from Packet.Fbb.
 /// </summary>
 internal sealed class FakeFbbBbs : IAsyncDisposable
 {
@@ -169,7 +169,7 @@ internal sealed class FakeFbbBbs : IAsyncDisposable
 }
 
 /// <summary>
-/// A slot as a station hears it, made without a radio: GB7RDG's frames planned by Mailcast.Core's
+/// A slot as a station hears it, made without a radio: GB7RDG's frames planned by Packet.Mailcast's
 /// own scheduler, each modulated as its own MS110D WN4 burst, after the 10 s opening tone, in
 /// seeded Gaussian noise.
 /// </summary>

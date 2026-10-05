@@ -1,10 +1,10 @@
 using System.Threading.Channels;
-using Mailcast.Core;
+using Packet.Mailcast;
 
 namespace Packet.SoundModem.Daemon;
 
 /// <summary>
-/// Takes mailcast frames from the modem and keeps their pieces in Mailcast.Core's
+/// Takes mailcast frames from the modem and keeps their pieces in Packet.Mailcast's
 /// <see cref="ReceiverStore"/>, which puts every piece on disk so bulletins add up across slots
 /// and restarts.
 /// </summary>

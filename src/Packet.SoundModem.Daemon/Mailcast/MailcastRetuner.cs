@@ -1,5 +1,5 @@
 using System.Globalization;
-using Mailcast.Core;
+using Packet.Mailcast;
 using Packet.SoundModem.Rig;
 
 namespace Packet.SoundModem.Daemon;
@@ -203,8 +203,13 @@ internal sealed class MailcastRetuner
 
     private static TimeSpan Shorter(TimeSpan a, TimeSpan b) => a < b ? (a < TimeSpan.Zero ? TimeSpan.Zero : a) : b;
 
+    /// <summary>For tests: when the loop's current timer fires, so a fake clock can be moved on
+    /// no further than that until the loop has acted and set its next one.</summary>
+    internal DateTimeOffset NextWake { get; private set; } = DateTimeOffset.MinValue;
+
     private async Task DelayAsync(TimeSpan delay, CancellationToken cancellation)
     {
+        NextWake = _time.GetUtcNow() + delay;
         Task tick = Task.Delay(delay, _time, cancellation);
         Waiting?.Invoke();
         try

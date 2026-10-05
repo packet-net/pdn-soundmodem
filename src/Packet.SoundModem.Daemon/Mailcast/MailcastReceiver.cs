@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json.Nodes;
-using Mailcast.Core;
+using Packet.Mailcast;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems;
 

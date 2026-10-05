@@ -1,8 +1,8 @@
 using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
-using Bbs.Fbb;
-using Mailcast.Core;
+using Packet.Fbb;
+using Packet.Mailcast;
 
 namespace Packet.SoundModem.Daemon;
 
@@ -50,7 +50,7 @@ internal interface IMailcastBbs
 /// propose each bulletin, send those the BBS asks for, close.
 /// </summary>
 /// <remarks>
-/// <para>The protocol is the FBB session state machine from M0LTE.Mailcast.Fbb (pdn-bbs's); this
+/// <para>The protocol is the FBB session state machine from Packet.Fbb (pdn-fbb); this
 /// is only the transport round it, the same job pdn-mailcast's receiver BbsClient does, which is
 /// not in a library. Lines go out with CR LF, transfers raw, and everything that arrives is fed
 /// back in.</para>

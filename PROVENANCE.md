@@ -46,7 +46,7 @@ Much of what this file was written about now ships as a package rather than as a
 | FlexRadio 6000-series client (**M0LTE.Flex**, AGPL-3.0-or-later; `FlexRadio/FlexDevice.cs` here is the daemon's adapter onto it) | Written here against FlexRadio's published SmartSDR TCP command and DAX interfaces, then lifted out so other programs could use it. That package records its own provenance. |
 | Audio and PTT interfaces (**M0LTE.Radio.Audio**, AGPL-3.0-or-later) | The `IAudioInput`, `IAudioOutput` and `IPttControl` surfaces that the devices and modems here implement, shared so that out-of-tree modems compile against one definition. That package records its own provenance. |
 | Daemon, KISS TCP server, config | Original. |
-| Daemon `Mailcast/*` (the built-in pdn-mailcast receiver) | Original to Tom's own projects. The on-air format, the store, the timetable and the FBB session come from pdn-mailcast's libraries (**Packet.Mailcast** and **Packet.Fbb**, AGPL-3.0-only, the FBB session from pdn-bbs); the frame filter, tone detector, slot tracking, BBS transport and delivery loop here follow pdn-mailcast's own receiver, which those libraries do not yet contain. No third-party code. |
+| Daemon `Mailcast/*` (the built-in pdn-mailcast receiver) | Original to Tom's own projects. The on-air format, the store, the timetable and the FBB session come from pdn-mailcast's libraries (**Packet.Mailcast**, AGPL-3.0-only, and **Packet.Fbb** from pdn-fbb, AGPL-3.0-or-later); the frame filter, tone detector, slot tracking, BBS transport and delivery loop here follow pdn-mailcast's own receiver, which those libraries do not yet contain. No third-party code. |
 
 ## What was not taken
 
