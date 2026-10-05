@@ -1517,8 +1517,13 @@ public sealed class SoundModemChannel
     /// transmission that owns the channel's timing is never held: ARDOP is running the channel
     /// rather than sharing it, and its own ARQ turnarounds are what it is protecting.
     /// </remarks>
-    private object? NextEligibleSource(out TimeSpan? soonest, out long wakes)
+    private object? NextEligibleSource(out TimeSpan? soonest, out long wakes, out long rendersDone)
     {
+        lock (_txGate)
+        {
+            rendersDone = _rendersDone;
+        }
+
         soonest = null;
         var toStart = new List<(object, TxItem[], int)>();
         object? chosen = NextEligibleSourceCore(ref soonest, toStart, out wakes);
@@ -1854,6 +1859,7 @@ public sealed class SoundModemChannel
                 {
                     lock (_txGate)
                     {
+                        _rendersDone++;
                         WakeLocked();
                     }
                 },
@@ -2037,6 +2043,10 @@ public sealed class SoundModemChannel
     /// <summary>Counts every <see cref="WakeLocked"/>, so the loop can tell whether one happened
     /// between deciding to wait and starting to.</summary>
     private long _wakes;
+
+    /// <summary>Counts packed renders that have ended, so the loop can tell that one finished
+    /// between choosing to wait and starting to.</summary>
+    private long _rendersDone;
 
     /// <summary>
     /// One packed burst, as a keyup of its own: keyed only once its audio exists, and unkeyed
@@ -2311,7 +2321,7 @@ public sealed class SoundModemChannel
             while (source is null)
             {
                 cancellation.ThrowIfCancellationRequested();
-                source = NextEligibleSource(out TimeSpan? gatherEnds, out long wakes);
+                source = NextEligibleSource(out TimeSpan? gatherEnds, out long wakes, out long rendersDone);
                 if (source is null)
                 {
                     // Wait out what is left of the hold rather than polling at slot intervals.
@@ -2331,7 +2341,7 @@ public sealed class SoundModemChannel
                     // order ports get the air in. A new frame from the link that owns the hold
                     // waits too, so the frame another port had already queued goes first when
                     // the hold ends.
-                    bool packing = gatherEnds is not null || PackedRenderPending();
+                    bool packing = gatherEnds is not null || PackedRenderPending() || RenderEndedSince(rendersDone);
                     if (!packing)
                     {
                         EnterWait(WaitSlot.TurnaroundHold, null);
@@ -2650,6 +2660,16 @@ public sealed class SoundModemChannel
         TransmittingChanged?.Invoke(false);
         _transmitting = false;
         EnterWait(WaitSlot.Unattributed, null);
+    }
+
+    /// <summary>Whether a packed render has ended since <paramref name="seen"/> was read: one that
+    /// was started and finished while the loop was deciding to wait, and is ready to go.</summary>
+    private bool RenderEndedSince(long seen)
+    {
+        lock (_txGate)
+        {
+            return _rendersDone != seen;
+        }
     }
 
     /// <summary>Whether a packed burst is rendering, whose end will wake the loop.</summary>
