@@ -63,13 +63,13 @@ public class TransmitRecordTests
             "ARDOP: only the virtual TNC knows what the burst was, so the record is written from "
             + "its own FrameTransmitted event (Program.cs, ardopTnc.FrameTransmitted), not here"),
 
-        new("src/Packet.SoundModem.Daemon/Program.cs",
+        new("src/Packet.SoundModem.Daemon/IdentTransmission.cs",
             "source: owed",
-            "the CW ident: recorded beside owed.NoteIdentified(), with the ident text as the "
+            "the CW ident: recorded in Program.cs beside owed.NoteIdentified(), with the ident text as the "
             + "payload because an ident is not a frame"),
 
         new("src/Packet.SoundModem.Daemon/TxTest.cs",
-            "source: this",
+            "source: run",
             "the operator's test tone: TxTestOptions.Recorded, which Program.cs turns into "
             + "frameLog.RecordTransmitted with the sentence describing what went out"),
     ];

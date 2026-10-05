@@ -252,6 +252,19 @@ public sealed class SoundModemChannel
 
         _burstSnr = new BurstSnrMonitor(sampleRate);
         _frameLevel = new FrameLevelMonitor(sampleRate);
+        TransmitLease = new TransmitLease(_time);
+        TransmitLease.TakenInternal += RefuseOutsideLease;
+        TransmitLease.EndingInternal += (holder, how) =>
+        {
+            // A lease that ran out was not given back: its holder stopped renewing, most likely
+            // because it died, and whatever it had queued is a broadcast nobody is running any
+            // more. It must not go out into normal service, so it goes with the lease. A release
+            // keeps its queue unless it asks otherwise (DropQueued).
+            if (how == TransmitLeaseChange.Expired)
+            {
+                DropQueued(holder, ExpiredDropReason);
+            }
+        };
         _constellationSink = constellationSink;
         // Read once, here, and never again: a station's receive path does not change under it
         // while it runs.
@@ -272,6 +285,18 @@ public sealed class SoundModemChannel
 
     /// <summary>Channel-access tunables (KISS parameter commands update these).</summary>
     public CsmaParameters Csma { get; } = new();
+
+    /// <summary>
+    /// Gives one sub-channel this channel's transmitter for a while, refusing everyone else's
+    /// transmissions until it ends; nobody holds it unless asked. See <see cref="Channel.TransmitLease"/>.
+    /// </summary>
+    /// <remarks>
+    /// Each modem's frames belong to its own sub-channel, and are attributed to it as the modem is
+    /// added. A transmission queued through the delegate overload belongs to nobody unless its
+    /// source has been <see cref="TransmitLease.Attribute">attributed</see>, so while a lease is
+    /// held it is refused. Receive is untouched.
+    /// </remarks>
+    public TransmitLease TransmitLease { get; }
 
     /// <summary>Raised for every received frame a modem passes up, with the sub-channel that
     /// decoded it. Called from the receive-processing thread. This is the <b>host</b> path: it
@@ -548,6 +573,10 @@ public sealed class SoundModemChannel
 
         _burstSnr.AddModem(subChannel, modem);
         _modems.Add(subChannel, modem);
+
+        // The modem is the identity its frames are queued under, so this is what lets them
+        // through while their own sub-channel holds the transmit lease.
+        TransmitLease.Attribute(modem, subChannel);
 
         // Measured here, and only here: a modem has just been built, nothing is feeding it audio
         // and nothing is asking it to modulate, which is the one moment its own transmit path is
@@ -1099,7 +1128,10 @@ public sealed class SoundModemChannel
     /// </remarks>
     private bool InhibitHolds(object source)
     {
-        if (TransmitInhibit?.Invoke() != true)
+        // A lease is a claim on the transmitter that outranks the inhibit: everything still
+        // queued belongs to the holder, and the service that set the inhibit cannot transmit
+        // until the lease ends anyway.
+        if (TransmitInhibit?.Invoke() != true || TransmitLease.HolderNow() is not null)
         {
             return false;
         }
@@ -1124,29 +1156,55 @@ public sealed class SoundModemChannel
             Frame = frame,
             Packed = packed,
         };
+        Exception? leasedOut = null;
         lock (_txGate)
         {
-            if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue))
+            // Asked under the queue lock, which is also where a lease being taken sweeps the
+            // queues (RefuseOutsideLease), so a transmission either sees the lease here or is
+            // queued before the sweep and refused by it: it never slips in between.
+            if (TransmitLease.HolderNow() is int holder && !TransmitLease.IsAttributed(source, holder))
             {
-                queue = new Queue<TxItem>();
-                _txQueues[source] = queue;
-                _txOrder.Add(source);
+                leasedOut = TransmitLease.Refusal(holder);
             }
-
-            // Brought up to this instant BEFORE the copy below, so that the stretch the
-            // transmitter is in the middle of is booked against the frames that were already
-            // waiting and none of it lands on this one, which has only just arrived.
-            CreditWaitLocked(_time.GetTimestamp());
-            if (!_waitLedgers.TryGetValue(source, out long[]? ledger))
+            else if (IsExpiredHoldersModemLocked(source))
             {
-                ledger = new long[LedgerLength];
-                _waitLedgers[source] = ledger;
+                leasedOut = new InvalidOperationException(ExpiredDropReason);
             }
+            else
+            {
+                if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue))
+                {
+                    queue = new Queue<TxItem>();
+                    _txQueues[source] = queue;
+                    _txOrder.Add(source);
+                }
 
-            item.Ledger = ledger;
-            item.LedgerAtQueue = (long[])ledger.Clone();
-            queue.Enqueue(item);
-            WakeLocked();
+                // Brought up to this instant BEFORE the copy below, so that the stretch the
+                // transmitter is in the middle of is booked against the frames that were already
+                // waiting and none of it lands on this one, which has only just arrived.
+                CreditWaitLocked(_time.GetTimestamp());
+                if (!_waitLedgers.TryGetValue(source, out long[]? ledger))
+                {
+                    ledger = new long[LedgerLength];
+                    _waitLedgers[source] = ledger;
+                }
+
+                item.Ledger = ledger;
+                item.LedgerAtQueue = (long[])ledger.Clone();
+                queue.Enqueue(item);
+                WakeLocked();
+            }
+        }
+
+        if (leasedOut is not null)
+        {
+            // Refused, never queued: a queue would release a burst of stale frames when the lease
+            // ends, where AX.25 simply retries. Announced before the task faults, as every other
+            // refusal is, and observed here because a fire-and-forget caller cannot.
+            rejected?.Invoke(leasedOut);
+            done.TrySetException(leasedOut);
+            _ = done.Task.Exception;
+            return done.Task;
         }
 
         if (withdraw.CanBeCanceled)
@@ -1258,7 +1316,7 @@ public sealed class SoundModemChannel
     /// </remarks>
     private void ExpireHeldTransmission(TxItem item)
     {
-        if (TransmitInhibit?.Invoke() != true)
+        if (TransmitInhibit?.Invoke() != true || TransmitLease.HolderNow() is not null)
         {
             return;
         }
@@ -1660,6 +1718,11 @@ public sealed class SoundModemChannel
     /// or, given <paramref name="only"/>, when the next item is not that one.</summary>
     private TxItem? TakeFrom(object source, TxItem? only = null)
     {
+        if (RefuseIfLeasedOut(source))
+        {
+            return null;
+        }
+
         lock (_txGate)
         {
             if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue) || queue.Count == 0)
@@ -1669,6 +1732,13 @@ public sealed class SoundModemChannel
 
             if (only is not null && !ReferenceEquals(queue.Peek(), only))
             {
+                return null;
+            }
+
+            if (TransmitLease.HolderNow() is int holder && !TransmitLease.IsAttributed(source, holder))
+            {
+                // Taken in the instant since the check above. Nothing leaves the queue for a
+                // transmitter the lease does not cover; the next pass refuses what is left.
                 return null;
             }
 
@@ -1955,6 +2025,13 @@ public sealed class SoundModemChannel
             return null;
         }
 
+        long dropsBefore;
+        lock (_txGate)
+        {
+            dropsBefore = _drops.TryGetValue(source, out (long Epoch, string Reason) seen) ? seen.Epoch : 0;
+        }
+
+
         PackedAudio? rendered = null;
         Exception? failed = null;
         TxItem[] wanted;
@@ -1985,6 +2062,25 @@ public sealed class SoundModemChannel
             return null;
         }
 
+        TakingPackedBurst?.Invoke();
+
+        // Dropped while it was being taken: the drop could not see frames already in hand, and
+        // they must go the way the rest of the queue went, not back into it or onto the air.
+        string? droppedFor = null;
+        lock (_txGate)
+        {
+            if (_drops.TryGetValue(source, out (long Epoch, string Reason) now) && now.Epoch != dropsBefore)
+            {
+                droppedFor = now.Reason;
+            }
+        }
+
+        if (droppedFor is not null)
+        {
+            RefuseWith(taken, droppedFor);
+            return new PackedAudio([], [], 0);
+        }
+
         if (failed is not null)
         {
             foreach (TxItem refused in taken)
@@ -2005,6 +2101,10 @@ public sealed class SoundModemChannel
 
         return rendered;
     }
+
+    /// <summary>For tests: called once a packed burst has been taken off its queue and before it
+    /// keys, the one moment a drop or an expiry can land with the burst in hand.</summary>
+    internal Action? TakingPackedBurst { get; set; }
 
     /// <summary>Returns frames to the head of their transmitter's queue, in order.</summary>
     private void PutBack(object source, IEnumerable<TxItem> items)
@@ -2241,6 +2341,202 @@ public sealed class SoundModemChannel
         }
     }
 
+    /// <summary>What a frame dropped by <see cref="DropQueued(int)"/> is refused with.</summary>
+    public const string DroppedByHolderReason =
+        "dropped by the transmit lease holder before it was sent";
+
+    /// <summary>What a frame dropped as its holder's lease ran out is refused with.</summary>
+    public const string ExpiredDropReason =
+        "dropped because the transmit lease ran out before it was sent";
+
+    /// <summary>
+    /// Takes every frame still queued for <paramref name="subChannel"/>'s modem off the queue and
+    /// refuses it, and says how many there were. A burst already keyed finishes; nothing else of
+    /// that sub-channel's (its Morse ident, say) is touched.
+    /// </summary>
+    /// <remarks>
+    /// For a broadcast that is abandoned part way: the frames it queued must not go out later as
+    /// a burst nobody is running. Each is refused through <see cref="TransmitRejected"/> with one
+    /// fixed sentence, as a lease's refusals are, so a KISS ACKMODE host gets no ack for it, the
+    /// same as for any refused frame.
+    /// </remarks>
+    public int DropQueued(int subChannel) => DropQueued(subChannel, DroppedByHolderReason);
+
+    /// <summary>How many times each modem's queue has been dropped, and why it last was. Guarded
+    /// by <see cref="_txGate"/>.</summary>
+    private readonly Dictionary<object, (long Epoch, string Reason)> _drops = new(ReferenceEqualityComparer.Instance);
+
+    private int DropQueued(int subChannel, string reason)
+    {
+        if (!_modems.TryGetValue(subChannel, out IModem? modem))
+        {
+            return 0;
+        }
+
+        List<TxItem> dropped = [];
+        lock (_txGate)
+        {
+            RemoveAllLocked(modem, dropped);
+
+            // So a burst being taken off this queue as it is dropped, which the removal above
+            // cannot see, is refused rather than put back or keyed (TakePackedBurstAsync).
+            long epoch = _drops.TryGetValue(modem, out (long Epoch, string Reason) last) ? last.Epoch : 0;
+            _drops[modem] = (epoch + 1, reason);
+        }
+
+        RefuseWith(dropped, reason);
+        return dropped.Count;
+    }
+
+    /// <summary>
+    /// Refuses everything queued that does not belong to a lease just taken, and lifts any
+    /// turnaround hold, so the holder's traffic is next on the air.
+    /// </summary>
+    /// <remarks>
+    /// Run from <see cref="TransmitLease.Take"/> before the holder is told it has the lease. A
+    /// keyup already on the air finishes; nothing can call back audio the card already has.
+    /// The refusal is the same one a new transmission gets, through the same path, so a host
+    /// cannot tell a frame refused while queued from one refused as it arrived.
+    /// </remarks>
+    private void RefuseOutsideLease()
+    {
+        if (TransmitLease.HolderNow() is not int holder)
+        {
+            return;
+        }
+
+        List<TxItem> refused = [];
+        lock (_txGate)
+        {
+            foreach (object source in _txOrder.ToArray())
+            {
+                if (!TransmitLease.IsAttributed(source, holder))
+                {
+                    RemoveAllLocked(source, refused);
+                }
+            }
+
+            _quietOwner = null;
+        }
+
+        RefuseLeased(refused, holder);
+    }
+
+    /// <summary>
+    /// Refuses everything one transmitter has queued, and whatever it has already taken in
+    /// <paramref name="taken"/>, if a lease it does not belong to is held now. True when it did.
+    /// </summary>
+    /// <remarks>
+    /// The last word before the radio keys, and the transmitter's first act on taking anything,
+    /// so that a lease taken while this transmitter was waiting for the channel is honoured: the
+    /// sweep that runs as the lease is taken cannot see a frame the transmitter already has in
+    /// hand.
+    /// </remarks>
+    private bool RefuseIfLeasedOut(object source, IReadOnlyList<TxItem>? taken = null)
+    {
+        List<TxItem> refused = [];
+        int holder;
+        lock (_txGate)
+        {
+            if (IsExpiredHoldersModemLocked(source))
+            {
+                // A lease that ran out: its holder's burst in hand goes nowhere, so a dead head
+                // end's last burst cannot follow its lease out, and the closing ident is next.
+                if (taken is not null)
+                {
+                    refused.AddRange(taken);
+                }
+
+                RemoveAllLocked(source, refused);
+            }
+        }
+
+        if (refused.Count > 0)
+        {
+            RefuseWith(refused, ExpiredDropReason);
+            return true;
+        }
+
+        lock (_txGate)
+        {
+            if (TransmitLease.HolderNow() is not int held || TransmitLease.IsAttributed(source, held))
+            {
+                return false;
+            }
+
+            holder = held;
+            if (taken is not null)
+            {
+                refused.AddRange(taken);
+            }
+
+            RemoveAllLocked(source, refused);
+        }
+
+        RefuseLeased(refused, holder);
+        return true;
+    }
+
+    /// <summary>Whether <paramref name="source"/> is the modem of a holder whose lease ran out.
+    /// Call under <see cref="_txGate"/> (or not; it takes only the lease's own lock).</summary>
+    private bool IsExpiredHoldersModemLocked(object source) =>
+        TransmitLease.ExpiringHolderNow() is int expired
+        && _modems.TryGetValue(expired, out IModem? modem)
+        && ReferenceEquals(modem, source);
+
+    /// <summary>Refuses each of <paramref name="items"/> with one sentence. Never under the lock.</summary>
+    private static void RefuseWith(List<TxItem> items, string reason)
+    {
+        foreach (TxItem item in items)
+        {
+            Finish(item);
+            var refusal = new InvalidOperationException(reason);
+            item.Rejected?.Invoke(refusal);
+            item.Done.TrySetException(refusal);
+            _ = item.Done.Task.Exception;
+        }
+    }
+
+    /// <summary>Takes every item one transmitter has queued out of the queue. Call under
+    /// <see cref="_txGate"/>.</summary>
+    private void RemoveAllLocked(object source, List<TxItem> into)
+    {
+        if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue))
+        {
+            return;
+        }
+
+        foreach (TxItem item in queue.ToArray())
+        {
+            if (RemoveLocked(item))
+            {
+                // Same reasoning as TakeFrom: never Dispose under this lock.
+                item.Withdrawal.Unregister();
+                into.Add(item);
+            }
+        }
+
+        // A render still running keeps its record: it is what stops a second render of the same
+        // modem starting alongside it (see PackedReadyLocked).
+        if (_packedRenders.TryGetValue(source, out PackedRender? render) && render.Result.IsCompleted)
+        {
+            _packedRenders.Remove(source);
+        }
+    }
+
+    /// <summary>Gives each of <paramref name="items"/> the lease's refusal. Never under the lock.</summary>
+    private void RefuseLeased(List<TxItem> items, int holder)
+    {
+        foreach (TxItem item in items)
+        {
+            Finish(item);
+            Exception refusal = TransmitLease.Refusal(holder);
+            item.Rejected?.Invoke(refusal);
+            item.Done.TrySetException(refusal);
+            _ = item.Done.Task.Exception;
+        }
+    }
+
     /// <summary>Fails every queued transmission - a keyup or a device that has died takes them all.</summary>
     private void FaultEverything(Exception reason)
     {
@@ -2383,6 +2679,9 @@ public sealed class SoundModemChannel
             // channel discipline against ARQ turnaround budgets, and the busy it would be
             // deferring to is partly its own signal - at a shifted centre it sits inside a
             // packet modem's passband and asserts that modem's busy detector.
+            // When this transmitter started finding the channel busy, for a lease that bounds how
+            // long its holder waits (TransmitLease.MaxCarrierWait).
+            long? busySince = null;
             while (!(PeekFrom(source) is { OwnsTiming: true }))
             {
                 // A burst that owns the channel's timing may have been queued while we were
@@ -2402,6 +2701,24 @@ public sealed class SoundModemChannel
                 // station-wide answer cost GB7RDG.
                 if (ChannelBusyFor(source, out int asserted))
                 {
+                    // The lease holder's transmissions may be told to stop waiting: a slot booked
+                    // for a time goes out after its limit rather than not at all. Nobody else's,
+                    // and nobody's without a lease that asks for it.
+                    if (TransmitLease.CarrierWaitFor(source) is { } limit)
+                    {
+                        busySince ??= _time.GetTimestamp();
+                        TimeSpan waited = _time.GetElapsedTime(busySince.Value);
+                        if (waited >= limit)
+                        {
+                            if (TransmitLease.HolderNow() is int holder)
+                            {
+                                TransmitLease.NoteCarrierWaitCutShort(holder, waited);
+                            }
+
+                            break;
+                        }
+                    }
+
                     EnterWait(WaitSlot.ChannelBusy, source, asserted);
                     await Delay(Csma.SlotTimeMilliseconds, cancellation).ConfigureAwait(false);
                     continue;
@@ -2433,9 +2750,21 @@ public sealed class SoundModemChannel
             {
                 if (await TakePackedBurstAsync(source).ConfigureAwait(false) is { Items.Length: > 0 } packed)
                 {
-                    RunPackedKeyup(source, packed, output, ptt);
+                    // The last word before the radio keys: a lease taken while this burst waited
+                    // for the channel or rendered refuses it here, unkeyed.
+                    if (!RefuseIfLeasedOut(source, packed.Items))
+                    {
+                        RunPackedKeyup(source, packed, output, ptt);
+                    }
                 }
 
+                continue;
+            }
+
+            // The last word before the radio keys: a lease taken while this transmitter waited for
+            // the channel refuses everything it has queued here, and nothing keys.
+            if (RefuseIfLeasedOut(source))
+            {
                 continue;
             }
 

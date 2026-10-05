@@ -143,6 +143,21 @@ public sealed class StationIdentifier
     }
 
     /// <summary>
+    /// Whether this modem has transmitted since it last identified, whatever the interval says:
+    /// the question for a closing ident, owed at the end of a transmission rather than on a clock.
+    /// </summary>
+    public bool TransmittedSinceIdentification
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _transmittedSinceIdent;
+            }
+        }
+    }
+
+    /// <summary>
     /// Whether an identification is owed now: this modem has transmitted since it last
     /// identified, and either it never has or <see cref="Interval"/> has elapsed since.
     /// </summary>

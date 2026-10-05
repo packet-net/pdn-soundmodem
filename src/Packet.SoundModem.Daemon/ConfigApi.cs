@@ -45,6 +45,9 @@ internal sealed class ConfigApi
     private readonly string _configPath;
     private Func<IReadOnlyList<Survey.ModemProposal>>? _proposals;
     private TxTestRunner? _txTest;
+    private Channel.SoundModemChannel? _txLease;
+    private Func<int, bool>? _hasModem;
+    private string? _txLeaseCannot;
     private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
     private MixerRuntime? _mixer;
     private string _mixerWhyNot = "this station has no sound-card mixer";
@@ -107,6 +110,38 @@ internal sealed class ConfigApi
     /// </summary>
     public void ServeTxTest(TxTestRunner runner) => _txTest = runner;
 
+    // ---------------------------------------------------------------- TX lease
+    /// <summary>
+    /// Serves the channel's transmit lease at <c>/api/txlease</c>. See <see cref="TxLeaseApi"/>.
+    /// </summary>
+    /// <param name="channel">The station's channel, whose lease it is.</param>
+    /// <param name="cannot">Why this station cannot transmit at all, or null.</param>
+    public void ServeTxLease(Channel.SoundModemChannel channel, string? cannot)
+    {
+        _txLease = channel;
+        _hasModem = channel.Modems.ContainsKey;
+        _txLeaseCannot = cannot;
+    }
+
+    private async Task TxLeaseAsync(HttpListenerContext context)
+    {
+        if (_txLease is null)
+        {
+            await RespondAsync(context, 404, "this station offers no transmit lease").ConfigureAwait(false);
+            return;
+        }
+
+        string body;
+        using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
+        {
+            body = await reader.ReadToEndAsync().ConfigureAwait(false);
+        }
+
+        (int status, JsonObject answer) = TxLeaseApi.Handle(
+            _txLease, context.Request.HttpMethod, body, _txLeaseCannot);
+        await RespondJsonAsync(context, status, answer.ToJsonString(Pretty)).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Runs one test on behalf of an API caller and answers with what happened.
     /// </summary>
@@ -157,12 +192,14 @@ internal sealed class ConfigApi
         bool twoTone;
         double toneHz;
         double seconds;
+        int? subChannel;
         try
         {
             stop = asked?["stop"]?.GetValue<bool>() == true;
             twoTone = asked?["twoTone"]?.GetValue<bool>() ?? true;
             toneHz = asked?["toneHz"]?.GetValue<double>() ?? Audio.TestTone.TwoToneLowHz;
             seconds = asked?["seconds"]?.GetValue<double>() ?? 0;
+            subChannel = asked?["subChannel"]?.GetValue<int>();
         }
         catch (Exception wrongType) when (wrongType is InvalidOperationException or FormatException)
         {
@@ -170,7 +207,15 @@ internal sealed class ConfigApi
             // reason to drop the connection with no explanation.
             await RespondAsync(context, 400,
                 "\"twoTone\" and \"stop\" are true or false, \"toneHz\" and \"seconds\" are "
-                + $"numbers: {wrongType.Message}").ConfigureAwait(false);
+                + $"numbers, \"subChannel\" a whole number: {wrongType.Message}").ConfigureAwait(false);
+            return;
+        }
+
+        // Checked as /api/txlease checks it: a sub-channel that carries no modem is a caller's
+        // mistake, and a 400 says so before anything is prepared.
+        if (subChannel is int sub && _hasModem is { } hasModem && !hasModem(sub))
+        {
+            await RespondAsync(context, 400, $"no modem transmits on sub-channel {sub}").ConfigureAwait(false);
             return;
         }
 
@@ -182,7 +227,7 @@ internal sealed class ConfigApi
         }
 
         TxTestOutcome outcome = await _txTest
-            .RunAsync(new Waterfall.TxTestRequest(twoTone, toneHz, seconds))
+            .RunAsync(new Waterfall.TxTestRequest(twoTone, toneHz, seconds) { SubChannel = subChannel })
             .ConfigureAwait(false);
 
         // Three answers, because a script should be able to tell them apart without reading the
@@ -415,7 +460,7 @@ internal sealed class ConfigApi
     /// </param>
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
-        if (path is not ("/api/config" or "/api/proposals" or "/api/txtest" or "/api/mixer"))
+        if (path is not ("/api/config" or "/api/proposals" or "/api/txtest" or "/api/txlease" or "/api/mixer"))
         {
             return false;
         }
@@ -448,6 +493,12 @@ internal sealed class ConfigApi
         if (path is "/api/txtest")
         {
             await GuardedAsync(context, () => TxTestAsync(context)).ConfigureAwait(false);
+            return true;
+        }
+
+        if (path is "/api/txlease")
+        {
+            await GuardedAsync(context, () => TxLeaseAsync(context)).ConfigureAwait(false);
             return true;
         }
 

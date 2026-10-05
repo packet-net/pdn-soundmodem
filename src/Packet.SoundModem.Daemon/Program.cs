@@ -872,6 +872,10 @@ foreach (ModemConfig modemConfig in modems)
     }
 
     identifiers[subChannel] = identifier;
+
+    // The ident is this modem's own transmission, so it keeps going out while this modem's
+    // sub-channel holds the transmit lease, and waits while anybody else does.
+    IdentTransmission.Register(channel, subChannel, identifier);
     Console.WriteLine(
         $"modem {subChannel}: identifying as {identifier.Text} in CW @ {tone:F0} Hz"
         // Not on FM, where the tone is a tone on the channel and adding it to one would be the
@@ -1992,6 +1996,11 @@ if (benchTxTest is null && ardopModem is not null)
     // A reply that cannot make its turnaround is taken back rather than keyed late: see
     // ArdopReplyWindow for why a late ARQ frame is worse than a missing one.
     var ardopReplies = new ArdopReplyWindow(TimeProvider.System);
+    var ardopLeaseQuiet = new LeaseQuietLine(
+        TimeProvider.System,
+        (holder, more) => Console.Error.WriteLine(
+            $"ardop: reply not sent - sub-channel {holder} holds the transmit lease"
+            + (more > 0 ? $" (and {more} more in the last minute)" : "")));
     var ardopTnc = new M0LTE.Ardop.Host.ArdopHostTnc(
         captureDevice: captureDeviceKey ?? device, playbackDevice: playbackDeviceKey ?? device)
     {
@@ -2000,6 +2009,16 @@ if (benchTxTest is null && ardopModem is not null)
         // Catching turns "ARDOP silently stops working" into a line saying why.
         Transmitter = async audio =>
         {
+            // Not even queued while a transmit lease is held: the lease refuses every ARDOP burst,
+            // and an ARQ session replies several times a second, which would be a journal line
+            // each. Said once, then at most once a minute with a count, the same rule the DROPPED
+            // line keeps.
+            if (channel.TransmitLease.Holder is int leaseHolder)
+            {
+                ardopLeaseQuiet.Note(leaseHolder);
+                return;
+            }
+
             CancellationToken turnaround = ardopReplies.Open();
             try
             {
@@ -3073,6 +3092,17 @@ if (waterfallServer is not null && waterfallConfig?.Public != true)
 }
 
 runtimeApi?.ServeTxTest(txTestRunner);
+
+// The transmit lease (POST /api/txlease): one sub-channel takes the transmitter for a while -
+// pdn-mailcast's daily broadcast - and everyone else's transmissions are refused until it gives it
+// back or stops renewing. The refusals are the channel's own and reach the journal through the
+// rate-limited DROPPED line above; what the lease itself does is journalled here.
+var txLeaseJournal = new TxLeaseJournal(
+    stationJournal,
+    sub => channel.Modems.TryGetValue(sub, out IModem? leased) ? leased.Mode : "no modem");
+channel.TransmitLease.Changed += txLeaseJournal.Note;
+channel.TransmitLease.CarrierWaitCutShort += txLeaseJournal.NoteCarrierWaitCutShort;
+runtimeApi?.ServeTxLease(channel, channel.ReceiveOnlyReason);
 if (txTestRefusal is null)
 {
     stationJournal.Write(
@@ -3101,6 +3131,58 @@ if (identifiers.Count > 0)
         }
     };
 
+    // One identification, sent and written down. Also what a transmit lease closes with: as the
+    // lease is released or runs out, the holder's modem identifies before anyone else may key
+    // (Ofcom wants an ident at the end of a transmission), if it has transmitted since it last did.
+    async Task IdentifyAsync(int sub, StationIdentifier owed)
+    {
+        try
+        {
+            await IdentTransmission.SendAsync(channel, owed).ConfigureAwait(false);
+
+            // Stamped only on success: an ident the radio refused was not sent, and
+            // clearing the debt for it would mean the station quietly stopped identifying.
+            owed.NoteIdentified();
+            Console.WriteLine($"id[{sub}] {owed.Text} in CW");
+
+            // And written down where transmissions are written down, on the same terms as
+            // the operator's test tone. An ident keys the radio, and until now it left
+            // nothing behind but that console line: a station could identify every ten
+            // minutes all afternoon and have no record of having transmitted at all
+            // (#473). It is not a frame, so the payload is the sentence describing what
+            // went out; the callsign is ours to state rather than parse out of prose, so
+            // the row is attributed the way an ARDOP one is.
+            byte[] identRecord =
+                System.Text.Encoding.ASCII.GetBytes(owed.TransmissionRecord);
+
+            // Where the ident actually lands on the band, which is not the modem's own
+            // centre: the dial plus its tone on USB, minus it on LSB. Null without a band
+            // plan, there being no dial to add to, and null on FM, where the channel is
+            // the RF and there is no arithmetic to do - the same rule the start-up line
+            // and the operator page already follow.
+            double? identRfHz = bandPlan is not null && !bandPlan.IsFm
+                ? bandPlan.IsUpperSideband
+                    ? bandPlan.DialHz + owed.ToneHz
+                    : bandPlan.DialHz - owed.ToneHz
+                : null;
+
+            waterfallServer?.ReportTransmittedFrame(
+                sub,
+                Packet.SoundModem.Waterfall.WaterfallWebServer.IdentTransmissionMode,
+                owed.Callsign, to: null, identRecord.Length);
+            frameLog?.RecordTransmitted(
+                sub, identRecord,
+                Packet.SoundModem.Waterfall.WaterfallWebServer.IdentTransmissionMode,
+                owed.ToneHz, identRfHz);
+        }
+        catch (Exception refused) when (refused is InvalidOperationException or ArgumentException)
+        {
+            Console.Error.WriteLine($"id[{sub}]: identification dropped - {refused.Message}");
+        }
+    }
+
+    channel.TransmitLease.Closing = IdentTransmission.Closing(identifiers, IdentifyAsync);
+
     _ = Task.Run(async () =>
     {
         while (!cancellation.IsCancellationRequested)
@@ -3116,69 +3198,12 @@ if (identifiers.Count > 0)
 
             foreach ((int sub, StationIdentifier owed) in identifiers)
             {
-                if (!owed.IdentificationDue)
+                if (!IdentTransmission.ShouldSend(channel, owed))
                 {
                     continue;
                 }
 
-                try
-                {
-                    // Queued like anything else, so it waits out a busy channel and a keyup in
-                    // progress rather than transmitting over somebody. The TXDELAY budget is
-                    // spent on silence: an SSB transmitter radiates nothing without audio, which
-                    // is exactly what the PTT settling time wants.
-                    await channel.EnqueueTransmit(txDelay =>
-                    {
-                        float[] tone = owed.Render();
-                        int lead = (int)Math.Round(txDelay / 1000.0 * DspRate);
-                        var audio = new float[lead + tone.Length];
-                        tone.CopyTo(audio, lead);
-                        return audio;
-                    },
-                    // This sub-channel's identifier is the transmitter, so the CW ident takes its
-                    // own keyup rather than lengthening somebody else's - the station is deaf for
-                    // whatever it appends itself to.
-                    source: owed).ConfigureAwait(false);
-
-                    // Stamped only on success: an ident the radio refused was not sent, and
-                    // clearing the debt for it would mean the station quietly stopped identifying.
-                    owed.NoteIdentified();
-                    Console.WriteLine($"id[{sub}] {owed.Text} in CW");
-
-                    // And written down where transmissions are written down, on the same terms as
-                    // the operator's test tone. An ident keys the radio, and until now it left
-                    // nothing behind but that console line: a station could identify every ten
-                    // minutes all afternoon and have no record of having transmitted at all
-                    // (#473). It is not a frame, so the payload is the sentence describing what
-                    // went out; the callsign is ours to state rather than parse out of prose, so
-                    // the row is attributed the way an ARDOP one is.
-                    byte[] identRecord =
-                        System.Text.Encoding.ASCII.GetBytes(owed.TransmissionRecord);
-
-                    // Where the ident actually lands on the band, which is not the modem's own
-                    // centre: the dial plus its tone on USB, minus it on LSB. Null without a band
-                    // plan, there being no dial to add to, and null on FM, where the channel is
-                    // the RF and there is no arithmetic to do - the same rule the start-up line
-                    // and the operator page already follow.
-                    double? identRfHz = bandPlan is not null && !bandPlan.IsFm
-                        ? bandPlan.IsUpperSideband
-                            ? bandPlan.DialHz + owed.ToneHz
-                            : bandPlan.DialHz - owed.ToneHz
-                        : null;
-
-                    waterfallServer?.ReportTransmittedFrame(
-                        sub,
-                        Packet.SoundModem.Waterfall.WaterfallWebServer.IdentTransmissionMode,
-                        owed.Callsign, to: null, identRecord.Length);
-                    frameLog?.RecordTransmitted(
-                        sub, identRecord,
-                        Packet.SoundModem.Waterfall.WaterfallWebServer.IdentTransmissionMode,
-                        owed.ToneHz, identRfHz);
-                }
-                catch (Exception refused) when (refused is InvalidOperationException or ArgumentException)
-                {
-                    Console.Error.WriteLine($"id[{sub}]: identification dropped - {refused.Message}");
-                }
+                await IdentifyAsync(sub, owed).ConfigureAwait(false);
             }
         }
     });

@@ -222,7 +222,9 @@ The key is presented as `Authorization: Bearer KEY` or `X-API-Key: KEY`; `X-API-
 | `/api/config` | `POST` | required | a complete configuration document, the shape of `soundmodem.json` | 400 with the same message the journal would carry, station untouched; or 200 `{"applied": true, "persisted": false, "restarting": true, "note": "..."}` and the process exits 1 for systemd to restart it |
 | `/api/config?persist=true` | `POST` | required | as above | as above with `"persisted": true`, written to the config file; 500 if the file cannot be written |
 | `/api/proposals` | `GET` | required | none | `{"proposing": false, "why": "...", "proposals": []}` without `survey.propose`; otherwise `{"proposing": true, "examined": N, "readable": N, "skippedForBacklog": N, "proposals": [...]}`, each proposal carrying a `config` to POST to `/api/config` |
-| `/api/txtest` | `POST` | required | `{"twoTone": true, "seconds": 5}`, `{"twoTone": false, "toneHz": 999, "seconds": 5}` or `{"stop": true}` | `{"transmitted": bool, "sent": ..., "refused": ..., "failed": ...}` with the unused keys null, answered once the test is over: 200 when it went out, 409 when the station would not run it, 500 when it broke; `{"stopped": true, "note": "..."}` for a stop; 404 with no transmitter or `txTest.enabled` false |
+| `/api/txtest` | `POST` | required | `{"twoTone": true, "seconds": 5}`, `{"twoTone": false, "toneHz": 999, "seconds": 5}` or `{"stop": true}`, each optionally with `"subChannel": N` (needed while a lease is held; 400 if no modem is on it) | `{"transmitted": bool, "sent": ..., "refused": ..., "failed": ...}` with the unused keys null, answered once the test is over: 200 when it went out, 409 when the station would not run it, 500 when it broke; `{"stopped": true, "note": "..."}` for a stop; 404 with no transmitter or `txTest.enabled` false |
+| `/api/txlease` | `POST` | required | `{"subChannel": N, "seconds": 60}` to take or renew, optionally with `"maxCarrierWaitSeconds": 30`; `{"release": true, "subChannel": N}` to give it back; `"dropQueued": true` with a release, or alone while holding, to drop the holder's unsent frames | 200 with the lease's state (below) plus `"renewed"`, `"seconds"` and `"capped"` for a take, `"released"` for a release and `"dropped"` (a count) for a drop; 409 with `refused` when another sub-channel holds it, when a lease is closing, when a release or drop names a sub-channel that does not hold it, or for a drop with no lease; 400 for a missing `subChannel`, one with no modem, `seconds` of 0 or less, or `maxCarrierWaitSeconds` outside 1 to 300 |
+| `/api/txlease` | `GET` | required | none | the lease's state: `{"held": bool, "subChannel": N or null, "expires": ... or null, "closing": bool, "maxCarrierWaitSeconds": S or null, "channelBusy": bool, "carrierDetect": bool}`. `channelBusy` is the holder's carrier sense, or the whole station's when nobody holds a lease, and is true while this station transmits; `carrierDetect` is true while any modem hears a packet signal |
 | `/api/mixer` | `GET` | required, or none with `enableAudioControls` | none | `available` true, `card`, `controls` (every control name), `playbackCard` and `playbackControls` (the transmit card and its controls, the same as `card` and `controls` unless [`playbackDevice`](config.md#two-cards-capturedevice-and-playbackdevice) puts transmit on another card), `capture` and `playback` (each null when the card has no such control, else `control`, `decibels`, `dbRange` as `min`, `max` and `mutesBelowMin` or null on a card with no dB scale, `percent`, and `source` as `config`, `state` or `none`), `agc` and `micBoost` (each null or `control`, `on` and `forcedOff`, always true), `summary` and `journal` (the start-up lines); `{"available": false, "why": "..."}` on a station with no sound card |
 | `/api/mixer` | `POST` | required, or none with `enableAudioControls` | `{"captureGainDb": 6, "playbackDb": -8}`, either or both | 200 with the read-back plus `applied`, `persisted`, `warn`, `stateFile` and `note`; 400 for a level outside the card's range or a removed key; 409 on a station with no mixer |
 | `/api/mixer?persist=false` | `POST` | as above | as above | the card is set for this run and nothing is written |
@@ -238,8 +240,34 @@ What a change does to the running station:
 | `POST /api/config?persist=true` | written over the config file instead, then the same restart |
 | `POST /api/mixer` | applied to the card at once with no restart, and written to the mixer state file so the next start-up sets it again. The config file is never written; a level it pins wins at the next start-up (see [`alsa`](config.md#alsa)), and the answer says so with `"warn": true` |
 | `POST /api/txtest` | keys the transmitter for the test and answers when it is over |
+| `POST /api/txlease` | holds the transmitter for one sub-channel until the expiry; see below |
 
 Run outside systemd, an applied configuration stops the modem rather than restarting it; the journal warns at start-up when no `INVOCATION_ID` is present.
+
+### The transmit lease
+
+A lease gives one sub-channel the radio's transmitter for a while, so a broadcast can run on a station that also serves ordinary packet traffic. pdn-mailcast's head end uses it for its daily slot: it takes a 60 s lease for its own modem, renews it every 30 s, and releases it at the end, naming its sub-channel so a late release can never free somebody else's lease.
+
+- One lease at a time. `seconds` defaults to 60 and is capped at 300; ask again before it runs out to renew it.
+- While it is held, frames for every other sub-channel are refused the moment they arrive, never queued, so nothing stale goes out afterwards and AX.25 simply retries. Frames other modems had already queued are refused when the lease is taken. Refusals reach the journal as the usual rate-limited `DROPPED` line, `sub-channel N holds the transmit lease, so other transmissions are refused until it ends`; an ACKMODE frame refused this way is not acknowledged.
+- Other modems' Morse idents wait until the lease ends, and paging is refused. ARDOP replies are not sent; the journal says `ardop: reply not sent - sub-channel N holds the transmit lease` once, then at most once a minute with a count. The holder's own frames and its own Morse ident go out normally, with the usual carrier sense.
+- `POST /api/txtest` runs only when it names the holder's `"subChannel"`; anything else is refused with 409. That is how the head end sends its calibration tone without anyone else's test getting on the air.
+- Receiving carries on as normal on every modem, and every KISS connection stays up.
+- A keyup already on the air when the lease is taken finishes first.
+- If the holder stops renewing, the lease runs out by itself and normal service resumes. Frames the holder still had queued, or had in hand and not yet keyed, are dropped with it, and anything it queues while the lease closes is refused, so a head end that died part way can never leak a burst into normal service. The length is timed on the system's monotonic clock, so a wall-clock step does not change it.
+- When the lease is released or runs out, the holder's modem sends its closing Morse ident first, if it has an `identify` and has transmitted since it last identified. If that modem's periodic ident is already queued, it is the closing ident; none is added. Until it has gone (or 60 s have passed), the lease is still held, `closing` reads true and nobody can take a lease, the holder included: a renewal then gets a 409 saying the lease is closing.
+- `"dropQueued": true` drops the holder's frames that have not keyed yet, for an aborted slot. Each is refused with the usual `DROPPED` line, so an ACKMODE host gets no ack for it, the same as any refused frame. A burst already on the air finishes. A release without it keeps the queue.
+- `"maxCarrierWaitSeconds"` bounds how long the holder's transmissions wait for a clear channel; after that they go anyway and the journal says so. Without it, carrier sense is as usual and a busy channel can hold the slot back indefinitely. A renewal that leaves it out keeps the value the lease already had.
+
+The journal says when a lease starts, ends and runs out, and every five minutes while it is renewed:
+
+```
+tx lease: sub-channel 3 (ms110d-wn4) holds the transmitter until 2026-10-04T12:01:00Z; transmissions from other sub-channels are refused until it ends
+tx lease: sub-channel 3 (ms110d-wn4) still holds the transmitter after 5m00s (10 renewals), now until 2026-10-04T12:06:00Z; 4 transmissions from others refused so far
+tx lease: sub-channel 3 (ms110d-wn4) released the transmitter after 15m02s; 7 transmissions from others refused; normal service resumes
+tx lease: sub-channel 3 (ms110d-wn4) stopped renewing and its lease ran out at 2026-10-04T12:16:00Z, after 15m30s; its unsent frames were dropped; 7 transmissions from others refused; normal service resumes
+tx lease: sub-channel 3 (ms110d-wn4) transmitted after 30s without a clear channel (maxCarrierWaitSeconds)
+```
 
 ## Metrics
 

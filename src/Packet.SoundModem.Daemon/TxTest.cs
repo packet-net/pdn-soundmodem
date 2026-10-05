@@ -176,6 +176,24 @@ internal sealed class TxTestRunner
             return Refuse(cannot);
         }
 
+        // A transmit lease gives the transmitter to one sub-channel, and a test tone from anybody
+        // else is exactly what it exists to keep off the air. The holder's own tone (the mailcast
+        // head end's calibration tone) is the one exception, and it says it is the holder's by
+        // naming the sub-channel. Anything else that could ask - the page's button, a script
+        // that does not know about the lease - names nothing and is refused here.
+        if (request.SubChannel is int named && !_options.Channel.Modems.ContainsKey(named))
+        {
+            return Refuse($"no modem transmits on sub-channel {named}");
+        }
+
+        TransmitLease lease = _options.Channel.TransmitLease;
+        if (lease.Holder is int holder && request.SubChannel != holder)
+        {
+            return Refuse(
+                $"sub-channel {holder} holds the transmit lease, so a test runs now only for it "
+                + $"(\"subChannel\": {holder})");
+        }
+
         (Run Run, string Text, double AudioHz)? prepared;
         string? why;
         try
@@ -197,6 +215,14 @@ internal sealed class TxTestRunner
         }
 
         (Run run, string text, double audioHz) = ready;
+        if (request.SubChannel is int sub)
+        {
+            // Queued under the run itself, attributed to the sub-channel it names, so a lease that
+            // sub-channel holds (or takes while the test waits for the channel) lets it through
+            // and one anybody else takes refuses it.
+            lease.Attribute(run, sub);
+        }
+
         try
         {
             _options.Journal.Write($"tx test: {text}");
@@ -236,8 +262,9 @@ internal sealed class TxTestRunner
                 rejected: refusal => rejection = refusal.Message,
                 // Its own identity, so the test takes its own keyup rather than being appended to
                 // a modem's - the operator wants to measure the tones, not the frame in front of
-                // them.
-                source: this,
+                // them. The run rather than the runner, because only this run is attributed to
+                // the sub-channel it named.
+                source: run,
                 withdraw: run.Withdrawal.Token,
                 stopEarly: () => run.Cancelled,
                 // What actually reached the device, in case a stop cut the write short - not the
@@ -322,7 +349,7 @@ internal sealed class TxTestRunner
 
             // Written down like a transmission, because it was one. See TxTestOptions.Recorded.
             _options.Recorded?.Invoke(new TxTestRecord(
-                _options.SubChannel, $"tx test: {text} - {done}", audioHz));
+                request.SubChannel ?? _options.SubChannel, $"tx test: {text} - {done}", audioHz));
 
             return new TxTestOutcome(true, text, null);
         }
