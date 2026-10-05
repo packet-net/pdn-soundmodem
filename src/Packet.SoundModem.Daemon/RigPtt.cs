@@ -18,7 +18,7 @@ internal sealed class RigPtt(RigControl rig, IPttControl? inner) : IPttControl
     /// <inheritdoc />
     public void Key()
     {
-        rig.Key(sendT: inner is null);
+        rig.Key();
         if (inner is null)
         {
             return;
@@ -30,7 +30,7 @@ internal sealed class RigPtt(RigControl rig, IPttControl? inner) : IPttControl
         }
         catch
         {
-            rig.Unkey(sendT: false);
+            rig.Unkey();
             throw;
         }
     }
@@ -40,7 +40,7 @@ internal sealed class RigPtt(RigControl rig, IPttControl? inner) : IPttControl
     {
         if (inner is null)
         {
-            rig.Unkey(sendT: true);
+            rig.Unkey();
             return;
         }
 
@@ -50,7 +50,7 @@ internal sealed class RigPtt(RigControl rig, IPttControl? inner) : IPttControl
         }
         finally
         {
-            rig.Unkey(sendT: false);
+            rig.Unkey();
         }
     }
 }
@@ -58,8 +58,12 @@ internal sealed class RigPtt(RigControl rig, IPttControl? inner) : IPttControl
 /// <summary>The station's side of a <see cref="RigControl"/>: its PTT and where its files go.</summary>
 internal static class RigStation
 {
-    /// <summary>A PTT that keys the radio with rigctld's <c>T 1</c> and <c>T 0</c>.</summary>
-    internal static IPttControl KeyingPtt(this RigControl rig) => new RigPtt(rig, null);
+    /// <summary>A PTT that keys the radio with rigctld's <c>T 1</c> and <c>T 0</c>. Only for a
+    /// rig set up to key through rigctld.</summary>
+    internal static IPttControl KeyingPtt(this RigControl rig) =>
+        rig.KeysThroughRig
+            ? new RigPtt(rig, null)
+            : throw new InvalidOperationException("this rig is not set up to key through rigctld");
 
     /// <summary>
     /// <paramref name="inner"/> with this rig's tuning windows guarding it: a keyup is refused
@@ -67,13 +71,17 @@ internal static class RigStation
     /// already goes through this rig is returned as it is.
     /// </summary>
     internal static IPttControl Guard(this RigControl rig, IPttControl inner) =>
-        inner is RigPtt mine && ReferenceEquals(mine.Rig, rig) ? inner : new RigPtt(rig, inner);
+        inner is RigPtt mine && ReferenceEquals(mine.Rig, rig) ? inner
+        : rig.KeysThroughRig
+            ? throw new InvalidOperationException(
+                "this rig keys through rigctld, so a second keying line beside it would key the radio twice")
+        : new RigPtt(rig, inner);
 
     /// <summary>Where a window's restore target is written down: the state directory under
     /// systemd, else beside the config file, the same as the mixer state file.</summary>
-    internal static string RestoreFilePath(string? configPath) =>
+    internal static string RestoreFilePath(string? configPath, RigctldEndpoint endpoint) =>
         Path.Combine(
             StateDirectory.Current
                 ?? (Path.GetDirectoryName(configPath ?? "") is { Length: > 0 } beside ? beside : "."),
-            RigRestoreFile.Name);
+            RigRestoreFile.NameFor(endpoint));
 }

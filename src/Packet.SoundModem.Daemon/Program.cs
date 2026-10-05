@@ -2325,7 +2325,7 @@ if (rigConfig is not null)
         Plan = rigPlan,
         // A window's restore target is written down while it is open, so a station killed
         // mid-window puts the rig back at its next start-up before it transmits anything.
-        RestoreFile = RigStation.RestoreFilePath(configPath),
+        RestoreFile = RigStation.RestoreFilePath(configPath, rigEndpoint),
         TransmitPending = () => channel.TransmitQueued,
     });
     rig.Journal += stationJournal.Write;

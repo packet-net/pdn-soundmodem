@@ -64,6 +64,9 @@ internal sealed class FakeRigctld : IAsyncDisposable
     /// <summary>Answer <c>\chk_vfo</c> with 1, as a rigctld started with <c>--vfo</c> does.</summary>
     internal bool VfoMode { get; set; }
 
+    /// <summary>Never answer <c>\chk_vfo</c>, as an old rigctld that ignores it does.</summary>
+    internal bool IgnoresChkVfo { get; set; }
+
     /// <summary>Answer <c>T 1</c> with RPRT -9 (and key the rig anyway, the worst case).</summary>
     internal bool RefusesKey { get; set; }
 
@@ -174,6 +177,11 @@ internal sealed class FakeRigctld : IAsyncDisposable
                         client.Client.LingerState = new LingerOption(true, 0);
                         break;
                     }
+                }
+
+                if (IgnoresChkVfo && command == "\\chk_vfo")
+                {
+                    continue;
                 }
 
                 byte[] reply = Encoding.ASCII.GetBytes(Answer(command));

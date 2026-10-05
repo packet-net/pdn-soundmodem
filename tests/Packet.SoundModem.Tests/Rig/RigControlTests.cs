@@ -30,7 +30,7 @@ public sealed class RigControlTests : IAsyncDisposable
     private readonly string _dir = Directory.CreateTempSubdirectory("pdnsm-rig").FullName;
     private volatile bool _pending;
 
-    private string RestorePath => Path.Combine(_dir, RigRestoreFile.Name);
+    private string RestorePath => Path.Combine(_dir, RigRestoreFile.NameFor(_fake.Endpoint));
 
     public async ValueTask DisposeAsync()
     {
@@ -45,10 +45,11 @@ public sealed class RigControlTests : IAsyncDisposable
 
     private RigControl Rig(
         bool keysThroughRig = false, RigTuning? plan = null, RigctldEndpoint? endpoint = null,
-        bool persist = false)
+        bool persist = false, TimeSpan? replyTimeout = null)
     {
         var rig = new RigControl(new RigControlOptions
         {
+            ReplyTimeout = replyTimeout ?? TimeSpan.FromSeconds(3),
             RestoreFile = persist ? RestorePath : null,
             TransmitPending = () => _pending,
             Endpoint = endpoint ?? _fake.Endpoint,
@@ -680,7 +681,7 @@ public sealed class RigControlTests : IAsyncDisposable
 
         RigTuneResult result = rig.Tune(new RigTuning(7_052_000, "USB", 0), TimeSpan.FromSeconds(60), "mailcast");
 
-        RigRestoreFile.Read(RestorePath, _fake.Endpoint, out _).Should().Be(new RigTuning(14_074_000, "USB", 2400));
+        RigRestoreFile.Read(RestorePath, _fake.Endpoint, out _, out _).Should().Be(new RigTuning(14_074_000, "USB", 2400));
         result.Window!.Dispose();
         File.Exists(RestorePath).Should().BeFalse();
     }
@@ -715,7 +716,7 @@ public sealed class RigControlTests : IAsyncDisposable
         rig.HoldsTransmitter.Should().BeFalse();
         _fake.Sets.Should().BeEmpty();
         _warned.Should().ContainSingle(w => w.Contains("is for the rigctld at 10.0.0.9:4532"));
-        File.Exists(RestorePath).Should().BeFalse();
+        File.Exists(RestorePath).Should().BeTrue("another station's promise is not this one's to delete");
     }
 
     [Fact]
@@ -770,6 +771,72 @@ public sealed class RigControlTests : IAsyncDisposable
         _fake.Accepting = false;
         _fake.Kill();
         await Eventually(() => !_changes.Last().Connected, "a drop is raised", TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Key_And_Unkey_Decide_From_The_Rig_Whether_To_Send_T()
+    {
+        // A rig that does not key through rigctld: the public Key marks the keyup and sends nothing.
+        RigControl rig = await Started();
+        rig.Key();
+        _fake.Sets.Should().BeEmpty();
+        _fake.Ptt.Should().BeFalse();
+        rig.Snapshot().Keyed.Should().BeTrue();
+        rig.Tune(new RigTuning(7_052_000, "USB", 0), TimeSpan.FromSeconds(60), "mailcast")
+            .Outcome.Should().Be(RigTuneOutcome.Refused);
+        rig.Unkey();
+        _fake.Sets.Should().BeEmpty();
+        rig.HoldsTransmitter.Should().BeFalse();
+        Func<IPttControl> keying = rig.KeyingPtt;
+        keying.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task Key_And_Unkey_On_A_Rig_That_Keys_Through_Rigctld_Always_Send_T()
+    {
+        RigControl rig = await Started(keysThroughRig: true);
+
+        rig.Key();
+        _fake.Ptt.Should().BeTrue();
+        rig.Unkey();
+        _fake.Ptt.Should().BeFalse();
+        _fake.Sets.Should().Equal(["T 0", "T 1", "T 0"]);
+        Func<IPttControl> guard = () => rig.Guard(new NullPtt());
+        guard.Should().Throw<InvalidOperationException>("a second keying line would key the radio twice");
+    }
+
+    [Fact]
+    public async Task After_A_Start_Up_Restore_The_Band_Plan_Is_Checked_Too()
+    {
+        // The restore puts the rig back to where it was before the window; the config's band plan
+        // has moved since, and takes effect at once.
+        RigRestoreFile.Write(RestorePath, _fake.Endpoint, new RigTuning(7_049_450, "USB", 2400));
+        _fake.DialHz = 7_052_000;
+        RigControl rig = await Started(plan: new RigTuning(7_050_100, "USB", 2400), persist: true);
+
+        rig.HoldsTransmitter.Should().BeFalse();
+        _fake.Sets.Should().Equal(["M USB 2400", "F 7049450", "M USB 2400", "F 7050100"]);
+        _fake.DialHz.Should().Be(7_050_100);
+    }
+
+    [Fact]
+    public async Task A_Rigctld_That_Ignores_Chk_Vfo_Is_Taken_As_Too_Old_For_Vfo_And_Used()
+    {
+        _fake.IgnoresChkVfo = true;
+        RigControl rig = Rig(replyTimeout: TimeSpan.FromSeconds(2));
+
+        (await rig.StartAsync(CancellationToken.None)).Should().BeFalse();
+        await Eventually(() => rig.Connected, "the next connection does not ask", TimeSpan.FromSeconds(1));
+
+        _fake.Commands.Count(c => c.Command == "\\chk_vfo").Should().Be(1);
+        _warned.Should().ContainSingle(w => w.Contains("did not answer \\chk_vfo"));
+    }
+
+    [Fact]
+    public void Restore_Files_Are_Named_For_Their_Rigctld()
+    {
+        RigRestoreFile.NameFor(new RigctldEndpoint("127.0.0.1", 4532)).Should().Be("rig-restore-127.0.0.1-4532.json");
+        RigRestoreFile.NameFor(new RigctldEndpoint("::1", 4533)).Should().Be("rig-restore-__1-4533.json");
     }
 
     [Fact]

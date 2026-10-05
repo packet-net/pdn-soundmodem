@@ -157,10 +157,10 @@ public sealed class RigctldException : Exception
 /// </remarks>
 internal sealed class RigctldConnection : IDisposable
 {
-    /// <summary>How long one reply may take. Real I/O on a real socket, so a real timeout: a
-    /// rigctld that accepts and then never answers is hung, and holding a keyup behind it for
-    /// longer than this would be worse than giving up on it.</summary>
-    internal static readonly TimeSpan ReplyTimeout = TimeSpan.FromSeconds(3);
+    /// <summary>How long one reply may take by default. Real I/O on a real socket, so a real
+    /// timeout: a rigctld that accepts and then never answers is hung, and holding a keyup behind
+    /// it for longer than this would be worse than giving up on it.</summary>
+    internal static readonly TimeSpan DefaultReplyTimeout = TimeSpan.FromSeconds(3);
 
     /// <summary>The longest reply line taken. rigctld's own answers to these commands are a
     /// few tens of characters; anything longer is not rigctld, or not well.</summary>
@@ -172,13 +172,13 @@ internal sealed class RigctldConnection : IDisposable
     private int _buffered;
     private int _consumed;
 
-    private RigctldConnection(TcpClient client, RigctldEndpoint endpoint)
+    private RigctldConnection(TcpClient client, RigctldEndpoint endpoint, TimeSpan replyTimeout)
     {
         _client = client;
         Endpoint = endpoint;
         _stream = client.GetStream();
-        _stream.ReadTimeout = (int)ReplyTimeout.TotalMilliseconds;
-        _stream.WriteTimeout = (int)ReplyTimeout.TotalMilliseconds;
+        _stream.ReadTimeout = (int)replyTimeout.TotalMilliseconds;
+        _stream.WriteTimeout = (int)replyTimeout.TotalMilliseconds;
     }
 
     /// <summary>Where this connection goes.</summary>
@@ -186,7 +186,7 @@ internal sealed class RigctldConnection : IDisposable
 
     /// <summary>Connects, or throws <see cref="IOException"/> saying why not.</summary>
     internal static async Task<RigctldConnection> OpenAsync(
-        RigctldEndpoint endpoint, TimeSpan timeout, CancellationToken cancellation)
+        RigctldEndpoint endpoint, TimeSpan timeout, TimeSpan replyTimeout, CancellationToken cancellation)
     {
         var client = new TcpClient { NoDelay = true };
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
@@ -194,7 +194,7 @@ internal sealed class RigctldConnection : IDisposable
         try
         {
             await client.ConnectAsync(endpoint.Host, endpoint.Port, limit.Token).ConfigureAwait(false);
-            return new RigctldConnection(client, endpoint);
+            return new RigctldConnection(client, endpoint, replyTimeout);
         }
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
         {
@@ -255,7 +255,10 @@ internal sealed class RigctldConnection : IDisposable
     /// argument this station does not send (<c>\chk_vfo</c>). A rigctld too old to know the
     /// command cannot have the option either.
     /// </summary>
-    internal bool WantsVfoArguments()
+    /// <returns>True or false, or null when rigctld did not answer in time, which an old one
+    /// that ignores the command does; the connection is then out of step (a late answer may
+    /// still come) and has to be thrown away.</returns>
+    internal bool? WantsVfoArguments()
     {
         string answer;
         try
@@ -265,6 +268,10 @@ internal sealed class RigctldConnection : IDisposable
         catch (RigctldException)
         {
             return false;
+        }
+        catch (IOException quiet) when (quiet.InnerException is SocketException { SocketErrorCode: SocketError.TimedOut })
+        {
+            return null;
         }
 
         // "1" from Hamlib 4, "CHKVFO 1" from some 3.x builds.

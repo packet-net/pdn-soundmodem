@@ -16,8 +16,23 @@ namespace Packet.SoundModem.Rig;
 /// </remarks>
 public static class RigRestoreFile
 {
-    /// <summary>The file's name in the state directory.</summary>
-    public const string Name = "rig-restore.json";
+    /// <summary>
+    /// The file's name for one rigctld, <c>rig-restore-HOST-PORT.json</c>, so two stations that
+    /// share a state directory but not a rig never touch each other's.
+    /// </summary>
+    /// <param name="endpoint">The rigctld.</param>
+    public static string NameFor(RigctldEndpoint endpoint)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        var host = new System.Text.StringBuilder(endpoint.Host.Length);
+        foreach (char c in endpoint.Host)
+        {
+            host.Append(c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '.' or '-' ? c : '_');
+        }
+
+        return string.Create(
+            System.Globalization.CultureInfo.InvariantCulture, $"rig-restore-{host}-{endpoint.Port}.json");
+    }
 
     /// <summary>Writes the target and flushes it to the disk. Throws <see cref="IOException"/> or
     /// <see cref="UnauthorizedAccessException"/> when it cannot.</summary>
@@ -52,9 +67,12 @@ public static class RigRestoreFile
     /// <param name="path">The file.</param>
     /// <param name="endpoint">The rigctld this station uses now.</param>
     /// <param name="why">Why a file that is there was not used, or null.</param>
-    public static RigTuning? Read(string path, RigctldEndpoint endpoint, out string? why)
+    /// <param name="foreign">True when the file is readable but names another rigctld: it is
+    /// another station's, and must be left where it is.</param>
+    public static RigTuning? Read(string path, RigctldEndpoint endpoint, out string? why, out bool foreign)
     {
         why = null;
+        foreign = false;
         if (!File.Exists(path))
         {
             return null;
@@ -76,6 +94,7 @@ public static class RigRestoreFile
             if (rigctld != endpoint.ToString())
             {
                 why = $"{path} is for the rigctld at {rigctld}, not {endpoint}";
+                foreign = true;
                 return null;
             }
 

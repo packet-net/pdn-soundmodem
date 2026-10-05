@@ -42,6 +42,9 @@ public sealed class RigControlOptions
     /// <summary>The longest wait between reconnect attempts.</summary>
     public TimeSpan MaxRetry { get; init; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>How long one reply from rigctld may take before the connection is given up on.</summary>
+    public TimeSpan ReplyTimeout { get; init; } = TimeSpan.FromSeconds(3);
+
     /// <summary>How long one connect attempt may take.</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(3);
 
@@ -200,6 +203,7 @@ public sealed class RigControl : IAsyncDisposable
     private bool _disposed;
     private int _disposing;
     private int _unkeyAttempts;
+    private bool _skipVfoCheck;
 
     // The flags a keyup and a retune decide on. Set under _gate; read anywhere.
     private volatile bool _keyed;
@@ -283,7 +287,7 @@ public sealed class RigControl : IAsyncDisposable
     {
         if (_options.RestoreFile is string file)
         {
-            RigTuning? owed = RigRestoreFile.Read(file, Endpoint, out string? why);
+            RigTuning? owed = RigRestoreFile.Read(file, Endpoint, out string? why, out bool foreign);
             if (owed is not null)
             {
                 _restoreTo = owed;
@@ -293,8 +297,13 @@ public sealed class RigControl : IAsyncDisposable
             }
             else if (why is not null)
             {
+                // Another rigctld's file is another station's promise, and is left alone; only one
+                // that cannot be read at all is removed.
                 Warn($"rig: WARNING - {why}; ignoring it");
-                TryDeleteRestoreFile();
+                if (!foreign)
+                {
+                    TryDeleteRestoreFile();
+                }
             }
         }
 
@@ -306,15 +315,23 @@ public sealed class RigControl : IAsyncDisposable
     // ------------------------------------------------------------------ keying
 
     /// <summary>
-    /// Starts a keyup: refused while the rig is retuned or an unkey is owed, and sends
-    /// <c>T 1</c> when <paramref name="sendT"/>.
+    /// Starts a keyup: refused while the rig is retuned or an unkey is owed. With
+    /// <see cref="KeysThroughRig"/> it keys the radio with <c>T 1</c>; without, the caller keys
+    /// the radio by its own line and this marks the keyup, so no window opens during it.
     /// </summary>
     /// <exception cref="TransmitterHeldException">Not a moment to transmit.</exception>
     /// <exception cref="IOException">rigctld is not there to key the radio.</exception>
     /// <exception cref="RigctldException">rigctld refused the keyup.</exception>
-    /// <param name="sendT">True to key the radio with <c>T 1</c>; false when the radio is keyed by
-    /// a line of the caller's own and this only marks the keyup, so no window opens during it.</param>
-    public void Key(bool sendT)
+    public void Key() => KeyCore(sendT: KeysThroughRig);
+
+    /// <summary>
+    /// Ends a keyup: with <see cref="KeysThroughRig"/> it sends <c>T 0</c>, owed until rigctld
+    /// confirms it. The keyup is over as far as this station is concerned whatever happens to
+    /// the command.
+    /// </summary>
+    public void Unkey() => UnkeyCore(sendT: KeysThroughRig);
+
+    private void KeyCore(bool sendT)
     {
         lock (_gate)
         {
@@ -368,13 +385,7 @@ public sealed class RigControl : IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// Ends a keyup, sending <c>T 0</c> when <paramref name="sendT"/>. The keyup is over as far as
-    /// this station is concerned whatever happens to the command; the unkey is owed until rigctld
-    /// confirms it.
-    /// </summary>
-    /// <param name="sendT">As it was for <see cref="Key"/>.</param>
-    public void Unkey(bool sendT)
+    private void UnkeyCore(bool sendT)
     {
         if (!sendT)
         {
@@ -779,7 +790,8 @@ public sealed class RigControl : IAsyncDisposable
         RigctldConnection opened;
         try
         {
-            opened = await RigctldConnection.OpenAsync(Endpoint, _options.ConnectTimeout, cancellation)
+            opened = await RigctldConnection.OpenAsync(
+                    Endpoint, _options.ConnectTimeout, _options.ReplyTimeout, cancellation)
                 .ConfigureAwait(false);
         }
         catch (IOException unreachable)
@@ -853,10 +865,24 @@ public sealed class RigControl : IAsyncDisposable
     /// </summary>
     private void OnConnectedIo(RigctldConnection connection)
     {
-        if (connection.WantsVfoArguments())
+        if (!_skipVfoCheck)
         {
-            throw new IOException(
-                "rigctld was started with --vfo, which this station does not speak; start it without --vfo");
+            switch (connection.WantsVfoArguments())
+            {
+                case true:
+                    throw new IOException(
+                        "rigctld was started with --vfo, which this station does not speak; start it without --vfo");
+                case null:
+                    // An old rigctld that ignores the command, so one too old to have --vfo. The
+                    // connection may yet get the late answer, so it goes, and the next one does
+                    // not ask.
+                    _skipVfoCheck = true;
+                    throw new IOException(
+                        "rigctld did not answer \\chk_vfo, so it is taken to be too old to have --vfo; "
+                        + "reconnecting without asking");
+                default:
+                    break;
+            }
         }
 
         // Before anything else: a radio left keyed by a connection that died is the one thing here
@@ -901,8 +927,20 @@ public sealed class RigControl : IAsyncDisposable
         if (_window is null && _restoreTo is not null)
         {
             RestoreIo();
+            if (_restoreTo is not null || _connection is null)
+            {
+                return;
+            }
+
+            // Put back to where it was before the window; the band plan, which the config may
+            // have changed since, is checked against that below.
+            lock (_gate)
+            {
+                state = _known ?? state;
+            }
         }
-        else if (_window is { } open)
+
+        if (_window is { } open)
         {
             Retuning(() => TryApplyIo(connection, open.Tuning));
         }
