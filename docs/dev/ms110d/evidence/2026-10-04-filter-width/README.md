@@ -1,6 +1,6 @@
 # MS110D through a receiver's SSB filter: what the transmit width costs (2026-10-04)
 
-Status: simulation evidence for pdn-mailcast's filter study (its design doc, "Filter study"). It decides the transmit roll-off for the GB7RDG 40 m bulletin broadcast and checks the dial.
+Status: simulation evidence for pdn-mailcast's filter study (its design doc, "Filter study"). It decides the transmit roll-off for GB7RDG's 40 m bulletin transmissions and checks the dial.
 
 ## The answer
 

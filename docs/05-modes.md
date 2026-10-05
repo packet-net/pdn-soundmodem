@@ -111,7 +111,7 @@ Design notes, the measured rate ladder and what still limits the waveform are in
 | `ms110d-wn8` | 16QAM r3/4 | **Partial**, caveat - proven on air on a clean channel; the Poor channel is hard-gated in simulation only, because neither rig reaches the +23 dB it would need |
 | `ms110d-wn13` | QPSK r9/16 | **On-air**, caveat - same disciplined-reference condition as wn6 |
 
-Each frame normally goes out as its own burst, with its own preamble. For a station that sends runs of frames, such as a broadcast, set `maxBurstSeconds` on the modem entry and frames queued together share one burst instead, which saves the preamble and the interleaver flush on every frame after the first. Each burst is still its own keyup. It is meant for UI broadcast, not connected-mode links. Receivers need nothing new. See [`maxBurstSeconds`](reference/config.md#modems).
+Each frame normally goes out as its own burst, with its own preamble. For a station that sends runs of frames, such as a daily bulletin service, set `maxBurstSeconds` on the modem entry and frames queued together share one burst instead, which saves the preamble and the interleaver flush on every frame after the first. Each burst is still its own keyup. It is meant for runs of UI frames, not connected-mode links. Receivers need nothing new. See [`maxBurstSeconds`](reference/config.md#modems).
 
 ## Running several modems at once
 
