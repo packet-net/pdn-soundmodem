@@ -458,6 +458,7 @@ public class PackedBurstTests
     private sealed class LoggingBusyModem(List<string> log) : IModem
     {
         private volatile bool _busy = true;
+        private bool _loggedBusy;
 
         public TaskCompletionSource Asked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -475,9 +476,19 @@ public class PackedBurstTests
         {
             get
             {
+                // A busy answer is logged once: carrier sense asks every slot, and the order of
+                // events this test reads only needs the first and the clear ones.
                 lock (log)
                 {
-                    log.Add(_busy ? "asked busy" : "asked clear");
+                    if (!_busy)
+                    {
+                        log.Add("asked clear");
+                    }
+                    else if (!_loggedBusy)
+                    {
+                        log.Add("asked busy");
+                        _loggedBusy = true;
+                    }
                 }
 
                 Asked.TrySetResult();
@@ -518,7 +529,7 @@ public class PackedBurstTests
         channel.AddModem(0, _ => packer);
         channel.AddModem(1, _ => busy);
         channel.Csma.Persistence = 255;
-        channel.Csma.SlotTimeMilliseconds = 0;
+        channel.Csma.SlotTimeMilliseconds = 10; // a real slot, so a busy channel is not a spin
 
         Task send = channel.EnqueueTransmit(0, UiFrame(1, 20));
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
