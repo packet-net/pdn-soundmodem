@@ -298,7 +298,7 @@ public class TransmitLeaseTests
     {
         private int _renders;
 
-        public ManualResetEventSlim SecondRenderStarted { get; } = new();
+        public TaskCompletionSource SecondRenderStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ManualResetEventSlim ReleaseSecondRender { get; } = new();
 
@@ -333,7 +333,7 @@ public class TransmitLeaseTests
         {
             if (Interlocked.Increment(ref _renders) == 2)
             {
-                SecondRenderStarted.Set();
+                SecondRenderStarted.TrySetResult();
                 ReleaseSecondRender.Wait(TimeSpan.FromMinutes(2));
             }
 
@@ -347,7 +347,7 @@ public class TransmitLeaseTests
     {
         private volatile bool _busy = true;
 
-        public ManualResetEventSlim Asked { get; } = new();
+        public TaskCompletionSource Asked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public string Mode => "busy";
 
         public event Action<byte[], FrameQuality>? FrameDecoded
@@ -362,7 +362,7 @@ public class TransmitLeaseTests
         {
             get
             {
-                Asked.Set();
+                Asked.TrySetResult();
                 return _busy;
             }
         }
@@ -404,11 +404,12 @@ public class TransmitLeaseTests
         // Carrier sense is only asked once the first render (TXDELAY 300) is done and the burst is
         // contending. While the busy channel holds it there, the host changes TXDELAY, so the
         // burst taken once the channel clears has to be rendered again - and that render is held.
-        // The bounds below fail a broken run; they never pace a passing one.
-        busy.Asked.Wait(TimeSpan.FromMinutes(1)).Should().BeTrue();
+        // Awaited rather than blocked on, so a busy thread pool is not made busier by this test,
+        // and the bounds below fail a broken run; they never pace a passing one.
+        await busy.Asked.Task.WaitAsync(TimeSpan.FromMinutes(2));
         channel.Csma.TxDelayMilliseconds = 120;
         busy.Clear();
-        packer.SecondRenderStarted.Wait(TimeSpan.FromMinutes(1)).Should().BeTrue();
+        await packer.SecondRenderStarted.Task.WaitAsync(TimeSpan.FromMinutes(2));
 
         channel.TransmitLease.Take(1, TimeSpan.FromSeconds(60));
         packer.ReleaseSecondRender.Set();
