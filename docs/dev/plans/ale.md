@@ -18,7 +18,7 @@ Status: design record as of 2026-09-17. Describes a plan for a software 2G ALE i
 
 **Phase A0 is the transcription**, and nothing else starts until it is done. Tables go in `docs/dev/ale/tables/` as CSV with a `README` recording page numbers, in the shape `docs/dev/ms110d/tables/` uses.
 
-**Licence care.** Consulting a reference implementation is allowed and encouraged, but this repo is GPL-3.0-or-later: anything consulted must be GPL-compatible, and anything derived from it gets a comment naming the source file and function - the same rule that governs the QtSoundModem and Dire Wolf lineage in this codebase.
+**Licence care.** Consulting a reference implementation is allowed and encouraged, but this repo is AGPL-3.0-or-later: anything consulted must be compatible with that, and anything derived from it gets a comment naming the source file and function, keeps its source's licence and is listed in LICENSING.md - the same rule that governs the QtSoundModem and Dire Wolf lineage in this codebase.
 
 ---
 

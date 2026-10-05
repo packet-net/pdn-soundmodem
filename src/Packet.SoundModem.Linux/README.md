@@ -51,9 +51,9 @@ card can be opened directly. pdn-lin, the Linux package of pdn-win, ships both.
 
 ## Licence
 
-**AGPL-3.0-or-later**, as the Windows library is and unlike the GPL-3.0-or-later core. It is new
-code written for the Linux application and derived from nothing in QtSoundModem or Dire Wolf;
-GPLv3 section 13 permits the combination.
+**AGPL-3.0-or-later**, as the Windows library is. It is new code written for the Linux
+application and derived from nothing in QtSoundModem or Dire Wolf, so none of the GPL-only files
+[LICENSING.md](../../LICENSING.md) lists is in it.
 
 ## Builds everywhere, runs on Linux
 

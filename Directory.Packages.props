@@ -3,9 +3,8 @@
     <!-- Serial / IO -->
     <PackageVersion Include="System.IO.Ports" Version="10.0.11" />
 
-    <!-- FlexRadio 6000-series client (lifted out of this repo; AGPL-3.0-or-later). Adding it
-         to the GPL-3.0 core is permitted by GPLv3 §13, which pulls AGPL §13 onto the combined
-         work - see docs/dev/plan.md and PROVENANCE.md. -->
+    <!-- FlexRadio 6000-series client (lifted out of this repo; AGPL-3.0-or-later). The same
+         licence as this repo; see LICENSING.md and PROVENANCE.md. -->
     <PackageVersion Include="M0LTE.Flex" Version="0.14.1" />
     <PackageVersion Include="M0LTE.Radio.Audio" Version="0.1.0" />
     <PackageVersion Include="M0LTE.Fec" Version="0.3.0" />
@@ -25,7 +24,7 @@
     <PackageVersion Include="M0LTE.Ofdm" Version="0.1.0" />
     <!-- The Tait CCDI driver, for OFDM-FM carrier sense taken from the radio's own squelch and
          signal-strength meter rather than inferred from the audio a receiver produces. AGPL-3.0,
-         which this repo permits and already carries via M0LTE.Flex; see CLAUDE.md, Licence rules.
+         the same licence as this repo; see CLAUDE.md, Licence rules.
          Only reached when a station opts in by writing ofdm-fm.station.json, so a station without
          that file never constructs it and never opens a serial port. -->
     <PackageVersion Include="Packet.Radio.Tait" Version="0.33.0" />
@@ -52,7 +51,7 @@
     <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
     <PackageVersion Include="MQTTnet" Version="5.2.0.1603" />
     <!-- AX.25 codec and link observer from packet.net. AGPL-3.0-or-later since 0.26.0 (0.23.0
-         was the last MIT release), permitted on the same GPLv3 §13 footing as M0LTE.Flex above.
+         was the last MIT release), the same licence as this repo, like M0LTE.Flex above.
          Packet.Core moves with it: each Packet.Ax25 depends on the matching version. -->
     <PackageVersion Include="Packet.Ax25" Version="0.37.0" />
     <PackageVersion Include="Packet.Core" Version="0.37.0" />

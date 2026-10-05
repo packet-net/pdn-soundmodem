@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Stays GPL: QtSoundModem's filter plan and Dire Wolf's DPLL constant. See LICENSING.md.
+
 using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Modems;

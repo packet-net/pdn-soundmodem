@@ -1,3 +1,30 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later AND MIT
+// The harness is AGPL-3.0-or-later like the rest of this repository. The functions marked
+// "verbatim from ardopcf" below are copied from ardopcf (git a7c9228) and stay under its
+// MIT licence, whose notice follows. See LICENSING.md.
+//
+// MIT License
+//
+// Copyright (c) 2014-2024 Rick Muething, John Wiseman, Peter LaRue
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 // ARDOP reference vector generator: compiles ardopcf's actual rrs.c (Rockliff RS)
 // alongside verbatim copies of GenCRC16 (ARDOPC.c:1673), GenCRC8 (ARQ.c:200) and
 // ComputeTypeParity (ARDOPC.c:1640) extracted below, and emits byte vectors used to

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Stays GPL: receive behaviour from Dire Wolf's FX.25 code. See LICENSING.md.
+
 using Packet.SoundModem.Hdlc;
 
 namespace Packet.SoundModem.Fx25;

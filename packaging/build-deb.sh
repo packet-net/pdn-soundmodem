@@ -202,7 +202,8 @@ Description: Headless soundcard packet-radio modem (KISS TCP)
  instance: /etc/pdn-soundmodem/NAME.json and "systemctl enable --now
  pdn-soundmodem@NAME". Instances are never enabled by the package.
  .
- GPL-3.0-or-later.
+ AGPL-3.0-or-later, with some parts GPL-3.0-or-later; see
+ /usr/share/doc/pdn-soundmodem/copyright.
 EOF
 
 # --- maintainer scripts -------------------------------------------------------

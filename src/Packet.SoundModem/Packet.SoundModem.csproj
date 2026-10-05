@@ -6,6 +6,10 @@
     <PackageTags>packet-radio;ax25;il2p;soundmodem;kiss;fec;reed-solomon;amateur-radio</PackageTags>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- AGPL-3.0-or-later as a whole, but this library contains the files that stay
+         GPL-3.0-or-later (derived from Dire Wolf, QtSoundModem and MMDVM-TNC) and the
+         GPL-3.0-only ka9q_ubersdr decoder port; LICENSING.md lists them. -->
+    <PackageLicenseExpression>AGPL-3.0-or-later AND GPL-3.0-or-later AND GPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,9 +26,8 @@
          package is AGPL-3.0-or-later (0.23.0 was the last MIT release; the pin moved to
          0.31.0 for the link observer, 0.32.0 for its giving up on unanswered calls and
          0.33.0 for acknowledgements counting as a link and 0.36.0 for a SABME to SABM
-         fallback re-keying the observed link to modulo 8), which CLAUDE.md allows alongside
-         this library's
-         GPL-3.0-or-later by way of GPLv3 §13, the same footing as M0LTE.Flex. The
+         fallback re-keying the observed link to modulo 8), which is this
+         library's own licence too, the same footing as M0LTE.Flex. The
          dependency runs the safe way round: packet.net's AX.25 package knows nothing about
          this modem. Build against a local packet.net checkout with
          `-p:Ax25SourcePath=/path/to/packet.net/src/Packet.Ax25/Packet.Ax25.csproj`, the

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Stays GPL: Dire Wolf's DCD algorithm and constants. See LICENSING.md.
+
 using System.Numerics;
 
 namespace Packet.SoundModem.Modems;

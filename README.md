@@ -62,6 +62,6 @@ packaging/build-deb.sh 0.69.0 amd64    # also arm64, armhf; cross-builds from an
 
 ## Licence and credits
 
-GPL-3.0-or-later; the text is in [COPYING](COPYING). It stays GPL because it is built on GPL prior art: UZ7HO SoundModem (Andrei Kopanchuk) through QtSoundModem (John Wiseman, G8BPQ), Dire Wolf (John Langner, WB2OSZ), MMDVM-TNC (Jonathan Naylor, G4KLX), the IL2P specification (Nino Carrillo, KK4HEJ), and ka9q_ubersdr (madpsy).
+AGPL-3.0-or-later; the text is in [COPYING](COPYING). The files derived from other people's GPL code stay GPL, and [LICENSING.md](LICENSING.md) lists them; the two licences combine under section 13 of each, so the program as a whole is used on AGPL terms, including its network clause. It builds on prior art: UZ7HO SoundModem (Andrei Kopanchuk) through QtSoundModem (John Wiseman, G8BPQ), Dire Wolf (John Langner, WB2OSZ), MMDVM-TNC (Jonathan Naylor, G4KLX), the IL2P specification (Nino Carrillo, KK4HEJ), and ka9q_ubersdr (madpsy).
 
-[PROVENANCE.md](PROVENANCE.md) records, component by component, what this code is based on. The sibling [packet.net](https://github.com/packet-net/packet.net) node is AGPL-3.0 and the two combine under GPLv3 section 13; nothing MIT-licensed may depend on this package.
+[PROVENANCE.md](PROVENANCE.md) records, component by component, what this code is based on. Nothing MIT-licensed may depend on this package.

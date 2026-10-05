@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Stays GPL: derived from UZ7HO SoundModem via QtSoundModem, and Dire Wolf. See LICENSING.md.
+
 using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Modems;
