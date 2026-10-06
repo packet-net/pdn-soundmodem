@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Time.Testing;
 using M0LTE.Radio.Audio;
 using Packet.SoundModem.CarrierSense;
 using Packet.SoundModem.Channel;
@@ -17,9 +16,10 @@ namespace Packet.SoundModem.Tests.Channel;
 /// identical polls behind it, all of which went out in one keyup with the UA. Nothing in the
 /// station's journal, frame log or page said the wait had happened, so the only way to find it was
 /// to subtract timestamps by hand.</para>
-/// <para>Every test here drives a <see cref="FakeTimeProvider"/>: the figure under test is a
+/// <para>Every test here runs on a <see cref="VirtualAir.Clock"/>: the figure under test is a
 /// duration, and a duration checked against the wall clock is a test that fails on a loaded CI
-/// box and passes everywhere else.</para>
+/// box and passes everywhere else. The clock moves only while the transmitter is parked on it, so
+/// twenty seconds of carrier sense cost no real time and cannot be stretched by a slow box.</para>
 /// </remarks>
 public class HeldForTests
 {
@@ -51,9 +51,9 @@ public class HeldForTests
         return [.. frame, (byte)0xF0, (byte)0x41];
     }
 
-    private static (SoundModemChannel Channel, FakeTimeProvider Time, Switch Busy) Station()
+    private static (SoundModemChannel Channel, VirtualAir.Clock Time, Switch Busy) Station()
     {
-        var time = new FakeTimeProvider();
+        var time = new VirtualAir.Clock();
         var busy = new Switch { Busy = false };
         var channel = new SoundModemChannel(SampleRate, time, randomSeed: 42, channelBusySource: busy);
         channel.AddModem(2, sink => new BpskMultiModem(SampleRate, sink, crc: true, 2150, baud: 300, offsetPairs: 4));
@@ -62,33 +62,20 @@ public class HeldForTests
         return (channel, time, busy);
     }
 
-    private static async Task<Task> StartAsync(
-        SoundModemChannel channel, FakeTimeProvider time, CancellationToken cancellation)
-    {
-        Task transmitter = channel.RunTransmitterAsync(new Sink(SampleRate), new RecordingPtt(), cancellation);
-        _ = Task.Run(async () =>
-        {
-            while (!cancellation.IsCancellationRequested)
-            {
-                time.Advance(TimeSpan.FromMilliseconds(10));
-                await Task.Delay(1, CancellationToken.None);
-            }
-        }, CancellationToken.None);
-        await Task.Yield();
-        return transmitter;
-    }
+    private static Task Start(SoundModemChannel channel, CancellationToken cancellation) =>
+        channel.RunTransmitterAsync(new Sink(SampleRate), new RecordingPtt(), cancellation);
 
     [Fact]
     public async Task A_Frame_On_A_Clear_Channel_Reports_Almost_No_Wait()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, _) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time, _) = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         TimeSpan? held = null;
         channel.FrameTransmittedWithReport += (_, _, report) => held = report.HeldFor;
 
         Task sent = channel.EnqueueTransmit(2, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
-        await sent.WaitAsync(TimeSpan.FromSeconds(15));
+        Task transmitter = Start(channel, cancellation.Token);
+        await time.RunUntilAsync(sent);
 
         held.Should().NotBeNull();
         held!.Value.Should().BeLessThan(TimeSpan.FromMilliseconds(500),
@@ -101,28 +88,26 @@ public class HeldForTests
     [Fact]
     public async Task A_Busy_Channel_Reports_The_Whole_Wait()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, Switch busy) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time, Switch busy) = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         TimeSpan? held = null;
         channel.FrameTransmittedWithReport += (_, _, report) => held = report.HeldFor;
 
         busy.Busy = true;
+        DateTimeOffset queued = time.GetUtcNow();
         Task sent = channel.EnqueueTransmit(2, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, cancellation.Token);
 
-        // Hold the channel for a good while on the fake clock, then let go.
-        DateTimeOffset releaseAfter = time.GetUtcNow() + TimeSpan.FromSeconds(20);
-        while (time.GetUtcNow() < releaseAfter)
-        {
-            sent.IsCompleted.Should().BeFalse("carrier sense says the channel is occupied");
-            await Task.Delay(5, CancellationToken.None);
-        }
+        // Hold the channel for a good while on the clock, then let go.
+        await time.AdvanceToAsync(queued + TimeSpan.FromSeconds(20));
+        sent.IsCompleted.Should().BeFalse("carrier sense says the channel is occupied");
+        TimeSpan shut = time.GetUtcNow() - queued;
 
         busy.Busy = false;
-        await sent.WaitAsync(TimeSpan.FromSeconds(30));
+        await time.RunUntilAsync(sent);
 
         held.Should().NotBeNull();
-        held!.Value.Should().BeGreaterThan(TimeSpan.FromSeconds(15),
+        held!.Value.Should().BeCloseTo(shut, VirtualAir.Tolerance,
             "the frame sat behind carrier sense for twenty seconds of the channel's own clock, "
             + "and that is the number nothing in the station used to write down");
 
@@ -133,15 +118,15 @@ public class HeldForTests
     [Fact]
     public async Task A_Frame_The_Modem_Refuses_Reports_Nothing()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, _) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time, _) = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var reports = new List<TimeSpan>();
         channel.FrameTransmittedWithReport += (_, _, report) => reports.Add(report.HeldFor);
 
         // Oversize for the mode: the modulator refuses it, so it never reaches the air.
         Task refused = channel.EnqueueTransmit(2, [.. Broadcast(), .. new byte[8192]]);
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
-        await Ignore(refused);
+        Task transmitter = Start(channel, cancellation.Token);
+        await Ignore(time.RunUntilAsync(refused));
 
         reports.Should().BeEmpty(
             "a frame that was never transmitted did not wait for the channel in any sense an "
