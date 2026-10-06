@@ -555,7 +555,11 @@ public sealed class Ms110dDemodulator
     public Ms110dRxState State => _state;
 
     /// <summary>Autobaud result while locked, else null.</summary>
-    public Ms110dLockInfo? Lock => _lock;
+    /// <remarks>Read with <c>Volatile.Read</c>, so a thread other than the one
+    /// calling <see cref="Process"/> (a status page, <see cref="Ms110dModem.LockedWaveformNumber"/>)
+    /// sees the latest lock the receiver published rather than a stale cached one. The lock is an
+    /// immutable record, replaced whole, so what it sees is always one consistent lock.</remarks>
+    public Ms110dLockInfo? Lock => Volatile.Read(ref _lock);
 
     /// <summary>True from preamble detection until the burst ends.</summary>
     public bool CarrierDetect => _state != Ms110dRxState.Searching;

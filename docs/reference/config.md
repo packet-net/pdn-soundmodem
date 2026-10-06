@@ -307,6 +307,18 @@ A station with no serial link to its radio, or one that is not a Tait, reads car
 - The test is unavailable, with the reason in the journal, when `enabled` is false, when the station receives only, or when there is no `ptt`. The control is never on a public page. On a monitor `--two-tone` and `--tone` are refused with exit 2.
 - While a [transmit lease](ports-and-endpoints.md#the-transmit-lease) is held, a test runs only when `POST /api/txtest` names the holder's `subChannel`; the page's button is refused until the lease ends.
 
+### The channel probe
+
+A test asked for through `POST /api/txtest` can follow its tone with a channel-sounding probe: `"probe": {"kind": "zc255", "gapSeconds": 1.5, "audioHz": 1800}`. The tone, the silent gap and the probe go out in one keyup, so the cap, Stop, the channel wait, the lease and the Morse ident treat them as one transmission. pdn-mailcast's head end sends it after the calibration tone in every slot.
+
+- `zc255` is the only kind, with the id `zc255-2400-rrc015-v1`: a Zadoff-Chu sequence of length 255 (root 1) at 2400 chips/s with root-raised-cosine roll-off 0.15, 61 periods of 106.25 ms with 10 ms ramps, 6.5 s in all. At an 1800 Hz centre it occupies 420 to 3180 Hz. Its envelope peaks at `amplitude`, as the tone does, and its average power sits about 3 dB below the tone's.
+- `gapSeconds` defaults to 1.5 and `audioHz` to 1800. The whole band must fit the channel, so `audioHz` must be more than 1380 Hz from 0 Hz and from the channel's Nyquist frequency.
+- These are refused with 400 and nothing is sent: an unknown or missing `kind`, a negative `gapSeconds`, an `audioHz` that puts the band outside the channel, and any other field inside `probe` (a misspelt `gapSecs` would otherwise quietly mean the default).
+- The tone, gap and probe together must fit within `maxSeconds`. A test that would not is refused (409), never cut short. Mailcast's slot (a 10 s tone, the 1.5 s gap and the 6.5 s probe) needs `maxSeconds` of at least 18; the default 30 is enough.
+- The reply's `probe` is the id of the probe when all of it went out, or null, and `probeComplete` is true when it did, false when a stop cut it short or kept it off the air, and null when no probe was asked for. A station too old to know the field leaves both keys out, so a head end can tell it sent the tone alone.
+- `{"stop": true}` always wins: whatever else the body carries, it stops the test and is answered 200.
+- The renderer, `Packet.SoundModem.Audio.ProbeSignal`, is public in the library, with every parameter in its `ProbeDescriptor`, so a receiver can build the identical reference.
+
 ## `alsa`
 
 ```json

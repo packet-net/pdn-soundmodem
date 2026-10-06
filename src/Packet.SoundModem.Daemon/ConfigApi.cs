@@ -193,8 +193,10 @@ internal sealed class ConfigApi
         {
             await RespondAsync(context, 405,
                 "POST to transmit: {\"twoTone\": true, \"seconds\": 5} for the two-tone test, "
-                + "{\"twoTone\": false, \"toneHz\": 999, \"seconds\": 5} for a single tone, "
-                + "{\"stop\": true} to end one early").ConfigureAwait(false);
+                + "{\"twoTone\": false, \"toneHz\": 999, \"seconds\": 5} for a single tone, either "
+                + "optionally with \"probe\": {\"kind\": \"zc255\", \"gapSeconds\": 1.5, \"audioHz\": 1800} "
+                + "to follow it with a channel-sounding probe, {\"stop\": true} to end one early")
+                .ConfigureAwait(false);
             return;
         }
 
@@ -216,26 +218,58 @@ internal sealed class ConfigApi
             return;
         }
 
+        // A stop wins, read first and on its own, whatever else is in the body: the button that
+        // ends a transmission must never be refused because some other field was wrong.
         bool stop;
+        try
+        {
+            stop = asked?["stop"]?.GetValue<bool>() == true;
+        }
+        catch (Exception wrongType) when (wrongType is InvalidOperationException or FormatException)
+        {
+            await RespondAsync(context, 400, $"\"stop\" is true or false: {wrongType.Message}")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        if (stop)
+        {
+            _txTest.Stop();
+            await RespondJsonAsync(context, 200, TxTestStopped).ConfigureAwait(false);
+            return;
+        }
+
         bool twoTone;
         double toneHz;
         double seconds;
         int? subChannel;
+        Waterfall.TxTestProbe? probe;
         try
         {
-            stop = asked?["stop"]?.GetValue<bool>() == true;
             twoTone = asked?["twoTone"]?.GetValue<bool>() ?? true;
             toneHz = asked?["toneHz"]?.GetValue<double>() ?? Audio.TestTone.TwoToneLowHz;
             seconds = asked?["seconds"]?.GetValue<double>() ?? 0;
             subChannel = asked?["subChannel"]?.GetValue<int>();
+            probe = ReadProbe(asked?["probe"]);
         }
         catch (Exception wrongType) when (wrongType is InvalidOperationException or FormatException)
         {
             // A field of the wrong kind ("seconds": "5"), which is a caller's mistake and not a
             // reason to drop the connection with no explanation.
             await RespondAsync(context, 400,
-                "\"twoTone\" and \"stop\" are true or false, \"toneHz\" and \"seconds\" are "
-                + $"numbers, \"subChannel\" a whole number: {wrongType.Message}").ConfigureAwait(false);
+                "\"twoTone\" is true or false, \"toneHz\" and \"seconds\" are "
+                + "numbers, \"subChannel\" a whole number, \"probe\" an object with a \"kind\" "
+                + $"string and \"gapSeconds\" and \"audioHz\" numbers: {wrongType.Message}").ConfigureAwait(false);
+            return;
+        }
+
+        // A probe the station cannot make as asked is the caller's mistake and a 400, before
+        // anything is prepared: an unknown kind (a head end newer than this station must hear
+        // "no", never a tone with the probe silently left off), a negative gap, or a centre that
+        // puts the band outside this channel. Only the cap, the station's own limit, is a 409.
+        if (probe is { } wanted && _txTest.ProbeProblem(wanted) is string problem)
+        {
+            await RespondAsync(context, 400, problem).ConfigureAwait(false);
             return;
         }
 
@@ -247,15 +281,8 @@ internal sealed class ConfigApi
             return;
         }
 
-        if (stop)
-        {
-            _txTest.Stop();
-            await RespondJsonAsync(context, 200, TxTestStopped).ConfigureAwait(false);
-            return;
-        }
-
         TxTestOutcome outcome = await _txTest
-            .RunAsync(new Waterfall.TxTestRequest(twoTone, toneHz, seconds) { SubChannel = subChannel })
+            .RunAsync(new Waterfall.TxTestRequest(twoTone, toneHz, seconds) { SubChannel = subChannel, Probe = probe })
             .ConfigureAwait(false);
 
         // Three answers, because a script should be able to tell them apart without reading the
@@ -270,7 +297,50 @@ internal sealed class ConfigApi
             ["sent"] = outcome.Ran ? outcome.Text : null,
             ["refused"] = outcome.Failed ? null : outcome.Refusal,
             ["failed"] = outcome.Failed ? outcome.Refusal : null,
+
+            // The id of the probe that followed the tone, whole, or null; and whether all of the
+            // probe asked for went out (null when none was asked for). A station older than the
+            // probe writes neither key, which is how a head end tells "sent the tone and ignored
+            // the probe" from "sent both".
+            ["probe"] = outcome.Probe,
+            ["probeComplete"] = outcome.ProbeComplete,
         }.ToJsonString(new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reads a request's <c>probe</c> object, or null when there is none. A <c>probe</c> that is
+    /// there but is not an object with a <c>kind</c> string, or that carries a field it does not
+    /// take (a misspelt <c>gapSecs</c> silently meaning the default is the mistake this catches),
+    /// throws, which the caller answers 400.
+    /// </summary>
+    private static Waterfall.TxTestProbe? ReadProbe(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+
+        if (node is not JsonObject probe)
+        {
+            throw new InvalidOperationException("\"probe\" is not an object");
+        }
+
+        foreach (KeyValuePair<string, JsonNode?> field in probe)
+        {
+            if (field.Key is not ("kind" or "gapSeconds" or "audioHz"))
+            {
+                throw new InvalidOperationException(
+                    $"\"probe\" has no field \"{TxTestRunner.Printable(field.Key)}\"; it takes \"kind\", "
+                    + "\"gapSeconds\" and \"audioHz\"");
+            }
+        }
+
+        string kind = probe["kind"]?.GetValue<string>()
+            ?? throw new InvalidOperationException("\"probe\" has no \"kind\"");
+        return new Waterfall.TxTestProbe(
+            kind,
+            probe["gapSeconds"]?.GetValue<double>() ?? Waterfall.TxTestProbe.DefaultGapSeconds,
+            probe["audioHz"]?.GetValue<double>() ?? Waterfall.TxTestProbe.DefaultAudioHz);
     }
 
     /// <summary>What a stop is answered with, and what it does and does not promise.</summary>

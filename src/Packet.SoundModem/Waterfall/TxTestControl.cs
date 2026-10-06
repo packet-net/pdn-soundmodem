@@ -78,6 +78,31 @@ public sealed record TxTestRequest(bool TwoTone, double ToneHz, double Seconds)
     /// holder: see <see cref="Channel.SoundModemChannel.TransmitLease"/>.
     /// </summary>
     public int? SubChannel { get; init; }
+
+    /// <summary>
+    /// A channel-sounding probe to send after the tone, in the same keyup, or null for the tone
+    /// alone. See <see cref="TxTestProbe"/>.
+    /// </summary>
+    public TxTestProbe? Probe { get; init; }
+}
+
+/// <summary>
+/// The channel-sounding probe a test sends after its tone: the tone, a gap of silence, then the
+/// probe, as one transmission.
+/// </summary>
+/// <param name="Kind">Which probe, by <see cref="ProbeDescriptor.Kind"/>: <c>zc255</c> is the only
+/// one so far. A kind the station does not know is refused, never ignored.</param>
+/// <param name="GapSeconds">Silence between the end of the tone and the start of the probe.</param>
+/// <param name="AudioHz">The audio frequency the probe is centred on.</param>
+public sealed record TxTestProbe(string Kind, double GapSeconds = TxTestProbe.DefaultGapSeconds, double AudioHz = TxTestProbe.DefaultAudioHz)
+{
+    /// <summary>The gap when a request does not give one: long enough that a tone measurement's
+    /// last block ends in silence rather than on the probe.</summary>
+    public const double DefaultGapSeconds = 1.5;
+
+    /// <summary>The centre when a request does not give one: the MS110D sub-carrier, which is
+    /// where mailcast's bursts sit.</summary>
+    public const double DefaultAudioHz = 1800;
 }
 
 /// <summary>What became of a test, for every page that is open.</summary>

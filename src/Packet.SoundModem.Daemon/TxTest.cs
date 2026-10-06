@@ -92,9 +92,17 @@ internal sealed class TxTestRunner
     /// it. The callback that renders the burst holds this object, so what it asks is "was THIS
     /// test cancelled", which stays true for ever.
     /// </remarks>
-    private sealed class Run(TestTone tone)
+    private sealed class Run(TestTone tone, double burstSeconds, ProbeBurst? probe)
     {
         internal TestTone Tone { get; } = tone;
+
+        /// <summary>The whole keyup's audio, in seconds, TXDELAY aside: the tone, and the gap and
+        /// probe after it when there is one. Fixed when the run is prepared, so the channel wait
+        /// is measured against it whether or not the render has happened yet.</summary>
+        internal double BurstSeconds { get; } = burstSeconds;
+
+        /// <summary>The probe that follows the tone, or null for the tone alone.</summary>
+        internal ProbeBurst? Probe { get; } = probe;
 
         internal CancellationTokenSource Withdrawal { get; } = new();
 
@@ -230,6 +238,7 @@ internal sealed class TxTestRunner
 
             string? rejection = null;
             int leadSamples = 0;
+            int toneSamples = 0;
             int producedSamples = 0;
             Task send = _options.Channel.EnqueueTransmit(
                 txDelay =>
@@ -255,8 +264,17 @@ internal sealed class TxTestRunner
                     // before the button could do anything about it.
                     float[] burst = run.Tone.Render();
                     leadSamples = (int)Math.Round(txDelay / 1000.0 * _options.Channel.SampleRate);
-                    var audio = new float[leadSamples + burst.Length];
+                    toneSamples = burst.Length;
+
+                    // The probe, when asked for, goes in the same array: tone, gap, probe, one
+                    // keyup, so the transmitter never unkeys between them and Stop, the channel
+                    // wait and the lease treat the three as the one transmission they are. Left
+                    // off if a stop landed while the tone was being rendered.
+                    ProbeBurst? probe = run.Cancelled ? null : run.Probe;
+                    int probeAt = leadSamples + burst.Length + (probe?.GapSamples ?? 0);
+                    var audio = new float[probeAt + (probe?.Audio.Length ?? 0)];
                     burst.CopyTo(audio, leadSamples);
+                    probe?.Audio.CopyTo(audio, probeAt);
                     return audio;
                 },
                 rejected: refusal => rejection = refusal.Message,
@@ -276,9 +294,15 @@ internal sealed class TxTestRunner
             // burst itself; this is the other half - the transmitter's own wait for a clear
             // channel has no timeout, so a channel busy for minutes would otherwise leave the
             // page saying "running" for ever.
+            //
+            // The keyup's own TXDELAY lead and tail count too: they are airtime the burst spends
+            // after the channel clears, and leaving them out would let a channel that clears just
+            // inside the wait have the end of its burst withdrawn and be told nothing went out.
+            CsmaParameters csma = _options.Channel.Csma;
+            TimeSpan keying = TimeSpan.FromMilliseconds(
+                Math.Max(0, csma.TxDelayMilliseconds) + Math.Max(0, csma.TxTailMilliseconds));
             Task waited = Task.Delay(
-                TimeSpan.FromSeconds(run.Tone.Remaining / (double)_options.Channel.SampleRate)
-                    + _options.ChannelWait,
+                TimeSpan.FromSeconds(run.BurstSeconds) + keying + _options.ChannelWait,
                 _options.Time);
             if (await Task.WhenAny(send, waited).ConfigureAwait(false) == waited)
             {
@@ -351,7 +375,18 @@ internal sealed class TxTestRunner
             _options.Recorded?.Invoke(new TxTestRecord(
                 request.SubChannel ?? _options.SubChannel, $"tx test: {text} - {done}", audioHz));
 
-            return new TxTestOutcome(true, text, null);
+            // The probe's id goes back only when all of it reached the air: the head end reads it
+            // as "this station sent the probe", a measurement it can use, and a probe a stop cut
+            // part way is not one. ProbeComplete says which, so a cut probe reads as false rather
+            // than as a station that never knew the field (which leaves both keys out).
+            bool? probeComplete = run.Probe is { } sentProbe
+                ? producedSamples >= leadSamples + toneSamples + sentProbe.GapSamples + sentProbe.Audio.Length
+                : null;
+            return new TxTestOutcome(true, text, null)
+            {
+                Probe = probeComplete == true ? run.Probe!.Descriptor.Id : null,
+                ProbeComplete = probeComplete,
+            };
         }
         catch (Exception unexpected)
         {
@@ -399,6 +434,7 @@ internal sealed class TxTestRunner
         double seconds = double.IsFinite(request.Seconds) && request.Seconds > 0
             ? request.Seconds
             : _options.DefaultSeconds;
+        double requested = seconds;
         bool capped = seconds > cap;
         seconds = Math.Min(seconds, cap);
 
@@ -431,11 +467,34 @@ internal sealed class TxTestRunner
                 + $"{TestTone.BesselNullDeviationHz(hz) / 1000:F1} kHz deviation)";
         }
 
+        ProbeBurst? probe = null;
+        string probeText = "";
+        if (request.Probe is { } asked)
+        {
+            // Against the length asked for, not the capped one: a tone with a probe is refused
+            // rather than cut, so the cap is applied to what the head end actually wanted.
+            if (PrepareProbe(asked, requested, cap, out refusal) is not { } ready)
+            {
+                return null;
+            }
+
+            probe = ready;
+            probeText = $", then after {Seconds(asked.GapSeconds)} s the {ready.Descriptor.Id} probe at "
+                + $"{asked.AudioHz.ToString("0", CultureInfo.InvariantCulture)} Hz, "
+                + $"{Seconds(ready.Descriptor.DurationSeconds)} s";
+        }
+
+        double burstSeconds = seconds + (probe is { } extra
+            ? (extra.GapSamples + extra.Audio.Length) / (double)_options.Channel.SampleRate
+            : 0);
         var run = new Run(
-            new TestTone(tones, _options.Amplitude, _options.Channel.SampleRate, seconds));
+            new TestTone(tones, _options.Amplitude, _options.Channel.SampleRate, seconds),
+            burstSeconds,
+            probe);
         string text =
-            $"{what}, {seconds.ToString("0.0", CultureInfo.InvariantCulture)} s"
-            + (capped ? $" (capped from {request.Seconds.ToString("0.0", CultureInfo.InvariantCulture)} s)" : "")
+            $"{what}, {Seconds(seconds)} s"
+            + (capped ? $" (capped from {Seconds(request.Seconds)} s)" : "")
+            + probeText
             + $", peak level {_options.Amplitude.ToString("0.00", CultureInfo.InvariantCulture)}";
 
         lock (_gate)
@@ -451,6 +510,85 @@ internal sealed class TxTestRunner
         }
 
         return (run, text, audioHz);
+    }
+
+    /// <summary>
+    /// Reads a probe request into the audio that follows the tone, or returns null with the
+    /// reason. Everything about it is refused rather than adjusted: an unknown kind (a newer head
+    /// end asking for a probe this station cannot make), a gap that is not a length, a centre
+    /// that puts the band outside the channel, and a keyup that would run past the cap.
+    /// </summary>
+    /// <remarks>
+    /// The cap is the same <c>txTest.maxSeconds</c> a tone alone is held to, applied to the whole
+    /// keyup. A tone alone is cut to it; a tone with a probe is refused instead, because cutting
+    /// either part would hand the head end a measurement it did not ask for.
+    /// </remarks>
+    private ProbeBurst? PrepareProbe(TxTestProbe asked, double toneSeconds, double cap, out string? refusal)
+    {
+        refusal = ProbeProblem(asked);
+        if (refusal is not null || ProbeSignal.ForKind(asked.Kind) is not { } descriptor)
+        {
+            return null;
+        }
+
+        int rate = _options.Channel.SampleRate;
+
+        double total = toneSeconds + asked.GapSeconds + descriptor.DurationSeconds;
+        if (total > cap)
+        {
+            refusal =
+                $"the tone ({Seconds(toneSeconds)} s), gap ({Seconds(asked.GapSeconds)} s) and "
+                + $"{descriptor.Id} probe ({Seconds(descriptor.DurationSeconds)} s) come to {Seconds(total)} s, "
+                + $"over this station's {Seconds(cap)} s limit (txTest.maxSeconds), so nothing was transmitted";
+            return null;
+        }
+
+        // Rendered here, before anything is queued, so the keyup never waits on it: on a small
+        // processor a 6.5 s probe at 48 kHz is a noticeable fraction of a second.
+        float[] audio = ProbeSignal.Render(descriptor, asked.AudioHz, _options.Amplitude, rate);
+        return new ProbeBurst(descriptor, (int)Math.Round(asked.GapSeconds * rate), audio);
+    }
+
+    /// <summary>
+    /// What is wrong with a probe request in itself, or null when nothing is: an unknown kind, a
+    /// gap that is not a length, or a centre that puts the band outside this channel. These are
+    /// the caller's mistakes, which <c>/api/txtest</c> answers 400 before anything is prepared;
+    /// the cap is the station's limit, not a mistake, and is checked when the test is.
+    /// </summary>
+    internal string? ProbeProblem(TxTestProbe asked)
+    {
+        ArgumentNullException.ThrowIfNull(asked);
+        if (ProbeSignal.ForKind(asked.Kind) is not { } descriptor)
+        {
+            return $"unknown probe kind \"{Printable(asked.Kind)}\"; this station sends "
+                + string.Join(", ", ProbeSignal.Known.Select(k => $"\"{k.Kind}\" ({k.Id})"));
+        }
+
+        if (!double.IsFinite(asked.GapSeconds) || asked.GapSeconds < 0)
+        {
+            return "a probe's gapSeconds must be zero or more";
+        }
+
+        return ProbeSignal.BandProblem(descriptor, asked.AudioHz, _options.Channel.SampleRate);
+    }
+
+    private static string Seconds(double seconds) => seconds.ToString("0.0", CultureInfo.InvariantCulture);
+
+    /// <summary>A caller's string, made safe for a journal line: printable ASCII, and short.</summary>
+    internal static string Printable(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return "";
+        }
+
+        var printable = new StringBuilder(Math.Min(text.Length, 32));
+        foreach (char c in text.AsSpan(0, Math.Min(text.Length, 32)))
+        {
+            printable.Append(c is >= ' ' and <= '~' and not '"' ? c : '?');
+        }
+
+        return printable.ToString();
     }
 
     private TxTestOutcome Refuse(string why)
@@ -584,4 +722,15 @@ internal sealed record TxTestRecord(int SubChannel, string Text, double AudioHz)
 /// True when it did not run because something threw rather than because the station said no. The
 /// distinction is the caller's to act on: a refusal is an answer, a failure is a fault.
 /// </param>
-internal sealed record TxTestOutcome(bool Ran, string Text, string? Refusal, bool Failed = false);
+internal sealed record TxTestOutcome(bool Ran, string Text, string? Refusal, bool Failed = false)
+{
+    /// <summary>The id of the probe that went out after the tone, whole, or null when none did.</summary>
+    public string? Probe { get; init; }
+
+    /// <summary>Whether all of the probe asked for went out: true when it did, false when a stop
+    /// cut it short or kept it off the air, null when no probe was asked for.</summary>
+    public bool? ProbeComplete { get; init; }
+}
+
+/// <summary>A probe ready to follow the tone: which one, the silence before it, and its audio.</summary>
+internal sealed record ProbeBurst(ProbeDescriptor Descriptor, int GapSamples, float[] Audio);

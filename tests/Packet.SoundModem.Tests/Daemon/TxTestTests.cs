@@ -1,3 +1,6 @@
+using System.Net;
+using System.Text;
+using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Audio;
@@ -854,5 +857,339 @@ public class TxTestTests
         });
 
         rig.Runner.Control.Refusal.Should().Contain("no \"ptt\" is configured");
+    }
+    // ---------------------------------------------------------------- the probe
+
+    private static readonly TxTestProbe Zc255 = new("zc255", GapSeconds: 0.5);
+
+    /// <summary>A rig whose channel wait is on a clock nobody advances, so a test of the probe can
+    /// only end by the burst finishing, never by a wall-clock timeout.</summary>
+    private static Rig ProbeRig(double maxSeconds = 30) =>
+        new(o => o with { MaxSeconds = maxSeconds, Time = new FakeTimeProvider() });
+
+    [Fact]
+    public async Task A_Probe_Follows_The_Tone_After_The_Gap_In_The_Same_Keyup()
+    {
+        await using var rig = ProbeRig();
+
+        TxTestOutcome outcome = await rig.Runner.RunAsync(
+            new TxTestRequest(false, 1800, 1) { SubChannel = 0, Probe = Zc255 });
+
+        outcome.Ran.Should().BeTrue(outcome.Refusal);
+        outcome.Probe.Should().Be("zc255-2400-rrc015-v1");
+        outcome.ProbeComplete.Should().BeTrue();
+        await rig.SettledAsync();
+        rig.Keying.Should().Equal(["key", "unkey"], "tone, gap and probe are one keyup");
+
+        // TXDELAY of silence, the tone, the gap, then the probe sample for sample as the public
+        // renderer makes it - which is what lets a receiver build the identical reference.
+        float[] audio = rig.Output.Snapshot();
+        float[] probe = ProbeSignal.Render(ProbeSignal.Zc255, 1800, 0.8, Rate);
+        int lead = Rate * 20 / 1000, tone = Rate, gap = Rate / 2;
+        audio.Length.Should().Be(lead + tone + gap + probe.Length);
+        audio.AsSpan(lead + tone, gap).ToArray().Should().OnlyContain(s => s == 0f, "the gap is silence");
+        audio.AsSpan(lead + tone + gap).ToArray().Should().Equal(probe);
+        Amplitude(audio.AsSpan(0, lead + tone).ToArray(), 1800).Should().BeApproximately(0.8, 0.02);
+
+        rig.Lines.Should().Contain(line => line.Contains("then after 0.5 s the zc255-2400-rrc015-v1 probe at 1800 Hz, 6.5 s"));
+        rig.Records.Should().ContainSingle("one transmission, so one record and one ident arming")
+            .Which.Text.Should().Contain("zc255-2400-rrc015-v1");
+    }
+
+    [Fact]
+    public async Task A_Probe_Follows_The_Stations_Level_As_The_Tone_Does()
+    {
+        await using var rig = new Rig(o => o with { Amplitude = 0.5, Time = new FakeTimeProvider() });
+
+        await rig.Runner.RunAsync(new TxTestRequest(false, 1800, 1) { Probe = Zc255 });
+
+        float[] audio = rig.Output.Snapshot();
+        audio.AsSpan(audio.Length - ProbeSignal.Zc255.SampleCount(Rate)).ToArray()
+            .Should().Equal(ProbeSignal.Render(ProbeSignal.Zc255, 1800, 0.5, Rate));
+    }
+
+    [Fact]
+    public async Task A_Tone_And_Probe_Longer_Than_The_Cap_Are_Refused_Rather_Than_Cut()
+    {
+        // The mailcast slot's own numbers, 10 + 1.5 + 6.5 s, against a station capped at 15 s.
+        await using var rig = ProbeRig(maxSeconds: 15);
+
+        TxTestOutcome outcome = await rig.Runner.RunAsync(
+            new TxTestRequest(false, 1800, 10) { Probe = new TxTestProbe("zc255") });
+
+        outcome.Ran.Should().BeFalse();
+        outcome.Probe.Should().BeNull();
+        outcome.Refusal.Should().Be(
+            "the tone (10.0 s), gap (1.5 s) and zc255-2400-rrc015-v1 probe (6.5 s) come to 18.0 s, over this "
+            + "station's 15.0 s limit (txTest.maxSeconds), so nothing was transmitted");
+        rig.Output.Snapshot().Should().BeEmpty();
+        rig.Records.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task A_Tone_And_Probe_Inside_The_Cap_Go_Out()
+    {
+        await using var rig = ProbeRig(maxSeconds: 30);
+
+        TxTestOutcome outcome = await rig.Runner.RunAsync(
+            new TxTestRequest(false, 1800, 10) { Probe = new TxTestProbe("zc255") });
+
+        outcome.Ran.Should().BeTrue(outcome.Refusal);
+        outcome.Probe.Should().Be(ProbeSignal.Zc255.Id);
+        rig.Output.Snapshot().Length.Should().Be(
+            (Rate * 20 / 1000) + (10 * Rate) + (int)(1.5 * Rate) + ProbeSignal.Zc255.SampleCount(Rate));
+    }
+
+    [Theory]
+    [InlineData("zc511", 1.5, 1800, "unknown probe kind \"zc511\"; this station sends \"zc255\" (zc255-2400-rrc015-v1)")]
+    [InlineData("ZC255", 1.5, 1800, "unknown probe kind \"ZC255\"")]
+    [InlineData("zc255", -1, 1800, "gapSeconds must be zero or more")]
+    [InlineData("zc255", 1.5, 1000, "its centre must be between 1380 Hz and 4620 Hz on this 12000 Hz channel")]
+    public async Task A_Probe_The_Station_Cannot_Make_As_Asked_Is_Refused_Not_Ignored(
+        string kind, double gap, double audioHz, string why)
+    {
+        await using var rig = ProbeRig();
+
+        TxTestOutcome outcome = await rig.Runner.RunAsync(
+            new TxTestRequest(false, 1800, 1) { Probe = new TxTestProbe(kind, gap, audioHz) });
+
+        outcome.Ran.Should().BeFalse("a tone with the probe silently left off is the one answer that must not happen");
+        outcome.Refusal.Should().Contain(why);
+        rig.Output.Snapshot().Should().BeEmpty("nothing keyed");
+    }
+
+    [Fact]
+    public async Task A_Stop_During_The_Tone_Keeps_The_Probe_Off_The_Air_And_Out_Of_The_Reply()
+    {
+        var channel = new SoundModemChannel(Rate, randomSeed: 5);
+        channel.Csma.Persistence = 255;
+        channel.Csma.TxDelayMilliseconds = 20;
+        channel.Csma.TxTailMilliseconds = 0;
+        var runner = new TxTestRunner(new TxTestOptions
+        {
+            Channel = channel,
+            Journal = new StationJournal("", _ => { }, _ => { }),
+            Time = new FakeTimeProvider(),
+        });
+
+        var ptt = new RecordingPtt();
+        var output = new StoppingAfterOutput(Rate, stopAfterWrites: 3, runner.Stop);
+        using var stopTransmitter = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        Task transmitter = channel.RunTransmitterAsync(output, ptt, stopTransmitter.Token);
+
+        TxTestOutcome outcome = await runner.RunAsync(new TxTestRequest(false, 1800, 5) { Probe = Zc255 });
+
+        outcome.Ran.Should().BeTrue("some of the tone went out");
+        outcome.Probe.Should().BeNull("none of the probe did");
+        outcome.ProbeComplete.Should().BeFalse("a probe was asked for and did not go out whole");
+        output.Snapshot().Length.Should().BeLessThan(Rate, "the stop cut the keyup within about one block");
+
+        await stopTransmitter.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        ptt.Events.Should().Equal(["key", "unkey"]);
+    }
+
+    [Fact]
+    public async Task A_Stop_Part_Way_Through_The_Probe_Is_Not_Reported_As_A_Probe_Sent()
+    {
+        // The probe is a measurement, and a cut one is not one: the id goes back only for a whole
+        // probe, and ProbeComplete says false rather than leaving a head end to guess.
+        var channel = new SoundModemChannel(Rate, randomSeed: 5);
+        channel.Csma.Persistence = 255;
+        channel.Csma.TxDelayMilliseconds = 20;
+        channel.Csma.TxTailMilliseconds = 0;
+        var runner = new TxTestRunner(new TxTestOptions
+        {
+            Channel = channel,
+            Journal = new StationJournal("", _ => { }, _ => { }),
+            Time = new FakeTimeProvider(),
+        });
+
+        // 20 ms lead, 0.2 s tone and a 0.1 s gap put the probe's first sample at 3840, inside
+        // the eighth 40 ms write; the stop lands after the twelfth, well inside the probe.
+        var output = new StoppingAfterOutput(Rate, stopAfterWrites: 12, runner.Stop);
+        using var stopTransmitter = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        Task transmitter = channel.RunTransmitterAsync(output, new RecordingPtt(), stopTransmitter.Token);
+
+        TxTestOutcome outcome = await runner.RunAsync(
+            new TxTestRequest(false, 1800, 0.2) { Probe = new TxTestProbe("zc255", 0.1) });
+
+        int probeAt = (Rate * 20 / 1000) + (Rate / 5) + (Rate / 10);
+        output.Snapshot().Length.Should().BeGreaterThan(probeAt, "some of the probe went out");
+        output.Snapshot().Length.Should().BeLessThan(probeAt + Rate, "and the stop cut it within about a block");
+        outcome.Ran.Should().BeTrue();
+        outcome.Probe.Should().BeNull("the probe did not go out whole");
+        outcome.ProbeComplete.Should().BeFalse();
+
+        await stopTransmitter.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    [Fact]
+    public async Task The_Channel_Wait_Allows_For_The_Keyups_Own_Txdelay()
+    {
+        // A channel that clears inside the wait gets its whole keyup, TXDELAY included. With a
+        // 500 ms TXDELAY, a 1 s burst and a 20 s wait the deadline is 21.5 s, not 21 s: at 21.25 s
+        // the test is still waiting, so when the channel clears it goes out rather than being
+        // withdrawn and reported as nothing transmitted.
+        var clock = new FakeTimeProvider();
+        await using var rig = new Rig(o => o with { Time = clock, ChannelWait = TimeSpan.FromSeconds(20) });
+        rig.Channel.Csma.TxDelayMilliseconds = 500;
+        rig.Band.ChannelBusy = true;
+
+        Task<TxTestOutcome> running = rig.Runner.RunAsync(new TxTestRequest(false, 1800, 1));
+        while (rig.Reports.Count == 0)
+        {
+            await Task.Delay(10);
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(21.25));
+        rig.Band.ChannelBusy = false;
+
+        TxTestOutcome outcome = await running.WaitAsync(TimeSpan.FromSeconds(20));
+        outcome.Ran.Should().BeTrue(outcome.Refusal);
+    }
+
+    /// <summary>Posts each body to <c>/api/txtest</c> in turn and returns what came back.</summary>
+    private static async Task<List<(HttpStatusCode Status, string Body)>> PostAllAsync(
+        TxTestRunner runner, IReadOnlyList<string> bodies)
+    {
+        const string key = "test-key-not-a-secret";
+        var api = new ConfigApi(
+            key, "/nonexistent/soundmodem.json", "/nonexistent/pending.json",
+            runningJson: () => "{}", ephemeralInForce: false, requestRestart: () => { });
+        api.ServeTxTest(runner);
+
+        int port = FreePorts.Next();
+        using var listener = new HttpListener();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        Task serving = Task.Run(async () =>
+        {
+            for (int i = 0; i < bodies.Count; i++)
+            {
+                HttpListenerContext context = await listener.GetContextAsync();
+                await api.HandleAsync(context, context.Request.Url!.AbsolutePath);
+            }
+        });
+
+        using var client = new HttpClient();
+        client.DefaultRequestHeaders.Add("X-API-Key", key);
+        var url = new Uri($"http://127.0.0.1:{port}/api/txtest", UriKind.Absolute);
+        var answers = new List<(HttpStatusCode Status, string Body)>();
+        foreach (string body in bodies)
+        {
+            HttpResponseMessage response = await client.PostAsync(
+                url, new StringContent(body, Encoding.UTF8, "application/json"));
+            answers.Add((response.StatusCode, await response.Content.ReadAsStringAsync()));
+        }
+
+        await serving.WaitAsync(TimeSpan.FromSeconds(30));
+        listener.Close();
+        return answers;
+    }
+
+    [Fact]
+    public async Task The_Api_Accepts_A_Probe_Refuses_What_It_Cannot_Send_And_Names_What_Went_Out()
+    {
+        await using var rig = ProbeRig(maxSeconds: 15);
+
+        List<(HttpStatusCode Status, string Body)> answers = await PostAllAsync(rig.Runner,
+        [
+            """{"twoTone": false, "toneHz": 1800, "seconds": 1, "probe": {"kind": "zc255", "gapSeconds": 0.5, "audioHz": 1800}}""",
+            """{"twoTone": false, "toneHz": 1800, "seconds": 1}""",
+            """{"twoTone": false, "toneHz": 1800, "seconds": 10, "probe": {"kind": "zc255"}}""",
+            """{"twoTone": false, "toneHz": 1800, "seconds": 1, "probe": {"kind": "chirp"}}""",
+            """{"twoTone": false, "toneHz": 1800, "seconds": 1, "probe": {"gapSeconds": 1}}""",
+            """{"twoTone": false, "toneHz": 1800, "seconds": 1, "probe": "zc255"}""",
+            """{"twoTone": false, "toneHz": 1800, "seconds": 1, "probe": {"kind": "zc255", "gapSeconds": -1}}""",
+            """{"twoTone": false, "toneHz": 1800, "seconds": 1, "probe": {"kind": "zc255", "audioHz": 5000}}""",
+            """{"twoTone": false, "toneHz": 1800, "seconds": 1, "probe": {"kind": "zc255", "gapSecs": 3}}""",
+        ]);
+
+        // Accepted: the tone and the probe went out whole, and the reply names the probe.
+        answers[0].Status.Should().Be(HttpStatusCode.OK, answers[0].Body);
+        JsonNode sent = JsonNode.Parse(answers[0].Body)!;
+        sent["transmitted"]!.GetValue<bool>().Should().BeTrue();
+        sent["probe"]!.GetValue<string>().Should().Be("zc255-2400-rrc015-v1");
+        sent["probeComplete"]!.GetValue<bool>().Should().BeTrue();
+        sent["sent"]!.GetValue<string>().Should().Contain("zc255-2400-rrc015-v1 probe at 1800 Hz");
+        sent["refused"].Should().BeNull();
+        sent["failed"].Should().BeNull();
+
+        // A tone alone: both keys are there, and null, so "no probe" is said rather than implied.
+        answers[1].Status.Should().Be(HttpStatusCode.OK, answers[1].Body);
+        JsonObject toneOnly = JsonNode.Parse(answers[1].Body)!.AsObject();
+        toneOnly.ContainsKey("probe").Should().BeTrue();
+        toneOnly["probe"].Should().BeNull();
+        toneOnly.ContainsKey("probeComplete").Should().BeTrue();
+        toneOnly["probeComplete"].Should().BeNull();
+
+        // Over the cap: the station's own limit, so 409, with the sums in the sentence.
+        answers[2].Status.Should().Be(HttpStatusCode.Conflict, answers[2].Body);
+        JsonNode over = JsonNode.Parse(answers[2].Body)!;
+        over["transmitted"]!.GetValue<bool>().Should().BeFalse();
+        over["refused"]!.GetValue<string>().Should().Contain("come to 18.0 s, over this station's 15.0 s limit");
+        over["probe"].Should().BeNull();
+
+        // The caller's mistakes, all 400 and never a tone with the probe dropped: an unknown kind,
+        // no kind, a probe that is not an object, a negative gap, a centre outside the channel,
+        // and a field the probe does not take.
+        answers[3].Status.Should().Be(HttpStatusCode.BadRequest);
+        answers[3].Body.Should().Contain("unknown probe kind \"chirp\"").And.Contain("\"zc255\" (zc255-2400-rrc015-v1)");
+        answers[4].Status.Should().Be(HttpStatusCode.BadRequest);
+        answers[4].Body.Should().Contain("\"probe\" has no \"kind\"");
+        answers[5].Status.Should().Be(HttpStatusCode.BadRequest);
+        answers[5].Body.Should().Contain("\"probe\" is not an object");
+        answers[6].Status.Should().Be(HttpStatusCode.BadRequest);
+        answers[6].Body.Should().Contain("gapSeconds must be zero or more");
+        answers[7].Status.Should().Be(HttpStatusCode.BadRequest);
+        answers[7].Body.Should().Contain("between 1380 Hz and 4620 Hz on this 12000 Hz channel");
+        answers[8].Status.Should().Be(HttpStatusCode.BadRequest);
+        answers[8].Body.Should().Contain("\"probe\" has no field \"gapSecs\"; it takes \"kind\", \"gapSeconds\" and \"audioHz\"");
+
+        // Two keyups went out (the probe test and the tone alone) and nothing else did.
+        rig.Records.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task A_Stop_Wins_Whatever_Else_The_Body_Carries()
+    {
+        // The button that ends a transmission must never be refused because some other field was
+        // wrong. A test waits on a busy channel; a stop that also carries a bad probe, a
+        // wrong-typed field and a sub-channel with no modem still withdraws it.
+        await using var rig = ProbeRig();
+        rig.Band.ChannelBusy = true;
+        Task<TxTestOutcome> running = rig.Runner.RunAsync(new TxTestRequest(false, 1800, 1));
+        while (rig.Reports.Count == 0)
+        {
+            await Task.Delay(10);
+        }
+
+        List<(HttpStatusCode Status, string Body)> answers = await PostAllAsync(rig.Runner,
+        [
+            """{"stop": true, "probe": {"kind": "x", "nonsense": 1}, "seconds": "five", "subChannel": 7}""",
+        ]);
+
+        answers[0].Status.Should().Be(HttpStatusCode.OK, answers[0].Body);
+        answers[0].Body.Should().Contain("\"stopped\": true");
+        TxTestOutcome outcome = await running.WaitAsync(TimeSpan.FromSeconds(20));
+        outcome.Ran.Should().BeFalse();
+        outcome.Refusal.Should().Contain("nothing was transmitted");
+        rig.Band.ChannelBusy = false;
+        rig.Keying.Should().BeEmpty("the stopped test never keyed the radio");
     }
 }

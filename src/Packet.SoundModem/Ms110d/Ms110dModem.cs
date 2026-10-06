@@ -142,6 +142,19 @@ public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingMo
     public string Mode => $"ms110d-wn{Volatile.Read(ref _tx).Mode.Wn}";
 
     /// <summary>
+    /// The waveform number the receiver has locked to, read from the preamble of the burst it is
+    /// decoding now, or null while it is searching or still reading that preamble.
+    /// </summary>
+    /// <remarks>
+    /// This is the receive side's autobaud result, and it is not <see cref="Mode"/>, which names
+    /// the transmit waveform (as each frame's <see cref="FrameQuality.Mode"/> does). A receiver
+    /// that wants the speed it is hearing reads this. It is updated on the thread calling
+    /// <see cref="Process"/> and read through a volatile read, so another thread sees the latest
+    /// lock, at most one block behind.
+    /// </remarks>
+    public int? LockedWaveformNumber => _rx.Lock is { WaveformNumber: >= 0 and var wn } ? wn : null;
+
+    /// <summary>
     /// Switches the TRANSMIT waveform at runtime - the typed API the KISS SETHW path calls
     /// after parsing its bytes, and the one an in-process host (the pdn node's
     /// <c>kind: soundmodem</c> transport) should call directly. Applies from the next burst;

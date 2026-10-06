@@ -33,6 +33,28 @@ public class Ms110dModemTests
     }
 
     [Fact]
+    public void The_Locked_Waveform_Is_The_One_Heard_Not_The_One_Sent()
+    {
+        // A WN 2 burst heard by a modem that transmits WN 6: Mode says what it sends, and
+        // LockedWaveformNumber says what it is hearing, for as long as it hears it.
+        const int rate = 48000;
+        var sender = new Ms110dModem(rate, _ => { }, new Ms110dTxSettings { WaveformNumber = 2 });
+        int? heardAs = null;
+        Ms110dModem? listener = null;
+        listener = new Ms110dModem(
+            rate, _ => heardAs = listener!.LockedWaveformNumber, new Ms110dTxSettings { WaveformNumber = 6 });
+
+        listener.LockedWaveformNumber.Should().BeNull("nothing has been heard yet");
+        listener.Process(new float[rate / 10]);
+        listener.Process(sender.Modulate(TestFrame(120, 3), txDelayMilliseconds: 50));
+        listener.Process(new float[rate / 2]);
+
+        heardAs.Should().Be(2);
+        listener.Mode.Should().Be("ms110d-wn6");
+        listener.LockedWaveformNumber.Should().BeNull("the burst has ended and the receiver is searching again");
+    }
+
+    [Fact]
     public void FrameDecoded_Reports_Il2p_Quality_And_Cfo()
     {
         byte[] frame = TestFrame(60, 3);
