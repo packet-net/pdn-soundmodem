@@ -274,6 +274,18 @@ public sealed class OfdmFmModem : IModem
     /// </summary>
     internal long LastSyncAtSample { get; private set; } = -1;
 
+    /// <summary>
+    /// Headers this receiver has tried to read since construction, sync-committed and follow-on
+    /// alike. A header read is the unit of work a commit costs (several transforms), so this is
+    /// the instrument for the claim that a signal which stays correlated costs a bounded number of
+    /// them rather than one per sample. Counted rather than inferred from allocated bytes, because
+    /// the runtime's per-thread allocation counter is not a pure function of what this thread did:
+    /// under the server collector, with other threads allocating, it moves by up to an allocation
+    /// quantum (about 8 KB) on a thread that allocated nothing at all, and tiered compilation
+    /// changes what a method allocates partway through a run.
+    /// </summary>
+    internal long HeaderReads { get; private set; }
+
     /// <inheritdoc/>
     public void Process(ReadOnlySpan<float> samples)
     {
@@ -579,6 +591,7 @@ public sealed class OfdmFmModem : IModem
             // The header is in: it says what the rest of the burst looks like, and therefore how
             // much more to wait for. A burst that will not fit is abandoned here, before anything
             // is sized from it.
+            HeaderReads++;
             OfdmFmHeader? read = _codec.ReadHeader(_window.AsSpan(0, _windowCount), _burstAt);
             if (read is not OfdmFmHeader header || header.PayloadLength > MaxPayloadBytes)
             {
@@ -681,6 +694,7 @@ public sealed class OfdmFmModem : IModem
         ReadOnlySpan<float> audio = _window.AsSpan(0, _windowCount);
         if (_header is null)
         {
+            HeaderReads++;
             OfdmFmHeader? read = _codec.ReadFollowOnHeader(audio, _burstAt, _keyup!, out int start);
             if (read is not OfdmFmHeader header || header.PayloadLength > MaxPayloadBytes)
             {
