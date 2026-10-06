@@ -981,14 +981,21 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                 ? parsed
                 : 0;
 
-        int before = Interlocked.Exchange(ref _viewers, viewers);
+        // This loop is the only writer of the count while a session is up, so the count read here
+        // is the one being replaced.
+        int before = Volatile.Read(ref _viewers);
         if ((before > 0) == (viewers > 0))
         {
+            Volatile.Write(ref _viewers, viewers);
             return;
         }
 
-        // Whichever way it went, a half-assembled block belongs to the other side of it.
+        // Whichever way it went, a half-assembled block belongs to the other side of it. Moved on
+        // before the count is published, not after: the count is what lets the audio threads in,
+        // and a block they started in the gap between the two would be thrown away half built by
+        // the generation arriving behind it, losing the first samples a new viewer was sent.
         Interlocked.Increment(ref _generation);
+        Volatile.Write(ref _viewers, viewers);
 
         // Said in pairs or not at all. Rate-limiting both halves through one gate let a viewer who
         // arrived and left inside a minute leave "1 watching, sending audio" as the last word on
