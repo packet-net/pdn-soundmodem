@@ -1,6 +1,12 @@
-# Receiving GB7RDG's bulletins
+# Receive GB7RDG's 40 m bulletins into your own BBS
 
-GB7RDG sends its recent packet mail bulletins on 40 m every daylight hour, as [pdn-mailcast](https://github.com/packet-net/pdn-mailcast). pdn-soundmodem can listen for them, rebuild each bulletin and hand it to your own BBS, as if it came from a forwarding partner. At the end of this page your station hears the slots, and the bulletins turn up in your LinBPQ or FBB. Nothing is sent on the air for this: the receiver only listens.
+GB7RDG broadcasts packet BBS bulletins on 40 m every daylight hour. This page sets up your station to receive them and drop them into your own LinBPQ or FBB. You don't connect to GB7RDG, and you transmit nothing: your station only listens.
+
+It is for a station in or near the UK that runs pdn-soundmodem with an HF rig and a LinBPQ or FBB BBS, usually one already on 40 m packet. If that isn't you:
+
+- **No pdn-soundmodem** (QtSoundModem, say): use pdn-mailcast's [standalone receiver](https://github.com/packet-net/pdn-mailcast/blob/main/src/Mailcast.Receiver/README.md).
+- **No radio**: the same standalone receiver can listen through a public web SDR.
+- **Sending bulletins** rather than receiving them: that is pdn-mailcast's [head end](https://github.com/packet-net/pdn-mailcast/blob/main/docs/headend.md), not this page.
 
 ## What you need
 
@@ -9,8 +15,6 @@ GB7RDG sends its recent packet mail bulletins on 40 m every daylight hour, as [p
 - Hamlib's `rigctld` (`sudo apt install libhamlib-utils`), or flrig if it already runs your rig.
 - LinBPQ with its mail, or Linux FBB, that this machine can reach.
 - A `waterfall` section, if you want the Mailcast panel on the station page.
-
-Using QtSoundModem rather than pdn-soundmodem? Run pdn-mailcast's [standalone receiver](https://github.com/packet-net/pdn-mailcast/blob/main/src/Mailcast.Receiver/README.md) instead. It has its own way of sharing a radio with LinBPQ.
 
 ## What GB7RDG sends
 

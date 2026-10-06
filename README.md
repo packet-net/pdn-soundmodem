@@ -39,7 +39,7 @@ Now follow the guide. It starts at [docs/README.md](docs/README.md), and [docs/0
 | Putting your station on a public monitor site | [docs/10-public-monitor.md](docs/10-public-monitor.md) |
 | The frame log, survey captures, Prometheus and Grafana | [docs/11-logging-and-metrics.md](docs/11-logging-and-metrics.md) |
 | When nothing decodes | [docs/12-troubleshooting.md](docs/12-troubleshooting.md) |
-| Receiving GB7RDG's bulletins into your BBS, with rig control | [docs/14-mailcast.md](docs/14-mailcast.md) |
+| Receiving GB7RDG's 40 m bulletins into your own BBS, listening only | [docs/14-mailcast.md](docs/14-mailcast.md) |
 
 ## Status
 
