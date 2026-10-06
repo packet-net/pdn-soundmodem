@@ -294,8 +294,15 @@ internal sealed class TxTestRunner
             // burst itself; this is the other half - the transmitter's own wait for a clear
             // channel has no timeout, so a channel busy for minutes would otherwise leave the
             // page saying "running" for ever.
+            //
+            // The keyup's own TXDELAY lead and tail count too: they are airtime the burst spends
+            // after the channel clears, and leaving them out would let a channel that clears just
+            // inside the wait have the end of its burst withdrawn and be told nothing went out.
+            CsmaParameters csma = _options.Channel.Csma;
+            TimeSpan keying = TimeSpan.FromMilliseconds(
+                Math.Max(0, csma.TxDelayMilliseconds) + Math.Max(0, csma.TxTailMilliseconds));
             Task waited = Task.Delay(
-                TimeSpan.FromSeconds(run.BurstSeconds) + _options.ChannelWait,
+                TimeSpan.FromSeconds(run.BurstSeconds) + keying + _options.ChannelWait,
                 _options.Time);
             if (await Task.WhenAny(send, waited).ConfigureAwait(false) == waited)
             {
@@ -368,12 +375,18 @@ internal sealed class TxTestRunner
             _options.Recorded?.Invoke(new TxTestRecord(
                 request.SubChannel ?? _options.SubChannel, $"tx test: {text} - {done}", audioHz));
 
-            // The probe's id goes back only when some of it reached the air: the head end reads
-            // it as "this station sent the probe", and a station too old to know the field leaves
-            // it out altogether.
-            bool probeSent = run.Probe is { } sentProbe
-                && producedSamples > leadSamples + toneSamples + sentProbe.GapSamples;
-            return new TxTestOutcome(true, text, null) { Probe = probeSent ? run.Probe!.Descriptor.Id : null };
+            // The probe's id goes back only when all of it reached the air: the head end reads it
+            // as "this station sent the probe", a measurement it can use, and a probe a stop cut
+            // part way is not one. ProbeComplete says which, so a cut probe reads as false rather
+            // than as a station that never knew the field (which leaves both keys out).
+            bool? probeComplete = run.Probe is { } sentProbe
+                ? producedSamples >= leadSamples + toneSamples + sentProbe.GapSamples + sentProbe.Audio.Length
+                : null;
+            return new TxTestOutcome(true, text, null)
+            {
+                Probe = probeComplete == true ? run.Probe!.Descriptor.Id : null,
+                ProbeComplete = probeComplete,
+            };
         }
         catch (Exception unexpected)
         {
@@ -512,26 +525,13 @@ internal sealed class TxTestRunner
     /// </remarks>
     private ProbeBurst? PrepareProbe(TxTestProbe asked, double toneSeconds, double cap, out string? refusal)
     {
-        refusal = null;
-        if (ProbeSignal.ForKind(asked.Kind) is not { } descriptor)
+        refusal = ProbeProblem(asked);
+        if (refusal is not null || ProbeSignal.ForKind(asked.Kind) is not { } descriptor)
         {
-            refusal = $"unknown probe kind \"{Printable(asked.Kind)}\"; this station sends "
-                + string.Join(", ", ProbeSignal.Known.Select(k => $"\"{k.Kind}\" ({k.Id})"));
-            return null;
-        }
-
-        if (!double.IsFinite(asked.GapSeconds) || asked.GapSeconds < 0)
-        {
-            refusal = "a probe's gapSeconds must be zero or more";
             return null;
         }
 
         int rate = _options.Channel.SampleRate;
-        if (ProbeSignal.BandProblem(descriptor, asked.AudioHz, rate) is string band)
-        {
-            refusal = band;
-            return null;
-        }
 
         double total = toneSeconds + asked.GapSeconds + descriptor.DurationSeconds;
         if (total > cap)
@@ -549,10 +549,33 @@ internal sealed class TxTestRunner
         return new ProbeBurst(descriptor, (int)Math.Round(asked.GapSeconds * rate), audio);
     }
 
+    /// <summary>
+    /// What is wrong with a probe request in itself, or null when nothing is: an unknown kind, a
+    /// gap that is not a length, or a centre that puts the band outside this channel. These are
+    /// the caller's mistakes, which <c>/api/txtest</c> answers 400 before anything is prepared;
+    /// the cap is the station's limit, not a mistake, and is checked when the test is.
+    /// </summary>
+    internal string? ProbeProblem(TxTestProbe asked)
+    {
+        ArgumentNullException.ThrowIfNull(asked);
+        if (ProbeSignal.ForKind(asked.Kind) is not { } descriptor)
+        {
+            return $"unknown probe kind \"{Printable(asked.Kind)}\"; this station sends "
+                + string.Join(", ", ProbeSignal.Known.Select(k => $"\"{k.Kind}\" ({k.Id})"));
+        }
+
+        if (!double.IsFinite(asked.GapSeconds) || asked.GapSeconds < 0)
+        {
+            return "a probe's gapSeconds must be zero or more";
+        }
+
+        return ProbeSignal.BandProblem(descriptor, asked.AudioHz, _options.Channel.SampleRate);
+    }
+
     private static string Seconds(double seconds) => seconds.ToString("0.0", CultureInfo.InvariantCulture);
 
     /// <summary>A caller's string, made safe for a journal line: printable ASCII, and short.</summary>
-    private static string Printable(string? text)
+    internal static string Printable(string? text)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -701,8 +724,12 @@ internal sealed record TxTestRecord(int SubChannel, string Text, double AudioHz)
 /// </param>
 internal sealed record TxTestOutcome(bool Ran, string Text, string? Refusal, bool Failed = false)
 {
-    /// <summary>The id of the probe that went out after the tone, or null when none did.</summary>
+    /// <summary>The id of the probe that went out after the tone, whole, or null when none did.</summary>
     public string? Probe { get; init; }
+
+    /// <summary>Whether all of the probe asked for went out: true when it did, false when a stop
+    /// cut it short or kept it off the air, null when no probe was asked for.</summary>
+    public bool? ProbeComplete { get; init; }
 }
 
 /// <summary>A probe ready to follow the tone: which one, the silence before it, and its audio.</summary>

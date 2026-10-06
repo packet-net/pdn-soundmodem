@@ -148,8 +148,9 @@ public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingMo
     /// <remarks>
     /// This is the receive side's autobaud result, and it is not <see cref="Mode"/>, which names
     /// the transmit waveform (as each frame's <see cref="FrameQuality.Mode"/> does). A receiver
-    /// that wants the speed it is hearing reads this; it is updated on the thread calling
-    /// <see cref="Process"/>, so read it from there or accept a value one block old.
+    /// that wants the speed it is hearing reads this. It is updated on the thread calling
+    /// <see cref="Process"/> and read through a volatile read, so another thread sees the latest
+    /// lock, at most one block behind.
     /// </remarks>
     public int? LockedWaveformNumber => _rx.Lock is { WaveformNumber: >= 0 and var wn } ? wn : null;
 

@@ -28,30 +28,113 @@ namespace Packet.SoundModem.Audio;
 /// zero away from lag 0, so every delay inside one period (106.25 ms) reads out cleanly.</para>
 /// <para><b>The id is the contract.</b> Change any field and it is a different probe, with a new
 /// id; a receiver that does not know an id must not guess at it.</para>
+/// <para><b>Checked when it is made.</b> Every field is validated by the constructor, and the
+/// properties have no setters, so a descriptor that exists describes a probe that can be rendered:
+/// an odd length, a root coprime with it, a positive chip rate and so on.</para>
 /// </remarks>
-/// <param name="Id">The versioned name, e.g. <c>zc255-2400-rrc015-v1</c>.</param>
-/// <param name="Kind">The short name a request asks for it by, e.g. <c>zc255</c>.</param>
-/// <param name="SequenceLength">Chips in one period.</param>
-/// <param name="Root">The Zadoff-Chu root, coprime with the length.</param>
-/// <param name="ChipRate">Chips per second.</param>
-/// <param name="RollOff">The root-raised-cosine roll-off.</param>
-/// <param name="PulseHalfSpanChips">How far either side of its centre a chip's pulse reaches.</param>
-/// <param name="Periods">Whole periods sent, the first of them the cyclic prefix.</param>
-/// <param name="RampSeconds">The raised-cosine rise before the first period and fall after the
-/// last; the rendered probe is this much longer than the periods at each end.</param>
-/// <param name="NormalisationPointsPerChip">The density the envelope's peak is found at.</param>
-public sealed record ProbeDescriptor(
-    string Id,
-    string Kind,
-    int SequenceLength,
-    int Root,
-    double ChipRate,
-    double RollOff,
-    int PulseHalfSpanChips,
-    int Periods,
-    double RampSeconds,
-    int NormalisationPointsPerChip)
+public sealed record ProbeDescriptor
 {
+    /// <summary>Describes one version of a probe, refusing one that could not be rendered.</summary>
+    /// <param name="id">The versioned name, e.g. <c>zc255-2400-rrc015-v1</c>.</param>
+    /// <param name="kind">The short name a request asks for it by, e.g. <c>zc255</c>.</param>
+    /// <param name="sequenceLength">Chips in one period.</param>
+    /// <param name="root">The Zadoff-Chu root, coprime with the length.</param>
+    /// <param name="chipRate">Chips per second.</param>
+    /// <param name="rollOff">The root-raised-cosine roll-off.</param>
+    /// <param name="pulseHalfSpanChips">How far either side of its centre a chip's pulse reaches.</param>
+    /// <param name="periods">Whole periods sent, the first of them the cyclic prefix.</param>
+    /// <param name="rampSeconds">The raised-cosine rise before the first period and fall after the
+    /// last; the rendered probe is this much longer than the periods at each end.</param>
+    /// <param name="normalisationPointsPerChip">The density the envelope's peak is found at.</param>
+    /// <exception cref="ArgumentException">A field that does not describe a renderable probe.</exception>
+    public ProbeDescriptor(
+        string id,
+        string kind,
+        int sequenceLength,
+        int root,
+        double chipRate,
+        double rollOff,
+        int pulseHalfSpanChips,
+        int periods,
+        double rampSeconds,
+        int normalisationPointsPerChip)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        ArgumentException.ThrowIfNullOrWhiteSpace(kind);
+
+        // The odd-length Zadoff-Chu form, c[n] = exp(-j pi u n (n + 1) / N): an even length needs
+        // the other formula, and a root sharing a factor with the length loses the property the
+        // probe exists for, a periodic autocorrelation that is zero away from lag 0.
+        if (sequenceLength < 3 || sequenceLength % 2 == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sequenceLength), sequenceLength, "the length must be odd and at least 3");
+        }
+
+        if (root < 1 || root >= sequenceLength || Gcd(root, sequenceLength) != 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(root), root, $"the root must be between 1 and {sequenceLength - 1} and coprime with {sequenceLength}");
+        }
+
+        if (!double.IsFinite(chipRate) || chipRate <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(chipRate), chipRate, "the chip rate must be above zero");
+        }
+
+        if (!(rollOff > 0 && rollOff <= 1))
+        {
+            throw new ArgumentOutOfRangeException(nameof(rollOff), rollOff, "the roll-off must be above 0 and at most 1");
+        }
+
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pulseHalfSpanChips);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(periods);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(normalisationPointsPerChip);
+        if (!double.IsFinite(rampSeconds) || rampSeconds < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rampSeconds), rampSeconds, "the ramp must be zero or more seconds");
+        }
+
+        Id = id;
+        Kind = kind;
+        SequenceLength = sequenceLength;
+        Root = root;
+        ChipRate = chipRate;
+        RollOff = rollOff;
+        PulseHalfSpanChips = pulseHalfSpanChips;
+        Periods = periods;
+        RampSeconds = rampSeconds;
+        NormalisationPointsPerChip = normalisationPointsPerChip;
+    }
+
+    /// <summary>The versioned name, e.g. <c>zc255-2400-rrc015-v1</c>.</summary>
+    public string Id { get; }
+
+    /// <summary>The short name a request asks for it by, e.g. <c>zc255</c>.</summary>
+    public string Kind { get; }
+
+    /// <summary>Chips in one period.</summary>
+    public int SequenceLength { get; }
+
+    /// <summary>The Zadoff-Chu root, coprime with the length.</summary>
+    public int Root { get; }
+
+    /// <summary>Chips per second.</summary>
+    public double ChipRate { get; }
+
+    /// <summary>The root-raised-cosine roll-off.</summary>
+    public double RollOff { get; }
+
+    /// <summary>How far either side of its centre a chip's pulse reaches, in chips.</summary>
+    public int PulseHalfSpanChips { get; }
+
+    /// <summary>Whole periods sent, the first of them the cyclic prefix.</summary>
+    public int Periods { get; }
+
+    /// <summary>The raised-cosine rise before the first period and fall after the last, in seconds.</summary>
+    public double RampSeconds { get; }
+
+    /// <summary>The density the envelope's peak is found at, in points per chip.</summary>
+    public int NormalisationPointsPerChip { get; }
+
     /// <summary>One period, in seconds.</summary>
     public double PeriodSeconds => SequenceLength / ChipRate;
 
@@ -67,6 +150,16 @@ public sealed record ProbeDescriptor(
 
     /// <summary>The first sample of the first period (the cyclic prefix), at <paramref name="sampleRate"/>.</summary>
     public int FirstPeriodSample(int sampleRate) => (int)Math.Round(RampSeconds * sampleRate);
+
+    private static int Gcd(int a, int b)
+    {
+        while (b != 0)
+        {
+            (a, b) = (b, a % b);
+        }
+
+        return a;
+    }
 }
 
 /// <summary>
@@ -99,16 +192,16 @@ public static class ProbeSignal
     /// occupies 420 to 3180 Hz.
     /// </summary>
     public static ProbeDescriptor Zc255 { get; } = new(
-        Id: "zc255-2400-rrc015-v1",
-        Kind: Zc255Kind,
-        SequenceLength: 255,
-        Root: 1,
-        ChipRate: 2400,
-        RollOff: 0.15,
-        PulseHalfSpanChips: 32,
-        Periods: 61,
-        RampSeconds: 0.010,
-        NormalisationPointsPerChip: 64);
+        id: "zc255-2400-rrc015-v1",
+        kind: Zc255Kind,
+        sequenceLength: 255,
+        root: 1,
+        chipRate: 2400,
+        rollOff: 0.15,
+        pulseHalfSpanChips: 32,
+        periods: 61,
+        rampSeconds: 0.010,
+        normalisationPointsPerChip: 64);
 
     /// <summary>Every probe this build can send, by kind.</summary>
     public static IReadOnlyList<ProbeDescriptor> Known { get; } = [Zc255];

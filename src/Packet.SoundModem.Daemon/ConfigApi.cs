@@ -218,7 +218,27 @@ internal sealed class ConfigApi
             return;
         }
 
+        // A stop wins, read first and on its own, whatever else is in the body: the button that
+        // ends a transmission must never be refused because some other field was wrong.
         bool stop;
+        try
+        {
+            stop = asked?["stop"]?.GetValue<bool>() == true;
+        }
+        catch (Exception wrongType) when (wrongType is InvalidOperationException or FormatException)
+        {
+            await RespondAsync(context, 400, $"\"stop\" is true or false: {wrongType.Message}")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        if (stop)
+        {
+            _txTest.Stop();
+            await RespondJsonAsync(context, 200, TxTestStopped).ConfigureAwait(false);
+            return;
+        }
+
         bool twoTone;
         double toneHz;
         double seconds;
@@ -226,7 +246,6 @@ internal sealed class ConfigApi
         Waterfall.TxTestProbe? probe;
         try
         {
-            stop = asked?["stop"]?.GetValue<bool>() == true;
             twoTone = asked?["twoTone"]?.GetValue<bool>() ?? true;
             toneHz = asked?["toneHz"]?.GetValue<double>() ?? Audio.TestTone.TwoToneLowHz;
             seconds = asked?["seconds"]?.GetValue<double>() ?? 0;
@@ -238,21 +257,19 @@ internal sealed class ConfigApi
             // A field of the wrong kind ("seconds": "5"), which is a caller's mistake and not a
             // reason to drop the connection with no explanation.
             await RespondAsync(context, 400,
-                "\"twoTone\" and \"stop\" are true or false, \"toneHz\" and \"seconds\" are "
+                "\"twoTone\" is true or false, \"toneHz\" and \"seconds\" are "
                 + "numbers, \"subChannel\" a whole number, \"probe\" an object with a \"kind\" "
                 + $"string and \"gapSeconds\" and \"audioHz\" numbers: {wrongType.Message}").ConfigureAwait(false);
             return;
         }
 
-        // An unknown kind is the caller's mistake and a 400, before anything is prepared: a head
-        // end newer than this station asking for a probe it cannot make must hear "no", never a
-        // tone with the probe silently left off.
-        if (probe is { } wanted && Audio.ProbeSignal.ForKind(wanted.Kind) is null)
+        // A probe the station cannot make as asked is the caller's mistake and a 400, before
+        // anything is prepared: an unknown kind (a head end newer than this station must hear
+        // "no", never a tone with the probe silently left off), a negative gap, or a centre that
+        // puts the band outside this channel. Only the cap, the station's own limit, is a 409.
+        if (probe is { } wanted && _txTest.ProbeProblem(wanted) is string problem)
         {
-            await RespondAsync(context, 400,
-                $"unknown probe kind: this station sends "
-                + string.Join(", ", Audio.ProbeSignal.Known.Select(k => $"\"{k.Kind}\" ({k.Id})")))
-                .ConfigureAwait(false);
+            await RespondAsync(context, 400, problem).ConfigureAwait(false);
             return;
         }
 
@@ -261,13 +278,6 @@ internal sealed class ConfigApi
         if (subChannel is int sub && _hasModem is { } hasModem && !hasModem(sub))
         {
             await RespondAsync(context, 400, $"no modem transmits on sub-channel {sub}").ConfigureAwait(false);
-            return;
-        }
-
-        if (stop)
-        {
-            _txTest.Stop();
-            await RespondJsonAsync(context, 200, TxTestStopped).ConfigureAwait(false);
             return;
         }
 
@@ -288,16 +298,20 @@ internal sealed class ConfigApi
             ["refused"] = outcome.Failed ? null : outcome.Refusal,
             ["failed"] = outcome.Failed ? outcome.Refusal : null,
 
-            // The id of the probe that followed the tone, or null. A station older than the
-            // probe never writes this key, which is how a head end tells "sent the tone and
-            // ignored the probe" from "sent both".
+            // The id of the probe that followed the tone, whole, or null; and whether all of the
+            // probe asked for went out (null when none was asked for). A station older than the
+            // probe writes neither key, which is how a head end tells "sent the tone and ignored
+            // the probe" from "sent both".
             ["probe"] = outcome.Probe,
+            ["probeComplete"] = outcome.ProbeComplete,
         }.ToJsonString(new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Reads a request's <c>probe</c> object, or null when there is none. A <c>probe</c> that is
-    /// there but is not an object with a <c>kind</c> string throws, which the caller answers 400.
+    /// there but is not an object with a <c>kind</c> string, or that carries a field it does not
+    /// take (a misspelt <c>gapSecs</c> silently meaning the default is the mistake this catches),
+    /// throws, which the caller answers 400.
     /// </summary>
     private static Waterfall.TxTestProbe? ReadProbe(JsonNode? node)
     {
@@ -309,6 +323,16 @@ internal sealed class ConfigApi
         if (node is not JsonObject probe)
         {
             throw new InvalidOperationException("\"probe\" is not an object");
+        }
+
+        foreach (KeyValuePair<string, JsonNode?> field in probe)
+        {
+            if (field.Key is not ("kind" or "gapSeconds" or "audioHz"))
+            {
+                throw new InvalidOperationException(
+                    $"\"probe\" has no field \"{TxTestRunner.Printable(field.Key)}\"; it takes \"kind\", "
+                    + "\"gapSeconds\" and \"audioHz\"");
+            }
         }
 
         string kind = probe["kind"]?.GetValue<string>()

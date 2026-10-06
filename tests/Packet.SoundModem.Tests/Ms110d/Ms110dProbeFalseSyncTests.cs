@@ -23,8 +23,10 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// the probe is periodic and the metric sums segment magnitudes, so an offset inside the bins'
 /// reach changes little. For comparison, 7 s of white noise reaches 0.29 to 0.30 on the same
 /// search, so the probe is quieter to it than an empty band.</para>
-/// <para><b>Deterministic.</b> No noise and no clock: the probe is the worst case clean, since
-/// noise only adds energy to the metric's denominator.</para>
+/// <para><b>Deterministic.</b> No noise and no clock, so this measures what the probe itself
+/// does to the search. It is not a bound on the probe plus noise: noise has false-sync statistics
+/// of its own (the 0.29 to 0.30 above), which the threshold already has to live with on every
+/// empty band; what this shows is that the probe on its own sits below that figure.</para>
 /// </remarks>
 public class Ms110dProbeFalseSyncTests(ITestOutputHelper output)
 {

@@ -201,4 +201,37 @@ public class ProbeSignalTests(ITestOutputHelper output)
         render.Should().Throw<ArgumentOutOfRangeException>();
         ProbeSignal.BandProblem(Probe, 1800, 12000).Should().BeNull();
     }
+
+    [Fact]
+    public void A_Descriptor_That_Could_Not_Be_Rendered_Is_Refused_When_It_Is_Made()
+    {
+        ProbeDescriptor Make(int length = 255, int root = 1, double chipRate = 2400, double rollOff = 0.15,
+            int span = 32, int periods = 61, double ramp = 0.01, int points = 64, string id = "test-v1") =>
+            new(id, "test", length, root, chipRate, rollOff, span, periods, ramp, points);
+
+        Make().Should().Be(Make(), "two descriptors with the same fields are the same probe");
+        Make().Should().NotBe(Make(periods: 60));
+
+        Action[] refused =
+        [
+            () => Make(length: 256),
+            () => Make(length: 1),
+            () => Make(root: 0),
+            () => Make(root: 255),
+            () => Make(root: 3),
+            () => Make(chipRate: 0),
+            () => Make(chipRate: double.NaN),
+            () => Make(rollOff: 0),
+            () => Make(rollOff: 1.5),
+            () => Make(span: 0),
+            () => Make(periods: 0),
+            () => Make(ramp: -0.01),
+            () => Make(points: 0),
+            () => Make(id: " "),
+        ];
+        foreach (Action make in refused)
+        {
+            make.Should().Throw<ArgumentException>();
+        }
+    }
 }
