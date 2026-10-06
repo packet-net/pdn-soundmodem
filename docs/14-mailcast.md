@@ -1,6 +1,6 @@
 # Receive GB7RDG's 40 m bulletins into your own BBS
 
-GB7RDG sends packet BBS bulletins on 40 m every daylight hour. This page sets up your station to receive them and drop them into your own LinBPQ or FBB. You don't connect to GB7RDG, and you transmit nothing: your station only listens.
+Experimentally, GB7RDG sends packet BBS bulletins on 40 m every daylight hour using MS110D (a STANAG-ish mode) on 7052 dial USB. This page sets up your station to receive them and drop them into your own LinBPQ or FBB. You don't connect to GB7RDG, and you transmit nothing: your station only listens.
 
 It is for a station in or near the UK that runs pdn-soundmodem with an HF rig and a LinBPQ or FBB BBS, usually one already on 40 m packet. If that isn't you:
 
