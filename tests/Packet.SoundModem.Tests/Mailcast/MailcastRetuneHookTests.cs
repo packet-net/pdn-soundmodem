@@ -153,4 +153,55 @@ public sealed partial class MailcastRetuneTests
         _fake.Sets.Should().NotContain("F 7052000");
         rig.HoldsTransmitter.Should().BeFalse();
     }
+
+    [Fact]
+    public async Task After_Waits_While_The_Rig_Is_Owed_Its_Restore()
+    {
+        RigControl rig = await StartedRig();
+        MailcastHooks hooks = Hooks(rig, Scripts.Hook("before"), Scripts.Hook("after"));
+        (MailcastRetuner retuner, _) = RetunerWith(rig, hooks, _stop.Token);
+        await AdvanceTo(Slot + TimeSpan.FromMinutes(11));
+        await Patiently(() => retuner.Listening, "the window is open");
+
+        // The rig will not go back at 12:12.
+        _fake.RefusesFrequency = true;
+        await AdvanceTo(Slot + TimeSpan.FromMinutes(12) + TimeSpan.FromSeconds(30));
+        await Patiently(() => retuner.State.StartsWith("waiting for the rig to be put back", StringComparison.Ordinal), "\"after\" waits");
+        rig.RestorePending.Should().BeTrue();
+        Scripts.Calls.Should().HaveCount(1, "\"after\" has not run with the rig still on the mailcast dial");
+
+        _fake.RefusesFrequency = false;
+        await AdvanceTo(_time.GetUtcNow() + TimeSpan.FromMinutes(1));
+        await Patiently(() => Scripts.Calls.Count == 2, "\"after\" ran once the rig was back");
+        _atHookStart.Last().Should().Be((7_049_450L, false));
+        _journal.Should().ContainSingle(line => line == "mailcast: hooks: waiting for the rig to be put back before running \"after\"");
+    }
+
+    [Fact]
+    public async Task An_Owed_After_Waits_While_Someone_Elses_Window_Has_The_Rig()
+    {
+        // A note from a run killed mid-window, and the API holding the rig when this one starts.
+        using (var lastRun = new MailcastHooks(
+            new MailcastConfig { Bbs = new MailcastBbsConfig { Password = "x" }, Hooks = new MailcastHooksConfig { Before = Scripts.Hook("before") } },
+            HooksDir, _time, _ => { }))
+        {
+            (await lastRun.BeforeAsync(Slot, this, "", CancellationToken.None)).Should().Be(MailcastBeforeOutcome.Ok);
+        }
+
+        _time.SetUtcNow(Slot + TimeSpan.FromMinutes(5));
+        RigControl rig = await StartedRig();
+        rig.Tune(new RigTuning(7_074_000, "USB", 0), TimeSpan.FromMinutes(4), "the API").Granted.Should().BeTrue();
+        rig.Snapshot().RestoreOwed.Should().BeNull("the snapshot hides a restore behind an open window, which is why it is not what is asked");
+        MailcastHooks hooks = Hooks(rig, Scripts.Hook("before"), Scripts.Hook("after"));
+        (MailcastRetuner retuner, _) = RetunerWith(rig, hooks, _stop.Token);
+
+        await Patiently(() => retuner.State.StartsWith("waiting for the rig to be put back", StringComparison.Ordinal), "\"after\" waits");
+        await AdvanceTo(_time.GetUtcNow() + TimeSpan.FromMinutes(1));
+        Scripts.Calls.Should().HaveCount(1, "\"after\" has not run with the rig on the API's frequency");
+
+        rig.Release("the API").Should().BeTrue();
+        await AdvanceTo(_time.GetUtcNow() + MailcastRetuner.RetryEvery);
+        await Patiently(() => Scripts.Calls.Count == 2, "\"after\" ran once the API let go");
+        _atHookStart.Single().Should().Be((7_049_450L, false));
+    }
 }

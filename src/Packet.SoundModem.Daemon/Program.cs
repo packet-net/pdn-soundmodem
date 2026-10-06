@@ -1864,6 +1864,7 @@ if (mailcast is not null && waterfallServer is not null && waterfallConfig?.Publ
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
+    StopDeadline.Arm(StopDeadline.For(mailcastConfig));
     cancellation.Cancel();
 };
 
@@ -1876,6 +1877,9 @@ using var sigterm = System.Runtime.InteropServices.PosixSignalRegistration.Creat
     context =>
     {
         context.Cancel = true;
+        // The unit waits 400 s for a mailcast "after" hook; without hooks a wedged stop is cut
+        // off at the 90 s it always was.
+        StopDeadline.Arm(StopDeadline.For(mailcastConfig));
         cancellation.Cancel();
     });
 

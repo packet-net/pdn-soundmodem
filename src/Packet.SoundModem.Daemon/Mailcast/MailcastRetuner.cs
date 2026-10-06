@@ -160,10 +160,10 @@ internal sealed class MailcastRetuner
             SetListening(false);
             if (_hooks is not null && _hooks.AfterOwedTo(this, unowned: true))
             {
-                if (_rig.Snapshot().RestoreOwed is not null)
+                if (_rig.RestorePending)
                 {
-                    _log("mailcast: hooks: WARNING - the rig could not be put back before the station stopped (it is put back at the next start); "
-                        + "running \"after\" all the same, so whatever it starts may find the rig still on the mailcast dial");
+                    _log("mailcast: hooks: WARNING - the rig is not back where it was as the station stops (a restore is owed, or a tuning window is open); "
+                        + "running \"after\" all the same, so whatever it starts may find the rig still retuned");
                 }
 
                 await _hooks.AfterAsync(this, unowned: true, " as the station stops").ConfigureAwait(false);
@@ -197,9 +197,10 @@ internal sealed class MailcastRetuner
                     tunedFor = null;
                 }
 
-                if (_rig.Snapshot() is { RestoreOwed: not null } or { Window.Owner: Owner })
+                if (_rig.RestorePending)
                 {
-                    // Whatever "after" starts must find the rig where it was, and free to transmit.
+                    // Whatever "after" starts must find the rig where it was, and free to transmit:
+                    // not while any restore is owed, nor while anyone's window has the rig.
                     _state = "waiting for the rig to be put back before running the \"after\" command";
                     if (!_saidRigOwed)
                     {

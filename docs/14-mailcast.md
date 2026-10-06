@@ -111,12 +111,15 @@ K=/var/lib/pdn-soundmodem/.ssh
 exec ssh -i $K/id_ed25519 -o UserKnownHostsFile=$K/known_hosts -o BatchMode=yes -o ConnectTimeout=10 ardop@shack-pc "sudo systemctl $1 ardopcf"
 ```
 
-On the shack PC, a sudoers line such as `ardop ALL=(root) NOPASSWD: /usr/bin/systemctl stop ardopcf, /usr/bin/systemctl start ardopcf` lets it do that without a password. Then make the service's key and copy it across, which also records the shack PC's host key:
+On the shack PC, a sudoers line such as `ardop ALL=(root) NOPASSWD: /usr/bin/systemctl stop ardopcf, /usr/bin/systemctl start ardopcf` lets it do that without a password.
+
+The service's user has no home directory, so its key lives in the state directory, and `ssh-copy-id` is run as root rather than as that user. Make the key, copy it across (this asks for `ardop`'s password on the shack PC), and record the shack PC's host key for the service:
 
 ```sh
 sudo install -d -m 700 -o pdn-soundmodem -g pdn-soundmodem /var/lib/pdn-soundmodem/.ssh
 sudo -u pdn-soundmodem ssh-keygen -t ed25519 -N "" -f /var/lib/pdn-soundmodem/.ssh/id_ed25519
-sudo -u pdn-soundmodem ssh-copy-id -i /var/lib/pdn-soundmodem/.ssh/id_ed25519 -o UserKnownHostsFile=/var/lib/pdn-soundmodem/.ssh/known_hosts ardop@shack-pc
+sudo ssh-copy-id -i /var/lib/pdn-soundmodem/.ssh/id_ed25519.pub ardop@shack-pc
+sudo -u pdn-soundmodem ssh -i /var/lib/pdn-soundmodem/.ssh/id_ed25519 -o UserKnownHostsFile=/var/lib/pdn-soundmodem/.ssh/known_hosts -o StrictHostKeyChecking=accept-new ardop@shack-pc true
 ```
 
 Try it with `sudo -u pdn-soundmodem /usr/local/bin/mailcast-hook stop` and `start`, then restart the service. A second modem run as `pdn-soundmodem@NAME` has its state in `/var/lib/pdn-soundmodem/NAME` instead.

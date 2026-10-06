@@ -406,3 +406,17 @@ public sealed class MailcastHooksTests : IAsyncDisposable
         hooks.OwedSlot.Should().BeNull();
     }
 }
+
+/// <summary>How long a stop may take before the daemon ends itself.</summary>
+public sealed class StopDeadlineTests
+{
+    [Fact]
+    public void Without_Hooks_A_Stop_Keeps_Systemds_Old_90_S_And_With_Them_It_Is_The_Units()
+    {
+        StopDeadline.For(null).Should().Be(TimeSpan.FromSeconds(90));
+        StopDeadline.For(new MailcastConfig()).Should().Be(TimeSpan.FromSeconds(90));
+        StopDeadline.For(new MailcastConfig { Hooks = new MailcastHooksConfig() }).Should().Be(TimeSpan.FromSeconds(90));
+        StopDeadline.For(new MailcastConfig { Hooks = new MailcastHooksConfig { After = new HookCommand { Command = "/bin/true" } } })
+            .Should().BeNull("the unit's 400 s leaves time for an \"after\" hook");
+    }
+}
