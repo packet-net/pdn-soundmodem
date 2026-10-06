@@ -194,6 +194,10 @@ public sealed class RigControl : IAsyncDisposable
     private TaskCompletionSource _wake = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task _loop = Task.CompletedTask;
 
+    // When the watch's current wait on the clock ends, or null while it is not waiting on one.
+    // Set and cleared under _gate.
+    private DateTimeOffset? _napUntil;
+
     // Changed only while holding both _io and _gate, so either is enough to read it steadily.
     private volatile RigctldConnection? _connection;
     private RigTuning? _known;
@@ -270,6 +274,30 @@ public sealed class RigControl : IAsyncDisposable
     /// <see cref="RigState.RestoreOwed"/>, an open window does not hide it. Takes no lock.
     /// </summary>
     public bool RestorePending => _restoreTo is not null || _window is not null;
+
+    /// <summary>
+    /// For tests on a fake clock: whether the background watch is running. Not started, or
+    /// stopped, it never waits on the clock and never will.
+    /// </summary>
+    internal bool Watching => !_loop.IsCompleted;
+
+    /// <summary>
+    /// For tests on a fake clock: when the watch's wait between looks at rigctld ends, or null
+    /// while it is not waiting on the clock - connecting, polling, retrying an unkey or a restore,
+    /// or woken early and on its way to do so. A test that moves the clock only while this is set,
+    /// and never past it without letting the watch act on it first, keeps the clock in step with
+    /// what the rig has actually done, however long rigctld takes to answer.
+    /// </summary>
+    internal DateTimeOffset? NapUntil
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _napUntil;
+            }
+        }
+    }
 
     /// <summary>The state as it stands, for the API and the tests.</summary>
     public RigState Snapshot()
@@ -778,8 +806,28 @@ public sealed class RigControl : IAsyncDisposable
         }
 
         using var nap = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        DateTimeOffset until = _time.GetUtcNow() + span;
         Task delay = Task.Delay(span, _time, nap.Token);
-        await Task.WhenAny(delay, wake).ConfigureAwait(false);
+        lock (_gate)
+        {
+            if (!wake.IsCompleted)
+            {
+                _napUntil = until;
+            }
+        }
+
+        try
+        {
+            await Task.WhenAny(delay, wake).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _napUntil = null;
+            }
+        }
+
         await nap.CancelAsync().ConfigureAwait(false);
         cancellation.ThrowIfCancellationRequested();
     }
@@ -789,6 +837,9 @@ public sealed class RigControl : IAsyncDisposable
         lock (_gate)
         {
             _wake.TrySetResult();
+
+            // Woken is no longer waiting on the clock, even before the continuation has run.
+            _napUntil = null;
         }
     }
 
