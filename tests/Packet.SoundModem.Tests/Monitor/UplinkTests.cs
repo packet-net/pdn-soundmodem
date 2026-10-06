@@ -194,8 +194,11 @@ public class UplinkTests
         // slug and nothing for the one-connection-per-token rule to apply to. A socket that said
         // nothing was held for the life of the process, costing a WebSocket, a semaphore, a
         // linked cancellation source and a read buffer, with nothing in the journal about it.
+        int before = h.Time.Created(UplinkServer.HelloDeadline);
         using ClientWebSocket silent = await StubStation.ConnectAsync(h.Port, h.Token);
         silent.State.Should().Be(WebSocketState.Open);
+        await StubStation.UntilAsync(
+            () => h.Time.Created(UplinkServer.HelloDeadline) > before, "the hello deadline on the clock");
 
         h.Time.Advance(UplinkServer.HelloDeadline + TimeSpan.FromSeconds(1));
 
@@ -809,10 +812,13 @@ public class UplinkTests
     public async Task The_Viewer_Count_Is_Repeated_On_A_Heartbeat()
     {
         await using var h = await Harness.StartAsync();
+        int before = h.Time.Created(UplinkServer.DemandHeartbeat);
 
         await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await station.WelcomedAsync();
         await StubStation.UntilAsync(() => station.Demands.Count >= 1, "the demand on connecting");
+        await StubStation.UntilAsync(
+            () => h.Time.Created(UplinkServer.DemandHeartbeat) > before, "the station's heartbeat timer on the clock");
 
         // The station's client reconnects after 45 s of silence, so something has to come down
         // this socket well inside that. The count repeated every twenty seconds is that
@@ -1132,6 +1138,25 @@ public class UplinkTests
     /// A monitor with two fake receivers, one configured uplink, a real frame-log directory and a
     /// fake clock.
     /// </summary>
+    /// <summary>A fake clock that also counts the timers put on it, by their first due time, so
+    /// a test can wait for the server's timer to exist before moving the clock on. The server
+    /// acts a moment before it creates some of its timers (it announces the demand, then sets
+    /// the heartbeat; it accepts the socket, then sets the hello deadline), and a clock advanced
+    /// in between never fires them: the test then waits out its 30 s timeout.</summary>
+    private sealed class TimerCountingTimeProvider : FakeTimeProvider
+    {
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<TimeSpan, int> _created = new();
+
+        internal int Created(TimeSpan dueTime) => _created.GetValueOrDefault(dueTime);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            ITimer timer = base.CreateTimer(callback, state, dueTime, period);
+            _created.AddOrUpdate(dueTime, 1, (_, n) => n + 1);
+            return timer;
+        }
+    }
+
     private sealed class Harness : IAsyncDisposable
     {
         internal static readonly TimeSpan Linger = TimeSpan.FromSeconds(60);
@@ -1186,7 +1211,7 @@ public class UplinkTests
 
         internal string FrameLogDirectory => _scratch.FullName;
 
-        internal FakeTimeProvider Time { get; } = new();
+        internal TimerCountingTimeProvider Time { get; } = new();
 
         internal List<string> Lines { get; } = [];
 
