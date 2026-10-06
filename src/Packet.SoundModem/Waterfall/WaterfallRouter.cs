@@ -235,16 +235,17 @@ public sealed class WaterfallRouter : IAsyncDisposable
     {
         await _stopping.CancelAsync().ConfigureAwait(false);
 
-        // Stop() does not just stop listening: it closes the connections it is still holding,
-        // and closing one flushes and disposes its response stream. A browser that has already
+        // Taking the listener down does not just stop listening: it closes the connections it is
+        // still holding, and closing one flushes and disposes its response stream. A browser that has already
         // walked away leaves a socket that cannot be written to, so the flush throws from inside
-        // Stop() - InvalidOperationException ("The stream does not support writing") via
+        // the listener - InvalidOperationException ("The stream does not support writing") via
         // NetworkStream.Write, IOException if the peer reset it instead, or
         // ObjectDisposedException where the stream has already been disposed. Nothing wants to
         // know at this point, and an unhandled throw here would escape the whole monitor
         // teardown, as it did to release run 35235370433. Worse, the throw used to skip Close()
         // as well and leave the accept below pending for ever, which is what hung the uplink
-        // tests at their 30 s limit. HttpListenerLifetime has both halves of the cure.
+        // tests at their 30 s limit. HttpListenerLifetime has both halves of the cure, and takes
+        // the listener down without binding its port a second time.
         HttpListenerLifetime.Shut(_listener);
 
         if (_acceptLoop is not null)

@@ -20,8 +20,18 @@ namespace Packet.SoundModem.Waterfall;
 /// old code caught it and skipped <c>Close()</c> with it. A monitor being stopped by systemd
 /// would hang the same way until it was killed.</para>
 /// <para>So the accept is waited on together with the owner's stopping token, and the loop
-/// ends when the token is cancelled whatever the listener does; and <c>Close()</c> is called even
-/// when <c>Stop()</c> threw, because <c>Close()</c> is what finishes the clean-up.</para>
+/// ends when the token is cancelled whatever the listener does.</para>
+/// <para>The listener is then taken down with <c>Abort()</c> alone, not <c>Stop()</c> followed by
+/// <c>Close()</c>. In the managed listener every <c>Close()</c> that finds it anything but
+/// closed (stopped, or never started) unregisters its prefixes a second time, and unregistering
+/// a prefix whose port has no endpoint left creates one first: it binds the port again, only to
+/// close it straight away. So <c>Stop()</c> released the port and <c>Close()</c> took it back,
+/// and if anything had been given the port in between (any bind to port 0 on the box draws from
+/// the same pool, another test process's servers included) <c>Close()</c> threw "Address already
+/// in use" out of the teardown, as it did to the waterfall tests, or took the port away from
+/// whoever had just been handed it. <c>Abort()</c> does the same single forced clean-up as
+/// <c>Close()</c> on a started listener and nothing at all to one that is not, so the port is
+/// released once and never touched again.</para>
 /// </remarks>
 internal static class HttpListenerLifetime
 {
@@ -45,27 +55,24 @@ internal static class HttpListenerLifetime
     }
 
     /// <summary>
-    /// Stops and closes the listener, each whatever the other did, and never throws for a peer
-    /// that has already gone.
+    /// Takes the listener down, releasing its port once and never binding it again, and never
+    /// throws for a peer that has already gone.
     /// </summary>
-    internal static void Shut(HttpListener listener)
+    /// <param name="listener">The listener, started or not.</param>
+    /// <param name="swallowed">Told about each exception the clean-up threw and this ignored;
+    /// for tests, which have no other way to see one.</param>
+    internal static void Shut(HttpListener listener, Action<Exception>? swallowed = null)
     {
         try
         {
-            listener.Stop();
+            listener.Abort();
         }
         catch (Exception e) when (IsShutdownNoise(e))
         {
-            // A connection whose peer has gone, failing to flush as it is closed. Close() below
-            // is what finishes the job Stop() was doing when it threw.
-        }
-
-        try
-        {
-            listener.Close();
-        }
-        catch (Exception e) when (IsShutdownNoise(e))
-        {
+            // A connection whose peer has gone, failing to flush as it is closed. What the throw
+            // skips is the rest of the connections, which end as their peers go, and the pending
+            // accept, which the owner's token has already ended.
+            swallowed?.Invoke(e);
         }
     }
 
