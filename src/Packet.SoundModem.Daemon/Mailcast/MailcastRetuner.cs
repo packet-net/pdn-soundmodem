@@ -222,7 +222,7 @@ internal sealed class MailcastRetuner
 
         if (next is not { } window)
         {
-            _state = "no slot of GB7RDG's runs in the coming year by its timetable";
+            _state = "no slot of the broadcast's runs in the coming year by its timetable";
             await DelayAsync(ClockCheck, cancellation).ConfigureAwait(false);
             return (saidRefusalFor, tunedFor);
         }

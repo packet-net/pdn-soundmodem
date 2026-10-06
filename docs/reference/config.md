@@ -433,10 +433,10 @@ A radio controlled through Hamlib's `rigctld`, for any device but `flex:` and `u
 ## `mailcast`
 
 ```json
-{ "mailcast": { "bbs": { "type": "linBpq", "port": 8011, "password": "pick-one" }, "retune": true } }
+{ "mailcast": { "bbs": { "type": "linBpq", "port": 8011, "password": "pick-one" }, "retune": true, "sources": ["GB7RDG", "M0LTE"] } }
 ```
 
-The built-in [pdn-mailcast](../14-mailcast.md) receiver. Absent, there is none. Present, the station runs an MS110D receive modem on the mailcast signal beside its own modems, rebuilds the packet mail bulletins GB7RDG sends to `MCAST`, and forwards each into the BBS by FBB B1F as a forwarding partner. It never transmits, has no KISS port, takes no mail from the BBS, and delivers no other kind of content.
+The built-in [pdn-mailcast](../14-mailcast.md) receiver. Absent, there is none. Present, the station runs an MS110D receive modem on the mailcast signal beside its own modems, rebuilds the packet mail bulletins its `sources` send to `MCAST`, and forwards each into the BBS by FBB B1F as a forwarding partner. It never transmits, has no KISS port, takes no mail from the BBS, and delivers no other kind of content.
 
 | Key | Type | Default | What it is |
 |---|---|---|---|
@@ -444,6 +444,7 @@ The built-in [pdn-mailcast](../14-mailcast.md) receiver. Absent, there is none. 
 | `dialKHz` | number | `7052.0` | The USB dial in kHz the signal is heard on; its centre is 1.8 kHz above. 1800 to 30000. |
 | `stateDirectory` | string | absent: `mailcast/` in the state directory | Where the pieces, the rebuilt bulletins (`store/`) and the record of deliveries (`deliveries.jsonl`) are kept. |
 | `retune` | bool | `false` | When the station's passband does not reach the signal, retune the rig to `dialKHz` USB (a 3000 Hz passband, or the rig's normal width if it refuses) from 1 minute before each slot to 12 minutes after. Needs a [`rig`](#rig) section. |
+| `sources` | array of strings | `["GB7RDG", "M0LTE"]` | The callsigns the bulletins are taken from: frames to `MCAST` from anyone else are ignored. Case doesn't matter, and any SSID is accepted, so an SSID given here is ignored. Left out, the default is used and the journal says so at start-up. |
 | `hooks` | object | absent: none | Your own commands, run before and after each slot: `before` and `after`, each with the keys below. See [`mailcast.hooks`](#mailcasthooks). |
 
 `bbs`:
@@ -453,7 +454,7 @@ The built-in [pdn-mailcast](../14-mailcast.md) receiver. Absent, there is none. 
 | `type` | string | `"linBpq"` | `"linBpq"` for LinBPQ's mail on its Telnet port's `FBBPORT`, or `"fbb"` for Linux FBB. |
 | `host` | string | `"127.0.0.1"` | The BBS's address. |
 | `port` | int | `8011` | LinBPQ's `FBBPORT`, or FBB's telnet port. |
-| `login` | string | `"Q0CAST"` | The receiver's own login on the BBS, set up as a BBS forwarding partner; never your callsign or GB7RDG. FBB is sent `.Q0CAST`, asking for a binary session. |
+| `login` | string | `"Q0CAST"` | The receiver's own login on the BBS, set up as a BBS forwarding partner; never your callsign or one of the `sources`. FBB is sent `.Q0CAST`, asking for a binary session. |
 | `password` | string | required | The login's password. Never logged, never served; `GET /api/config` reads it as `(set, not shown)`. |
 | `command` | string | `"BBS"` | LinBPQ only: the node command that reaches the mail application. |
 
@@ -462,7 +463,7 @@ The built-in [pdn-mailcast](../14-mailcast.md) receiver. Absent, there is none. 
 - The channel runs at 48 kHz, as it does with any `ms110d-*` modem. On a station that retunes for it, the receiver only runs while the rig is on the mailcast dial.
 - `POST /api/config` makes the same placement and state directory checks start-up does, and refuses a configuration that would fail them.
 - A rebuilt bulletin stays in the outbox until the BBS has answered for it, and is offered again after a failure (30 s, then up to 30 minutes apart) or 10 minutes after the BBS says "later". Mail the BBS offers back is answered "later", and the journal warns.
-- Refused: no `bbs` section; an empty `password`; a `type` other than `linBpq` or `fbb`; a `port` outside 1 to 65535; an empty `host`; a `login` that is not one word; a `password` or `command` over more than one line; a `dialKHz` outside 1800 to 30000; an empty `stateDirectory`; a hook whose `command` is not a full path to a program the service's user may run, whose `timeoutSeconds` is outside 1 to 300, or with any other key (in `hooks` too); `mailcast` in a `monitor` configuration; and, at start-up, a station that cannot hear the signal and cannot retune for it, or an FM station.
+- Refused: no `bbs` section; an empty `password`; a `type` other than `linBpq` or `fbb`; a `port` outside 1 to 65535; an empty `host`; a `login` that is not one word; a `password` or `command` over more than one line; a `dialKHz` outside 1800 to 30000; an empty `stateDirectory`; an empty `sources`, or one that is not a callsign of 1 to 6 letters and digits (with an optional SSID 0 to 15); a hook whose `command` is not a full path to a program the service's user may run, whose `timeoutSeconds` is outside 1 to 300, or with any other key (in `hooks` too); `mailcast` in a `monitor` configuration; and, at start-up, a station that cannot hear the signal and cannot retune for it, or an FM station.
 - Not on a `--two-tone` or `--tone` run.
 
 ### `mailcast.hooks`

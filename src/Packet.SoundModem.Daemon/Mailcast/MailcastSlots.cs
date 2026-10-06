@@ -92,7 +92,7 @@ internal sealed class MailcastSlots
             _heard = timetable;
         }
 
-        _log($"mailcast: GB7RDG's directory gives its slots as {Describe(timetable)}; using that");
+        _log($"mailcast: the broadcast's directory gives its slots as {Describe(timetable)}; using that");
     }
 
     /// <summary>A mailcast frame was decoded.</summary>
@@ -127,7 +127,7 @@ internal sealed class MailcastSlots
             $"{tone.OffsetHz:+0.0;-0.0;0.0} Hz from where it should be, SNR {tone.SnrDb:F1} dB in 3 kHz, {tone.Duration.TotalSeconds:F0} s");
         if ((began - nearest).Duration() > ToneWindow)
         {
-            _log($"mailcast: a tone {measured}, but it began at {began.UtcDateTime:HH:mm:ss} UTC, not at a slot's start, so it is not GB7RDG's; ignored");
+            _log($"mailcast: a tone {measured}, but it began at {began.UtcDateTime:HH:mm:ss} UTC, not at a slot's start, so it is not the broadcast's; ignored");
             return;
         }
 

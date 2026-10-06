@@ -42,6 +42,9 @@ public sealed class MailcastConfigTests : IDisposable
         mailcast.Retune.Should().BeFalse("retuning somebody's rig is something they ask for");
         mailcast.StateDirectory.Should().BeNull();
         mailcast.StateDirectoryFor("/var/lib/pdn-soundmodem").Should().Be("/var/lib/pdn-soundmodem/mailcast");
+        mailcast.Sources.Should().BeNull();
+        mailcast.SourcesDefaulted.Should().BeTrue();
+        mailcast.SourcesInUse.Should().Equal("GB7RDG", "M0LTE");
         MailcastBbsConfig bbs = mailcast.Bbs!;
         bbs.IsLinBpq.Should().BeTrue();
         bbs.Host.Should().Be("127.0.0.1");
@@ -58,11 +61,14 @@ public sealed class MailcastConfigTests : IDisposable
         (DaemonConfig? config, string error) = Load("""
             {"device": "null", "mailcast": {
               "bbs": {"type": "fbb", "host": "bbs.lan", "port": 6300, "login": "Q0CAST", "password": "x", "command": ""},
-              "dialKHz": 7051.5, "stateDirectory": "/srv/mailcast", "retune": true}}
+              "dialKHz": 7051.5, "stateDirectory": "/srv/mailcast", "retune": true, "sources": ["G4XYZ"]}}
             """);
 
         error.Should().BeEmpty();
-        MailcastConfig mailcast = config!.Mailcast!;
+        config!.Warnings.Should().BeEmpty();
+        MailcastConfig mailcast = config.Mailcast!;
+        mailcast.SourcesDefaulted.Should().BeFalse();
+        mailcast.SourcesInUse.Should().Equal("G4XYZ");
         mailcast.Bbs!.IsFbb.Should().BeTrue();
         mailcast.Bbs.Describe().Should().Be("FBB at bbs.lan:6300 as Q0CAST");
         mailcast.DialHz.Should().Be(7_051_500);
@@ -79,6 +85,13 @@ public sealed class MailcastConfigTests : IDisposable
     [InlineData("""{"bbs": {"password": "x", "login": "Q0 CAST"}}""", "must be one word")]
     [InlineData("""{"bbs": {"password": "x"}, "dialKHz": 7052000}""", "\"dialKHz\" is 7052000")]
     [InlineData("""{"bbs": {"password": "x"}, "stateDirectory": ""}""", "\"stateDirectory\" is empty")]
+    [InlineData("""{"bbs": {"password": "x"}, "sources": []}""", "\"sources\" is empty, so no frame would ever be taken")]
+    [InlineData("""{"bbs": {"password": "x"}, "sources": ["GB7RDG", ""]}""", "\"sources\" has \"\", which is not a callsign")]
+    [InlineData("""{"bbs": {"password": "x"}, "sources": ["GB7RDG", null]}""", "\"sources\" has null, which is not a callsign")]
+    [InlineData("""{"bbs": {"password": "x"}, "sources": ["GB7 RDG"]}""", "\"sources\" has \"GB7 RDG\", which is not a callsign")]
+    [InlineData("""{"bbs": {"password": "x"}, "sources": ["GB7RDGX"]}""", "\"sources\" has \"GB7RDGX\"")]
+    [InlineData("""{"bbs": {"password": "x"}, "sources": ["M0LTE-16"]}""", "\"sources\" has \"M0LTE-16\"")]
+    [InlineData("""{"bbs": {"password": "x"}, "sources": ["M0LTE-"]}""", "\"sources\" has \"M0LTE-\"")]
     public void A_Section_That_Cannot_Work_Is_Refused_Saying_What_To_Change(string section, string why)
     {
         (DaemonConfig? config, string error) = Load($$"""{"device": "null", "mailcast": {{section}}}""");
@@ -101,6 +114,40 @@ public sealed class MailcastConfigTests : IDisposable
 
         config.Should().BeNull();
         error.Should().Contain($"\"mailcast\".\"bbs\".\"{key}\" is null");
+    }
+
+    [Fact]
+    public void Sources_Are_Upper_Cased_Without_Their_Ssids_And_Each_Kept_Once()
+    {
+        (DaemonConfig? config, string error) = Load(
+            """{"device": "null", "mailcast": {"bbs": {"password": "x"}, "sources": ["gb7rdg-2", " m0lte ", "GB7RDG", "M0LTE-15"]}}""");
+
+        error.Should().BeEmpty();
+        config!.Mailcast!.SourcesInUse.Should().Equal("GB7RDG", "M0LTE");
+        config.Mailcast.SourcesDefaulted.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Sources_Given_As_One_String_Rather_Than_A_List_Is_Refused_Not_Thrown()
+    {
+        (DaemonConfig? config, string error) = Load(
+            """{"device": "null", "mailcast": {"bbs": {"password": "x"}, "sources": "GB7RDG"}}""");
+
+        config.Should().BeNull();
+        error.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void The_Api_Checks_Sources_The_Way_Start_Up_Does()
+    {
+        string asPath = Path.Combine(_dir.FullName, "soundmodem.json");
+        const string Station = """{"device": "null", "dialFrequency": 7052000, "mailcast": {"bbs": {"password": "x"}""";
+
+        ConfigApi.Validate(Station + """, "sources": []}}""", asPath).Should().Contain("\"mailcast\".\"sources\" is empty");
+        ConfigApi.Validate(Station + """, "sources": ["M0LTE", "not a call"]}}""", asPath)
+            .Should().Contain("\"mailcast\".\"sources\" has \"not a call\", which is not a callsign");
+        ConfigApi.Validate(Station + """, "sources": ["m0lte-1", "GB7RDG"]}}""", asPath).Should().BeNull();
+        ConfigApi.Validate(Station + "}}", asPath).Should().BeNull("left out, the default sources are used");
     }
 
     [Fact]

@@ -34,16 +34,17 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
         _dir.Dispose();
     }
 
-    private MailcastConfig Config() => new()
+    private MailcastConfig Config(List<string?>? sources = null) => new()
     {
         Bbs = new MailcastBbsConfig { Host = "127.0.0.1", Port = _bbs.Port, Password = _bbs.Password },
+        Sources = sources,
     };
 
-    private MailcastReceiver Receiver(double centreHz = 1800, TimeSpan? longestBurst = null)
+    private MailcastReceiver Receiver(double centreHz = 1800, TimeSpan? longestBurst = null, List<string?>? sources = null)
     {
         var placement = new MailcastPlacement(false, centreHz, centreHz - 1450, centreHz + 1450);
         MailcastReceiver receiver = MailcastReceiver.Create(
-            Config(), placement, MailcastSlotAudio.Rate, _dir.FullName, _time, _journal.Enqueue,
+            Config(sources), placement, MailcastSlotAudio.Rate, _dir.FullName, _time, _journal.Enqueue,
             longestBurst: longestBurst);
         _receivers.Add(receiver);
         return receiver;
@@ -262,11 +263,49 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
         MailcastReceiver receiver = Receiver();
         byte[] payload = MailcastSlotAudio.Frames()[0][16..];
 
-        receiver.Intake.Offer(MailcastSlotAudio.Ui("G8ABC", "MCAST", payload)).Should().BeFalse("only GB7RDG sends it");
+        receiver.Intake.Offer(MailcastSlotAudio.Ui("G8ABC", "MCAST", payload)).Should().BeFalse("G8ABC is not a source");
+        receiver.Intake.Offer(MailcastSlotAudio.Ui("GB7RD", "MCAST", payload)).Should().BeFalse("a source is matched whole");
         receiver.Intake.Offer(MailcastSlotAudio.Ui("GB7RDG", "CQ", payload)).Should().BeFalse();
+        receiver.Intake.Offer(MailcastSlotAudio.Ui("M0LTE", "CQ", payload)).Should().BeFalse();
         receiver.Intake.Offer(MailcastSlotAudio.Ui("GB7RDG", "MCAST", payload)).Should().BeTrue();
         await receiver.Intake.DrainAsync(CancellationToken.None);
         receiver.Intake.FramesHeard.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Without_Sources_Both_Default_Callsigns_Are_Taken_On_Any_Ssid_And_The_Journal_Says_So()
+    {
+        MailcastReceiver receiver = Receiver();
+        byte[] payload = MailcastSlotAudio.Frames()[0][16..];
+
+        foreach (string from in (string[])["GB7RDG", "M0LTE", "GB7RDG-2", "M0LTE-15", "GB7RDG-0"])
+        {
+            receiver.Intake.Offer(MailcastSlotAudio.Ui(from, "MCAST", payload)).Should().BeTrue($"{from} is a default source");
+        }
+
+        receiver.Intake.Offer(MailcastSlotAudio.Ui("M0LTE-1", "MCAST-3", payload)).Should().BeTrue("any SSID on the destination too");
+        await receiver.Intake.DrainAsync(CancellationToken.None);
+        receiver.Intake.FramesHeard.Should().Be(6);
+        MailcastConfig.DefaultSources.Should().Equal("GB7RDG", "M0LTE");
+        receiver.Describe().Where(line => line.Contains("taking frames")).Should().ContainSingle().Which.Should().Be(
+            "mailcast: taking frames to MCAST from GB7RDG or M0LTE (any SSID); \"sources\" is not set, so that is the default");
+        receiver.Status()["sources"]!.AsArray().Select(n => n!.GetValue<string>()).Should().Equal("GB7RDG", "M0LTE");
+    }
+
+    [Fact]
+    public async Task Configured_Sources_Are_The_Only_Ones_Taken_Whatever_Their_Case_Or_Ssid()
+    {
+        MailcastReceiver receiver = Receiver(sources: ["m0lte-5", "G4XYZ", "M0LTE"]);
+        byte[] payload = MailcastSlotAudio.Frames()[0][16..];
+
+        receiver.Intake.Offer(MailcastSlotAudio.Ui("M0LTE", "MCAST", payload)).Should().BeTrue("the SSID in the file is ignored");
+        receiver.Intake.Offer(MailcastSlotAudio.Ui("M0LTE-9", "MCAST", payload)).Should().BeTrue();
+        receiver.Intake.Offer(MailcastSlotAudio.Ui("G4XYZ-1", "MCAST", payload)).Should().BeTrue();
+        receiver.Intake.Offer(MailcastSlotAudio.Ui("GB7RDG", "MCAST", payload)).Should().BeFalse("GB7RDG is not listed, so the default does not apply");
+        await receiver.Intake.DrainAsync(CancellationToken.None);
+        receiver.Intake.FramesHeard.Should().Be(3);
+        receiver.Describe().Should().Contain("mailcast: taking frames to MCAST from M0LTE or G4XYZ (any SSID)");
+        receiver.Status()["sources"]!.AsArray().Select(n => n!.GetValue<string>()).Should().Equal("M0LTE", "G4XYZ");
     }
 
     [Fact]
@@ -280,7 +319,7 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
         Play(receiver.Process, audio);
 
         receiver.LocksReleased.Should().BeGreaterThan(0);
-        _journal.Should().Contain(line => line.Contains("longer than any GB7RDG sends") && line.Contains("listening afresh"));
+        _journal.Should().Contain(line => line.Contains("longer than any mailcast burst") && line.Contains("listening afresh"));
     }
 
     [Fact]
@@ -304,11 +343,11 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
         receiver.LocksReleased.Should().Be(1);
         _journal.Should().ContainSingle(line => line.Contains("let go of a wn4 lock")).Which
             .Should().StartWith("mailcast: ms110d:").And.MatchRegex("^[ -~]+$");
-        _journal.Should().NotContain(line => line.Contains("longer than any GB7RDG sends"));
+        _journal.Should().NotContain(line => line.Contains("longer than any mailcast burst"));
     }
 
     [Fact]
-    public void A_Tone_Away_From_A_Slots_Start_Is_Not_Taken_As_GB7RDGs()
+    public void A_Tone_Away_From_A_Slots_Start_Is_Not_Taken_As_The_Broadcasts()
     {
         var slots = new MailcastSlots(_time, _journal.Enqueue, null);
         _time.SetUtcNow(MailcastSlotAudio.Noon.AddMinutes(20));
@@ -336,6 +375,6 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
         slots.Timetable.Should().Be(every30);
         slots.FromDirectory.Should().BeTrue();
         slots.Next.Should().Be(new DateTimeOffset(2026, 10, 5, 12, 45, 0, TimeSpan.Zero));
-        _journal.Should().Contain("mailcast: GB7RDG's directory gives its slots as every 30 minutes from 00:15 UTC; using that");
+        _journal.Should().Contain("mailcast: the broadcast's directory gives its slots as every 30 minutes from 00:15 UTC; using that");
     }
 }

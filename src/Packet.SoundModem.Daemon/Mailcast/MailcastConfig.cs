@@ -7,20 +7,20 @@ using Packet.Mailcast;
 namespace Packet.SoundModem.Daemon;
 
 /// <summary>
-/// The built-in pdn-mailcast receiver: hear GB7RDG's hourly bulletins on 40 m and forward them
-/// into the local BBS. Null (the default) is a station that does none of it.
+/// The built-in pdn-mailcast receiver: hear the hourly bulletins on 40 m and forward them into
+/// the local BBS. Null (the default) is a station that does none of it.
 /// </summary>
 /// <remarks>
 /// <para>Present, the station runs an MS110D receive modem on the mailcast signal (centred
 /// <see cref="DialKHz"/> + 1.8 kHz) beside its own modems. It never transmits on it and it has no
-/// KISS port. Frames from GB7RDG to MCAST feed a store on disk, and each bulletin rebuilt from them
+/// KISS port. Frames to MCAST from one of <see cref="Sources"/> feed a store on disk, and each bulletin rebuilt from them
 /// is offered to the BBS as the forwarding partner <see cref="MailcastBbsConfig.Login"/>.</para>
 /// <para>Where the modem listens is decided at start-up, see <see cref="MailcastPlacement"/>: on
 /// the station's own passband when that already hears the signal, else by retuning the rig around
 /// each slot when <see cref="Retune"/> is true and there is a <c>rig</c> section, else the station
 /// refuses to start and says why.</para>
 /// </remarks>
-public sealed class MailcastConfig
+public sealed partial class MailcastConfig
 {
     /// <summary>The usual USB dial, 7.052 MHz, which puts the signal's centre at 1800 Hz audio.</summary>
     public const double DefaultDialKHz = 7052.0;
@@ -31,8 +31,21 @@ public sealed class MailcastConfig
     /// <summary>The highest dial accepted: the top of HF.</summary>
     public const double HighestDialKHz = 30000;
 
+    /// <summary>
+    /// The stations the broadcast is taken from when <see cref="Sources"/> is left out: GB7RDG,
+    /// which sends it, and M0LTE, which it may move to. The one place this list is written.
+    /// </summary>
+    public static IReadOnlyList<string> DefaultSources { get; } = ["GB7RDG", "M0LTE"];
+
     /// <summary>Where the BBS is and how to log in to it.</summary>
     public MailcastBbsConfig? Bbs { get; set; }
+
+    /// <summary>
+    /// The callsigns whose frames to MCAST are the broadcast, as base callsigns: case is ignored,
+    /// and so is any SSID given, since every SSID of a source is accepted. Null (left out):
+    /// <see cref="DefaultSources"/>. An empty list is refused.
+    /// </summary>
+    public List<string?>? Sources { get; set; }
 
     /// <summary>The USB dial the signal is heard on, in kHz; its centre is 1800 Hz above.</summary>
     public double DialKHz { get; set; } = DefaultDialKHz;
@@ -68,6 +81,30 @@ public sealed class MailcastConfig
     [JsonIgnore]
     public double CentreHz => DialHz + MailcastOnAir.CentreAudioHz;
 
+    /// <summary>Whether <see cref="Sources"/> was left out, so <see cref="DefaultSources"/> is used.</summary>
+    [JsonIgnore]
+    internal bool SourcesDefaulted => Sources is null;
+
+    /// <summary>
+    /// The callsigns frames are accepted from, as a frame's address carries them: upper case,
+    /// without an SSID, each once. Only meaningful once <see cref="Validate"/> has passed.
+    /// </summary>
+    [JsonIgnore]
+    internal IReadOnlyList<string> SourcesInUse =>
+        Sources is null ? DefaultSources : [.. Sources.Select(s => BaseCall(s ?? "")).Distinct(StringComparer.Ordinal)];
+
+    /// <summary>A list of callsigns for a person: "GB7RDG", "GB7RDG or M0LTE", "A, B or C".</summary>
+    internal static string DescribeSources(IReadOnlyList<string> sources) =>
+        sources.Count <= 1 ? string.Join("", sources) : $"{string.Join(", ", sources.Take(sources.Count - 1))} or {sources[^1]}";
+
+    /// <summary>A source as written in the file, as a frame carries it: trimmed, upper case, no SSID.</summary>
+    private static string BaseCall(string given)
+    {
+        string call = given.Trim().ToUpperInvariant();
+        int dash = call.IndexOf('-', StringComparison.Ordinal);
+        return dash < 0 ? call : call[..dash];
+    }
+
     /// <summary>The BBS settings, defaults filled in where the section is absent.</summary>
     [JsonIgnore]
     internal MailcastBbsConfig BbsInUse => Bbs ?? new MailcastBbsConfig();
@@ -97,8 +134,30 @@ public sealed class MailcastConfig
         {
             throw new InvalidDataException(string.Create(CultureInfo.InvariantCulture,
                 $"\"mailcast\".\"dialKHz\" is {mailcast.DialKHz}. That is the USB dial in kHz the "
-                + $"signal is heard on, between {LowestDialKHz:F0} and {HighestDialKHz:F0}; GB7RDG's is "
+                + $"signal is heard on, between {LowestDialKHz:F0} and {HighestDialKHz:F0}; the usual one is "
                 + $"{DefaultDialKHz:F1}, which is also what you get if you leave it out."));
+        }
+
+        if (mailcast.Sources is { } sources)
+        {
+            string defaults = string.Join(", ", DefaultSources.Select(d => $"\"{d}\""));
+            if (sources.Count == 0)
+            {
+                throw new InvalidDataException(
+                    "\"mailcast\".\"sources\" is empty, so no frame would ever be taken. List the "
+                    + $"callsigns the broadcast is sent from, or leave it out for [{defaults}].");
+            }
+
+            foreach (string? source in sources)
+            {
+                if (source is null || !SourcePattern().IsMatch(source.Trim()))
+                {
+                    throw new InvalidDataException(
+                        $"\"mailcast\".\"sources\" has {(source is null ? "null" : $"\"{MailcastOnAir.Ascii(source)}\"")}, "
+                        + "which is not a callsign. Give each source as a callsign of 1 to 6 letters and "
+                        + $"digits, such as [{defaults}]; any SSID is accepted, so none is needed.");
+                }
+            }
         }
 
         if (mailcast.StateDirectory is { } directory && directory.Trim().Length == 0)
@@ -148,7 +207,7 @@ public sealed class MailcastConfig
         {
             throw new InvalidDataException(
                 "\"mailcast\".\"bbs\".\"login\" must be one word, such as Q0CAST (the default): the "
-                + "receiver's own login on your BBS, never your callsign or GB7RDG.");
+                + "receiver's own login on your BBS, never your callsign or a mailcast source's.");
         }
 
         if (string.IsNullOrEmpty(bbs.Password))
@@ -203,6 +262,10 @@ public sealed class MailcastConfig
         return $"\"mailcast\".\"hooks\" cannot be read (at {MailcastOnAir.Ascii(at)}): give each hook as "
             + "{\"command\": \"/full/path/to/program\", \"args\": [\"a list\", \"of strings\"], \"timeoutSeconds\": 30}.";
     }
+
+    /// <summary>A callsign as <c>mailcast.sources</c> takes it: 1 to 6 letters and digits, an optional SSID 0 to 15.</summary>
+    [GeneratedRegex("^[A-Za-z0-9]{1,6}(-([0-9]|1[0-5]))?$", RegexOptions.CultureInvariant)]
+    private static partial Regex SourcePattern();
 
     /// <summary>The unknown-key warnings for this section and its <c>bbs</c>.</summary>
     internal static IEnumerable<(string Section, Dictionary<string, JsonElement>? Settings)> UnknownSections(MailcastConfig? mailcast) =>

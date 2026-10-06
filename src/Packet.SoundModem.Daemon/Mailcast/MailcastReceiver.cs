@@ -8,7 +8,7 @@ using Packet.SoundModem.Modems;
 namespace Packet.SoundModem.Daemon;
 
 /// <summary>
-/// The built-in pdn-mailcast receiver: an MS110D modem on GB7RDG's signal, the store its frames
+/// The built-in pdn-mailcast receiver: an MS110D modem on the mailcast signal, the store its frames
 /// feed, the slots and tones it hears, and the delivery of rebuilt bulletins into the BBS.
 /// </summary>
 /// <remarks>
@@ -47,7 +47,7 @@ internal sealed class MailcastReceiver : IAsyncDisposable
         _time = time;
         _log = log;
         Directory = directory;
-        Intake = new MailcastIntake(Path.Combine(directory, "store"), time, log);
+        Intake = new MailcastIntake(Path.Combine(directory, "store"), config.SourcesInUse, time, log);
         Ledger = new MailcastLedger(directory);
         Slots = new MailcastSlots(time, log, Intake.HeardTimetable);
         Delivery = new MailcastDelivery(Intake, bbs ?? new MailcastBbsClient(config.BbsInUse, time), Ledger, time, log);
@@ -171,7 +171,7 @@ internal sealed class MailcastReceiver : IAsyncDisposable
 
         _modem.ResetCarrierState();
         Interlocked.Increment(ref _locksReleased);
-        _log($"mailcast: the modem had been locked on one burst for {_locked / _rate} s, longer than any GB7RDG sends, "
+        _log($"mailcast: the modem had been locked on one burst for {_locked / _rate} s, longer than any mailcast burst, "
             + "so it was a signal too weak to read; listening afresh");
         _locked = 0;
     }
@@ -204,12 +204,18 @@ internal sealed class MailcastReceiver : IAsyncDisposable
         }
     }
 
-    /// <summary>The start-up lines: where it listens, the timetable, the BBS and the files.</summary>
+    /// <summary>
+    /// The start-up lines: where it listens, whom it takes frames from (and, once, that this is the
+    /// default when <c>sources</c> is left out), the timetable, the BBS and the files.
+    /// </summary>
     internal IEnumerable<string> Describe()
     {
         yield return _placement.Describe(_config);
-        yield return $"mailcast: GB7RDG's slots are {MailcastSlots.Describe(Slots.Timetable)}"
-            + (Slots.FromDirectory ? ", as its directory gives them" : " (its own; its directory updates them once heard)");
+        yield return $"mailcast: taking frames to {MailcastOnAir.Destination} from "
+            + $"{MailcastConfig.DescribeSources(_config.SourcesInUse)} (any SSID)"
+            + (_config.SourcesDefaulted ? "; \"sources\" is not set, so that is the default" : "");
+        yield return $"mailcast: the slots are {MailcastSlots.Describe(Slots.Timetable)}"
+            + (Slots.FromDirectory ? ", as the broadcast's directory gives them" : " (the built-in timetable; the broadcast's directory updates it once heard)");
         yield return $"mailcast: delivering rebuilt bulletins to {_config.BbsInUse.Describe()}; state in {Directory}";
         if (Hooks.DescribeConfig() is { } hooks)
         {
@@ -230,6 +236,7 @@ internal sealed class MailcastReceiver : IAsyncDisposable
             ["dialMhz"] = Math.Round(_config.DialHz / 1e6, 6),
             ["centreMhz"] = Math.Round(_config.CentreHz / 1e6, 6),
             ["audioCentreHz"] = Math.Round(_placement.AudioCentreHz, 1),
+            ["sources"] = new JsonArray([.. _config.SourcesInUse.Select(s => (JsonNode?)s)]),
             ["timetable"] = MailcastSlots.Describe(Slots.Timetable),
             ["timetableFromDirectory"] = Slots.FromDirectory,
             ["nextSlot"] = Iso(Slots.Next),

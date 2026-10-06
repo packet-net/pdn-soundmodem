@@ -812,7 +812,8 @@ function setMailcast(m) {
     $("mcRigFig").title = rig.state || "";
   }
   box.title = `pdn-mailcast on ${m.centreMhz} MHz (USB dial ${m.dialMhz} MHz), ${m.placement === "retune" ? "the rig retuned around each slot" : "on this station's own passband"}.`
-    + `\nGB7RDG's slots: ${m.timetable}${m.timetableFromDirectory ? " (from its directory)" : ""}.`
+    + `\nFrom: ${(m.sources || []).join(", ")}.`
+    + `\nSlots: ${m.timetable}${m.timetableFromDirectory ? " (from the broadcast's directory)" : ""}.`
     + `\n${m.framesHeard} frames heard since start.`;
 }
 
