@@ -162,10 +162,9 @@ public sealed class RigControlTests : IAsyncDisposable
     [Fact]
     public async Task Nothing_Listening_Is_A_Warning_Not_A_Failure()
     {
-        var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
+        // Nobody can be listening on it: a port 0 bind elsewhere in the suite could be handed a
+        // number that was merely probed and let go, but never one of these.
+        int port = FreePorts.Next();
 
         RigControl rig = Rig(endpoint: new RigctldEndpoint("127.0.0.1", port));
         bool answered = await rig.StartAsync(CancellationToken.None);
