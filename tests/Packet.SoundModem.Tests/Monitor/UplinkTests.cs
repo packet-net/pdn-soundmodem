@@ -1134,10 +1134,6 @@ public class UplinkTests
         }
     }
 
-    /// <summary>
-    /// A monitor with two fake receivers, one configured uplink, a real frame-log directory and a
-    /// fake clock.
-    /// </summary>
     /// <summary>A fake clock that also counts the timers put on it, by their first due time, so
     /// a test can wait for the server's timer to exist before moving the clock on. The server
     /// acts a moment before it creates some of its timers (it announces the demand, then sets
@@ -1157,6 +1153,10 @@ public class UplinkTests
         }
     }
 
+    /// <summary>
+    /// A monitor with two fake receivers, one configured uplink, a real frame-log directory and a
+    /// fake clock.
+    /// </summary>
     private sealed class Harness : IAsyncDisposable
     {
         internal static readonly TimeSpan Linger = TimeSpan.FromSeconds(60);

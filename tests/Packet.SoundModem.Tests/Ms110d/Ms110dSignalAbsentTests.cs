@@ -352,65 +352,88 @@ public class Ms110dSignalAbsentTests(ITestOutputHelper output)
         with.Should().Be(without);
     }
 
+    private static double[] Tones(string tones) =>
+        tones.Split(',').Select(t => double.Parse(t, CultureInfo.InvariantCulture)).ToArray();
+
     [Theory]
-    [InlineData(4, 6.0, 1950.0, 5.0)]
-    [InlineData(4, 6.0, 2100.0, 8.0)]
-    [InlineData(4, 6.0, 1875.0, 8.0)]
-    [InlineData(6, 10.0, 1650.0, 2.0)]
-    [InlineData(2, 1.0, 1896.0, 2.0)]
-    [InlineData(2, 1.0, 1850.0, 5.0)]
-    public void A_Steady_Carrier_Under_A_Readable_Burst_Costs_No_Frame(int wn, double snrDb, double toneHz, double aboveDb)
+    [InlineData(4, 6.0, "1950", 11.0)]
+    [InlineData(4, 6.0, "2100", 14.0)]
+    [InlineData(4, 6.0, "1875", 14.0)]
+    [InlineData(4, 6.0, "1650,2100", 6.0)]
+    [InlineData(4, 6.0, "1650,2100", 9.0)]
+    [InlineData(4, 10.0, "1650,2100", 10.0)]
+    [InlineData(4, 6.0, "1650,2100,1950,1500", 9.0)]
+    [InlineData(4, 6.0, "1875,2025,1725", 9.0)]
+    [InlineData(6, 10.0, "1650,1875,2100", 12.0)]
+    [InlineData(2, 1.0, "1896", 3.0)]
+    [InlineData(2, 1.0, "1850", 6.0)]
+    [InlineData(2, 4.0, "1896,1992,1704", 3.0)]
+    public void Steady_Carriers_Under_A_Readable_Burst_Cost_No_Frame(int wn, double snrDb, string tones, double toneDb)
     {
-        // The other side of the carrier: one on a probe line (1950, 2100, 1650 Hz for K = 32;
-        // 1896 Hz for K = 48) or off one (1875, 1850 Hz), stronger than the burst under it by
-        // aboveDb. Whatever the receiver read before #553 with the carrier there, it still reads.
+        // The other side of the carrier: up to four, on the probe's lines (1650, 1950, 2100,
+        // 1500 Hz for K = 32; 1704, 1896, 1992 Hz for K = 48) or off them, each toneDb in 3 kHz
+        // over the noise, under a readable burst. The review's cases are the 1650 + 2100 Hz pairs:
+        // with one carrier cancelled, the second ended the burst 9 frames in of main's 34.
+        // Whatever the receiver read before #553 with the carriers there, it still reads.
         const int rate = Ms110dModulator.NativeRate;
         float[] burst = PackedBurst(wn, 60, wn <= 2 ? 112 : 200);
         var air = new Air(rate, 77);
         float[] onAir = air.Noise(rate + burst.Length + (5 * rate));
         double power = burst.Average(x => (double)x * x);
         double gain = Math.Sqrt(NoiseSigma * NoiseSigma * 3000 / (rate / 2.0) * Math.Pow(10, snrDb / 10) / power);
-        double amplitude = Math.Sqrt(2 * power * gain * gain * Math.Pow(10, aboveDb / 10));
+        double amplitude = Math.Sqrt(2 * NoiseSigma * NoiseSigma * 3000 / (rate / 2.0) * Math.Pow(10, toneDb / 10));
+        double[] hz = Tones(tones);
         for (int i = 0; i < onAir.Length; i++)
         {
-            float signal = i >= rate && i < rate + burst.Length ? (float)(burst[i - rate] * gain) : 0f;
-            onAir[i] += signal + (float)(amplitude * Math.Cos(2 * Math.PI * toneHz * i / rate));
+            double sample = i >= rate && i < rate + burst.Length ? burst[i - rate] * gain : 0;
+            foreach (double f in hz)
+            {
+                sample += amplitude * Math.Cos(2 * Math.PI * f * i / rate);
+            }
+
+            onAir[i] += (float)sample;
         }
 
         (int with, int without, int releases) = ReadBothWays(onAir);
-        output.WriteLine($"wn{wn} {snrDb} dB under a carrier at {toneHz} Hz {aboveDb} dB above it: {with} frames read, {without} without the release, {releases} releases");
+        output.WriteLine($"wn{wn} {snrDb} dB under carriers at {tones} Hz, {toneDb} dB each: {with} frames read, {without} without the release, {releases} releases");
         without.Should().BeGreaterThan(0);
         with.Should().Be(without);
     }
 
     [Theory]
-    [InlineData(4, 1800.0, -6.0)]
-    [InlineData(4, 1950.0, 0.0)]
-    [InlineData(4, 2100.0, 6.0)]
-    [InlineData(4, 1650.0, 0.0)]
-    [InlineData(6, 1800.0, 0.0)]
-    [InlineData(2, 1800.0, 0.0)]
-    [InlineData(2, 1896.0, -6.0)]
-    [InlineData(2, 1992.0, 6.0)]
-    public void A_Steady_Carrier_On_A_Probe_Line_Reads_As_No_Signal(int wn, double toneHz, double toneDb)
+    [InlineData(4, "1800", -6.0)]
+    [InlineData(4, "1950", 0.0)]
+    [InlineData(4, "2100", 6.0)]
+    [InlineData(6, "1800", 0.0)]
+    [InlineData(2, "1800", 0.0)]
+    [InlineData(2, "1896", -6.0)]
+    [InlineData(4, "1650,2100", 6.0)]
+    [InlineData(4, "1650,2100,1950", 0.0)]
+    [InlineData(4, "1650,2100,1950,1500", 6.0)]
+    [InlineData(4, "1875,2025,1725", 6.0)]
+    [InlineData(6, "1650,1875,2100", 6.0)]
+    [InlineData(2, "1896,1992", 6.0)]
+    [InlineData(2, "1896,1992,1704,2088", 0.0)]
+    [InlineData(2, "1850,1944", 6.0)]
+    public void Steady_Carriers_After_A_Weak_Burst_Read_As_No_Signal(int wn, string tones, double toneDb)
     {
         // A carrier at 1800 Hz plus a multiple of the probe's line spacing (150 Hz for K = 32,
-        // 96 Hz for K = 48) correlates with the probe equally at every lag. A CW ident or a
-        // carrier on the band after a weak burst must read as no signal, or it is the #553 lock
-        // again. The plain lag sum sees it as strong; the floored statistic the release decides
-        // on puts it below the noise.
+        // 96 Hz for K = 48) correlates with the probe equally at every lag. CW idents or carriers
+        // on the band after a weak burst must read as no signal, up to four of them, on the lines
+        // or off, or it is the #553 lock again. The plain lag sum sees them as strong; the
+        // statistic the release decides on cancels them and scores what is left, which is noise.
         const int rate = Ms110dModulator.NativeRate;
         var air = new Air(rate, 5);
         var modem = new Ms110dModem(rate, _ => { });
         var plain = new List<double>();
-        var floored = new List<double>();
+        var cancelled = new List<double>();
         bool carrierOn = false;
         modem.Receiver.PresenceTraced += (_, a, b) =>
         {
             if (carrierOn)
             {
                 plain.Add(a);
-                floored.Add(b);
+                cancelled.Add(b);
             }
         };
         var tx = new Ms110dModem(rate, _ => { }, new Ms110dTxSettings { WaveformNumber = wn });
@@ -419,27 +442,29 @@ public class Ms110dSignalAbsentTests(ITestOutputHelper output)
         modem.CarrierDetect.Should().BeTrue("the weak burst is acquired");
 
         double amplitude = Math.Sqrt(2 * NoiseSigma * NoiseSigma * 3000 / (rate / 2.0) * Math.Pow(10, toneDb / 10));
+        double[] hz = Tones(tones);
         long phase = 0;
-        float[] Carrier()
+        float[] Carriers()
         {
             float[] block = air.Noise(rate / 10);
             for (int i = 0; i < block.Length; i++, phase++)
             {
-                block[i] += (float)(amplitude * Math.Cos(2 * Math.PI * toneHz * phase / rate));
+                foreach (double f in hz)
+                {
+                    block[i] += (float)(amplitude * Math.Cos(2 * Math.PI * f * phase / rate));
+                }
             }
 
             return block;
         }
 
-        modem.Process(Carrier()); // the last probes of the burst itself are read in this block
+        modem.Process(Carriers()); // the last probes of the burst itself are read in this block
         carrierOn = true;
-        long releasedAfter = FeedUntilReleased(modem, Carrier, 60L * rate);
+        long releasedAfter = FeedUntilReleased(modem, Carriers, 60L * rate);
         output.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"wn{wn}, carrier at {toneHz} Hz, {toneDb} dB in 3 kHz: plain mean {plain.Average():F1}, cancelled mean " +
-            $"{floored.Skip(floored.Count / 2).Average():F2} over the last {floored.Count - (floored.Count / 2)} frames; let go {releasedAfter / (double)rate:F2} s on, " +
-            $"{modem.LocksReleased} by the new exit"));
-        plain.Average().Should().BeGreaterThan(2,
-            "the carrier fills every lag of the plain sum, which would hold the lock: every mode's release line is below 1.4");
+            $"wn{wn}, carriers at {tones} Hz, {toneDb} dB each in 3 kHz: plain mean {plain.Average():F1}, cancelled mean " +
+            $"{cancelled.Skip(cancelled.Count / 2).Average():F2} over the last {cancelled.Count - (cancelled.Count / 2)} frames; " +
+            $"let go {releasedAfter / (double)rate:F2} s on, {modem.LocksReleased} by the new exit"));
         releasedAfter.Should().BeInRange(0, (long)(ReleaseBoundSeconds * rate) + (rate / 10));
         modem.CarrierDetect.Should().BeFalse();
     }

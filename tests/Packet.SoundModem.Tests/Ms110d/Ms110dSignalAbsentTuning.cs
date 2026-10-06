@@ -19,7 +19,8 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// <c>MS110D_TUNE_SET</c> picks the set: A slow flat Rayleigh, B scripted 4 to 8 s fades, C weak
 /// bursts then noise, D the AWGN and Poor mask points, V the validation seeds for A, E scripted
 /// 10 to 18 s fades, K steady carriers on and off the probe lines under a readable burst, T the
-/// same carriers after a weak burst (scored with the C set). Existing traces are kept, so an
+/// same carriers after a weak burst (scored with the C set), M two to four carriers under a
+/// readable burst and N the same after a weak one (scored with the C set). Existing traces are kept, so an
 /// interrupted set resumes.
 /// </summary>
 public class Ms110dSignalAbsentTuning(ITestOutputHelper output)
@@ -61,6 +62,30 @@ public class Ms110dSignalAbsentTuning(ITestOutputHelper output)
         }
 
         return b;
+    }
+
+    /// <summary>Two, three and four carriers on the probe's lines, two and three off them,
+    /// and a mix, for the probe length of <paramref name="wn"/>.</summary>
+    private static IEnumerable<(string Name, double[] Tones)> CarrierSets(int wn)
+    {
+        bool k48 = Ms110dMode.Mode3k(wn).K == 48;
+        double[] on = k48 ? [1896, 1992, 1704, 2088] : [1650, 2100, 1950, 1500];
+        double[] off = k48 ? [1850, 1944, 2040] : [1875, 2025, 1725];
+        yield return ("on2", on[..2]);
+        yield return ("on3", on[..3]);
+        yield return ("on4", on);
+        yield return ("off2", off[..2]);
+        yield return ("off3", off);
+        yield return ("mix3", [on[0], off[0], on[1]]);
+    }
+
+    private static float[] WeakBits(int wn)
+    {
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = wn });
+        var random = new Random(4);
+        var bits = new byte[4 * tx.Mode.Bps];
+        for (int i = 0; i < bits.Length; i++) bits[i] = (byte)random.Next(2);
+        return tx.Modulate(bits);
     }
 
     private static void AddCarrier(float[] air, int from, double hz, double amplitude)
@@ -228,6 +253,31 @@ public class Ms110dSignalAbsentTuning(ITestOutputHelper output)
                         double amplitude = Math.Sqrt(2 * Sigma * Sigma * 3000 / (Rate / 2.0) * Math.Pow(10, toneDb / 10));
                         AddCarrier(air, Rate + audio.Length, toneHz, amplitude);
                         return Trace(id, wn, air, Rate, Rate + audio.Length);
+                    }));
+                }
+            }
+            else if (set is "M" or "N" && wn is 2 or 4 or 6)
+            {
+                foreach ((string name, double[] tones) in CarrierSets(wn))
+                foreach (double toneDb in set == "M" ? new[] { 6.0, 9, 10, 12 } : new[] { -6.0, 0, 6 })
+                foreach (double off in set == "M" ? new[] { 1.0, 5 } : new[] { -99.0 })
+                {
+                    double snr = set == "M" ? AwgnMask[wn] + off : -6;
+                    string id = string.Create(CultureInfo.InvariantCulture,
+                        $"{(set == "M" ? "M" : "C")}-wn{wn}-{name}-t{toneDb}-s{snr}");
+                    jobs.Add((id, () =>
+                    {
+                        float[] burst = set == "M" ? Packed(wn, 60) : WeakBits(wn);
+                        double gain = Gain(burst, snr);
+                        var air = Noise(new Random(91), Rate + burst.Length + ((set == "M" ? 10 : 40) * Rate));
+                        for (int i = 0; i < burst.Length; i++) air[Rate + i] += (float)(burst[i] * gain);
+                        double amplitude = Math.Sqrt(2 * Sigma * Sigma * 3000 / (Rate / 2.0) * Math.Pow(10, toneDb / 10));
+                        foreach (double hz in tones)
+                        {
+                            AddCarrier(air, set == "M" ? 0 : Rate + burst.Length, hz, amplitude);
+                        }
+
+                        return Trace(id, wn, air, Rate, Rate + burst.Length);
                     }));
                 }
             }

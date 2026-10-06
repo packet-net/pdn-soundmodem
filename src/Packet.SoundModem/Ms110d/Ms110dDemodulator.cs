@@ -157,10 +157,10 @@ public sealed class Ms110dDemodulator
 
     // Signal-absent release (issue #553, docs/dev/ms110d/signal-absent.md). Each frame's
     // mini-probe is matched-filtered against the raw received symbols over a lag window; the
-    // coherent energy found there, less what noise puts there and with any steady carrier
-    // cancelled (a carrier on a probe line correlates with the probe at every lag), is
-    // averaged over the last PresenceWindowSeconds of frames. Noise-only, that average has a standard deviation of
-    // about sqrt(lags / frames); the lock is released when it falls below PresenceSigmas of
+    // coherent energy found there, less what noise puts there and with up to
+    // PresenceMaxCarriers steady carriers cancelled (a carrier on a probe line correlates with
+    // the probe at every lag), is averaged over the last PresenceWindowSeconds of frames.
+    // Noise-only, that average has a standard deviation of about sqrt(lags / frames); the lock is released when it falls below PresenceSigmas of
     // those. The window is long on purpose: a slow, deep NVIS fade takes the probes away for
     // many seconds inside a burst that is still worth reading, and losing that burst's frames
     // costs more than holding a dead lock a few seconds longer. It reads the ring through the
@@ -174,19 +174,37 @@ public sealed class Ms110dDemodulator
     private double _presenceThreshold;
     private long _presenceProbeChip;
     private Cf[] _presenceProbe = [];
-    private double _presenceRotationRe;
-    private double _presenceRotationIm;
     private double _presenceBackground;
     private double _presenceFrameSeconds;
+    private double[] _presenceSpectrum = [];
+    private bool _presenceSpectrumSeeded;
+    private double[] _presenceDftRe = [];
+    private double[] _presenceDftIm = [];
 
     /// <summary>How long the background a lag is judged against is averaged over: long
     /// enough to steady it, short enough to follow a signal's fade down to the noise.</summary>
     private const double PresenceBackgroundSeconds = 2.0;
 
-    /// <summary>How long the carrier's lag-to-lag rotation is averaged over: long enough that a
-    /// carrier well under the noise is still pinned down, short enough that one arriving after a
-    /// burst takes over the estimate from the burst's own channel within a few seconds.</summary>
-    private const double PresenceRotationSeconds = 4.0;
+    /// <summary>How long the lag spectrum carriers are found in is averaged over: long enough
+    /// that a carrier well under the noise stands out of it, short enough that one arriving
+    /// after a burst shows within a few seconds.</summary>
+    private const double PresenceSpectrumSeconds = 4.0;
+
+    /// <summary>The most steady carriers cancelled at once. Each takes two degrees of freedom
+    /// out of the lags (its sinusoid and that sinusoid's first-order term in frequency), so four
+    /// leave seven of the fifteen K = 32 lags, enough for the median to stand on.</summary>
+    private const int PresenceMaxCarriers = 4;
+
+    /// <summary>A line in the averaged lag spectrum is taken for a carrier when it stands this
+    /// many times above what noise alone puts in a spectrum bin: low, so a carrier too weak to be
+    /// found adds less than half a unit to the statistic (under every mode's line).</summary>
+    private const double PresenceCarrierOverNoise = 1.5;
+
+    /// <summary>... and when its excess over the noise is this many times the spectrum's median
+    /// excess, which is what a signal's own channel puts in every bin (its spectrum across the
+    /// lags is the channel's frequency response, so two equal paths ripple it by a factor of
+    /// two and no more): a readable burst's ripple is never taken for a carrier.</summary>
+    private const double PresenceCarrierOverSignal = 4.0;
 
     // Tracking state (WN 0).
     private Wid0WalshModem? _walsh;
@@ -2084,10 +2102,27 @@ public sealed class Ms110dDemodulator
         // The first frame scores the probe that ends the preamble (unshifted, design §2.4).
         _presenceProbeChip = _dataStartChip;
         _presenceProbe = MiniProbe.Get(mode.K, boundary: false);
-        _presenceRotationRe = 0;
-        _presenceRotationIm = 0;
         _presenceBackground = 0;
         _presenceFrameSeconds = (mode.U + mode.K) / (double)Ms110dTables.SymbolRate;
+
+        // The lag spectrum: 4 bins per lag across the full circle, and the DFT kernel for it,
+        // e^{-jωd} with d counted from the middle lag.
+        int lags = PresenceLags(mode.K);
+        int bins = 4 * lags;
+        _presenceSpectrum = new double[bins];
+        _presenceSpectrumSeeded = false;
+        _presenceDftRe = new double[bins * lags];
+        _presenceDftIm = new double[bins * lags];
+        double centre = (lags - 1) / 2.0;
+        for (int j = 0; j < bins; j++)
+        {
+            double w = PresenceBinFrequency(j, bins);
+            for (int d = 0; d < lags; d++)
+            {
+                _presenceDftRe[(j * lags) + d] = Math.Cos(w * (d - centre));
+                _presenceDftIm[(j * lags) + d] = -Math.Sin(w * (d - centre));
+            }
+        }
     }
 
     /// <summary>Symbol lags the probe matched filter searches: half a probe base period
@@ -2100,30 +2135,39 @@ public sealed class Ms110dDemodulator
         return (2 * ((MiniProbe.Sequence(k).Base.Length - 1) / 2)) + 1;
     }
 
+    /// <summary>The frequency, radians per symbol in [-π, π), of lag-spectrum bin j.</summary>
+    private static double PresenceBinFrequency(int j, int bins) => (2.0 * Math.PI * j / bins) - Math.PI;
+
     /// <summary>
     /// How much more coherent mini-probe energy the received symbols hold than the background
     /// would put there (issue #553). For each lag d of <see cref="PresenceLags"/> the K
     /// received symbols from probe start + d are correlated with the known probe, giving c_d.
     /// A signal puts its channel energy into the few lags its paths occupy; noise puts the
     /// same expected energy into every lag.
-    /// <para>Two things keep a carrier from looking like a signal. A steady carrier is the one
-    /// thing besides the probe that correlates with it, and its c_d is an exact complex
-    /// sinusoid in d, A·e^{jωd}, whatever its frequency; on one of the probe's spectral lines
-    /// (1800 Hz plus a multiple of 2400 / base length) it is a strong one. So ω is estimated
-    /// from the lag-to-lag rotation Σ c_{d+1}·conj(c_d), averaged over the last few seconds of
-    /// earlier frames (never this one, so on noise it is independent of the frame it is applied to),
-    /// and the projection of this frame's c onto e^{jωd} and d·e^{jωd} is removed, the carrier
-    /// with it. And
-    /// the background each lag is judged against is measured in the lags themselves: the median
-    /// residual lag energy, averaged over the last couple of seconds of frames and scaled by the
-    /// median's expectation on noise. Normalizing by the received power instead would let any
-    /// strong interferer that does not correlate with the probe (a carrier off the lines, say)
-    /// push the score below the noise and end a burst that is being read.</para>
+    /// <para>A steady carrier is the one other thing that correlates with the probe, and its
+    /// c_d is an exact complex sinusoid in d, A·e^{jωd}, whatever its frequency; on one of the
+    /// probe's spectral lines (1800 Hz plus a multiple of 2400 / base length) it is a strong
+    /// one. Across the lags, then, a carrier is a line in the spectrum of c, where a signal is
+    /// broad: a signal's lag spectrum is its channel's frequency response. So the spectrum of c
+    /// is averaged over the last <see cref="PresenceSpectrumSeconds"/> of earlier frames (never
+    /// this one, so on noise what is found is independent of the frame it is applied to); the
+    /// strongest line in it that stands out of both the noise and the signal's own spectrum is
+    /// taken for a carrier, its leakage taken off the averaged spectrum, and the search
+    /// repeated, up to <see cref="PresenceMaxCarriers"/>. This frame's c is then projected off
+    /// every carrier's e^{jωd}, and off d·e^{jωd} (the first-order term in ω, so an estimate a
+    /// little off the carrier, as the receiver's own carrier loop wanders, still takes all of
+    /// it).</para>
+    /// <para>The background each lag is judged against is measured in the residual lags
+    /// themselves: each residual lag's energy over its own noise variance after the projection
+    /// (1 less the projection's weight at that lag), the median of those over the median's
+    /// expectation on noise, averaged over the last couple of seconds of frames. Normalizing by
+    /// the received power instead would let any strong interferer that does not correlate with
+    /// the probe push the score below the noise and end a burst that is being read.</para>
     /// <para>The result is the residual lag energy over that background, less the residual's
-    /// degrees of freedom (lags - 2), which averages zero on noise and on a carrier alike,
-    /// whatever their level, and grows by the signal's in-window channel energy over the
-    /// background. <paramref name="plain"/> is the old uncancelled, power-normalized sum less
-    /// the lag count, kept for the instrument.</para>
+    /// degrees of freedom (lags less the projection's rank), which averages zero on noise and
+    /// on any number of carriers up to the limit, whatever their levels, and grows by the
+    /// signal's in-window channel energy over the background. <paramref name="plain"/> is the
+    /// old uncancelled, power-normalized sum less the lag count, kept for the instrument.</para>
     /// <para>Read straight from the ring with the receiver's own timing and carrier, but
     /// independent of the equalizer, its reference levels and the AGC (every term is a ratio),
     /// which is what lets it see noise as noise after the DFE has adapted itself to that
@@ -2171,55 +2215,101 @@ public sealed class Ms110dDemodulator
 
         plain = energy - lags;
 
-        // This frame's lag-to-lag rotation, taken before the carrier is removed.
-        double rotRe = 0, rotIm = 0;
-        for (int d = 0; d + 1 < lags; d++)
+        // This frame's lag spectrum, before anything is removed, for the frames after it.
+        int bins = _presenceSpectrum.Length;
+        Span<double> spectrum = stackalloc double[bins];
+        for (int j = 0; j < bins; j++)
         {
-            rotRe += (re[d + 1] * re[d]) + (im[d + 1] * im[d]);
-            rotIm += (im[d + 1] * re[d]) - (re[d + 1] * im[d]);
-        }
-
-        // Remove the carrier the earlier frames point to: the projection onto e^{jωd}, and onto
-        // d·e^{jωd} with d counted from the middle lag, the first-order term in ω, so that an
-        // estimate a little off the carrier's frequency (the receiver's own carrier loop wanders
-        // on noise) still takes all of it. The two are orthogonal, |e^{jωd}|² summing to lags and
-        // |d·e^{jωd}|² to lags(lags² - 1)/12, and on noise they take out two degrees of freedom.
-        double rotation = Math.Sqrt((_presenceRotationRe * _presenceRotationRe) + (_presenceRotationIm * _presenceRotationIm));
-        bool cancelled = rotation > 0;
-        if (cancelled)
-        {
-            double stepRe = _presenceRotationRe / rotation, stepIm = _presenceRotationIm / rotation;
-            double centre = (lags - 1) / 2.0;
-            double rampNorm = lags * ((lags * lags) - 1) / 12.0;
-            double phRe = 1, phIm = 0, flatRe = 0, flatIm = 0, rampRe = 0, rampIm = 0;
+            double xRe = 0, xIm = 0;
+            int row = j * lags;
             for (int d = 0; d < lags; d++)
             {
-                double conjRe = (re[d] * phRe) + (im[d] * phIm);
-                double conjIm = (im[d] * phRe) - (re[d] * phIm);
-                flatRe += conjRe;
-                flatIm += conjIm;
-                rampRe += (d - centre) * conjRe;
-                rampIm += (d - centre) * conjIm;
-                double nextRe = (phRe * stepRe) - (phIm * stepIm);
-                phIm = (phRe * stepIm) + (phIm * stepRe);
-                phRe = nextRe;
+                double kRe = _presenceDftRe[row + d], kIm = _presenceDftIm[row + d];
+                xRe += (re[d] * kRe) - (im[d] * kIm);
+                xIm += (re[d] * kIm) + (im[d] * kRe);
             }
 
-            flatRe /= lags;
-            flatIm /= lags;
-            rampRe /= rampNorm;
-            rampIm /= rampNorm;
-            phRe = 1;
-            phIm = 0;
+            spectrum[j] = (xRe * xRe) + (xIm * xIm);
+        }
+
+        // The carriers the earlier frames point to, and the orthonormal basis they span.
+        Span<double> carriers = stackalloc double[PresenceMaxCarriers];
+        int found = _presenceSpectrumSeeded ? FindPresenceCarriers(lags, carriers) : 0;
+        Span<double> basisRe = stackalloc double[2 * PresenceMaxCarriers * lags];
+        Span<double> basisIm = stackalloc double[2 * PresenceMaxCarriers * lags];
+        int rank = 0;
+        double centre = (lags - 1) / 2.0;
+        for (int n = 0; n < 2 * found; n++)
+        {
+            double w = carriers[n / 2];
+            Span<double> vRe = basisRe.Slice(rank * lags, lags);
+            Span<double> vIm = basisIm.Slice(rank * lags, lags);
             for (int d = 0; d < lags; d++)
             {
-                double aRe = flatRe + ((d - centre) * rampRe);
-                double aIm = flatIm + ((d - centre) * rampIm);
-                re[d] -= (aRe * phRe) - (aIm * phIm);
-                im[d] -= (aRe * phIm) + (aIm * phRe);
-                double nextRe = (phRe * stepRe) - (phIm * stepIm);
-                phIm = (phRe * stepIm) + (phIm * stepRe);
-                phRe = nextRe;
+                double weight = n % 2 == 0 ? 1.0 : d - centre;
+                vRe[d] = weight * Math.Cos(w * (d - centre));
+                vIm[d] = weight * Math.Sin(w * (d - centre));
+            }
+
+            // Modified Gram-Schmidt against the vectors already in the basis.
+            for (int q = 0; q < rank; q++)
+            {
+                ReadOnlySpan<double> qRe = basisRe.Slice(q * lags, lags);
+                ReadOnlySpan<double> qIm = basisIm.Slice(q * lags, lags);
+                double dotRe = 0, dotIm = 0;
+                for (int d = 0; d < lags; d++)
+                {
+                    dotRe += (qRe[d] * vRe[d]) + (qIm[d] * vIm[d]);
+                    dotIm += (qRe[d] * vIm[d]) - (qIm[d] * vRe[d]);
+                }
+
+                for (int d = 0; d < lags; d++)
+                {
+                    vRe[d] -= (dotRe * qRe[d]) - (dotIm * qIm[d]);
+                    vIm[d] -= (dotRe * qIm[d]) + (dotIm * qRe[d]);
+                }
+            }
+
+            double norm = 0;
+            for (int d = 0; d < lags; d++)
+            {
+                norm += (vRe[d] * vRe[d]) + (vIm[d] * vIm[d]);
+            }
+
+            if (norm < 1e-6)
+            {
+                continue; // already spanned
+            }
+
+            double inv = 1.0 / Math.Sqrt(norm);
+            for (int d = 0; d < lags; d++)
+            {
+                vRe[d] *= inv;
+                vIm[d] *= inv;
+            }
+
+            rank++;
+        }
+
+        // Project the carriers off this frame, and keep each lag's remaining noise variance.
+        Span<double> variance = stackalloc double[lags];
+        variance.Fill(1.0);
+        for (int q = 0; q < rank; q++)
+        {
+            ReadOnlySpan<double> qRe = basisRe.Slice(q * lags, lags);
+            ReadOnlySpan<double> qIm = basisIm.Slice(q * lags, lags);
+            double dotRe = 0, dotIm = 0;
+            for (int d = 0; d < lags; d++)
+            {
+                dotRe += (qRe[d] * re[d]) + (qIm[d] * im[d]);
+                dotIm += (qRe[d] * im[d]) - (qIm[d] * re[d]);
+            }
+
+            for (int d = 0; d < lags; d++)
+            {
+                re[d] -= (dotRe * qRe[d]) - (dotIm * qIm[d]);
+                im[d] -= (dotRe * qIm[d]) + (dotIm * qRe[d]);
+                variance[d] -= (qRe[d] * qRe[d]) + (qIm[d] * qIm[d]);
             }
         }
 
@@ -2227,34 +2317,94 @@ public sealed class Ms110dDemodulator
         double residual = 0;
         for (int d = 0; d < lags; d++)
         {
-            lagEnergy[d] = (re[d] * re[d]) + (im[d] * im[d]);
-            residual += lagEnergy[d];
+            double e = (re[d] * re[d]) + (im[d] * im[d]);
+            residual += e;
+            lagEnergy[d] = e / Math.Max(variance[d], 0.05);
         }
 
+        // The median residual lag, each over its own noise variance, over the median of that
+        // many unit exponentials (within 0.3 % of the true expectation for the projections
+        // used here, by simulation).
         lagEnergy.Sort();
-        int dof = cancelled ? lags - 2 : lags;
-
-        // The median residual lag over its expectation on noise: (1 - 2/lags) of the unit
-        // exponential's middle order statistic once the two-dimensional projection is removed
-        // (within 0.3 %, by simulation), the order statistic itself before.
-        double background = lagEnergy[lags / 2]
-            / (ExpectedMedianOfUnitExponentials(lags) * dof / lags);
+        double background = lagEnergy[lags / 2] / ExpectedMedianOfUnitExponentials(lags);
         double level = _presenceBackground > 0 ? _presenceBackground : background;
-        double presence = (residual / level) - dof;
+        double presence = (residual / level) - (lags - rank);
 
         // Then fold this frame into the estimates, for the frames after it: the background over
-        // the last PresenceBackgroundSeconds, the carrier's rotation over the last
-        // PresenceRotationSeconds, weighed against the background so it is scale-free.
+        // the last PresenceBackgroundSeconds, the lag spectrum over the last
+        // PresenceSpectrumSeconds, in units of the background so it is scale-free.
         double frameSeconds = _presenceFrameSeconds;
         double beta = Math.Min(1.0, frameSeconds / PresenceBackgroundSeconds);
         _presenceBackground = _presenceBackground > 0
             ? _presenceBackground + (beta * (background - _presenceBackground))
             : background;
-        double alpha = Math.Min(1.0, frameSeconds / PresenceRotationSeconds);
-        _presenceRotationRe += alpha * ((rotRe / level) - _presenceRotationRe);
-        _presenceRotationIm += alpha * ((rotIm / level) - _presenceRotationIm);
+        double alpha = _presenceSpectrumSeeded ? Math.Min(1.0, frameSeconds / PresenceSpectrumSeconds) : 1.0;
+        for (int j = 0; j < bins; j++)
+        {
+            _presenceSpectrum[j] += alpha * ((spectrum[j] / level) - _presenceSpectrum[j]);
+        }
 
+        _presenceSpectrumSeeded = true;
         return presence;
+    }
+
+    /// <summary>
+    /// The steady carriers in the averaged lag spectrum, strongest first, up to
+    /// <see cref="PresenceMaxCarriers"/>: the strongest bin is a carrier if it stands
+    /// <see cref="PresenceCarrierOverNoise"/> times above the noise's level in a bin (lags, in
+    /// units of the background) and its excess over that is
+    /// <see cref="PresenceCarrierOverSignal"/> times the spectrum's median excess; its frequency
+    /// is refined by a parabola through the bin and its neighbours, its leakage (the lag
+    /// window's Dirichlet kernel, scaled to its excess) is taken off a copy of the spectrum, and
+    /// the next is looked for. Returns how many were found.
+    /// </summary>
+    private int FindPresenceCarriers(int lags, Span<double> carriers)
+    {
+        int bins = _presenceSpectrum.Length;
+        Span<double> left = stackalloc double[bins];
+        _presenceSpectrum.CopyTo(left);
+        Span<double> sorted = stackalloc double[bins];
+        _presenceSpectrum.CopyTo(sorted);
+        sorted.Sort();
+        double median = sorted[bins / 2];
+        double floor = Math.Max(lags, median);
+        double threshold = Math.Max(
+            PresenceCarrierOverNoise * lags,
+            lags + (PresenceCarrierOverSignal * Math.Max(0, median - lags)));
+        int found = 0;
+        while (found < carriers.Length)
+        {
+            int peak = 0;
+            for (int j = 1; j < bins; j++)
+            {
+                if (left[j] > left[peak])
+                {
+                    peak = j;
+                }
+            }
+
+            if (left[peak] <= threshold)
+            {
+                break;
+            }
+
+            double below = left[(peak + bins - 1) % bins], at = left[peak], above = left[(peak + 1) % bins];
+            double curvature = below - (2 * at) + above;
+            double offset = curvature < 0 ? Math.Clamp(0.5 * (below - above) / curvature, -0.5, 0.5) : 0;
+            double w = PresenceBinFrequency(peak, bins) + (offset * 2.0 * Math.PI / bins);
+            carriers[found++] = w;
+
+            double excess = at - floor;
+            for (int j = 0; j < bins; j++)
+            {
+                double delta = PresenceBinFrequency(j, bins) - w;
+                double half = Math.Sin(delta / 2);
+                double kernel = Math.Abs(half) < 1e-9 ? lags : Math.Sin(lags * delta / 2) / half;
+                left[j] -= excess * kernel * kernel / (lags * (double)lags);
+            }
+        }
+
+        return found;
     }
 
     /// <summary>The expected middle order statistic of n (odd) independent unit-mean
