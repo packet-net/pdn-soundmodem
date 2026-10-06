@@ -222,10 +222,21 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
         await receiver.Intake.DrainAsync(CancellationToken.None);
         string outbox = Path.Combine(_dir.FullName, "store", "outbox");
         File.SetUnixFileMode(outbox, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+
+        // Raised once the retry's timer is on the fake clock, so the clock is never moved on
+        // before the timer exists.
+        int timersSet = 0;
+        receiver.Delivery.Waiting += timer =>
+        {
+            if (timer is not null)
+            {
+                Interlocked.Increment(ref timersSet);
+            }
+        };
         try
         {
             _ = receiver.RunAsync(_stop.Token);
-            await Eventually(() => receiver.Delivery.NextAttempt is not null, "the session ended and a retry is set");
+            await Eventually(() => Volatile.Read(ref timersSet) == 1, "the session ended and a retry is waiting on its timer");
 
             receiver.Delivery.NextAttempt.Should().Be(_time.GetUtcNow() + MailcastDelivery.Backoff[0]);
             receiver.Delivery.LastFailure.Should().Contain("out of the outbox");
