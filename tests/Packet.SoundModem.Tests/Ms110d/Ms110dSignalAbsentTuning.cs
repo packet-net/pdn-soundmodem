@@ -124,7 +124,7 @@ public class Ms110dSignalAbsentTuning(ITestOutputHelper output)
             {
                 foreach (double hold in set == "B" ? new[] { 4.0, 6, 8 } : new[] { 10.0, 12, 14, 16, 18 })
                 foreach (double depthDb in new[] { -15.0, -30 })
-                foreach (double off in new[] { -3.0, 0, 3 })
+                foreach (double off in new[] { -3.0, 0, 3, 6 })
                 foreach (int seed in new[] { 77, 78 })
                 {
                     double snr = AwgnMask[wn] + off;

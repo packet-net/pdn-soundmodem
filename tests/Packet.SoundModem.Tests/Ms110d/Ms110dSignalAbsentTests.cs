@@ -414,6 +414,17 @@ public class Ms110dSignalAbsentTests(ITestOutputHelper output)
         modem.CarrierDetect.Should().BeFalse();
     }
 
+    [Fact]
+    public void A_Host_Finds_The_Ms110d_Modem_Behind_A_Moved_One_To_Journal_Its_Releases()
+    {
+        IModem plain = ModemCatalog.Create("ms110d-wn4", 48000, _ => { });
+        IModem moved = ModemCatalog.Create("ms110d-wn4", 48000, _ => { }, new ModemOptions(CentreFrequencyHz: 2000));
+
+        Ms110dModem.Unwrap(plain).Should().BeSameAs(plain);
+        Ms110dModem.Unwrap(moved).Should().BeSameAs(((FrequencyShiftedModem)moved).Inner);
+        Ms110dModem.Unwrap(ModemCatalog.Create("afsk1200", 48000, _ => { })).Should().BeNull();
+    }
+
     // ------------------------------------------------------------------ evidence instruments
 
     /// <summary>
@@ -578,7 +589,7 @@ public class Ms110dSignalAbsentTests(ITestOutputHelper output)
         {
             var reasons = group.GroupBy(r => r.Reason).Select(g => $"{g.Key} {g.Count()}");
             output.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                $"{group.Key.Channel} wn{group.Key.Wn} {group.Key.Snr} dB: lowest 4 s window " +
+                $"{group.Key.Channel} wn{group.Key.Wn} {group.Key.Snr} dB: lowest {Ms110dDemodulator.PresenceWindowSeconds:0} s window " +
                 $"{group.Min(r => r.MinRatio):F1}x the release line (median of bursts " +
                 $"{group.Select(r => r.MinRatio).OrderBy(x => x).ElementAt(group.Count() / 2):F1}x); ended {string.Join(", ", reasons)}"));
         }
