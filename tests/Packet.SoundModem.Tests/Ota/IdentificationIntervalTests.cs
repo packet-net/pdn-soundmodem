@@ -23,6 +23,15 @@ namespace Packet.SoundModem.Tests.Ota;
 /// </remarks>
 public sealed class IdentificationIntervalTests
 {
+    /// <summary>
+    /// Bring-up's wait for each reply, as a hang guard rather than a deadline. The mock always
+    /// sends the slice it was asked to create, straight after its OK; what M0LTE.Flex's own 5 s
+    /// default timed out on under load was this process getting round to reading it, because the
+    /// library polls for it on the machine's clock. Nothing here waits this long unless the mock
+    /// has stopped answering.
+    /// </summary>
+    private static readonly TimeSpan SetupHangGuard = TimeSpan.FromMinutes(1);
+
     private static async Task<(MockFlexRadio Mock, FlexClient Client, FlexIqTransmitter Tx)> OpenAsync(
         FakeTimeProvider time, bool identify = true)
     {
@@ -38,6 +47,7 @@ public sealed class IdentificationIntervalTests
             Callsign = "M0LTE",
             Identify = identify,
             Time = time,
+            SetupTimeout = SetupHangGuard,
         });
 
         mock.RxDelivery = client.DeliverVitaPacket;

@@ -36,6 +36,9 @@ public sealed class FlexIqTransmitterMockTests
         // subscription path is exercised offline rather than switched off.
         LeadInSeconds = 0.1,
         LeadOutSeconds = 0.05,
+        // A hang guard, not a deadline: the mock always answers, and the library's 5 s default,
+        // counted on the machine's clock, timed out under load before this process had read it.
+        SetupTimeout = TimeSpan.FromMinutes(1),
     };
 
     private static async Task<(MockFlexRadio Mock, FlexClient Client, FlexIqTransmitter Tx)> OpenAsync()
