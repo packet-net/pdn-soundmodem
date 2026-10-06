@@ -35,16 +35,19 @@ internal sealed class KissTestClient : IDisposable
     private readonly byte[] _buffer = new byte[4096];
     private int _fenceCount;
 
-    private KissTestClient(TcpClient client)
+    private KissTestClient(TcpClient client, int maxFrame)
     {
         Client = client;
         Stream = client.GetStream();
-        _decoder = new KissDecoder(_frames.Add);
+        _decoder = new KissDecoder(_frames.Add, maxFrame);
     }
 
     public TcpClient Client { get; }
 
     public NetworkStream Stream { get; }
+
+    /// <summary>The port this end connected from, which is how the server's events name it.</summary>
+    public int LocalPort => ((IPEndPoint)Client.Client.LocalEndPoint!).Port;
 
     /// <summary>Everything the server has sent, fence answers included, in order.</summary>
     public IReadOnlyList<KissFrame> Frames => _frames;
@@ -53,7 +56,12 @@ internal sealed class KissTestClient : IDisposable
     /// Connects to <paramref name="server"/> and returns once the server holds the session, so a
     /// frame received from then on is certain to be offered to it.
     /// </summary>
-    public static async Task<KissTestClient> ConnectAsync(KissTcpServer server)
+    /// <param name="server">The server to connect to.</param>
+    /// <param name="receiveBufferBytes">The socket's receive buffer, set before connecting so the
+    /// window is pinned from the start; the kernel's default when null.</param>
+    /// <param name="maxFrame">The largest frame this end decodes.</param>
+    public static async Task<KissTestClient> ConnectAsync(
+        KissTcpServer server, int? receiveBufferBytes = null, int maxFrame = KissDecoder.DefaultMaxFrame)
     {
         // Recorded from before the connect: the accept can be raised before ConnectAsync returns,
         // and this client's port is not known until it has.
@@ -72,6 +80,11 @@ internal sealed class KissTestClient : IDisposable
 
         server.ClientConnected += OnConnected;
         var client = new TcpClient();
+        if (receiveBufferBytes is int bytes)
+        {
+            client.Client.ReceiveBufferSize = bytes;
+        }
+
         try
         {
             await client.ConnectAsync(IPAddress.Loopback, server.LocalPort);
@@ -89,7 +102,7 @@ internal sealed class KissTestClient : IDisposable
                 }
             }
 
-            return new KissTestClient(client);
+            return new KissTestClient(client, maxFrame);
         }
         catch
         {
