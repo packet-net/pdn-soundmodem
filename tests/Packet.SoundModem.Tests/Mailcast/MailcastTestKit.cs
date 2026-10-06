@@ -214,16 +214,19 @@ internal static class MailcastSlotAudio
         return [.. frame];
     }
 
+    /// <summary>An address field for <paramref name="call"/>, which may carry an SSID ("M0LTE-7").</summary>
     private static byte[] Address(string call, bool last)
     {
         var field = new byte[7];
-        string padded = call.PadRight(6);
+        string[] parts = call.Split('-');
+        int ssid = parts.Length > 1 ? int.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture) : 0;
+        string padded = parts[0].PadRight(6);
         for (int i = 0; i < 6; i++)
         {
             field[i] = (byte)(padded[i] << 1);
         }
 
-        field[6] = (byte)(0x60 | (last ? 1 : 0));
+        field[6] = (byte)(0x60 | (ssid << 1) | (last ? 1 : 0));
         return field;
     }
 

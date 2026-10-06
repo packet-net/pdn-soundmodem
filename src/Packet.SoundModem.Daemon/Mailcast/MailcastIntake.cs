@@ -31,12 +31,17 @@ internal sealed class MailcastIntake : IAsyncDisposable
     private long _settled;
     private long _heard;
     private long _dropped;
+    private readonly HashSet<string> _sources;
     private SlotTimetable? _timetable;
 
-    /// <summary>Opens the store in <paramref name="directory"/>, creating it if need be.</summary>
-    internal MailcastIntake(string directory, TimeProvider time, Action<string> log)
+    /// <summary>
+    /// Opens the store in <paramref name="directory"/>, creating it if need be, for frames from
+    /// <paramref name="sources"/> (base callsigns, upper case, as <see cref="MailcastConfig.SourcesInUse"/> gives them).
+    /// </summary>
+    internal MailcastIntake(string directory, IEnumerable<string> sources, TimeProvider time, Action<string> log)
     {
         _log = log;
+        _sources = new HashSet<string>(sources, StringComparer.Ordinal);
         _store = new ReceiverStore(directory, Compression.Default, new ReceiverStoreOptions
         {
             Time = time,
@@ -59,10 +64,10 @@ internal sealed class MailcastIntake : IAsyncDisposable
     /// <summary>A mailcast frame was heard (raised on the worker).</summary>
     internal event Action? FrameHeard;
 
-    /// <summary>A directory gave GB7RDG's timetable, different from the one held (raised on the worker).</summary>
+    /// <summary>A directory gave the broadcast's timetable, different from the one held (raised on the worker).</summary>
     internal event Action<SlotTimetable>? TimetableHeard;
 
-    /// <summary>GB7RDG's timetable from the newest directory that gave one, kept across restarts.</summary>
+    /// <summary>The broadcast's timetable from the newest directory that gave one, kept across restarts.</summary>
     internal SlotTimetable? HeardTimetable
     {
         get
@@ -86,7 +91,7 @@ internal sealed class MailcastIntake : IAsyncDisposable
     /// </summary>
     internal bool Offer(byte[] frame)
     {
-        if (!MailcastOnAir.TryGetPayload(frame, out ReadOnlyMemory<byte> payload))
+        if (!MailcastOnAir.TryGetPayload(frame, _sources, out ReadOnlyMemory<byte> payload))
         {
             return false;
         }

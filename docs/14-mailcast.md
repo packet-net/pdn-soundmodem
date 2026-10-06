@@ -18,6 +18,7 @@ It is for a station in or near the UK that runs pdn-soundmodem with an HF rig an
 
 ## What GB7RDG sends
 
+- **Who**: GB7RDG, as AX.25 UI frames to `MCAST`. The transmissions may move to M0LTE, so the receiver takes frames from either; that is what `mailcast.sources` says.
 - **When**: every hour on the hour, UTC, in daylight only: from 2 hours after sunrise to 30 minutes before sunset at GB7RDG (IO91lk). That is about 09:00 to 17:00 UTC in October, 11:00 to 15:00 in December and 06:00 to 19:00 in June. GB7RDG announces its timetable in every slot, and the receiver follows that once it has heard it.
 - **What**: a 10 second tone, then a few minutes of MS110D bursts, usually 2 to 8 minutes in all. Slots alternate between 1200 and 600 bps, and the receiver follows either by itself.
 - **Where**: centred on 7.0538 MHz and filling about 7.0524 to 7.0553 MHz. A USB dial of 7.052 MHz puts the centre at 1800 Hz audio.
@@ -64,13 +65,14 @@ Add a `rig` section and a `mailcast` section to your config. Here they are added
   "waterfall": { "port": 8107 },
   // Added for the bulletins:
   "rig": { "rigctld": "127.0.0.1:4532", "mode": "PKTUSB" },
-  "mailcast": { "bbs": { "password": "pick-one" }, "retune": true }
+  "mailcast": { "bbs": { "password": "pick-one" }, "retune": true, "sources": ["GB7RDG", "M0LTE"] }
 }
 ```
 
 - `rig.mode` is for a rig that only takes data-jack audio in a data mode; the rig is put in it on the mailcast dial too. Leave it out for plain USB.
 - With modems placed by `rfFrequency`, a `rig` section also lets pdn-soundmodem set your dial from the band plan at start-up, so check the `rig: setting the rig to` line reads the dial you use.
 - `bbs.password` is the one you give the receiver's login when you [set up the BBS login](#set-up-the-bbs-login).
+- `sources` is who the bulletins are taken from, any SSID. Leave it out and you get the same two.
 
 More on the `rig` section is in [03-radios-and-interfaces.md](03-radios-and-interfaces.md#other-radios-through-hamlib). Restart the service, and the journal says how it will listen:
 
@@ -107,7 +109,7 @@ pdn-soundmodem never retunes a Flex. A headless slice (a `flex:` device with no 
 
 ## Set up the BBS login
 
-The receiver logs in to your BBS as `Q0CAST`, a forwarding partner of its own. Never use GB7RDG, or your own callsign. A Q callsign is never issued, so Q0CAST clashes with nobody, and it is never sent on the air.
+The receiver logs in to your BBS as `Q0CAST`, a forwarding partner of its own. Never use GB7RDG, M0LTE or your own callsign. A Q callsign is never issued, so Q0CAST clashes with nobody, and it is never sent on the air.
 
 ### LinBPQ
 
@@ -150,6 +152,7 @@ Optional. If something else shares the radio, Ardopcf say, the station can run a
   "mailcast": {
     "bbs": { "password": "pick-one" },
     "retune": true,
+    "sources": ["GB7RDG", "M0LTE"],
     "hooks": {
       "before": { "command": "/usr/local/bin/mailcast-hook", "args": ["stop"], "timeoutSeconds": 30 },
       "after": { "command": "/usr/local/bin/mailcast-hook", "args": ["start"] }
@@ -191,7 +194,8 @@ journalctl -u pdn-soundmodem -f | grep -E 'mailcast|rig:'
 At start-up, after the line saying where it listens:
 
 ```
-mailcast: GB7RDG's slots are every hour on the hour, in daylight from 120 minutes after sunrise to 30 minutes before sunset at IO91lk (its own; its directory updates them once heard)
+mailcast: taking frames to MCAST from GB7RDG or M0LTE (any SSID)
+mailcast: the slots are every hour on the hour, in daylight from 120 minutes after sunrise to 30 minutes before sunset at IO91lk (the built-in timetable; the broadcast's directory updates it once heard)
 mailcast: delivering rebuilt bulletins to LinBPQ at 127.0.0.1:8011 as Q0CAST; state in /var/lib/pdn-soundmodem/mailcast
 mailcast: status on the station page and at http://127.0.0.1:8107/api/mailcast
 ```
@@ -203,7 +207,7 @@ mailcast: rig on 7.052 MHz PKTUSB for the 12:00 UTC slot until 12:12 UTC; nothin
 rig: tuned to 7.052000 MHz PKTUSB (3000 Hz passband) for mailcast until 2026-10-06T12:04:00Z; transmissions are held until it is put back to 7.049450 MHz PKTUSB (2400 Hz passband)
 mailcast: tone +1.3 Hz from where it should be, SNR 14.2 dB in 3 kHz, 10 s
 mailcast: 1 frame heard in this slot
-mailcast: GB7RDG's directory gives its slots as every hour on the hour, in daylight from 120 minutes after sunrise to 30 minutes before sunset at IO91lk; using that
+mailcast: the broadcast's directory gives its slots as every hour on the hour, in daylight from 120 minutes after sunrise to 30 minutes before sunset at IO91lk; using that
 mailcast: directory for 2026-10-06: 9 bulletins in rotation
 mailcast: bulletin complete: 1001_GB7ABC from G8ABC to ALL@GBR, "Net tonight"
 mailcast: bbs: 1001_GB7ABC accepted by the BBS
@@ -229,7 +233,7 @@ Pieces and rebuilt bulletins are kept in `mailcast/` in the state directory, so 
 - **`no answer from 127.0.0.1:8011`**: the BBS isn't running, or isn't listening on that port.
 - **`rejected by the BBS: it already has this BID`**: nothing is wrong. Your BBS already had that bulletin from another partner.
 - **`bbs: WARNING - the BBS tried to send the receiver's login ... message(s)`**: something is queued for Q0CAST. Empty the TO, AT and HR boxes on its forwarding page.
-- **A tone `... not at a slot's start, so it is not GB7RDG's; ignored`**: someone else near the frequency, or your clock is wrong. The slots are timed by this machine's clock, so keep it on NTP.
+- **A tone `... not at a slot's start, so it is not the broadcast's; ignored`**: someone else near the frequency, or your clock is wrong. The slots are timed by this machine's clock, so keep it on NTP.
 - **No tone and no frames**: check the time against the slots (daylight only), that 40 m is open from you, and that the waterfall shows the signal during a slot. On a retuned rig, check the radio really moved to 7.052 MHz, and that it is in a mode that takes your data-jack audio.
 - **A tone but few frames**: the signal is weak at your end. In GB7RDG's first tests, stations with 10 dB SNR or more in 3 kHz decoded nearly every frame, and one at 7.6 dB about half. The missing pieces come in later slots. Check your receive level in [04-levels.md](04-levels.md).
 - **`a frame uses a compression dictionary this version does not have`**: upgrade pdn-soundmodem.

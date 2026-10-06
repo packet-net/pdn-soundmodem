@@ -3,15 +3,13 @@ using Packet.Mailcast;
 namespace Packet.SoundModem.Daemon;
 
 /// <summary>
-/// The fixed facts of GB7RDG's transmission (pdn-mailcast's docs/design.md and
-/// docs/factsheet.md): who sends it, what it is addressed to, where it sits above the dial and
-/// when it is sent unless the directory says otherwise.
+/// The fixed facts of the mailcast transmission (pdn-mailcast's docs/design.md and
+/// docs/factsheet.md): what it is addressed to, where it sits above the dial and when it is sent
+/// unless the directory says otherwise. Who sends it is configuration,
+/// <see cref="MailcastConfig.Sources"/>.
 /// </summary>
 internal static class MailcastOnAir
 {
-    /// <summary>The station that sends it.</summary>
-    public const string Source = "GB7RDG";
-
     /// <summary>The AX.25 destination every frame of it carries.</summary>
     public const string Destination = "MCAST";
 
@@ -70,11 +68,12 @@ internal static class MailcastOnAir
     public static readonly TimeSpan LongestBurst = TimeSpan.FromSeconds(150);
 
     /// <summary>
-    /// The information field of a mailcast frame: an AX.25 UI frame from <see cref="Source"/> to
-    /// <see cref="Destination"/> (any SSID on either, any digipeaters) with no layer 3 protocol.
-    /// False for anything else the modem hears.
+    /// The information field of a mailcast frame: an AX.25 UI frame from one of
+    /// <paramref name="sources"/> (base callsigns, upper case) to <see cref="Destination"/> (any
+    /// SSID on either, any digipeaters) with no layer 3 protocol. False for anything else the
+    /// modem hears.
     /// </summary>
-    public static bool TryGetPayload(byte[] frame, out ReadOnlyMemory<byte> payload)
+    public static bool TryGetPayload(byte[] frame, IReadOnlySet<string> sources, out ReadOnlyMemory<byte> payload)
     {
         payload = default;
         int offset = 0;
@@ -120,7 +119,7 @@ internal static class MailcastOnAir
 
         // UI (0x03, P/F clear) and PID F0 (no layer 3).
         if (offset + 2 > frame.Length || frame[offset] != 0x03 || frame[offset + 1] != 0xF0
-            || source != Source || destination != Destination)
+            || destination != Destination || source is null || !sources.Contains(source))
         {
             return false;
         }
