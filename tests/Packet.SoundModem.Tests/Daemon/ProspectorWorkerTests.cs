@@ -97,6 +97,44 @@ public class ProspectorWorkerTests
             TimeSpan.FromSeconds(3), "Dispose joins with a bounded wait and cancels the sleep");
     }
 
+    [Fact]
+    public async Task A_Sweep_Still_Running_When_Dispose_Gives_Up_Waiting_Finishes_Without_Crashing()
+    {
+        // Issue #546: Dispose waited a bounded time for the worker and then disposed the token
+        // source anyway. A sweep slower than that wait (a loaded box, a long capture) came back
+        // to a disposed source, read its token for the throttle's sleep, and the
+        // ObjectDisposedException on the worker's own thread ended the process. Here the sweep is
+        // held inside the prospector, on the worker thread, until Dispose has returned; with no
+        // wait at all that is exactly the slow-sweep case, every time, with no clock involved.
+        using var scratch = new ScratchDirectory("prospector-worker-tests");
+        var prospector = new ModemProspector(new ModemProspectorOptions(), []);
+        using var inside = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        prospector.ExaminedCapture += (_, _) =>
+        {
+            inside.Set();
+            release.Wait();
+        };
+
+        string wav = Path.Combine(scratch.FullName, "capture.wav");
+        WavFile.WriteMono(wav, new float[12000], 12000);
+
+        var worker = new ProspectorWorker(prospector, 12000, shutdownWait: TimeSpan.Zero);
+        worker.Examine(Capture(), wav);
+        inside.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue("the worker should pick it up");
+
+        worker.Dispose();
+        worker.Exited.IsCompleted.Should().BeFalse("the sweep is still being held");
+
+        // A capture that lands while the station is going down is ignored, not an exception on
+        // the capture writer's thread.
+        worker.Invoking(w => w.Examine(Capture(), wav)).Should().NotThrow();
+
+        release.Set();
+        await worker.Exited.WaitAsync(TimeSpan.FromSeconds(30));
+        prospector.Examined.Should().Be(1);
+    }
+
     /// <summary>Polls for a condition the worker thread satisfies. Not a wall-clock assertion:
     /// the deadline only bounds a failure, and every passing run leaves as soon as it is
     /// true.</summary>
