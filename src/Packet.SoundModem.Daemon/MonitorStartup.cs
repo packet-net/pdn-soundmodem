@@ -137,6 +137,7 @@ internal static class MonitorStartup
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
+            StopDeadline.Arm(StopDeadline.WithoutHooks);
             cancellation.Cancel();
         };
         using var sigterm = PosixSignalRegistration.Create(
@@ -144,6 +145,8 @@ internal static class MonitorStartup
             context =>
             {
                 context.Cancel = true;
+                // A monitor has no mailcast hooks: its stop keeps systemd's old 90 s.
+                StopDeadline.Arm(StopDeadline.WithoutHooks);
                 cancellation.Cancel();
             });
 

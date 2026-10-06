@@ -43,6 +43,24 @@ internal static class MailcastOnAir
     public static readonly TimeSpan ListenAfter = TimeSpan.FromMinutes(12);
 
     /// <summary>
+    /// The window in progress at <paramref name="now"/>, from <paramref name="before"/> before a
+    /// slot to <paramref name="after"/> after it, or else the next one, for a timetable; null when
+    /// no slot runs within a year (a daylight rule no day satisfies).
+    /// </summary>
+    public static (DateTimeOffset Opens, DateTimeOffset Closes, DateTimeOffset Slot)? WindowAt(
+        DateTimeOffset now, SlotTimetable timetable, TimeSpan before, TimeSpan after)
+    {
+        if (timetable.ActiveAtOrBefore(now + before) is { } started && now < started + after)
+        {
+            return (started - before, started + after, started);
+        }
+
+        return timetable.NextActiveAtOrAfter(now + before) is { } next
+            ? (next - before, next + after, next)
+            : null;
+    }
+
+    /// <summary>
     /// The longest the modem may stay locked on one burst before it is made to listen afresh,
     /// longer than any burst GB7RDG sends. MS110D can lock on a burst too weak to read and then
     /// demodulate noise for ever (pdn-soundmodem issue #553); pdn-mailcast's receiver lets go

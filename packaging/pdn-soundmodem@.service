@@ -19,6 +19,10 @@ RestartSec=5
 # Exit 2, and only 2, is "your configuration is wrong": stay stopped so the operator can read
 # why, as the plain unit does.
 RestartPreventExitStatus=2
+# SIGTERM to the daemon alone, and up to 400 s for a mailcast "after" hook, as in the plain
+# unit; without hooks the daemon still ends a wedged stop itself at 90 s.
+KillMode=mixed
+TimeoutStopSec=400
 User=pdn-soundmodem
 # Nested under the plain unit's directory. The daemon's default frame log, survey and raw
 # capture paths follow $STATE_DIRECTORY, so two instances never share a SQLite file.

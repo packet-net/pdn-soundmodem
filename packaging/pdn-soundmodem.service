@@ -16,6 +16,16 @@ RestartSec=5
 # copies of itself and never succeed, so stay stopped and let the operator read it. Every
 # other failure (a card that vanished, a crash) still restarts.
 RestartPreventExitStatus=2
+# On stop, SIGTERM goes to the daemon alone, not to a mailcast hook (mailcast.hooks) it is
+# running: the daemon kills a "before" itself, puts a retuned rig back, and then runs "after" if
+# it is owed, which may take up to its 300 s maximum. 400 s covers the longest hook, the rig's
+# restore and the rest of the shutdown; anything still running then is killed, and an "after"
+# that did not finish is run again at the next start. The limit is the unit's, so it applies
+# with or without hooks: without them the daemon cuts off its own stop at systemd's old 90 s
+# (exit 1), so a wedged stop is ended no later than before. The daemon starts no other process
+# that outlives start-up, so KillMode=mixed changes nothing else.
+KillMode=mixed
+TimeoutStopSec=400
 User=pdn-soundmodem
 # systemd creates /var/lib/pdn-soundmodem owned by the service user. Without it the frame log's
 # default path is unwritable - an unprivileged user cannot create a directory in /var/lib - and

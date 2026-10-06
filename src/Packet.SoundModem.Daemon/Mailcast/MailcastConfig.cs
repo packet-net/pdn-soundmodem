@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
+using Packet.Mailcast;
 
 namespace Packet.SoundModem.Daemon;
 
@@ -47,6 +49,12 @@ public sealed class MailcastConfig
     /// default: retuning somebody's radio is something they ask for.
     /// </summary>
     public bool Retune { get; set; }
+
+    /// <summary>
+    /// Programs to run before and after each slot the receiver listens to, for a radio shared
+    /// with something else (stopping Ardopcf and starting it again, say). Null runs nothing.
+    /// </summary>
+    public MailcastHooksConfig? Hooks { get; set; }
 
     /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
@@ -156,6 +164,44 @@ public sealed class MailcastConfig
             throw new InvalidDataException(
                 "\"mailcast\".\"bbs\".\"password\" and \"command\" must each be one line.");
         }
+
+        // Whether each program exists and this user may run it: asked of the system, so a
+        // POST /api/config made to the running service is checked as the service's own user.
+        if (mailcast.Hooks is { } hooks)
+        {
+            foreach ((string name, HookCommand? hook) in (ReadOnlySpan<(string, HookCommand?)>)
+                [(SlotHookEnvironment.BeforeName, hooks.Before), (SlotHookEnvironment.AfterName, hooks.After)])
+            {
+                if (hook?.Problem() is { } problem)
+                {
+                    throw new InvalidDataException($"\"mailcast\".\"hooks\".\"{name}\": {problem}.");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// What to say about a <c>mailcast.hooks</c> the file's JSON could not be read into: a key
+    /// that is not a hook's or the section's (both are refused, so a misspelt
+    /// <c>"timeout"</c> is not silently ignored), or a value of the wrong shape.
+    /// </summary>
+    internal static string HooksReadProblem(JsonException e)
+    {
+        string at = e.Path ?? "$.mailcast.hooks";
+        if (Regex.Match(e.Message, "property '([^']*)' could not be mapped") is { Success: true } unknown)
+        {
+            // The path may or may not end with the unknown key itself: "$.mailcast.hooks.befor",
+            // or "$.mailcast.hooks.before(.timeout)".
+            string name = unknown.Groups[1].Value;
+            string[] parts = at.Split('.');
+            bool inHook = parts.Length > 4 || (parts.Length == 4 && parts[3] != name);
+            return inHook
+                ? $"\"{MailcastOnAir.Ascii(name)}\" is not a setting of a hook (at {MailcastOnAir.Ascii(at)}): a hook has \"command\", \"args\" and \"timeoutSeconds\"."
+                : $"\"{MailcastOnAir.Ascii(name)}\" is not a setting of \"mailcast\".\"hooks\": it has \"before\" and \"after\".";
+        }
+
+        return $"\"mailcast\".\"hooks\" cannot be read (at {MailcastOnAir.Ascii(at)}): give each hook as "
+            + "{\"command\": \"/full/path/to/program\", \"args\": [\"a list\", \"of strings\"], \"timeoutSeconds\": 30}.";
     }
 
     /// <summary>The unknown-key warnings for this section and its <c>bbs</c>.</summary>
@@ -163,6 +209,21 @@ public sealed class MailcastConfig
         mailcast is null
             ? []
             : [("mailcast", mailcast.UnknownSettings), ("mailcast bbs", mailcast.Bbs?.UnknownSettings)];
+}
+
+/// <summary>
+/// <c>mailcast.hooks</c>: a program run before each slot the receiver listens to, and one run
+/// after it, as in pdn-mailcast's standalone receiver. Either may be left out; any other key, here
+/// or in a hook, is refused.
+/// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed class MailcastHooksConfig
+{
+    /// <summary>Run before each slot's window, so that it has finished by the time the window opens.</summary>
+    public HookCommand? Before { get; set; }
+
+    /// <summary>Run after each slot's window, whenever <see cref="Before"/> was started.</summary>
+    public HookCommand? After { get; set; }
 }
 
 /// <summary>Where the mailcast receiver hands bulletins over, and how it logs in.</summary>

@@ -1864,6 +1864,7 @@ if (mailcast is not null && waterfallServer is not null && waterfallConfig?.Publ
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
+    StopDeadline.Arm(StopDeadline.For(mailcastConfig));
     cancellation.Cancel();
 };
 
@@ -1876,6 +1877,9 @@ using var sigterm = System.Runtime.InteropServices.PosixSignalRegistration.Creat
     context =>
     {
         context.Cancel = true;
+        // The unit waits 400 s for a mailcast "after" hook; without hooks a wedged stop is cut
+        // off at the 90 s it always was.
+        StopDeadline.Arm(StopDeadline.For(mailcastConfig));
         cancellation.Cancel();
     });
 
@@ -2441,7 +2445,7 @@ if (mailcast is not null && mailcastPlacement is { Retunes: true })
     MailcastReceiver retuned = mailcast;
     mailcast.Retuner = new MailcastRetuner(
         rig!, mailcastConfig!, rigConfig?.Mode, () => retuned.Slots.Timetable, TimeProvider.System,
-        MailcastStation.Journal(stationJournal));
+        MailcastStation.Journal(stationJournal), mailcast.Hooks);
 }
 
 // Audio + PTT: a FlexRadio DAX triplet (--device flex:…), an UberSDR web receiver's IQ stream
@@ -3167,13 +3171,13 @@ channel.PttFailed += failure => Console.Error.WriteLine($"ptt: {failure.Message}
 IPttControl stationPtt = rig is null ? ptt : rig.HoldTransmissions(channel, ptt);
 Task transmitter = channel.RunTransmitterAsync(playback, stationPtt, cancellation.Token);
 
-// The mailcast receiver's delivery into the BBS, and its rig retuning, once the transmitter is
-// held behind the rig: the first window may open at once, on a station started mid-slot.
+// The mailcast receiver's delivery into the BBS, its rig retuning and its hooks, once the
+// transmitter is held behind the rig: the first window may open at once, on a station started
+// mid-slot. On the way out it puts the rig back and then runs an "after" hook still owed, so
+// the shutdown below waits for that (up to its timeout; the unit's TimeoutStopSec allows it).
 Task? mailcastRun = mailcast is null
     ? null
-    : Task.WhenAll(
-        Task.Run(() => mailcast.RunAsync(cancellation.Token)),
-        mailcast.Retuner is { } mailcastRetuner ? Task.Run(() => mailcastRetuner.RunAsync(cancellation.Token)) : Task.CompletedTask);
+    : Task.Run(() => mailcast.RunAsync(cancellation.Token));
 
 // A transmitter that dies (the output device failed mid-keyup) must stop the daemon, not
 // leave it running as a healthy-looking receive-only station for the rest of the process's

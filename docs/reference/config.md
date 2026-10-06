@@ -432,6 +432,7 @@ The built-in [pdn-mailcast](../14-mailcast.md) receiver. Absent, there is none. 
 | `dialKHz` | number | `7052.0` | The USB dial in kHz the signal is heard on; its centre is 1.8 kHz above. 1800 to 30000. |
 | `stateDirectory` | string | absent: `mailcast/` in the state directory | Where the pieces, the rebuilt bulletins (`store/`) and the record of deliveries (`deliveries.jsonl`) are kept. |
 | `retune` | bool | `false` | When the station's passband does not reach the signal, retune the rig to `dialKHz` USB (a 3000 Hz passband, or the rig's normal width if it refuses) from 1 minute before each slot to 12 minutes after. Needs a [`rig`](#rig) section. |
+| `hooks` | object | absent: none | Your own commands, run before and after each slot: `before` and `after`, each with the keys below. See [running your own commands](../14-mailcast.md#running-your-own-commands-around-each-slot). |
 
 `bbs`:
 
@@ -444,12 +445,21 @@ The built-in [pdn-mailcast](../14-mailcast.md) receiver. Absent, there is none. 
 | `password` | string | required | The login's password. Never logged, never served; `GET /api/config` reads it as `(set, not shown)`. |
 | `command` | string | `"BBS"` | LinBPQ only: the node command that reaches the mail application. |
 
+`hooks.before` and `hooks.after`, either of which can be left out:
+
+| Key | Type | Default | What it is |
+|---|---|---|---|
+| `command` | string | required | The full path of the program to run, directly and not through a shell. It must exist and be executable by the service's user. |
+| `args` | array of strings | `[]` | Its arguments, each passed exactly as written. Never logged; `GET /api/config` reads them as `(set, not shown)`. |
+| `timeoutSeconds` | int | `30` | How long it may run, 1 to 300. Past it, it and what it started are killed. "before" starts this long ahead of the listening window. |
+
 - Where it listens is decided at start-up. A station whose passband already holds the whole signal (a headless Flex slice within reach, whose receive filter is opened to it; a band plan, `dialFrequency` or web receiver window that covers it; or a dial of `dialKHz` itself) listens there all the time. Otherwise, with `retune` and a `rig` section, the rig is retuned around each slot through the rig's [tuning windows](ports-and-endpoints.md#rig-tuning-windows), and nothing is transmitted until it is put back. Otherwise the station refuses to start: `mailcast: the signal on 7.0524 to 7.0552 MHz is outside what this station hears. ...`, saying what to change.
 - The slots are GB7RDG's own (hourly on the hour, in daylight from 2 hours after sunrise to 30 minutes before sunset at IO91lk) until its directory is heard; from then on, the directory's.
 - The channel runs at 48 kHz, as it does with any `ms110d-*` modem. On a station that retunes for it, the receiver only runs while the rig is on the mailcast dial.
 - `POST /api/config` makes the same placement and state directory checks start-up does, and refuses a configuration that would fail them.
+- With `hooks`, "before" runs ahead of each slot's listening window and "after" once it is over: on a station that retunes, before the rig is retuned and after it is back; otherwise from 2 minutes before each slot to 12 after. A failed "before" means no retune for that slot. An "after" owed when the station stops, or one that did not exit with 0, runs at the next start.
 - A rebuilt bulletin stays in the outbox until the BBS has answered for it, and is offered again after a failure (30 s, then up to 30 minutes apart) or 10 minutes after the BBS says "later". Mail the BBS offers back is answered "later", and the journal warns.
-- Refused: no `bbs` section; an empty `password`; a `type` other than `linBpq` or `fbb`; a `port` outside 1 to 65535; an empty `host`; a `login` that is not one word; a `password` or `command` over more than one line; a `dialKHz` outside 1800 to 30000; an empty `stateDirectory`; `mailcast` in a `monitor` configuration; and, at start-up, a station that cannot hear the signal and cannot retune for it, or an FM station.
+- Refused: no `bbs` section; an empty `password`; a `type` other than `linBpq` or `fbb`; a `port` outside 1 to 65535; an empty `host`; a `login` that is not one word; a `password` or `command` over more than one line; a `dialKHz` outside 1800 to 30000; an empty `stateDirectory`; a hook whose `command` is not a full path to a program the service's user may run, whose `timeoutSeconds` is outside 1 to 300, or with any other key (in `hooks` too); `mailcast` in a `monitor` configuration; and, at start-up, a station that cannot hear the signal and cannot retune for it, or an FM station.
 - Not on a `--two-tone` or `--tone` run.
 
 ## `ubersdr`

@@ -264,6 +264,13 @@ public sealed class RigControl : IAsyncDisposable
     public bool HoldsTransmitter =>
         _window is not null || _restoreTo is not null || _retuning || _unkeyOwed;
 
+    /// <summary>
+    /// True while the rig is anywhere but where it is to be put back to: a tuning window is open,
+    /// anyone's, or a restore is still owed after one. Unlike <see cref="Snapshot"/>'s
+    /// <see cref="RigState.RestoreOwed"/>, an open window does not hide it. Takes no lock.
+    /// </summary>
+    public bool RestorePending => _restoreTo is not null || _window is not null;
+
     /// <summary>The state as it stands, for the API and the tests.</summary>
     public RigState Snapshot()
     {

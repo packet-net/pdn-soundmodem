@@ -22,6 +22,12 @@ namespace Packet.SoundModem.Daemon;
 /// <para>A refusal (the transmitter keyed, the API holding a window of its own, rigctld away) is
 /// tried again every <see cref="RetryEvery"/> while the slot's window lasts, and said once per
 /// slot.</para>
+/// <para>With <c>mailcast.hooks</c>, the retuner runs them too (see <see cref="MailcastHooks"/>),
+/// in order with its own steps: "before" first, started its timeout earlier than the window's
+/// opening so it has finished by then, and only if it worked is the rig tuned and the transmitter
+/// held; "after" once the window is over, the rig back and transmissions released, and as the
+/// station stops. A slot whose window the station stopped in last time, after its "before", is
+/// not listened to again: its "after" runs instead.</para>
 /// </remarks>
 internal sealed class MailcastRetuner
 {
@@ -46,6 +52,12 @@ internal sealed class MailcastRetuner
     private readonly Func<SlotTimetable> _timetable;
     private readonly TimeProvider _time;
     private readonly Action<string> _log;
+    private readonly MailcastHooks? _hooks;
+    private DateTimeOffset? _finished;
+    private DateTimeOffset? _hookSlot;
+    private DateTimeOffset _hookCloses;
+    private bool _hookOk;
+    private bool _saidRigOwed;
     private volatile bool _listening;
     private volatile string _state = "starting";
 
@@ -56,9 +68,12 @@ internal sealed class MailcastRetuner
     /// <param name="timetable">GB7RDG's timetable as it stands, asked afresh each time.</param>
     /// <param name="time">The clock.</param>
     /// <param name="log">The journal.</param>
+    /// <param name="hooks">The hooks to run around each slot, if any.</param>
     internal MailcastRetuner(
-        RigControl rig, MailcastConfig config, string? rigMode, Func<SlotTimetable> timetable, TimeProvider time, Action<string> log)
+        RigControl rig, MailcastConfig config, string? rigMode, Func<SlotTimetable> timetable, TimeProvider time, Action<string> log,
+        MailcastHooks? hooks = null)
     {
+        _hooks = hooks;
         _rig = rig;
         string mode = rigMode is not null && RigModes.SidebandOf(rigMode) == "usb" ? rigMode.ToUpperInvariant() : "USB";
         // A 3000 Hz passband, which holds nearly all of the signal; a rig that will not set it is
@@ -87,18 +102,17 @@ internal sealed class MailcastRetuner
     /// The listening window in progress at <paramref name="now"/>, or else the next one, for a
     /// timetable; null when no slot runs within a year (a daylight rule no day satisfies).
     /// </summary>
-    internal static (DateTimeOffset Opens, DateTimeOffset Closes, DateTimeOffset Slot)? WindowAt(DateTimeOffset now, SlotTimetable timetable)
-    {
-        if (timetable.ActiveAtOrBefore(now + MailcastOnAir.ListenBefore) is { } started
-            && now < started + MailcastOnAir.ListenAfter)
-        {
-            return (started - MailcastOnAir.ListenBefore, started + MailcastOnAir.ListenAfter, started);
-        }
+    internal static (DateTimeOffset Opens, DateTimeOffset Closes, DateTimeOffset Slot)? WindowAt(DateTimeOffset now, SlotTimetable timetable) =>
+        MailcastOnAir.WindowAt(now, timetable, MailcastOnAir.ListenBefore, MailcastOnAir.ListenAfter);
 
-        return timetable.NextActiveAtOrAfter(now + MailcastOnAir.ListenBefore) is { } next
-            ? (next - MailcastOnAir.ListenBefore, next + MailcastOnAir.ListenAfter, next)
-            : null;
-    }
+    /// <summary>How much earlier than a window's opening its work starts: the "before" hook's timeout, so it is done by then.</summary>
+    private TimeSpan HookLead => _hooks is { Configured: true } hooks ? hooks.BeforeLead : TimeSpan.Zero;
+
+    /// <summary>The window in progress at <paramref name="now"/> or the next, past any slot not to be listened to again.</summary>
+    private MailcastHookWindow? NextWindow(DateTimeOffset now, SlotTimetable timetable) =>
+        MailcastHooks.Next(
+            at => WindowAt(at, timetable) is { } w ? new MailcastHookWindow(w.Opens, w.Closes, w.Slot) : null,
+            now, _finished);
 
     /// <summary>Retunes around each slot until <paramref name="cancellation"/> is cancelled, then
     /// lets the rig go back.</summary>
@@ -107,6 +121,14 @@ internal sealed class MailcastRetuner
         DateTimeOffset? saidRefusalFor = null;
         DateTimeOffset? tunedFor = null;
         string? saidFailure = null;
+        if (_hooks is not null)
+        {
+            // A slot whose window the station stopped in last time is not listened to again: its
+            // "after" runs instead, once the rig is back.
+            _hooks.Recover();
+            _finished = _hooks.RecoveredSlot;
+        }
+
         try
         {
             while (!cancellation.IsCancellationRequested)
@@ -136,6 +158,16 @@ internal sealed class MailcastRetuner
             // Put back at once rather than at the window's own end: the station is stopping.
             _rig.Release(Owner);
             SetListening(false);
+            if (_hooks is not null && _hooks.AfterOwedTo(this, unowned: true))
+            {
+                if (_rig.RestorePending)
+                {
+                    _log("mailcast: hooks: WARNING - the rig is not back where it was as the station stops (a restore is owed, or a tuning window is open); "
+                        + "running \"after\" all the same, so whatever it starts may find the rig still retuned");
+                }
+
+                await _hooks.AfterAsync(this, unowned: true, " as the station stops").ConfigureAwait(false);
+            }
         }
     }
 
@@ -145,10 +177,98 @@ internal sealed class MailcastRetuner
         DateTimeOffset? saidRefusalFor, DateTimeOffset? tunedFor, CancellationToken cancellation)
     {
         DateTimeOffset now = _time.GetUtcNow();
-        if (WindowAt(now, _timetable()) is not { } window)
+        MailcastHookWindow? next = NextWindow(now, _timetable());
+        if (_hooks is { } owing && owing.AfterOwedTo(this, unowned: true) && (_hookSlot is null || now >= _hookCloses))
+        {
+            if (_hookSlot is { } last && next is { } following && following.Slot > last && following.Opens - HookLead <= _hookCloses)
+            {
+                // A following window whose "before" would start before this one closes keeps the hooks' window open.
+                _hookSlot = following.Slot;
+                _hookCloses = following.Closes;
+                owing.Extend(following.Slot);
+                _log(string.Create(CultureInfo.InvariantCulture,
+                    $"mailcast: hooks: the {following.Slot.UtcDateTime:HH:mm} UTC slot follows straight on, so \"after\" waits until {following.Closes.UtcDateTime:HH:mm} UTC"));
+            }
+            else
+            {
+                if (tunedFor is { } ended)
+                {
+                    Ended(ended);
+                    tunedFor = null;
+                }
+
+                if (_rig.RestorePending)
+                {
+                    // Whatever "after" starts must find the rig where it was, and free to transmit:
+                    // not while any restore is owed, nor while anyone's window has the rig.
+                    _state = "waiting for the rig to be put back before running the \"after\" command";
+                    if (!_saidRigOwed)
+                    {
+                        _saidRigOwed = true;
+                        _log("mailcast: hooks: waiting for the rig to be put back before running \"after\"");
+                    }
+
+                    await DelayAsync(RetryEvery, cancellation).ConfigureAwait(false);
+                    return (saidRefusalFor, tunedFor);
+                }
+
+                _saidRigOwed = false;
+                _state = "running the \"after\" command";
+                await owing.AfterAsync(this, unowned: true).ConfigureAwait(false);
+                _hookSlot = null;
+                return (saidRefusalFor, tunedFor);
+            }
+        }
+
+        if (next is not { } window)
         {
             _state = "no slot of GB7RDG's runs in the coming year by its timetable";
             await DelayAsync(ClockCheck, cancellation).ConfigureAwait(false);
+            return (saidRefusalFor, tunedFor);
+        }
+
+        if (_hooks is { Configured: true } hooks && _hookSlot != window.Slot)
+        {
+            // No "before" yet for this window: it runs first, its timeout ahead of the opening.
+            if (tunedFor is not null)
+            {
+                Ended(tunedFor.Value);
+                tunedFor = null;
+            }
+
+            DateTimeOffset startAt = window.Opens - HookLead;
+            if (now < startAt)
+            {
+                _state = string.Create(CultureInfo.InvariantCulture,
+                    $"waiting for the {window.Slot.UtcDateTime:HH:mm} UTC slot; the \"before\" command runs at {startAt.UtcDateTime:HH:mm:ss} UTC and the rig is retuned at {window.Opens.UtcDateTime:HH:mm} UTC");
+                await DelayAsync(Shorter(startAt - now, ClockCheck), cancellation).ConfigureAwait(false);
+                return (saidRefusalFor, tunedFor);
+            }
+
+            _state = string.Create(CultureInfo.InvariantCulture, $"running the \"before\" command for the {window.Slot.UtcDateTime:HH:mm} UTC slot");
+            MailcastBeforeOutcome outcome = await hooks.BeforeAsync(
+                window.Slot, this,
+                "; so the rig is not retuned and nothing is held for that slot, as whatever it was to stop may still be transmitting",
+                cancellation).ConfigureAwait(false);
+            if (outcome == MailcastBeforeOutcome.Busy)
+            {
+                // Another window's "after" is owed first; it is run at the top of the next step.
+                _state = "the hooks are still running for another window";
+                await DelayAsync(RetryEvery, cancellation).ConfigureAwait(false);
+                return (saidRefusalFor, tunedFor);
+            }
+
+            _hookSlot = window.Slot;
+            _hookCloses = window.Closes;
+            _hookOk = outcome == MailcastBeforeOutcome.Ok;
+            return (saidRefusalFor, tunedFor);
+        }
+
+        if (_hooks is { Configured: true } && !_hookOk)
+        {
+            _state = string.Create(CultureInfo.InvariantCulture,
+                $"not retuning for the {window.Slot.UtcDateTime:HH:mm} UTC slot: the \"before\" command failed; \"after\" runs at {_hookCloses.UtcDateTime:HH:mm} UTC");
+            await DelayAsync(Shorter(_hookCloses - now, ClockCheck), cancellation).ConfigureAwait(false);
             return (saidRefusalFor, tunedFor);
         }
 
@@ -238,8 +358,11 @@ internal sealed class MailcastRetuner
 
     private async Task DelayAsync(TimeSpan delay, CancellationToken cancellation)
     {
-        NextWake = _time.GetUtcNow() + delay;
+        // The timer first, then the note of when it fires: a test that moves the clock on once it
+        // sees the note never moves it before the timer exists.
+        DateTimeOffset due = _time.GetUtcNow() + delay;
         Task tick = Task.Delay(delay, _time, cancellation);
+        NextWake = due;
         Waiting?.Invoke();
         try
         {

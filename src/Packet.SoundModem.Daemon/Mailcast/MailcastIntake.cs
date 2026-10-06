@@ -40,6 +40,10 @@ internal sealed class MailcastIntake : IAsyncDisposable
         _store = new ReceiverStore(directory, Compression.Default, new ReceiverStoreOptions
         {
             Time = time,
+            // No archive of answered bulletins: nothing here shows or resends them, so an answered
+            // bulletin simply leaves the outbox, as it did before the library had one.
+            ArchiveRetention = TimeSpan.Zero,
+            ArchiveMaxBytes = 0,
             Log = line => log("mailcast: store: " + MailcastOnAir.Ascii(line)),
         });
         _timetable = _store.HeardSchedule;
@@ -128,11 +132,11 @@ internal sealed class MailcastIntake : IAsyncDisposable
     }
 
     /// <summary>Takes a bulletin out of the outbox once the BBS has answered for it for good.</summary>
-    internal void Acknowledge(string bid)
+    internal void Acknowledge(string bid, BbsVerdict verdict, string? detail)
     {
         lock (_gate)
         {
-            _store.Acknowledge(bid);
+            _store.Acknowledge(bid, verdict, detail);
         }
     }
 
