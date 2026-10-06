@@ -1,4 +1,3 @@
-using System.Net.Sockets;
 using AwesomeAssertions;
 using M0LTE.Radio.Audio;
 using Packet.SoundModem.Channel;
@@ -24,7 +23,7 @@ public class KissPolyglotPortTests : IAsyncLifetime
 
     private readonly SoundModemChannel _channel;
     private readonly FakeAudioOutput _output = new(SampleRate);
-    private readonly CancellationTokenSource _cancellation = new(TimeSpan.FromSeconds(30));
+    private readonly CancellationTokenSource _cancellation = new();
     private Task? _transmitter;
     private KissTcpServer _polyglot = null!;
 
@@ -61,13 +60,6 @@ public class KissPolyglotPortTests : IAsyncLifetime
         _cancellation.Dispose();
     }
 
-    private static async Task<TcpClient> ConnectAsync(KissTcpServer server)
-    {
-        var client = new TcpClient();
-        await client.ConnectAsync("127.0.0.1", server.LocalPort);
-        return client;
-    }
-
     /// <summary>Audio carrying <paramref name="frame"/> as sent by <paramref name="mode"/>.</summary>
     private static async Task<float[]> ModulateAsync(string mode, byte[] frame)
     {
@@ -76,10 +68,12 @@ public class KissPolyglotPortTests : IAsyncLifetime
         channel.Csma.Persistence = 255;
         channel.Csma.TxDelayMilliseconds = 20;
         var output = new FakeAudioOutput(SampleRate);
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var cancellation = new CancellationTokenSource();
         Task transmitter = channel.RunTransmitterAsync(output, new NullPtt(), cancellation.Token);
-        await channel.EnqueueTransmit(0, frame);
-        await SettleAsync(output);
+
+        // Complete once the frame's audio has been written: the trailing silence added below
+        // stands in for whatever tail the transmitter is still writing.
+        await channel.EnqueueTransmit(0, frame).Within("the reference burst to be modulated");
         await cancellation.CancelAsync();
         try
         {
@@ -92,56 +86,20 @@ public class KissPolyglotPortTests : IAsyncLifetime
         return [.. output.Snapshot(), .. new float[SampleRate / 2]];
     }
 
-    /// <summary>Waits until the transmitter has stopped producing samples.</summary>
-    private static async Task SettleAsync(FakeAudioOutput output)
-    {
-        int settled;
-        do
-        {
-            settled = output.WrittenCount;
-            await Task.Delay(150);
-        }
-        while (output.WrittenCount != settled || output.WrittenCount == 0);
-    }
-
-    private static async Task<List<KissFrame>> DrainAsync(TcpClient client, TimeSpan window)
-    {
-        var frames = new List<KissFrame>();
-        var decoder = new KissDecoder(frames.Add);
-        var buffer = new byte[4096];
-        using var cancellation = new CancellationTokenSource(window);
-        NetworkStream stream = client.GetStream();
-        try
-        {
-            while (true)
-            {
-                int got = await stream.ReadAsync(buffer, cancellation.Token);
-                if (got == 0)
-                {
-                    break;
-                }
-
-                decoder.Push(buffer.AsSpan(0, got));
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-
-        return frames;
-    }
-
     [Fact]
     public async Task Every_Overlaid_Modems_Frames_Reach_The_Host_As_Nibble_Zero()
     {
         byte[] legacy = PolyglotRouterTests.Frame("M0LTE", "G4OLD");
         byte[] fancy = PolyglotRouterTests.Frame("M0LTE", "G4NEW");
         float[] audio = [.. await ModulateAsync("afsk1200", legacy), .. await ModulateAsync("afsk1200-il2p", fancy)];
-        using TcpClient host = await ConnectAsync(_polyglot);
+        using KissTestClient host = await KissTestClient.ConnectAsync(_polyglot);
 
+        // Both bursts are decoded and queued to the session before this returns, so the fence
+        // collects both. The session had to be registered first: one that the server accepted
+        // part-way through this call was offered the second frame and not the first.
         _channel.ProcessReceive(audio);
 
-        List<KissFrame> received = await DrainAsync(host, TimeSpan.FromSeconds(2));
+        List<KissFrame> received = await host.FenceAsync();
         received.Should().HaveCount(2);
         received.Should().OnlyContain(f => f.Port == 0, "the host sees one port and one channel");
         received.Select(f => f.Payload).Should().BeEquivalentTo([legacy, fancy], o => o.WithStrictOrdering());
@@ -153,11 +111,11 @@ public class KissPolyglotPortTests : IAsyncLifetime
         _polyglot.EmitQualityFrames = true;
         byte[] frame = PolyglotRouterTests.Frame("M0LTE", "G4NEW");
         float[] audio = await ModulateAsync("afsk1200-il2p", frame);
-        using TcpClient host = await ConnectAsync(_polyglot);
+        using KissTestClient host = await KissTestClient.ConnectAsync(_polyglot);
 
         _channel.ProcessReceive(audio);
 
-        List<KissFrame> received = await DrainAsync(host, TimeSpan.FromSeconds(2));
+        List<KissFrame> received = await host.FenceAsync();
         received.Select(f => (f.Port, f.Command)).Should().Equal(
             (0, KissCommand.Data), (0, KissCommand.RxQuality));
         System.Text.Encoding.UTF8.GetString(received[1].Payload).Should().Contain("afsk1200-il2p");
@@ -168,10 +126,11 @@ public class KissPolyglotPortTests : IAsyncLifetime
     {
         _channel.ProcessReceive(await ModulateAsync("afsk1200-il2p", PolyglotRouterTests.Frame("M0LTE", "G4NEW")));
         byte[] reply = PolyglotRouterTests.Frame("G4NEW", "M0LTE");
-        using TcpClient host = await ConnectAsync(_polyglot);
+        using KissTestClient host = await KissTestClient.ConnectAsync(_polyglot);
+        Task<byte[]> transmitted = KissTestWait.NextTransmissionAsync(_channel);
 
-        await host.GetStream().WriteAsync(KissCodec.Encode(new KissFrame(0, KissCommand.Data, reply)));
-        await SettleAsync(_output);
+        await host.SendAsync(new KissFrame(0, KissCommand.Data, reply));
+        await transmitted.Within("the reply to be transmitted");
 
         float[] audio = [.. _output.Snapshot(), .. new float[SampleRate / 2]];
         Decode("afsk1200-il2p", audio).Should().ContainSingle().Which.Should().Equal(reply);
@@ -183,10 +142,11 @@ public class KissPolyglotPortTests : IAsyncLifetime
     {
         _channel.ProcessReceive(await ModulateAsync("afsk1200-il2p", PolyglotRouterTests.Frame("M0LTE", "G4NEW")));
         byte[] frame = PolyglotRouterTests.Frame("G4OLD", "M0LTE");
-        using TcpClient host = await ConnectAsync(_polyglot);
+        using KissTestClient host = await KissTestClient.ConnectAsync(_polyglot);
+        Task<byte[]> transmitted = KissTestWait.NextTransmissionAsync(_channel);
 
-        await host.GetStream().WriteAsync(KissCodec.Encode(new KissFrame(0, KissCommand.Data, frame)));
-        await SettleAsync(_output);
+        await host.SendAsync(new KissFrame(0, KissCommand.Data, frame));
+        await transmitted.Within("the frame to be transmitted");
 
         float[] audio = [.. _output.Snapshot(), .. new float[SampleRate / 2]];
         Decode("afsk1200", audio).Should().ContainSingle().Which.Should().Equal(frame);
@@ -198,14 +158,14 @@ public class KissPolyglotPortTests : IAsyncLifetime
     {
         _channel.ProcessReceive(await ModulateAsync("afsk1200-il2p", PolyglotRouterTests.Frame("M0LTE", "G4NEW")));
         byte[] reply = PolyglotRouterTests.Frame("G4NEW", "M0LTE");
-        using TcpClient host = await ConnectAsync(_polyglot);
-        // The host is attached after the burst above, so the only thing it can read is the ack.
-        Task<List<KissFrame>> acks = DrainAsync(host, TimeSpan.FromSeconds(5));
+        using KissTestClient host = await KissTestClient.ConnectAsync(_polyglot);
 
-        await host.GetStream().WriteAsync(
-            KissCodec.Encode(new KissFrame(0, KissCommand.AckModeData, [0x12, 0x34, .. reply])));
+        await host.SendAsync(new KissFrame(0, KissCommand.AckModeData, [0x12, 0x34, .. reply]));
+        await host.ReadUntilAsync(frames => frames.Count > 0, "the ack");
 
-        (await acks).Should().ContainSingle().Which.Should().BeEquivalentTo(
+        // The host is attached after the burst above, so the only thing it can read is the ack;
+        // the fence shows nothing else was queued behind it.
+        (await host.FenceAsync()).Should().ContainSingle().Which.Should().BeEquivalentTo(
             new KissFrame(0, KissCommand.AckModeData, [0x12, 0x34]));
         float[] audio = [.. _output.Snapshot(), .. new float[SampleRate / 2]];
         Decode("afsk1200-il2p", audio).Should().ContainSingle().Which.Should().Equal(reply);
