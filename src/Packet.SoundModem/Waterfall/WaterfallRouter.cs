@@ -146,7 +146,8 @@ public sealed class WaterfallRouter : IAsyncDisposable
             HttpListenerContext context;
             try
             {
-                context = await _listener.GetContextAsync().ConfigureAwait(false);
+                context = await HttpListenerLifetime.AcceptAsync(_listener, _stopping.Token)
+                    .ConfigureAwait(false);
             }
             catch (Exception) when (_stopping.IsCancellationRequested)
             {
@@ -233,28 +234,18 @@ public sealed class WaterfallRouter : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await _stopping.CancelAsync().ConfigureAwait(false);
-        try
-        {
-            _listener.Stop();
-            _listener.Close();
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-        catch (Exception e) when (e is InvalidOperationException or HttpListenerException or IOException)
-        {
-            // Stop() does not just stop listening: it closes the connections it is still holding,
-            // and closing one flushes and disposes its response stream. A browser that has already
-            // walked away leaves a socket that cannot be written to, so the flush throws from
-            // inside Stop() - InvalidOperationException ("The stream does not support writing")
-            // via NetworkStream.Write, or IOException if the peer reset it instead.
-            //
-            // There is nothing to do about it at this point and nothing that wants to know. We are
-            // shutting the listener down, the peer is gone, and the only thing the exception can
-            // still accomplish is to take a station's shutdown down with it: MonitorHost disposes
-            // this router, so an unhandled throw here escapes the whole monitor teardown. It did
-            // exactly that to release run 35235370433, which was otherwise green.
-        }
+
+        // Stop() does not just stop listening: it closes the connections it is still holding,
+        // and closing one flushes and disposes its response stream. A browser that has already
+        // walked away leaves a socket that cannot be written to, so the flush throws from inside
+        // Stop() - InvalidOperationException ("The stream does not support writing") via
+        // NetworkStream.Write, IOException if the peer reset it instead, or
+        // ObjectDisposedException where the stream has already been disposed. Nothing wants to
+        // know at this point, and an unhandled throw here would escape the whole monitor
+        // teardown, as it did to release run 35235370433. Worse, the throw used to skip Close()
+        // as well and leave the accept below pending for ever, which is what hung the uplink
+        // tests at their 30 s limit. HttpListenerLifetime has both halves of the cure.
+        HttpListenerLifetime.Shut(_listener);
 
         if (_acceptLoop is not null)
         {

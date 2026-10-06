@@ -2757,7 +2757,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             HttpListenerContext context;
             try
             {
-                context = await listener.GetContextAsync().ConfigureAwait(false);
+                context = await HttpListenerLifetime.AcceptAsync(listener, _stopping.Token)
+                    .ConfigureAwait(false);
             }
             catch (Exception) when (_stopping.IsCancellationRequested)
             {
@@ -3511,13 +3512,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             _transmitPendingOffset = 0;
         }
 
-        try
+        // Never throws for a browser that has walked away, and never leaves the accept loop
+        // below waiting on a listener that failed to finish its own clean-up.
+        if (_listener is { } listener)
         {
-            _listener?.Stop();
-            _listener?.Close();
-        }
-        catch (ObjectDisposedException)
-        {
+            HttpListenerLifetime.Shut(listener);
         }
 
         if (_acceptLoop is not null)

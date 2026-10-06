@@ -52,6 +52,13 @@ public class UplinkClientTests
         private readonly CancellationTokenSource _stopping = new();
         private readonly List<(WebSocketMessageType Kind, byte[] Payload)> _received = [];
         private readonly Lock _gate = new();
+
+        /// <summary>
+        /// One send at a time on the socket, and the welcome and the demand that follows it go
+        /// out together under it. A test can only act once the station has seen the welcome, so
+        /// whatever it sends then queues behind the connect-time demand instead of racing it.
+        /// </summary>
+        private readonly SemaphoreSlim _sending = new(1, 1);
         private WebSocket? _socket;
         private Task? _accept;
 
@@ -129,28 +136,33 @@ public class UplinkClientTests
             [.. Received.Where(m => m.Kind == WebSocketMessageType.Binary).Select(m => m.Payload)];
 
         /// <summary>Says how many people are watching, as a real monitor does on every change.</summary>
-        public async Task DemandAsync(int viewers)
-        {
-            WebSocket socket = _socket
-                ?? throw new InvalidOperationException("no station is connected");
-            await socket.SendAsync(
-                Encoding.UTF8.GetBytes($"{{\"type\":\"demand\",\"viewers\":{viewers}}}"),
-                WebSocketMessageType.Text,
-                endOfMessage: true,
-                CancellationToken.None);
-        }
+        public Task DemandAsync(int viewers) => SendAsync(Demand(viewers));
 
         /// <summary>Sends anything at all, for the "everything but demand is dropped" test.</summary>
         public async Task SendAsync(string text)
         {
             WebSocket socket = _socket
                 ?? throw new InvalidOperationException("no station is connected");
-            await socket.SendAsync(
+            await _sending.WaitAsync();
+            try
+            {
+                await SendTextAsync(socket, text, CancellationToken.None);
+            }
+            finally
+            {
+                _sending.Release();
+            }
+        }
+
+        private static string Demand(int viewers) =>
+            $"{{\"type\":\"demand\",\"viewers\":{viewers}}}";
+
+        private static Task SendTextAsync(WebSocket socket, string text, CancellationToken ct) =>
+            socket.SendAsync(
                 Encoding.UTF8.GetBytes(text),
                 WebSocketMessageType.Text,
                 endOfMessage: true,
-                CancellationToken.None);
-        }
+                ct);
 
         private async Task AcceptLoopAsync()
         {
@@ -247,17 +259,27 @@ public class UplinkClientTests
                     if (!welcomed && SendWelcome)
                     {
                         welcomed = true;
-                        await socket.SendAsync(
-                            Encoding.UTF8.GetBytes(
-                                "{\"type\":\"welcome\",\"slug\":\"gb7rdg-2\","
-                                + "\"url\":\"https://monitor.example/r/gb7rdg-2/\"}"),
-                            WebSocketMessageType.Text,
-                            endOfMessage: true,
-                            _stopping.Token);
 
                         // A real monitor says how many people are watching straight away, and it
-                        // is nearly always nobody.
-                        await DemandAsync(0);
+                        // is nearly always nobody. The two go out as one, so a test that sends a
+                        // demand of its own on seeing the welcome cannot get in between them and
+                        // then have this nobody overwrite it, which timed tests out "waiting for
+                        // the demand" on a loaded machine.
+                        await _sending.WaitAsync(_stopping.Token);
+                        try
+                        {
+                            await SendTextAsync(
+                                socket,
+                                "{\"type\":\"welcome\",\"slug\":\"gb7rdg-2\","
+                                + "\"url\":\"https://monitor.example/r/gb7rdg-2/\"}",
+                                _stopping.Token);
+                            await SendTextAsync(socket, Demand(0), _stopping.Token);
+                        }
+                        finally
+                        {
+                            _sending.Release();
+                        }
+
                         if (DropAfterWelcome)
                         {
                             socket.Abort();
@@ -1156,6 +1178,14 @@ public class UplinkClientTests
     /// is unmistakable. The first block seen of each kind is skipped and only that one: its
     /// decimator is filling from silence, and after it each kind's input is a constant, so every
     /// later block is flat.</para>
+    /// <para>Nothing here depends on how fast anything runs. The two threads meet at a barrier
+    /// before every call, so the calls really do overlap rather than whenever the scheduler
+    /// happens to allow it. And the whole offering is fewer blocks than the send queue holds, so
+    /// none can be dropped however late the sender gets to run, and the test waits for every one
+    /// of them by count. It used to offer 500 blocks into the 200-deep queue, which drops the
+    /// oldest: on a loaded runner that starved the sender, every heard block was gone before it
+    /// was sent, and the test failed on a kind that never arrived rather than on a mixed
+    /// block.</para>
     /// </remarks>
     [Fact]
     public async Task Two_Threads_Offering_Both_Kinds_At_Once_Never_Mix_Them_In_One_Block()
@@ -1170,16 +1200,21 @@ public class UplinkClientTests
         await monitor.DemandAsync(1);
         await Until(() => client.Wanted, "the demand");
 
-        const int calls = 200;
+        // 2400 samples at 48 kHz are 600 at 12 kHz, so 64 calls are exactly 80 blocks of 480 a
+        // kind: 160 in all, under the 200 the send queue holds before it drops the oldest.
+        const int calls = 64;
+        const int blocksPerKind = calls * (2400 / 4) / 480;
         var heard = new float[2400];
         var ours = new float[2400];
         Array.Fill(heard, 0.8f);
         Array.Fill(ours, -0.8f);
 
+        using var together = new Barrier(2);
         void Offer(float[] block, bool transmitted)
         {
             for (int i = 0; i < calls; i++)
             {
+                together.SignalAndWait();
                 client.Audio(block, transmitted);
             }
         }
@@ -1191,11 +1226,16 @@ public class UplinkClientTests
         received.Join();
         transmitted.Join();
 
-        await Until(() => monitor.AudioMessages.Count > 20, "blocks to inspect");
-        await Task.Delay(250);
+        // Every block, by count. None can have been dropped, so this is all of them and nothing
+        // is still to come.
+        await Until(() => monitor.AudioMessages.Count >= 2 * blocksPerKind, "every block offered");
+        client.DroppedMessages.Should().Be(
+            0, "the offering fits the send queue, so a slow sender delays blocks but loses none");
 
         IReadOnlyList<byte[]> blocks = monitor.AudioMessages;
-        blocks.Should().HaveCountGreaterThan(20, "there has to be something to inspect");
+        blocks.Should().HaveCount(2 * blocksPerKind);
+        blocks.Count(b => b[1] == 0).Should().Be(blocksPerKind, "every heard block arrived");
+        blocks.Count(b => b[1] == 1).Should().Be(blocksPerKind, "every transmitted block arrived");
         blocks.Should().AllSatisfy(
             b => b.Length.Should().Be(4 + (480 * 2)),
             "a mixed block would be the right length too, which is why length is not the test");
