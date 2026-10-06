@@ -157,9 +157,9 @@ public sealed class Ms110dDemodulator
 
     // Signal-absent release (issue #553, docs/dev/ms110d/signal-absent.md). Each frame's
     // mini-probe is matched-filtered against the raw received symbols over a lag window; the
-    // coherent energy found beyond a floor taken from the median lag (so noise scores zero and
-    // a steady carrier, which fills every lag alike, scores below it) is averaged over the last
-    // PresenceWindowSeconds of frames. Noise-only, that average has a standard deviation of
+    // coherent energy found there, less what noise puts there and with any steady carrier
+    // cancelled (a carrier on a probe line correlates with the probe at every lag), is
+    // averaged over the last PresenceWindowSeconds of frames. Noise-only, that average has a standard deviation of
     // about sqrt(lags / frames); the lock is released when it falls below PresenceSigmas of
     // those. The window is long on purpose: a slow, deep NVIS fade takes the probes away for
     // many seconds inside a burst that is still worth reading, and losing that burst's frames
@@ -174,6 +174,19 @@ public sealed class Ms110dDemodulator
     private double _presenceThreshold;
     private long _presenceProbeChip;
     private Cf[] _presenceProbe = [];
+    private double _presenceRotationRe;
+    private double _presenceRotationIm;
+    private double _presenceBackground;
+    private double _presenceFrameSeconds;
+
+    /// <summary>How long the background a lag is judged against is averaged over: long
+    /// enough to steady it, short enough to follow a signal's fade down to the noise.</summary>
+    private const double PresenceBackgroundSeconds = 2.0;
+
+    /// <summary>How long the carrier's lag-to-lag rotation is averaged over: long enough that a
+    /// carrier well under the noise is still pinned down, short enough that one arriving after a
+    /// burst takes over the estimate from the burst's own channel within a few seconds.</summary>
+    private const double PresenceRotationSeconds = 4.0;
 
     // Tracking state (WN 0).
     private Wid0WalshModem? _walsh;
@@ -509,7 +522,8 @@ public sealed class Ms110dDemodulator
     private byte[]? _mfbInfo;            // G1d: the MFB's candidate decode for the ensemble
 
     /// <summary>Instrument seam (issue #553 tuning): per frame, the input samples consumed so
-    /// far, the plain probe-presence statistic and the floored one the release decides on.
+    /// far, the plain probe-presence statistic and the carrier-cancelled one the release
+    /// decides on.
     /// Null (the default) changes nothing.</summary>
     internal event Action<long, double, double>? PresenceTraced;
 
@@ -2070,6 +2084,10 @@ public sealed class Ms110dDemodulator
         // The first frame scores the probe that ends the preamble (unshifted, design §2.4).
         _presenceProbeChip = _dataStartChip;
         _presenceProbe = MiniProbe.Get(mode.K, boundary: false);
+        _presenceRotationRe = 0;
+        _presenceRotationIm = 0;
+        _presenceBackground = 0;
+        _presenceFrameSeconds = (mode.U + mode.K) / (double)Ms110dTables.SymbolRate;
     }
 
     /// <summary>Symbol lags the probe matched filter searches: half a probe base period
@@ -2083,22 +2101,33 @@ public sealed class Ms110dDemodulator
     }
 
     /// <summary>
-    /// How much more coherent mini-probe energy the received symbols hold than noise alone
+    /// How much more coherent mini-probe energy the received symbols hold than the background
     /// would put there (issue #553). For each lag d of <see cref="PresenceLags"/> the K
-    /// received symbols from probe start + d are correlated with the known probe, and each
-    /// lag's |c_d|² is normalized by K times the mean received power over the span, so on
-    /// noise every lag contributes a unit-mean exponential whatever the level. The result is
-    /// the sum over the lags less the lag count times a floor: the median lag scaled by the
-    /// median's expectation on noise, so noise scores zero on average. A signal at symbol SNR
-    /// s adds about K·s/(1+s) of its channel energy that falls inside the window, in the few
-    /// lags its paths occupy, and leaves the median where noise put it. A steady carrier on
-    /// one of the probe's spectral lines (1800 Hz plus a multiple of 2400 / base length)
-    /// correlates with the probe equally at every lag, so it raises the median with the sum
-    /// and scores below zero: it reads as no signal, as it must (the plain sum, kept for the
-    /// instrument as <paramref name="plain"/>, would hold a lock on it for ever). Read
-    /// straight from the ring with the receiver's own timing and carrier, but independent of
-    /// the equalizer, its reference levels and the AGC (the ratio is scale-free), which is
-    /// what lets it see noise as noise after the DFE has adapted itself to that noise.
+    /// received symbols from probe start + d are correlated with the known probe, giving c_d.
+    /// A signal puts its channel energy into the few lags its paths occupy; noise puts the
+    /// same expected energy into every lag.
+    /// <para>Two things keep a carrier from looking like a signal. A steady carrier is the one
+    /// thing besides the probe that correlates with it, and its c_d is an exact complex
+    /// sinusoid in d, A·e^{jωd}, whatever its frequency; on one of the probe's spectral lines
+    /// (1800 Hz plus a multiple of 2400 / base length) it is a strong one. So ω is estimated
+    /// from the lag-to-lag rotation Σ c_{d+1}·conj(c_d), averaged over the last few seconds of
+    /// earlier frames (never this one, so on noise it is independent of the frame it is applied to),
+    /// and the projection of this frame's c onto e^{jωd} and d·e^{jωd} is removed, the carrier
+    /// with it. And
+    /// the background each lag is judged against is measured in the lags themselves: the median
+    /// residual lag energy, averaged over the last couple of seconds of frames and scaled by the
+    /// median's expectation on noise. Normalizing by the received power instead would let any
+    /// strong interferer that does not correlate with the probe (a carrier off the lines, say)
+    /// push the score below the noise and end a burst that is being read.</para>
+    /// <para>The result is the residual lag energy over that background, less the residual's
+    /// degrees of freedom (lags - 2), which averages zero on noise and on a carrier alike,
+    /// whatever their level, and grows by the signal's in-window channel energy over the
+    /// background. <paramref name="plain"/> is the old uncancelled, power-normalized sum less
+    /// the lag count, kept for the instrument.</para>
+    /// <para>Read straight from the ring with the receiver's own timing and carrier, but
+    /// independent of the equalizer, its reference levels and the AGC (every term is a ratio),
+    /// which is what lets it see noise as noise after the DFE has adapted itself to that
+    /// noise.</para>
     /// </summary>
     private double ProbePresence(long probeChip, Cf[] probe, out double plain)
     {
@@ -2121,7 +2150,11 @@ public sealed class Ms110dDemodulator
             return 0;
         }
 
-        Span<double> lagEnergy = stackalloc double[lags];
+        // Scaled by the received power only to keep the numbers near unity; every quantity
+        // below is a ratio of them.
+        double scale = 1.0 / Math.Sqrt(k * power);
+        Span<double> re = stackalloc double[lags];
+        Span<double> im = stackalloc double[lags];
         double energy = 0;
         for (int d = 0; d < lags; d++)
         {
@@ -2131,18 +2164,102 @@ public sealed class Ms110dDemodulator
                 c += received[i + d] * probe[i].Conj();
             }
 
-            lagEnergy[d] = c.Cnorm() / (k * power);
-            energy += lagEnergy[d];
+            re[d] = c.Re * scale;
+            im[d] = c.Im * scale;
+            energy += (re[d] * re[d]) + (im[d] * im[d]);
         }
 
         plain = energy - lags;
+
+        // This frame's lag-to-lag rotation, taken before the carrier is removed.
+        double rotRe = 0, rotIm = 0;
+        for (int d = 0; d + 1 < lags; d++)
+        {
+            rotRe += (re[d + 1] * re[d]) + (im[d + 1] * im[d]);
+            rotIm += (im[d + 1] * re[d]) - (re[d + 1] * im[d]);
+        }
+
+        // Remove the carrier the earlier frames point to: the projection onto e^{jωd}, and onto
+        // d·e^{jωd} with d counted from the middle lag, the first-order term in ω, so that an
+        // estimate a little off the carrier's frequency (the receiver's own carrier loop wanders
+        // on noise) still takes all of it. The two are orthogonal, |e^{jωd}|² summing to lags and
+        // |d·e^{jωd}|² to lags(lags² - 1)/12, and on noise they take out two degrees of freedom.
+        double rotation = Math.Sqrt((_presenceRotationRe * _presenceRotationRe) + (_presenceRotationIm * _presenceRotationIm));
+        bool cancelled = rotation > 0;
+        if (cancelled)
+        {
+            double stepRe = _presenceRotationRe / rotation, stepIm = _presenceRotationIm / rotation;
+            double centre = (lags - 1) / 2.0;
+            double rampNorm = lags * ((lags * lags) - 1) / 12.0;
+            double phRe = 1, phIm = 0, flatRe = 0, flatIm = 0, rampRe = 0, rampIm = 0;
+            for (int d = 0; d < lags; d++)
+            {
+                double conjRe = (re[d] * phRe) + (im[d] * phIm);
+                double conjIm = (im[d] * phRe) - (re[d] * phIm);
+                flatRe += conjRe;
+                flatIm += conjIm;
+                rampRe += (d - centre) * conjRe;
+                rampIm += (d - centre) * conjIm;
+                double nextRe = (phRe * stepRe) - (phIm * stepIm);
+                phIm = (phRe * stepIm) + (phIm * stepRe);
+                phRe = nextRe;
+            }
+
+            flatRe /= lags;
+            flatIm /= lags;
+            rampRe /= rampNorm;
+            rampIm /= rampNorm;
+            phRe = 1;
+            phIm = 0;
+            for (int d = 0; d < lags; d++)
+            {
+                double aRe = flatRe + ((d - centre) * rampRe);
+                double aIm = flatIm + ((d - centre) * rampIm);
+                re[d] -= (aRe * phRe) - (aIm * phIm);
+                im[d] -= (aRe * phIm) + (aIm * phRe);
+                double nextRe = (phRe * stepRe) - (phIm * stepIm);
+                phIm = (phRe * stepIm) + (phIm * stepRe);
+                phRe = nextRe;
+            }
+        }
+
+        Span<double> lagEnergy = stackalloc double[lags];
+        double residual = 0;
+        for (int d = 0; d < lags; d++)
+        {
+            lagEnergy[d] = (re[d] * re[d]) + (im[d] * im[d]);
+            residual += lagEnergy[d];
+        }
+
         lagEnergy.Sort();
-        return energy - (lags * lagEnergy[lags / 2] / ExpectedMedianOfUnitExponentials(lags));
+        int dof = cancelled ? lags - 2 : lags;
+
+        // The median residual lag over its expectation on noise: (1 - 2/lags) of the unit
+        // exponential's middle order statistic once the two-dimensional projection is removed
+        // (within 0.3 %, by simulation), the order statistic itself before.
+        double background = lagEnergy[lags / 2]
+            / (ExpectedMedianOfUnitExponentials(lags) * dof / lags);
+        double level = _presenceBackground > 0 ? _presenceBackground : background;
+        double presence = (residual / level) - dof;
+
+        // Then fold this frame into the estimates, for the frames after it: the background over
+        // the last PresenceBackgroundSeconds, the carrier's rotation over the last
+        // PresenceRotationSeconds, weighed against the background so it is scale-free.
+        double frameSeconds = _presenceFrameSeconds;
+        double beta = Math.Min(1.0, frameSeconds / PresenceBackgroundSeconds);
+        _presenceBackground = _presenceBackground > 0
+            ? _presenceBackground + (beta * (background - _presenceBackground))
+            : background;
+        double alpha = Math.Min(1.0, frameSeconds / PresenceRotationSeconds);
+        _presenceRotationRe += alpha * ((rotRe / level) - _presenceRotationRe);
+        _presenceRotationIm += alpha * ((rotIm / level) - _presenceRotationIm);
+
+        return presence;
     }
 
     /// <summary>The expected middle order statistic of n (odd) independent unit-mean
     /// exponentials: the sum of 1/i for i from (n + 1) / 2 to n (Renyi's representation).
-    /// 0.7254 for 15 lags, 0.7084 for 25.</summary>
+    /// 0.7254 for 15 lags, 0.7127 for 25.</summary>
     private static double ExpectedMedianOfUnitExponentials(int n)
     {
         double sum = 0;
