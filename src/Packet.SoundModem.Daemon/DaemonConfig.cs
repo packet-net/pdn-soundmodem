@@ -3185,6 +3185,10 @@ public sealed class DaemonConfig
         {
             error = Describe(path, "permission denied reading the file");
         }
+        catch (JsonException e) when (e.Path?.StartsWith("$.mailcast.hooks", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            error = Describe(path, MailcastConfig.HooksReadProblem(e));
+        }
         catch (JsonException e)
         {
             // System.Text.Json counts lines from 0; humans and editors count from 1.

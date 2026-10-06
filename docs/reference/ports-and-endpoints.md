@@ -218,7 +218,7 @@ The key is presented as `Authorization: Bearer KEY` or `X-API-Key: KEY`; `X-API-
 
 | Endpoint | Method | Key | Request | Response |
 |---|---|---|---|---|
-| `/api/config` | `GET` | required | none | `{"source": "file" or "ephemeral", "configPath": "...", "running": {...}}`; `api.key`, `publish.token` and `mailcast.bbs.password` read `(set, not shown)` |
+| `/api/config` | `GET` | required | none | `{"source": "file" or "ephemeral", "configPath": "...", "running": {...}}`; `api.key`, `publish.token`, `mailcast.bbs.password` and the `args` of each `mailcast.hooks` command read `(set, not shown)` |
 | `/api/config` | `POST` | required | a complete configuration document, the shape of `soundmodem.json` | 400 with the same message the journal would carry, station untouched; or 200 `{"applied": true, "persisted": false, "restarting": true, "note": "..."}` and the process exits 1 for systemd to restart it |
 | `/api/config?persist=true` | `POST` | required | as above | as above with `"persisted": true`, written to the config file; 500 if the file cannot be written |
 | `/api/proposals` | `GET` | required | none | `{"proposing": false, "why": "...", "proposals": []}` without `survey.propose`; otherwise `{"proposing": true, "examined": N, "readable": N, "skippedForBacklog": N, "proposals": [...]}`, each proposal carrying a `config` to POST to `/api/config` |

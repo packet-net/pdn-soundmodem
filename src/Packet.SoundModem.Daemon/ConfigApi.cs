@@ -318,8 +318,9 @@ internal sealed class ConfigApi
     private const string Hidden = "(set, not shown)";
 
     /// <summary>
-    /// The configuration with <c>api.key</c>, <c>publish.token</c> and
-    /// <c>mailcast.bbs.password</c> blanked, for serving back to a caller.
+    /// The configuration with <c>api.key</c>, <c>publish.token</c>,
+    /// <c>mailcast.bbs.password</c> and the <c>args</c> of each <c>mailcast.hooks</c> command
+    /// blanked, for serving back to a caller.
     /// </summary>
     /// <remarks>
     /// <para>The caller already knows the key - they just presented it - so this is not keeping a
@@ -357,6 +358,11 @@ internal sealed class ConfigApi
             Hide("api", "key");
             Hide("publish", "token");
             Hide("mailcast", "bbs", "password");
+
+            // A hook's arguments may hold anything, a password for the program it runs included,
+            // so they are treated as the BBS password is: never served. The program's path is not.
+            Hide("mailcast", "hooks", "before", "args");
+            Hide("mailcast", "hooks", "after", "args");
             if (redacted)
             {
                 return root!.ToJsonString(new JsonSerializerOptions { WriteIndented = true });

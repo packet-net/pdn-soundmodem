@@ -51,6 +51,7 @@ internal sealed class MailcastReceiver : IAsyncDisposable
         Ledger = new MailcastLedger(directory);
         Slots = new MailcastSlots(time, log, Intake.HeardTimetable);
         Delivery = new MailcastDelivery(Intake, bbs ?? new MailcastBbsClient(config.BbsInUse, time), Ledger, time, log);
+        Hooks = new MailcastHooks(config, directory, time, log);
         Intake.FrameHeard += Slots.OnFrame;
         Intake.TimetableHeard += Slots.Heard;
 
@@ -81,8 +82,12 @@ internal sealed class MailcastReceiver : IAsyncDisposable
     /// <summary>The delivery loop.</summary>
     internal MailcastDelivery Delivery { get; }
 
+    /// <summary>The config's <c>hooks</c>, run around each slot listened to: by the retuner when
+    /// there is one, else by <see cref="RunAsync"/>.</summary>
+    internal MailcastHooks Hooks { get; }
+
     /// <summary>The rig retuner, on a station whose passband does not reach the signal; null on
-    /// one that hears it where it is. Set before audio flows.</summary>
+    /// one that hears it where it is. Set before audio flows, made with <see cref="Hooks"/>.</summary>
     internal MailcastRetuner? Retuner { get; set; }
 
     /// <summary>How many times a lock that outlasted any burst has been let go.</summary>
@@ -161,8 +166,33 @@ internal sealed class MailcastReceiver : IAsyncDisposable
         _locked = 0;
     }
 
-    /// <summary>Runs delivery until <paramref name="cancellation"/> is cancelled.</summary>
-    internal Task RunAsync(CancellationToken cancellation) => Delivery.RunAsync(cancellation);
+    /// <summary>
+    /// Runs delivery, and the retuner or (on a station that hears the signal where it is) the
+    /// hooks, until <paramref name="cancellation"/> is cancelled; then, once the retuner has put
+    /// the rig back, the "after" hook if it is still owed.
+    /// </summary>
+    internal async Task RunAsync(CancellationToken cancellation)
+    {
+        try
+        {
+            Task delivery = Task.Run(() => Delivery.RunAsync(cancellation), CancellationToken.None);
+            Task slots = Retuner is { } retuner
+                ? Task.Run(() => retuner.RunAsync(cancellation), CancellationToken.None)
+                : Task.Run(() => Hooks.RunAsync(at => MailcastHooks.PassbandWindowAt(at, Slots.Timetable), cancellation), CancellationToken.None);
+            try
+            {
+                await Task.WhenAll(delivery, slots).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+            }
+        }
+        finally
+        {
+            // "after" always runs once "before" has, whatever stopped the station.
+            await Hooks.FinishAsync().ConfigureAwait(false);
+        }
+    }
 
     /// <summary>The start-up lines: where it listens, the timetable, the BBS and the files.</summary>
     internal IEnumerable<string> Describe()
@@ -171,6 +201,10 @@ internal sealed class MailcastReceiver : IAsyncDisposable
         yield return $"mailcast: GB7RDG's slots are {MailcastSlots.Describe(Slots.Timetable)}"
             + (Slots.FromDirectory ? ", as its directory gives them" : " (its own; its directory updates them once heard)");
         yield return $"mailcast: delivering rebuilt bulletins to {_config.BbsInUse.Describe()}; state in {Directory}";
+        if (Hooks.DescribeConfig() is { } hooks)
+        {
+            yield return hooks;
+        }
     }
 
     /// <summary>What the page and <c>GET /api/mailcast</c> show. Never the BBS password.</summary>
@@ -256,5 +290,9 @@ internal sealed class MailcastReceiver : IAsyncDisposable
         at?.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
 
     /// <inheritdoc />
-    public async ValueTask DisposeAsync() => await Intake.DisposeAsync().ConfigureAwait(false);
+    public async ValueTask DisposeAsync()
+    {
+        await Intake.DisposeAsync().ConfigureAwait(false);
+        Hooks.Dispose();
+    }
 }

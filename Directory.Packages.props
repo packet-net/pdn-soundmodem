@@ -61,7 +61,7 @@
          AGPL-3.0-only, which combines with this repo's AGPL-3.0-or-later under AGPL-3.0, and brings
          M0LTE.RaptorQ with it) and FBB B1F forwarding from pdn-fbb (AGPL-3.0-or-later). See
          LICENSING.md. -->
-    <PackageVersion Include="Packet.Mailcast" Version="0.3.2" />
+    <PackageVersion Include="Packet.Mailcast" Version="0.4.3" />
     <PackageVersion Include="Packet.Fbb" Version="0.1.0" />
 
     <!-- Testing - xUnit v3 with Microsoft Testing Platform (MTP) runner -->

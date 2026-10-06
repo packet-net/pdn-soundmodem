@@ -17,7 +17,7 @@ namespace Packet.SoundModem.Tests.Mailcast;
 /// the mailcast dial, and a station restarted in the middle of a window. The rig and the retuner
 /// run on a fake clock; the channel's own waits are real but never what an assertion depends on.
 /// </summary>
-public sealed class MailcastRetuneTests : IAsyncDisposable
+public sealed partial class MailcastRetuneTests : IAsyncDisposable
 {
     // 11:58 UTC on 5 October: the noon slot is in daylight at IO91lk.
     private static readonly DateTimeOffset Start = new(2026, 10, 5, 11, 58, 0, TimeSpan.Zero);

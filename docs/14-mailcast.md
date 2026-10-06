@@ -80,6 +80,47 @@ Then:
 
 A rig that takes data-jack audio only in a data mode is retuned in the `rig` section's `mode` (such as `PKTUSB`). [03-radios-and-interfaces.md](03-radios-and-interfaces.md#other-radios-through-hamlib) has more on the `rig` section.
 
+## Running your own commands around each slot
+
+If your radio is shared with something else, Ardopcf say, the station can run a command of yours before each slot and another afterwards, to stop that program and start it again. Add `hooks`:
+
+```json
+{
+  "mailcast": {
+    "bbs": { "password": "pick-one" },
+    "retune": true,
+    "hooks": {
+      "before": { "command": "/usr/local/bin/mailcast-hook", "args": ["stop"], "timeoutSeconds": 30 },
+      "after": { "command": "/usr/local/bin/mailcast-hook", "args": ["start"] }
+    }
+  }
+}
+```
+
+- "before" starts its `timeoutSeconds` (30 unless set, up to 300) ahead of the window, so it is done before the rig is retuned and your transmitter held. "after" runs once the rig is back and your station can transmit again. A station that hears the signal without retuning runs them from 2 minutes before each slot to 12 minutes after.
+- If "before" fails, the rig is not retuned for that slot, since whatever it was meant to stop may still be transmitting. "after" still runs.
+- If the station stops during a slot, "after" runs on the way out, and systemd waits for it. One that did not finish with exit 0 runs again at the next start; until then `hooks.json` sits in the mailcast state directory.
+- Commands run directly, not through a shell, and are told about the slot in `MAILCAST_HOOK`, `MAILCAST_SLOT_UTC`, `MAILCAST_DIAL_KHZ`, `MAILCAST_CENTRE_KHZ` and, for "after", `MAILCAST_BEFORE_OK`. What they print goes to the journal on `mailcast: hooks:` lines. Their arguments are never logged, and `/api/config` does not show them.
+
+The commands run as the service's user, `pdn-soundmodem`, with the service's protections: no `sudo`, no `/home`, and `/usr` and most of `/etc` read-only. So keep scripts somewhere like `/usr/local/bin`, and the ssh key in the state directory. This one stops or starts Ardopcf on another machine:
+
+```sh
+#!/bin/sh
+# /usr/local/bin/mailcast-hook: stop or start Ardopcf on the shack PC.
+K=/var/lib/pdn-soundmodem/.ssh
+exec ssh -i $K/id_ed25519 -o UserKnownHostsFile=$K/known_hosts -o BatchMode=yes -o ConnectTimeout=10 ardop@shack-pc "sudo systemctl $1 ardopcf"
+```
+
+On the shack PC, a sudoers line such as `ardop ALL=(root) NOPASSWD: /usr/bin/systemctl stop ardopcf, /usr/bin/systemctl start ardopcf` lets it do that without a password. Then make the service's key and copy it across, which also records the shack PC's host key:
+
+```sh
+sudo install -d -m 700 -o pdn-soundmodem -g pdn-soundmodem /var/lib/pdn-soundmodem/.ssh
+sudo -u pdn-soundmodem ssh-keygen -t ed25519 -N "" -f /var/lib/pdn-soundmodem/.ssh/id_ed25519
+sudo -u pdn-soundmodem ssh-copy-id -i /var/lib/pdn-soundmodem/.ssh/id_ed25519 -o UserKnownHostsFile=/var/lib/pdn-soundmodem/.ssh/known_hosts ardop@shack-pc
+```
+
+Try it with `sudo -u pdn-soundmodem /usr/local/bin/mailcast-hook stop` and `start`, then restart the service. A second modem run as `pdn-soundmodem@NAME` has its state in `/var/lib/pdn-soundmodem/NAME` instead.
+
 ## What you see
 
 On the station page a Mailcast box in the header shows the next slot, the last slot's tone (how far off frequency and its signal-to-noise ratio), the frames heard in it, bulletins complete, partial and delivered, the BBS's state and, when retuning, the rig's. Hover it for the detail. The same numbers are at `GET /api/mailcast`; the BBS password is never shown or logged.

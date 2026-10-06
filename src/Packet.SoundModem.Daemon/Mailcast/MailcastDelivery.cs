@@ -276,7 +276,15 @@ internal sealed class MailcastDelivery
                     MailcastDeliveryRecord record = Record(bulletin, outcome);
                     try
                     {
-                        _intake.Acknowledge(bulletin.Bid);
+                        _intake.Acknowledge(
+                            bulletin.Bid,
+                            outcome.Verdict switch
+                            {
+                                MailcastVerdict.Accepted => BbsVerdict.Accepted,
+                                MailcastVerdict.AlreadyHad => BbsVerdict.AlreadyHad,
+                                _ => BbsVerdict.Refused,
+                            },
+                            outcome.Detail);
                     }
                     catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                     {
