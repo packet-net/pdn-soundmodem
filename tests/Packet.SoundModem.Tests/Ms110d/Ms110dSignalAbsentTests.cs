@@ -639,6 +639,9 @@ public class Ms110dSignalAbsentFadeAndCarrierTests(ITestOutputHelper output) : M
     [InlineData(4, 6.0, "1875,2025,1725", 9.0)]
     [InlineData(6, 10.0, "1650,1875,2100", 12.0)]
     [InlineData(2, 1.0, "1896", 3.0)]
+    [InlineData(2, 1.0, "1850", 6.0)]
+    [InlineData(2, 1.0, "1800", 3.0)]
+    [InlineData(6, 10.0, "1800", 12.0)]
     [InlineData(2, 4.0, "1896,1992,1704", 3.0)]
     public void Steady_Carriers_Under_A_Readable_Burst_Cost_No_Frame(int wn, double snrDb, string tones, double toneDb)
     {
@@ -675,6 +678,9 @@ public class Ms110dSignalAbsentFadeAndCarrierTests(ITestOutputHelper output) : M
     [Theory]
     [InlineData(4, "1800", -6.0)]
     [InlineData(2, "1896", -6.0)]
+    [InlineData(2, "1850", 6.0)]
+    [InlineData(2, "1800", 0.0)]
+    [InlineData(6, "1800", 0.0)]
     [InlineData(4, "1650,2100", 6.0)]
     [InlineData(4, "1650,2100,1950,1500", 6.0)]
     [InlineData(4, "1875,2025,1725", 6.0)]
