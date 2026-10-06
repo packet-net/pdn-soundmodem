@@ -62,6 +62,12 @@ jobs:
       - name: Register .NET root for MTP apphosts
         run: echo "DOTNET_ROOT=$(dirname "$(readlink -f "$(which dotnet)")")" >> "$GITHUB_ENV"
 
+      # Not every self-hosted runner has Node, and the npm package is built in this job, so
+      # bring our own rather than fail preflight on whichever runner picks the job up.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
       - name: Preflight
         run: |
           # dpkg-deb ships in the Essential `dpkg` package, so this only trips if the
