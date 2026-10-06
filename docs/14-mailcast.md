@@ -5,7 +5,8 @@ GB7RDG sends its recent packet mail bulletins on 40 m every daylight hour, as [p
 ## What you need
 
 - pdn-soundmodem 0.87.1 or later. `pdn-soundmodem --version` says which you have, and [01-install.md](01-install.md#upgrading) shows how to upgrade.
-- A 40 m receive path that pdn-soundmodem already runs: a rig on a sound card, or a FlexRadio. An FM station can't be used.
+- An HF rig with CAT control and a sound card interface, already working 40 m packet with pdn-soundmodem, for example with LinBPQ on its KISS ports. On a FlexRadio, see [On a FlexRadio](#on-a-flexradio) instead.
+- Hamlib's `rigctld` (`sudo apt install libhamlib-utils`), or flrig if it already runs your rig.
 - LinBPQ with its mail, or Linux FBB, that this machine can reach.
 - A `waterfall` section, if you want the Mailcast panel on the station page.
 
@@ -19,45 +20,32 @@ Using QtSoundModem rather than pdn-soundmodem? Run pdn-mailcast's [standalone re
 
 A bulletin is sent in pieces, and pieces from different slots add up, so one you only half heard at 10:00 can complete at 11:00.
 
-## On a station already on 40 m packet
+## Why the rig has to move
 
-This is the usual case: a pdn-soundmodem node on the UK HF packet channels around 7.0503 to 7.0516 MHz, with LinBPQ on its KISS ports. A rig set up for those channels has its dial around 7.049 MHz and hears up to about 7.052 MHz. The bulletins start just above that, and at 2.9 kHz wide they are wider than an ordinary 2.4 kHz SSB filter anyway, so one dial can't hear both.
+A rig set up for the UK HF packet channels, around 7.0503 to 7.0516 MHz, has its dial around 7.049 MHz and hears up to about 7.052 MHz. The bulletins start just above that, and at 2.9 kHz wide they don't fit an ordinary 2.4 kHz SSB filter anyway, so one dial can't hear both.
 
-pdn-soundmodem checks this for you when it starts. Add a `mailcast` section with just the BBS password:
+So pdn-soundmodem moves the rig for each slot: to 7.052 MHz USB from 1 minute before the hour to 12 minutes after, then back where it was. It does this through Hamlib's `rigctld`.
 
-```json
-{
-  "mailcast": { "bbs": { "password": "pick-one" } }
-}
+## Start rigctld
+
+**A CAT radio Hamlib drives directly**, such as an IC-7300 on a USB cable:
+
+```sh
+rigctl -l | grep -i 7300            # find your rig's model number
+rigctld -m 3073 -r /dev/ttyUSB0     # 3073 is an IC-7300
 ```
 
-Restart the service, and a `mailcast:` line in the journal says which case you are in. Either it can already hear the signal:
+**A rig flrig already runs.** Only one program can hold the CAT port, so point rigctld at flrig instead, and flrig stays in charge of the radio:
 
-```
-mailcast: listening on the station's own passband, the signal's centre 7.0538 MHz at 4350 Hz audio (2950-5750 Hz); no retuning
-```
-
-or it stops (exit 2, and systemd leaves it stopped) with a line saying why and what to change:
-
-```
-mailcast: the signal on 7.0524 to 7.0552 MHz is outside what this station hears. This station's dial is 7.04945 MHz USB and it hears 300-2700 Hz of audio (7.04975 to 7.05215 MHz); the signal would be at 2950-5750 Hz. Add a "rig" section (rigctld) and "mailcast"."retune": true, ...
+```sh
+rigctld -m 4                        # model 4 is Hamlib's flrig backend; start flrig first
 ```
 
-Then pick one of the three ways below.
+Start rigctld before pdn-soundmodem, without `--vfo`, and have it start at boot the way your other station software does.
 
-### a. Your station already hears it
+## Add the receiver
 
-Nothing needs changing, and the receiver listens all the time beside your packet modems. This is the case for:
-
-- **A headless FlexRadio** (a `flex:` device with no `@station`). pdn-soundmodem opens the slice's receive filter to take in the bulletins as well as your modems, as far as 10 kHz wide, so any slice tuned between about 7.046 and 7.052 MHz hears them. The journal says so: `flex: setting the slice receive filter to 450-6000 Hz, to hear everything the modems are placed across and the mailcast signal`.
-- **A rig whose dial is on 7.052 MHz USB**, set in your band plan or in `dialFrequency`.
-- **A web receiver** whose SSB window (`ubersdr.ssbLowHz` to `ssbHighHz`) covers the signal.
-
-A Flex in attach mode (`flex:HOST@station`, with SmartSDR owning the slice) is different: pdn-soundmodem can't open SmartSDR's filter, so it only counts that slice as hearing the signal when it is on 7.052 MHz. pdn-soundmodem never retunes a FlexRadio, and a `rig` section beside a `flex:` device is refused, so a Flex that is out of reach needs way c.
-
-### b. Retune the rig for each slot
-
-For a rig on a sound card that Hamlib can drive. Add a `rig` section and `"retune": true`, and pdn-soundmodem moves the rig to 7.052 MHz USB from 1 minute before each slot to 12 minutes after, then puts it back where it was. Here it is added to the 40 m station from [08-hf.md](08-hf.md); only the last two lines are new:
+Add a `rig` section and a `mailcast` section to your config. Here they are added to the 40 m station from [08-hf.md](08-hf.md); only the last two lines are new:
 
 ```jsonc
 {
@@ -76,60 +64,42 @@ For a rig on a sound card that Hamlib can drive. Add a `rig` section and `"retun
 }
 ```
 
-`mode` is for a rig that only takes data-jack audio in a data mode; the rig is put in it on the mailcast dial too. Leave it out for plain USB. With modems placed by `rfFrequency`, a `rig` section also lets pdn-soundmodem set your dial from the band plan at start-up, so check the `rig: setting the rig to` line reads the dial you use. More on the `rig` section is in [03-radios-and-interfaces.md](03-radios-and-interfaces.md#other-radios-through-hamlib).
+- `rig.mode` is for a rig that only takes data-jack audio in a data mode; the rig is put in it on the mailcast dial too. Leave it out for plain USB.
+- With modems placed by `rfFrequency`, a `rig` section also lets pdn-soundmodem set your dial from the band plan at start-up, so check the `rig: setting the rig to` line reads the dial you use.
+- `bbs.password` is the one you give the receiver's login when you [set up the BBS login](#set-up-the-bbs-login).
 
-The station talks to the rig through Hamlib's `rigctld`. Start it before pdn-soundmodem, and have it start at boot the way your other station software does. Start rigctld without `--vfo`.
-
-**A CAT radio Hamlib drives directly**, such as an IC-7300 on a USB cable:
-
-```sh
-sudo apt install libhamlib-utils
-rigctl -l | grep -i 7300            # find your rig's model number
-rigctld -m 3073 -r /dev/ttyUSB0     # 3073 is an IC-7300
-```
-
-**A rig flrig already runs.** Only one program can hold the CAT port, so point rigctld at flrig instead and flrig stays in charge of the radio:
-
-```sh
-rigctld -m 4                        # model 4 is Hamlib's flrig backend; start flrig first
-```
-
-Restart pdn-soundmodem, and the journal says how it will listen:
+More on the `rig` section is in [03-radios-and-interfaces.md](03-radios-and-interfaces.md#other-radios-through-hamlib). Restart the service, and the journal says how it will listen:
 
 ```
 mailcast: the station's passband does not reach the signal on 7.0538 MHz, so the rig is retuned to 7.052 MHz USB from 1 minute before each slot to 12 minutes after, and put back; nothing is transmitted meanwhile
 ```
 
-Never set `retune` on GB7RDG's own station, or on any head end sending the bulletins: while the rig is away the transmit lease the head end needs is refused, so its slot would never go out.
+Without `"retune": true` or the `rig` section, the station stops instead (exit 2, and systemd leaves it stopped), saying why:
 
-### c. A second receiver
-
-A second radio, or an SDR with a sound card output, left on 7.052 MHz USB. Give it a pdn-soundmodem instance of its own, as in [01-install.md](01-install.md#more-than-one-modem-on-one-machine), with no `ptt` so it never transmits, and its own ports. For example `/etc/pdn-soundmodem/mailcast.json`, started with `sudo systemctl enable --now pdn-soundmodem@mailcast`:
-
-```json
-{
-  "device": "plughw:CARD=Device_1,DEV=0",
-  "dialFrequency": 7052000,
-  "kissPort": 8115,
-  "waterfall": { "port": 8117 },
-  "mailcast": { "bbs": { "password": "pick-one" } }
-}
+```
+mailcast: the signal on 7.0524 to 7.0552 MHz is outside what this station hears. This station's dial is 7.04945 MHz USB and it hears 300-2700 Hz of audio (7.04975 to 7.05215 MHz); the signal would be at 2950-5750 Hz. Add a "rig" section (rigctld) and "mailcast"."retune": true, ...
 ```
 
-Your packet station is then left alone completely. On a FlexRadio the second receiver can be a second headless instance with its own slice: `flex.frequency` `"7.052000"`, its own `daxChannel` and `"receiveOnly": true`, as in [DAX channels](03-radios-and-interfaces.md#dax-channels). pdn-mailcast's [standalone receiver](https://github.com/packet-net/pdn-mailcast/blob/main/src/Mailcast.Receiver/README.md) works too, on a radio or on a public web receiver with no radio at all.
+Never set `retune` on GB7RDG's own station, or on any head end sending the bulletins: while the rig is away the transmit lease the head end needs is refused, so its slot would never go out.
 
 ## Your packet traffic while the rig is retuned
 
-For way b only. While the rig is on 7.052 MHz your station transmits nothing at all, so nothing of yours is ever keyed on the bulletin frequency:
+While the rig is on 7.052 MHz your station transmits nothing at all, so nothing of yours is ever keyed on the bulletin frequency:
 
 - frames from LinBPQ wait, and are dropped if they wait more than 30 s (AX.25 simply retries later);
 - idents wait until the rig is back;
 - ARDOP sessions and transmit leases are refused, and the transmitter test gives up after 60 s;
 - your modems keep receiving, but on 7.052 MHz, so they hear nothing of your packet channels.
 
-That is about 13 minutes in every daylight hour, roughly 2 hours a day in October. A connected session that is going on when the window opens will probably time out. Think about what else uses the radio: anything that keys it without going through pdn-soundmodem, such as Ardopcf or VARA on another sound card, is not held, and needs the hooks below.
+That is about 13 minutes in every daylight hour, roughly 2 hours a day in October. A connected session that is going on when the window opens will probably time out. Anything that keys the radio without going through pdn-soundmodem, such as Ardopcf or VARA on another sound card, is not held, and needs [the hooks below](#running-your-own-commands-around-each-slot).
 
 If the station stops in the middle of a window, it puts the rig back when it next starts, before it sends anything.
+
+Rather not take your packet radio off its channels? Give the bulletins a second radio on 7.052 MHz USB, with a pdn-soundmodem instance of its own as in [01-install.md](01-install.md#more-than-one-modem-on-one-machine): its own sound card and ports, no `ptt`, `"dialFrequency": 7052000` and the same `mailcast` section without `retune`.
+
+## On a FlexRadio
+
+pdn-soundmodem never retunes a Flex. A headless slice (a `flex:` device with no `@station`) tuned anywhere from about 7.046 to 7.052 MHz already hears the bulletins, because pdn-soundmodem opens the slice's receive filter to them, so just add the `mailcast` section without `retune`. Otherwise use a second slice as a second receiver: a second headless instance on 7.052 MHz with its own `daxChannel` and `"receiveOnly": true`, as in [DAX channels](03-radios-and-interfaces.md#dax-channels). Where else the receiver can listen without retuning is in [`mailcast`](reference/config.md#mailcast).
 
 ## Set up the BBS login
 
@@ -238,7 +208,7 @@ rig: put back to 7.049450 MHz PKTUSB (2400 Hz passband); transmissions resume
 mailcast: the 12:00 UTC slot's listening window has ended; the rig goes back
 ```
 
-A tone of about 10 s at the top of the hour is GB7RDG's. On a station that already hears the signal there are no `rig:` lines, and the rest is the same.
+A tone of about 10 s at the top of the hour is GB7RDG's. On a Flex or a second radio that already hears the signal there are no `rig:` lines, and the rest is the same.
 
 On the station page, the Mailcast box in the header shows the next slot, the last slot's tone (offset and SNR), the frames heard, bulletins complete, partial and delivered, the BBS (`ok`, `failing` or `not tried yet`) and, when retuning, the rig (`on mailcast` or `waiting`). Hover it for the detail. The same numbers are at `GET /api/mailcast`. The BBS password is never shown or logged.
 
@@ -246,7 +216,7 @@ Pieces and rebuilt bulletins are kept in `mailcast/` in the state directory, so 
 
 ## If it did not
 
-- **`mailcast: the signal on ... is outside what this station hears`** at start-up: your station can't hear it as configured. Follow its advice, or see [the three ways](#on-a-station-already-on-40-m-packet).
+- **`mailcast: the signal on ... is outside what this station hears`** at start-up: your station can't hear it as configured. Follow its advice, or see [Add the receiver](#add-the-receiver).
 - **`rig: WARNING - cannot reach rigctld at ...`**: rigctld isn't running, or is on another address. The station carries on and keeps trying.
 - **`mailcast: WARNING - cannot retune the rig for the 12:00 UTC slot yet (...)`**: the reason is in the brackets. Usually the rig was keyed at that moment, or rigctld was away. It tries again every 5 s until the slot's window ends.
 - **`mailcast: hooks: WARNING - "before" for the 12:00 UTC slot ...`**: your command failed, so the rig wasn't retuned for that slot. Run it by hand as `sudo -u pdn-soundmodem` to see why.
