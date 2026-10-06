@@ -885,6 +885,11 @@ public class UplinkTests
         await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await station.WelcomedAsync();
 
+        // The demand a station is sent on connecting carries the count at that moment, so the
+        // first browser waits for it: arriving first, it would make that demand a 1.
+        await StubStation.UntilAsync(
+            () => station.Demands.Count >= 1, "the demand a station gets on connecting");
+
         await using Browser first = await h.WatchAsync(Slug);
         await StubStation.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
         await using Browser second = await h.WatchAsync(Slug);
