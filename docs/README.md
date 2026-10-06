@@ -17,7 +17,7 @@ pdn-soundmodem is a software TNC for Linux. It turns a sound card, a FlexRadio o
 11. [11-logging-and-metrics.md](11-logging-and-metrics.md): the frame log, survey captures, raw capture, Prometheus and Grafana.
 12. [12-troubleshooting.md](12-troubleshooting.md): read the journal, the start-up refusals, and what to do when nothing decodes.
 13. [13-decode-a-recording.md](13-decode-a-recording.md): get the frames out of a WAV file with the source-tree tools.
-14. [14-mailcast.md](14-mailcast.md): hear GB7RDG's pdn-mailcast bulletins on 40 m and forward them into your BBS.
+14. [14-mailcast.md](14-mailcast.md): receive GB7RDG's bulletins on 40 m and forward them into your BBS, including on a station already working 40 m packet, by retuning the rig for each slot.
 
 The two hardware pages are what to build to wire a CM108 interface to a radio: [hardware/tait-tm8100-cm108.md](hardware/tait-tm8100-cm108.md) for a Tait TM8100 on FM, and [hardware/yaesu-ft450d-cm108.md](hardware/yaesu-ft450d-cm108.md) for a Yaesu FT-450D's DATA jack on HF.
 
@@ -47,6 +47,7 @@ The two hardware pages are what to build to wire a CM108 interface to a radio: [
 - Fix a service that will not start: [12-troubleshooting.md](12-troubleshooting.md#the-service-will-not-start).
 - Decode a recording: [13-decode-a-recording.md](13-decode-a-recording.md).
 - Get GB7RDG's bulletins into my BBS: [14-mailcast.md](14-mailcast.md).
+- Hear GB7RDG's bulletins on a 40 m packet station by retuning the rig: [14-mailcast.md](14-mailcast.md#b-retune-the-rig-for-each-slot).
 - Wire a Tait TM8100: [hardware/tait-tm8100-cm108.md](hardware/tait-tm8100-cm108.md).
 - Wire a Yaesu FT-450D: [hardware/yaesu-ft450d-cm108.md](hardware/yaesu-ft450d-cm108.md).
 - Run two modems on one machine: [01-install.md](01-install.md#more-than-one-modem-on-one-machine).
