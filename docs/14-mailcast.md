@@ -22,7 +22,7 @@ It is for a station in or near the UK that runs pdn-soundmodem with an HF rig an
 - **What**: a 10 second tone, then a few minutes of MS110D bursts, usually 2 to 8 minutes in all. Slots alternate between 1200 and 600 bps, and the receiver follows either by itself.
 - **Where**: centred on 7.0538 MHz and filling about 7.0524 to 7.0553 MHz. A USB dial of 7.052 MHz puts the centre at 1800 Hz audio.
 
-A bulletin is sent in pieces, and pieces from different slots add up, so one you only half heard at 10:00 can complete at 11:00.
+A bulletin is sent in pieces, and pieces from different slots add up, so one you only half heard at 10:00 can complete at 11:00. Sending the bulletins with a fountain code like this was Perry M0PYL's idea.
 
 ## Why the rig has to move
 
