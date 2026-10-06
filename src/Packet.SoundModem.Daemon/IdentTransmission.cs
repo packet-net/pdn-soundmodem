@@ -25,12 +25,14 @@ internal static class IdentTransmission
         channel.TransmitLease.Attribute(identifier, subChannel);
 
     /// <summary>
-    /// Whether to queue an ident now: one is owed, and no transmit lease that excludes it is
-    /// held. An excluded ident is not even asked for, because it would be refused every time the
-    /// poll came round for the length of the lease; it stays owed and goes once the lease ends.
+    /// Whether to queue an ident now: one is owed, no transmit lease that excludes it is held,
+    /// and the transmitter is not <paramref name="held"/> (a rig retuned for a tuning window). An
+    /// excluded or held ident is not even asked for, because it would be refused every time the
+    /// poll came round for the length of the lease or the window; it stays owed and goes once
+    /// that ends.
     /// </summary>
-    internal static bool ShouldSend(SoundModemChannel channel, StationIdentifier owed) =>
-        owed.IdentificationDue && channel.TransmitLease.Admits(owed) && Pending(owed) is null;
+    internal static bool ShouldSend(SoundModemChannel channel, StationIdentifier owed, bool held = false) =>
+        owed.IdentificationDue && !held && channel.TransmitLease.Admits(owed) && Pending(owed) is null;
 
     /// <summary>The ident this identifier has queued or on the air, or null.</summary>
     internal static Task? Pending(StationIdentifier owed) =>

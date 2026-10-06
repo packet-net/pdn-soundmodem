@@ -49,7 +49,10 @@ public sealed class RigControlTests : IAsyncDisposable
     {
         var rig = new RigControl(new RigControlOptions
         {
-            ReplyTimeout = replyTimeout ?? TimeSpan.FromSeconds(3),
+            // Real socket waits, so generous unless a test is about the timeout itself: a busy CI
+            // runner has taken longer than 3 s to answer the fake rigctld.
+            ReplyTimeout = replyTimeout ?? TimeSpan.FromSeconds(30),
+            ConnectTimeout = TimeSpan.FromSeconds(30),
             RestoreFile = persist ? RestorePath : null,
             TransmitPending = () => _pending,
             Endpoint = endpoint ?? _fake.Endpoint,
@@ -183,9 +186,12 @@ public sealed class RigControlTests : IAsyncDisposable
         _fake.DialHz.Should().Be(14_074_000);
 
         _fake.Accepting = true;
-        await Eventually(() => rig.Connected, "the backoff should bring the connection up", TimeSpan.FromSeconds(1));
+        // Connected is set before the new connection has applied the plan, so wait for both.
+        await Eventually(
+            () => rig.Connected && _fake.DialHz == 7_049_450,
+            "the backoff should bring the connection up and the plan be applied",
+            TimeSpan.FromSeconds(1));
 
-        _fake.DialHz.Should().Be(7_049_450);
         _said.Should().Contain(
             $"rig: rigctld at {_fake.Endpoint}: 14.074000 MHz USB (2400 Hz passband)",
             "a connection that hung up before answering never counted as one");

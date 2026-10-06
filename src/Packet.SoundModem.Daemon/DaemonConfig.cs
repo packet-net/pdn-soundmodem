@@ -1540,6 +1540,10 @@ public sealed class DaemonConfig
     /// See <see cref="RigConfig"/>.</summary>
     public RigConfig? Rig { get; set; }
 
+    /// <summary>The built-in pdn-mailcast receiver; null = none, the default. See
+    /// <see cref="MailcastConfig"/>.</summary>
+    public MailcastConfig? Mailcast { get; set; }
+
     /// <summary>
     /// Carrier sense read from the radio rather than inferred from the audio; null leaves the
     /// station on the audio-derived answer, which is what it has always had and which is wrong on
@@ -1692,6 +1696,10 @@ public sealed class DaemonConfig
         // Above the flavour split too: a monitor listens to a radio like anything else, and a
         // misspelled driver name there should be refused rather than silently ignored.
         RequireKnownCarrierSenseRadio(config);
+
+        // Above the flavour split as well, so that a monitor file with a "mailcast" section is
+        // told so rather than having it silently ignored.
+        MailcastConfig.Validate(config);
 
         if (config.Monitor is not null)
         {
@@ -2794,6 +2802,10 @@ public sealed class DaemonConfig
         Unknown("deadFeed", config.DeadFeed?.UnknownSettings);
         Unknown("ptt", config.Ptt?.UnknownSettings);
         Unknown("rig", config.Rig?.UnknownSettings);
+        foreach ((string section, Dictionary<string, JsonElement>? settings) in MailcastConfig.UnknownSections(config.Mailcast))
+        {
+            Unknown(section, settings);
+        }
         Unknown("carrierSense", config.CarrierSense?.UnknownSettings);
         Unknown("txTest", config.TxTest.UnknownSettings);
         Unknown("paging", config.Paging?.UnknownSettings);

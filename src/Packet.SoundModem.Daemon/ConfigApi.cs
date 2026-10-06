@@ -318,8 +318,8 @@ internal sealed class ConfigApi
     private const string Hidden = "(set, not shown)";
 
     /// <summary>
-    /// The configuration with <c>api.key</c> and <c>publish.token</c> blanked, for serving back to
-    /// a caller.
+    /// The configuration with <c>api.key</c>, <c>publish.token</c> and
+    /// <c>mailcast.bbs.password</c> blanked, for serving back to a caller.
     /// </summary>
     /// <remarks>
     /// <para>The caller already knows the key - they just presented it - so this is not keeping a
@@ -336,18 +336,27 @@ internal sealed class ConfigApi
         {
             JsonNode? root = JsonNode.Parse(json);
             bool redacted = false;
-            if (root?["api"] is JsonObject api && api.ContainsKey("key"))
+
+            // Keys are matched the way the file is read, which is without regard to case: a
+            // "Mailcast": {"BBS": {"Password": ...}} is the same password and must not be served.
+            void Hide(params string[] path)
             {
-                api["key"] = Hidden;
-                redacted = true;
+                JsonObject? node = root as JsonObject;
+                for (int i = 0; i < path.Length - 1 && node is not null; i++)
+                {
+                    node = Child(node, path[i]) as JsonObject;
+                }
+
+                if (node is not null && KeyOf(node, path[^1]) is string key)
+                {
+                    node[key] = Hidden;
+                    redacted = true;
+                }
             }
 
-            if (root?["publish"] is JsonObject publish && publish.ContainsKey("token"))
-            {
-                publish["token"] = Hidden;
-                redacted = true;
-            }
-
+            Hide("api", "key");
+            Hide("publish", "token");
+            Hide("mailcast", "bbs", "password");
             if (redacted)
             {
                 return root!.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
@@ -361,6 +370,12 @@ internal sealed class ConfigApi
             // this is close to unreachable - but serving nothing beats serving a key by accident.
             return "{}";
         }
+
+        static string? KeyOf(JsonObject node, string name) =>
+            node.Select(p => p.Key).FirstOrDefault(k => string.Equals(k, name, StringComparison.OrdinalIgnoreCase));
+
+        static JsonNode? Child(JsonObject node, string name) =>
+            KeyOf(node, name) is string key ? node[key] : null;
     }
 
     /// <summary>The waiting ephemeral configuration, or null if there is none.</summary>
@@ -447,13 +462,23 @@ internal sealed class ConfigApi
                 // Plan mutates the entries it is given, which is why this runs against the
                 // throwaway parse above and never against anything the station is using.
                 bool flex = proposed.Device.StartsWith("flex:", StringComparison.OrdinalIgnoreCase);
-                int dspRate = proposed.Modems.Any(
+                // The mailcast receiver is an MS110D modem, so the channel runs at 48 kHz with one,
+                // as start-up has it.
+                int dspRate = proposed.Mailcast is not null || proposed.Modems.Any(
                     m => !DaemonConfig.IsArdop(m.Mode) && ModemCatalog.DspRateFor(m.Mode) == 48000)
                     ? 48000
                     : 12000;
-                BandPlanner.Plan(
+                RfPlan.Result? plan = BandPlanner.Plan(
                     proposed.Modems, proposed.Sideband, proposed.DialFrequency, dspRate,
                     flex ? Passband.WideCeilingHz : null);
+
+                // Where the mailcast receiver would listen, and whether it can keep its files:
+                // start-up refuses both, so a configuration that fails either would only take
+                // the station off the air at the restart.
+                if (MailcastStation.Problem(proposed, plan, asPath) is string mailcast)
+                {
+                    return mailcast;
+                }
             }
             catch (Exception plan) when (plan is InvalidDataException or ArgumentException)
             {

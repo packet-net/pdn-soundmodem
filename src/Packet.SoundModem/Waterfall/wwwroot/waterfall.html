@@ -139,6 +139,14 @@
   .txfig b { color: var(--ink); font-weight: 600; }
   #txReadout.live .txfig b { color: #fff; }
   .txfig .k { font-size: 10px; letter-spacing: .08em; }
+
+  /* The built-in pdn-mailcast receiver, on a station that runs one: the next slot, the last
+     slot's tone, the bulletins and the BBS. Operator page only; the endpoint behind it is never
+     served on a public page, so there the block stays hidden. */
+  #mailcastCtl {
+    border: 1px solid var(--edge); border-radius: 3px; padding: 2px 8px 3px; background: #0c1016;
+  }
+  #mailcastCtl .txfig.bad b { color: #ffb3a3; }
   /* The one reading here an operator has to stop and act on, in either state - and while keyed
      the whole readout is already red, so the alarm needs a box of its own to be seen at all. */
   .txfig.alarm { background: #7a1f14; border-radius: 3px; padding: 0 5px; }
@@ -591,6 +599,20 @@
     <span id="txTestWhat"></span>
   </div>
 
+  <!-- pdn-mailcast: shown only where GET api/mailcast answers, which is a station with a "mailcast"
+       section, on the operator's page. The title carries the detail. -->
+  <div class="ctl" id="mailcastCtl" hidden>
+    <label id="mcWhat">Mailcast</label>
+    <div class="ctl-row">
+      <span class="txfig"><span class="k">next</span> <b id="mcNext">-</b></span>
+      <span class="txfig" id="mcToneFig"><span class="k">tone</span> <b id="mcTone">-</b></span>
+      <span class="txfig"><span class="k">frames</span> <b id="mcFrames">-</b></span>
+      <span class="txfig" title="Bulletins complete / partial / delivered to the BBS"><span class="k">bulletins</span> <b id="mcBulletins">-</b></span>
+      <span class="txfig" id="mcBbsFig"><span class="k">BBS</span> <b id="mcBbs">-</b></span>
+      <span class="txfig" id="mcRigFig" hidden><span class="k">rig</span> <b id="mcRig">-</b></span>
+    </div>
+  </div>
+
   <!-- Last on purpose: the header wraps on a narrow window, and this is the control that
        belongs beside the waterfall it sets the colours of, so it is the one to go down to the
        next line while the mixer and TX test stay together (Tom, 2026-09-07). -->
@@ -754,6 +776,61 @@ function setTransmitReading(msg) {
   $("txSwr").textContent = msg.swr != null ? msg.swr.toFixed(1) : "-";
   swr.classList.toggle("alarm", msg.swr != null && msg.swr >= 2.0);
 }
+
+// The mailcast panel. Polled rather than pushed: it changes a few times an hour. A 404 is a station
+// with no receiver, or a public page, and the block stays hidden; it is asked again now and then in
+// case the station is restarted onto a config that has one.
+function mcTime(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  return isNaN(d) ? "-" : d.toISOString().slice(11, 16) + " UTC";
+}
+
+function setMailcast(m) {
+  const box = $("mailcastCtl");
+  if (!box) return;
+  box.hidden = false;
+  $("mcNext").textContent = mcTime(m.nextSlot);
+  const last = m.lastSlot;
+  const tone = last && last.toneOffsetHz != null
+    ? `${last.toneOffsetHz >= 0 ? "+" : ""}${last.toneOffsetHz.toFixed(1)} Hz, ${last.toneSnrDb.toFixed(1)} dB`
+    : "-";
+  $("mcTone").textContent = tone;
+  $("mcToneFig").title = last ? `Last slot ${mcTime(last.slot)}: tone offset and SNR in 3 kHz` : "No slot heard yet";
+  $("mcFrames").textContent = last ? String(last.frames) : "0";
+  const b = m.bulletins || {};
+  $("mcBulletins").textContent = `${b.complete ?? 0}/${b.partial ?? 0}/${b.delivered ?? 0}`;
+  const bbs = m.bbs || {};
+  $("mcBbs").textContent = bbs.state || "-";
+  $("mcBbsFig").classList.toggle("bad", bbs.state === "failing");
+  $("mcBbsFig").title = (bbs.at || "") + (bbs.lastFailure ? `\n${bbs.lastFailure}` : "")
+    + (b.waitingForBbs ? `\n${b.waitingForBbs} waiting` : "");
+  const rig = m.retune;
+  $("mcRigFig").hidden = !rig;
+  if (rig) {
+    $("mcRig").textContent = rig.listening ? "on mailcast" : "waiting";
+    $("mcRigFig").title = rig.state || "";
+  }
+  box.title = `pdn-mailcast on ${m.centreMhz} MHz (USB dial ${m.dialMhz} MHz), ${m.placement === "retune" ? "the rig retuned around each slot" : "on this station's own passband"}.`
+    + `\nGB7RDG's slots: ${m.timetable}${m.timetableFromDirectory ? " (from its directory)" : ""}.`
+    + `\n${m.framesHeard} frames heard since start.`;
+}
+
+function pollMailcast() {
+  fetch(`${base}api/mailcast`, { cache: "no-store" })
+    .then(r => r.ok ? r.json() : null)
+    .then(m => {
+      if (m) {
+        setMailcast(m);
+        setTimeout(pollMailcast, 15 * 1000);
+      } else {
+        $("mailcastCtl").hidden = true;
+        setTimeout(pollMailcast, 5 * 60 * 1000);
+      }
+    })
+    .catch(() => setTimeout(pollMailcast, 60 * 1000));
+}
+pollMailcast();
 
 // When the held reading was taken. Minutes of silence look the same as seconds of it, so a held
 // reading has to say when, or it reads as though the station just transmitted.
