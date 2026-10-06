@@ -172,6 +172,7 @@ public sealed class FlexDaxTransmitter : IOtaTransmitter
                 // until both named themselves, two transmitting clients on one radio were
                 // indistinguishable "Flex"es in each other's diagnostics.
                 HeadlessStationName = "sm-ota",
+                SetupTimeout = options.SetupTimeout,
             },
             cancellation).ConfigureAwait(false);
 
