@@ -42,6 +42,7 @@ internal sealed class ProspectorWorker : IDisposable
     private readonly TaskCompletionSource _exited =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TimeSpan _shutdownWait;
+    private readonly TimeProvider _time;
 
     /// <summary>Guards <see cref="_disposed"/> and the hand-over of the queue and the token
     /// source from <see cref="Dispose"/> to the worker; see <see cref="Dispose"/>.</summary>
@@ -51,20 +52,20 @@ internal sealed class ProspectorWorker : IDisposable
 
     /// <param name="prospector">The analysis this worker feeds.</param>
     /// <param name="dspRate">The station's DSP rate, which its captures are written at.</param>
-    public ProspectorWorker(ModemProspector prospector, int dspRate)
-        : this(prospector, dspRate, TimeSpan.FromSeconds(2))
-    {
-    }
-
-    /// <param name="prospector">The analysis this worker feeds.</param>
-    /// <param name="dspRate">The station's DSP rate, which its captures are written at.</param>
+    /// <param name="time">Times each sweep and the throttle's sleep after it;
+    /// <see cref="TimeProvider.System"/> if null.</param>
     /// <param name="shutdownWait">How long <see cref="Dispose"/> waits for a sweep in progress
-    /// to notice it has been asked to stop.</param>
-    internal ProspectorWorker(ModemProspector prospector, int dspRate, TimeSpan shutdownWait)
+    /// to notice it has been asked to stop; 2 s if null.</param>
+    public ProspectorWorker(
+        ModemProspector prospector,
+        int dspRate,
+        TimeProvider? time = null,
+        TimeSpan? shutdownWait = null)
     {
         ArgumentNullException.ThrowIfNull(prospector);
         _prospector = prospector;
-        _shutdownWait = shutdownWait;
+        _time = time ?? TimeProvider.System;
+        _shutdownWait = shutdownWait ?? TimeSpan.FromSeconds(2);
 
         // Resolved once: the answer depends only on the station's rate, and working it out per
         // capture would walk the catalogue thirty times an hour for the same list.
@@ -142,7 +143,7 @@ internal sealed class ProspectorWorker : IDisposable
                 return;
             }
 
-            long startedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+            long startedAt = _time.GetTimestamp();
             try
             {
                 (float[] samples, int rate) = WavFile.ReadMono(item.WavPath);
@@ -164,8 +165,15 @@ internal sealed class ProspectorWorker : IDisposable
             // share rather than the rate: a capture that took four seconds to sweep buys the
             // station seventy-six seconds of quiet, and one that took a tenth of a second buys
             // two. Interruptible, so shutdown does not wait out a sleep.
-            TimeSpan spent = System.Diagnostics.Stopwatch.GetElapsedTime(startedAt);
-            stopping.WaitHandle.WaitOne(spent * Idle);
+            TimeSpan spent = _time.GetElapsedTime(startedAt);
+            try
+            {
+                Task.Delay(spent * Idle, _time, stopping).GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+            {
+                return;
+            }
         }
     }
 
