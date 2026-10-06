@@ -156,14 +156,17 @@ public sealed class Ms110dDemodulator
     private bool _collapseArmed;
 
     // Signal-absent release (issue #553, docs/dev/ms110d/signal-absent.md). Each frame's
-    // mini-probe is matched-filtered against the raw received symbols over a lag window, and
-    // the coherent energy found beyond what noise alone puts there is averaged over the last
-    // PresenceWindowSeconds of frames. Noise-only, that average sits at zero with a standard
-    // deviation of about sqrt(lags / frames) (independent unit-exponential lags; measured a
-    // little under it); the lock is released when it falls below PresenceSigmas of those.
-    // It reads the ring through the receiver's carrier and timing but writes no receiver
-    // state, so until it fires the receiver is bit-identical to one without it.
-    internal const double PresenceWindowSeconds = 4.0;
+    // mini-probe is matched-filtered against the raw received symbols over a lag window; the
+    // coherent energy found beyond a floor taken from the median lag (so noise scores zero and
+    // a steady carrier, which fills every lag alike, scores below it) is averaged over the last
+    // PresenceWindowSeconds of frames. Noise-only, that average has a standard deviation of
+    // about sqrt(lags / frames); the lock is released when it falls below PresenceSigmas of
+    // those. The window is long on purpose: a slow, deep NVIS fade takes the probes away for
+    // many seconds inside a burst that is still worth reading, and losing that burst's frames
+    // costs more than holding a dead lock a few seconds longer. It reads the ring through the
+    // receiver's carrier and timing but writes no receiver state, so until it fires the
+    // receiver is bit-identical to one without it.
+    internal const double PresenceWindowSeconds = 16.0;
     private const double PresenceSigmas = 4.0;
     private double[] _presenceRing = [];
     private int _presenceFrames;
@@ -504,6 +507,11 @@ public sealed class Ms110dDemodulator
 
     private Ms110dMfbBlockDecoder? _mfb; // W5b2: lazily built at the first QAM16/8PSK block
     private byte[]? _mfbInfo;            // G1d: the MFB's candidate decode for the ensemble
+
+    /// <summary>Instrument seam (issue #553 tuning): per frame, the input samples consumed so
+    /// far, the plain probe-presence statistic and the floored one the release decides on.
+    /// Null (the default) changes nothing.</summary>
+    internal event Action<long, double, double>? PresenceTraced;
 
     /// <summary>Fires for every decoded input-data block.</summary>
     public event Action<Ms110dRxBlock>? BlockDecoded;
@@ -1983,7 +1991,8 @@ public sealed class Ms110dDemodulator
         // The probe one frame back: every lag of it is resident however the input was cut
         // into blocks (this frame's own probe may not have its last lags written yet), so
         // the statistic, and the release, do not depend on the caller's block size.
-        double presence = ProbePresence(_presenceProbeChip, _presenceProbe);
+        double presence = ProbePresence(_presenceProbeChip, _presenceProbe, out double plainPresence);
+        PresenceTraced?.Invoke(2 * _written, plainPresence, presence);
         _presenceProbeChip = probeChip;
         _presenceProbe = probe;
         FrameDiagnostics?.Invoke(
@@ -2028,7 +2037,7 @@ public sealed class Ms110dDemodulator
             _collapseArmed = true;
         }
 
-        if (SignalAbsent(presence))
+        if (SignalAbsent(presence) && !_options.PresenceReleaseOff)
         {
             SignalAbsentReleases++;
             CompleteBurst(Ms110dBurstEndReason.SignalAbsent);
@@ -2078,14 +2087,20 @@ public sealed class Ms110dDemodulator
     /// would put there (issue #553). For each lag d of <see cref="PresenceLags"/> the K
     /// received symbols from probe start + d are correlated with the known probe, and each
     /// lag's |c_d|² is normalized by K times the mean received power over the span, so on
-    /// noise every lag contributes a unit-mean exponential and the sum, less the lag count,
-    /// is zero-mean whatever the level. A signal at symbol SNR s adds about K·s/(1+s) of
-    /// its channel energy that falls inside the window. Read straight from the ring with
-    /// the receiver's own timing and carrier, but independent of the equalizer, its
-    /// reference levels and the AGC (the ratio is scale-free), which is what lets it see
-    /// noise as noise after the DFE has adapted itself to that noise.
+    /// noise every lag contributes a unit-mean exponential whatever the level. The result is
+    /// the sum over the lags less the lag count times a floor: the median lag scaled by the
+    /// median's expectation on noise, so noise scores zero on average. A signal at symbol SNR
+    /// s adds about K·s/(1+s) of its channel energy that falls inside the window, in the few
+    /// lags its paths occupy, and leaves the median where noise put it. A steady carrier on
+    /// one of the probe's spectral lines (1800 Hz plus a multiple of 2400 / base length)
+    /// correlates with the probe equally at every lag, so it raises the median with the sum
+    /// and scores below zero: it reads as no signal, as it must (the plain sum, kept for the
+    /// instrument as <paramref name="plain"/>, would hold a lock on it for ever). Read
+    /// straight from the ring with the receiver's own timing and carrier, but independent of
+    /// the equalizer, its reference levels and the AGC (the ratio is scale-free), which is
+    /// what lets it see noise as noise after the DFE has adapted itself to that noise.
     /// </summary>
-    private double ProbePresence(long probeChip, Cf[] probe)
+    private double ProbePresence(long probeChip, Cf[] probe, out double plain)
     {
         int k = probe.Length;
         int lags = PresenceLags(k);
@@ -2102,9 +2117,11 @@ public sealed class Ms110dDemodulator
         power /= span;
         if (power <= 0)
         {
+            plain = 0;
             return 0;
         }
 
+        Span<double> lagEnergy = stackalloc double[lags];
         double energy = 0;
         for (int d = 0; d < lags; d++)
         {
@@ -2114,10 +2131,27 @@ public sealed class Ms110dDemodulator
                 c += received[i + d] * probe[i].Conj();
             }
 
-            energy += c.Cnorm();
+            lagEnergy[d] = c.Cnorm() / (k * power);
+            energy += lagEnergy[d];
         }
 
-        return (energy / (k * power)) - lags;
+        plain = energy - lags;
+        lagEnergy.Sort();
+        return energy - (lags * lagEnergy[lags / 2] / ExpectedMedianOfUnitExponentials(lags));
+    }
+
+    /// <summary>The expected middle order statistic of n (odd) independent unit-mean
+    /// exponentials: the sum of 1/i for i from (n + 1) / 2 to n (Renyi's representation).
+    /// 0.7254 for 15 lags, 0.7084 for 25.</summary>
+    private static double ExpectedMedianOfUnitExponentials(int n)
+    {
+        double sum = 0;
+        for (int i = (n + 1) / 2; i <= n; i++)
+        {
+            sum += 1.0 / i;
+        }
+
+        return sum;
     }
 
     /// <summary>Folds one frame's presence into the window; true once the window is full

@@ -135,6 +135,9 @@ public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingMo
     /// <inheritdoc />
     public event Action<byte[], FrameQuality>? FrameDecoded;
 
+    /// <summary>The receiver, for instruments and tests.</summary>
+    internal Ms110dDemodulator Receiver => _rx;
+
     /// <inheritdoc />
     public string Mode => $"ms110d-wn{Volatile.Read(ref _tx).Mode.Wn}";
 
@@ -227,6 +230,15 @@ public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingMo
     /// <see cref="CarrierDetect"/> has dropped.
     /// </summary>
     public event Action<string>? LockReleased;
+
+    /// <summary>The MS110D modem behind <paramref name="modem"/>: the modem itself, or the one a
+    /// <see cref="FrequencyShiftedModem"/> moved; null for any other modem.</summary>
+    public static Ms110dModem? Unwrap(IModem modem) => modem switch
+    {
+        Ms110dModem ms110d => ms110d,
+        FrequencyShiftedModem { Inner: Ms110dModem moved } => moved,
+        _ => null,
+    };
 
     /// <summary>How many times <see cref="LockReleased"/> has fired since construction.
     /// <see cref="ResetCarrierState"/> does not clear it.</summary>

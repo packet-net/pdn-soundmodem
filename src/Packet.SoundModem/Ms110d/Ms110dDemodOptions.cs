@@ -30,7 +30,7 @@ public enum Ms110dBurstEndReason
     SignalLost,
 
     /// <summary>The mini-probes were indistinguishable from noise for a whole presence window
-    /// (4 s): there is no signal under the lock, whatever the equalizer makes of it. The exit
+    /// (16 s): there is no signal under the lock, whatever the equalizer makes of it. The exit
     /// that lets go of a burst too weak to decode once it has ended (issue #553,
     /// docs/dev/ms110d/signal-absent.md). DFE modes only; WN 0 has no probes.</summary>
     SignalAbsent,
@@ -111,4 +111,9 @@ public sealed record Ms110dDemodOptions
     /// transmitter shapes narrower can match it here; left at 0.35 it still decodes a narrower
     /// signal, the equalizer absorbing the mismatch (docs/dev/ms110d/evidence/2026-10-04-filter-width/).</summary>
     public double RollOff { get; init; } = Ms110dModulator.RollOff;
+
+    /// <summary>Instrument knob (issue #553 tuning): never end a burst as
+    /// <see cref="Ms110dBurstEndReason.SignalAbsent"/>, so the receiver behaves exactly as it
+    /// did before that exit existed while the statistic is still computed and traced.</summary>
+    internal bool PresenceReleaseOff { get; init; }
 }

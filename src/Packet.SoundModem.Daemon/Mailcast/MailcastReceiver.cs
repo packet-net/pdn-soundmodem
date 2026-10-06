@@ -61,6 +61,16 @@ internal sealed class MailcastReceiver : IAsyncDisposable
         _modem = ModemCatalog.Create(
             MailcastOnAir.Mode, dspRate, frame => Intake.Offer(frame),
             Math.Abs(centre - MailcastOnAir.CentreAudioHz) < 0.5 ? default : new ModemOptions(CentreFrequencyHz: centre));
+        if (Packet.SoundModem.Ms110d.Ms110dModem.Unwrap(_modem) is { } ms110d)
+        {
+            // The receiver's own release (issue #553); the lock limit below stays as a backstop.
+            ms110d.LockReleased += line =>
+            {
+                Interlocked.Increment(ref _locksReleased);
+                _log($"mailcast: {line}");
+            };
+        }
+
         _tone = new MailcastToneDetector(dspRate, centre);
         _tone.Measured += Slots.OnTone;
         _lockLimit = (long)((longestBurst ?? MailcastOnAir.LongestBurst).TotalSeconds * dspRate);
