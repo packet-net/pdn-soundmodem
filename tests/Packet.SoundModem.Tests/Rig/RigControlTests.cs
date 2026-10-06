@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json.Nodes;
@@ -76,13 +77,25 @@ public sealed class RigControlTests : IAsyncDisposable
 
     /// <summary>
     /// Waits for something the rig does on its own thread, stepping the fake clock by
-    /// <paramref name="step"/> between looks. Bounded by a count of looks, not by a time, and the
-    /// bound is far beyond anything a working build needs.
+    /// <paramref name="step"/> between looks.
     /// </summary>
+    /// <remarks>
+    /// Stepped, each look is taken with every rig's watch back waiting on the clock, and the clock
+    /// moves only then (<see cref="RigClock"/>), so the bound is a count of steps of fake time,
+    /// far beyond anything a working build needs, and a slow rigctld cannot make the clock run on
+    /// ahead of what the rig has done. Unstepped, it is waiting for socket work only, and the
+    /// bound is <see cref="RigClock.Patience"/>, a safety net for a hang.
+    /// </remarks>
     private async Task Eventually(Func<bool> condition, string what, TimeSpan step = default)
     {
-        for (int look = 0; look < 2000; look++)
+        var patience = Stopwatch.StartNew();
+        for (int look = 0; ; look++)
         {
+            if (step > TimeSpan.Zero)
+            {
+                await RigClock.UntilWaitingAsync(_rigs);
+            }
+
             if (condition())
             {
                 return;
@@ -90,10 +103,23 @@ public sealed class RigControlTests : IAsyncDisposable
 
             if (step > TimeSpan.Zero)
             {
-                _time.Advance(step);
-            }
+                if (look >= 2000)
+                {
+                    break;
+                }
 
-            await Task.Delay(5);
+                await RigClock.StepAsync(_time, _rigs, step);
+                await Task.Delay(1);
+            }
+            else
+            {
+                if (patience.Elapsed > RigClock.Patience)
+                {
+                    break;
+                }
+
+                await Task.Delay(5);
+            }
         }
 
         condition().Should().BeTrue(what);

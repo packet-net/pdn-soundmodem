@@ -75,11 +75,12 @@ public sealed partial class MailcastRetuneTests : IAsyncDisposable
         _rigs.Add(rig);
         if (!await rig.StartAsync(CancellationToken.None))
         {
-            // Not this test's subject: let the rig's own backoff bring it up on the fake clock.
+            // Not this test's subject: let the rig's own backoff bring it up on the fake clock,
+            // moved only while the rig is waiting on it (RigClock).
             for (int look = 0; look < 2000 && !rig.Connected; look++)
             {
-                _time.Advance(TimeSpan.FromSeconds(1));
-                await Task.Delay(5);
+                await RigClock.StepAsync(_time, _rigs, TimeSpan.FromSeconds(1));
+                await RigClock.UntilWaitingAsync(_rigs);
             }
         }
 
@@ -100,9 +101,11 @@ public sealed partial class MailcastRetuneTests : IAsyncDisposable
 
     /// <summary>
     /// Moves the fake clock on to <paramref name="until"/> in steps of at most 5 s, and never past
-    /// a retuner's next timer until it has acted on that one and set the next: so a renewal always
-    /// lands before the rig's own five-minute window could run out, however slowly the machine
-    /// is running.
+    /// a retuner's next timer, or the end of the rig's own wait between looks at rigctld, until
+    /// that one has acted on it: so a renewal always lands before the rig's own five-minute window
+    /// could run out, and a restore the rig owes is retried at the time it is due rather than at a
+    /// time the clock has already been moved past, however slowly the machine is running. Each
+    /// step waits for the rig's watch to be back waiting on the clock (RigClock).
     /// </summary>
     private async Task AdvanceTo(DateTimeOffset until)
     {
@@ -113,8 +116,9 @@ public sealed partial class MailcastRetuneTests : IAsyncDisposable
 
         while (_time.GetUtcNow() < until)
         {
+            await RigClock.UntilWaitingAsync(_rigs);
             DateTimeOffset now = _time.GetUtcNow();
-            DateTimeOffset next = now + TimeSpan.FromSeconds(5);
+            DateTimeOffset next = RigClock.Limit(_rigs, now, now + TimeSpan.FromSeconds(5));
             foreach (MailcastRetuner retuner in _retuners)
             {
                 if (retuner.NextWake > now && retuner.NextWake < next)
@@ -123,7 +127,13 @@ public sealed partial class MailcastRetuneTests : IAsyncDisposable
                 }
             }
 
-            _time.SetUtcNow(next < until ? next : until);
+            if (next > until)
+            {
+                next = until;
+            }
+
+            List<(RigControl, DateTimeOffset)> rigsDue = RigClock.Due(_rigs, next);
+            _time.SetUtcNow(next);
             foreach (MailcastRetuner retuner in _retuners)
             {
                 DateTimeOffset due = retuner.NextWake;
@@ -133,29 +143,38 @@ public sealed partial class MailcastRetuneTests : IAsyncDisposable
                 }
             }
 
+            await RigClock.UntilActedAsync(rigsDue);
             await Task.Delay(1);
         }
     }
 
     /// <summary>
     /// Moves the fake clock on 50 ms at a time until <paramref name="condition"/> holds, for the
-    /// channel's own waits (its carrier-sense slots and inhibit polls run on the same clock).
-    /// Bounded by a count of looks, not by a time.
+    /// channel's own waits (its carrier-sense slots and inhibit polls run on the same clock), and
+    /// only while the rig is waiting on the clock (RigClock). Bounded by a count of steps, not by
+    /// a time.
     /// </summary>
     private async Task Pump(Func<bool> condition, string what)
     {
         for (int look = 0; look < 4000 && !condition(); look++)
         {
-            _time.Advance(TimeSpan.FromMilliseconds(50));
+            await RigClock.StepAsync(_time, _rigs, TimeSpan.FromMilliseconds(50));
             await Task.Delay(1);
         }
 
         condition().Should().BeTrue(what);
     }
 
+    /// <summary>
+    /// Waits for work the retuner or the rig does on its own thread, real socket work included,
+    /// without moving the clock. Bounded by <see cref="RigClock.Patience"/>, a safety net for a
+    /// hang: the count of looks it used to be bounded by was about twenty seconds of wall clock,
+    /// which a retune over a slow socket is entitled to take.
+    /// </summary>
     private static async Task Eventually(Func<bool> condition, string what)
     {
-        for (int look = 0; look < 4000 && !condition(); look++)
+        var patience = System.Diagnostics.Stopwatch.StartNew();
+        while (!condition() && patience.Elapsed < RigClock.Patience)
         {
             await Task.Delay(5);
         }
