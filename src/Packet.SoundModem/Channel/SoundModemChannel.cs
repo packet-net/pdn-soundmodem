@@ -206,6 +206,10 @@ public sealed class SoundModemChannel
     private readonly FmShapeBusyDetector? _audioFallback;
     private volatile bool _transmitting;
 
+    // The announcement of the last frame the transmitter put on the air, which the next one's
+    // announcement waits for. See SendAndAnnounceAsync.
+    private Task _lastAnnouncement = Task.CompletedTask;
+
     /// <summary>Creates a channel.</summary>
     /// <param name="sampleRate">DSP sample rate all modems and TX audio run at.</param>
     /// <param name="time">Clock for CSMA waits (injectable per repo discipline).</param>
@@ -768,6 +772,12 @@ public sealed class SoundModemChannel
         TimeSpan heldFor = TimeSpan.Zero;
         TransmitWaits waits = default;
 
+        // This frame's place in the order the announcements go out in: the announcement of the
+        // frame that went on air before it, and this one's own, which the frame behind it waits
+        // for in turn. See the comment above the announcement below.
+        Task previous = Task.CompletedTask;
+        TaskCompletionSource? announced = null;
+
         // A modem that can pack is offered the frame with the decisions its own closure below
         // makes, so a keyup can put it in one burst with the frames queued behind it. Whether it
         // actually does is asked when the burst is rendered: the modem's Packing can be null, and
@@ -778,43 +788,69 @@ public sealed class SoundModemChannel
                 () => ResolveTrim(TransmitTrimHz?.Invoke(subChannel, frame)),
                 hz => applied = hz)
             : null;
-        bool transmitted = await EnqueueTransmitCore(
-                // Inside the modulate callback, so the trim is chosen when the burst is actually
-                // rendered rather than when it was queued - a frame can wait behind CSMA for
-                // seconds, and the estimate may have moved on by then.
-                txDelay =>
-                {
-                    applied = ResolveTrim(TransmitTrimHz?.Invoke(subChannel, frame));
-                    return ApplyTransmitTrim(modem.Modulate(frame, txDelay), applied);
-                },
-                rejection => TransmitRejected?.Invoke(subChannel, frame, rejection),
-                ownsChannelTiming: false,
-                // The modem is the keyup's identity: this sub-channel's frames run back-to-back
-                // under one PTT, another sub-channel's do not.
-                source: modem,
-                quietAfter: QuietAfterTransmit?.Invoke(subChannel, frame),
-                withdraw: default,
-                stopEarly: null,
-                written: null,
-                started: null,
-                noted: (held, where) =>
-                {
-                    heldFor = held;
-                    waits = where;
-                },
-                frame: frame,
-                packed: packed)
-            .ConfigureAwait(false);
-
-        if (!transmitted)
+        try
         {
-            return;
-        }
+            bool transmitted = await EnqueueTransmitCore(
+                    // Inside the modulate callback, so the trim is chosen when the burst is actually
+                    // rendered rather than when it was queued - a frame can wait behind CSMA for
+                    // seconds, and the estimate may have moved on by then.
+                    txDelay =>
+                    {
+                        applied = ResolveTrim(TransmitTrimHz?.Invoke(subChannel, frame));
+                        return ApplyTransmitTrim(modem.Modulate(frame, txDelay), applied);
+                    },
+                    rejection => TransmitRejected?.Invoke(subChannel, frame, rejection),
+                    ownsChannelTiming: false,
+                    // The modem is the keyup's identity: this sub-channel's frames run back-to-back
+                    // under one PTT, another sub-channel's do not.
+                    source: modem,
+                    quietAfter: QuietAfterTransmit?.Invoke(subChannel, frame),
+                    withdraw: default,
+                    stopEarly: null,
+                    written: null,
+                    started: null,
+                    noted: (held, where) =>
+                    {
+                        heldFor = held;
+                        waits = where;
 
-        FrameTransmitted?.Invoke(subChannel, frame);
-        FrameTransmittedWithTrim?.Invoke(subChannel, frame, applied);
-        FrameTransmittedWithReport?.Invoke(
-            subChannel, frame, new TransmitReport(applied, heldFor) { Waits = waits });
+                        // On the transmitter's own thread, immediately before this frame's write, so
+                        // in the order the frames go on the air.
+                        announced = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        previous = Interlocked.Exchange(ref _lastAnnouncement, announced.Task);
+                    },
+                    frame: frame,
+                    packed: packed)
+                .ConfigureAwait(false);
+
+            if (!transmitted)
+            {
+                return;
+            }
+
+            // Announced in the order the frames went out, one at a time. The transmitter completes
+            // each frame's task in that order, but each continuation then runs whenever the thread
+            // pool gets to it, and the frames of one keyup complete close together. A pool thread
+            // runs the work it queued itself newest first, so on a busy pool a three-frame keyup
+            // could be announced 3, 2, 1, with the handlers running at the same time on threads of
+            // their own: the frame log and the console wrote the rows in that order, each row's
+            // figures right and the rows in the wrong places. Comparing held times across the rows
+            // of one keyup is the whole use of them. The channel's own wait-attribution tests
+            // failed on exactly this under load (#537). Waiting for the previous announcement costs
+            // a caller nothing it was not already waiting for: its frame went out after that one,
+            // and what it waits on is that frame's log lines.
+            await previous.ConfigureAwait(false);
+            FrameTransmitted?.Invoke(subChannel, frame);
+            FrameTransmittedWithTrim?.Invoke(subChannel, frame, applied);
+            FrameTransmittedWithReport?.Invoke(
+                subChannel, frame, new TransmitReport(applied, heldFor) { Waits = waits });
+        }
+        finally
+        {
+            // Whatever happened to this frame - announced, refused after all, faulted with the
+            // device - the one behind it must not wait for an announcement that is never coming.
+            announced?.TrySetResult();
+        }
     }
 
     /// <summary>
