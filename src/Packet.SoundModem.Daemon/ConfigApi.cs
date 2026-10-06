@@ -193,8 +193,10 @@ internal sealed class ConfigApi
         {
             await RespondAsync(context, 405,
                 "POST to transmit: {\"twoTone\": true, \"seconds\": 5} for the two-tone test, "
-                + "{\"twoTone\": false, \"toneHz\": 999, \"seconds\": 5} for a single tone, "
-                + "{\"stop\": true} to end one early").ConfigureAwait(false);
+                + "{\"twoTone\": false, \"toneHz\": 999, \"seconds\": 5} for a single tone, either "
+                + "optionally with \"probe\": {\"kind\": \"zc255\", \"gapSeconds\": 1.5, \"audioHz\": 1800} "
+                + "to follow it with a channel-sounding probe, {\"stop\": true} to end one early")
+                .ConfigureAwait(false);
             return;
         }
 
@@ -221,6 +223,7 @@ internal sealed class ConfigApi
         double toneHz;
         double seconds;
         int? subChannel;
+        Waterfall.TxTestProbe? probe;
         try
         {
             stop = asked?["stop"]?.GetValue<bool>() == true;
@@ -228,6 +231,7 @@ internal sealed class ConfigApi
             toneHz = asked?["toneHz"]?.GetValue<double>() ?? Audio.TestTone.TwoToneLowHz;
             seconds = asked?["seconds"]?.GetValue<double>() ?? 0;
             subChannel = asked?["subChannel"]?.GetValue<int>();
+            probe = ReadProbe(asked?["probe"]);
         }
         catch (Exception wrongType) when (wrongType is InvalidOperationException or FormatException)
         {
@@ -235,7 +239,20 @@ internal sealed class ConfigApi
             // reason to drop the connection with no explanation.
             await RespondAsync(context, 400,
                 "\"twoTone\" and \"stop\" are true or false, \"toneHz\" and \"seconds\" are "
-                + $"numbers, \"subChannel\" a whole number: {wrongType.Message}").ConfigureAwait(false);
+                + "numbers, \"subChannel\" a whole number, \"probe\" an object with a \"kind\" "
+                + $"string and \"gapSeconds\" and \"audioHz\" numbers: {wrongType.Message}").ConfigureAwait(false);
+            return;
+        }
+
+        // An unknown kind is the caller's mistake and a 400, before anything is prepared: a head
+        // end newer than this station asking for a probe it cannot make must hear "no", never a
+        // tone with the probe silently left off.
+        if (probe is { } wanted && Audio.ProbeSignal.ForKind(wanted.Kind) is null)
+        {
+            await RespondAsync(context, 400,
+                $"unknown probe kind: this station sends "
+                + string.Join(", ", Audio.ProbeSignal.Known.Select(k => $"\"{k.Kind}\" ({k.Id})")))
+                .ConfigureAwait(false);
             return;
         }
 
@@ -255,7 +272,7 @@ internal sealed class ConfigApi
         }
 
         TxTestOutcome outcome = await _txTest
-            .RunAsync(new Waterfall.TxTestRequest(twoTone, toneHz, seconds) { SubChannel = subChannel })
+            .RunAsync(new Waterfall.TxTestRequest(twoTone, toneHz, seconds) { SubChannel = subChannel, Probe = probe })
             .ConfigureAwait(false);
 
         // Three answers, because a script should be able to tell them apart without reading the
@@ -270,7 +287,36 @@ internal sealed class ConfigApi
             ["sent"] = outcome.Ran ? outcome.Text : null,
             ["refused"] = outcome.Failed ? null : outcome.Refusal,
             ["failed"] = outcome.Failed ? outcome.Refusal : null,
+
+            // The id of the probe that followed the tone, or null. A station older than the
+            // probe never writes this key, which is how a head end tells "sent the tone and
+            // ignored the probe" from "sent both".
+            ["probe"] = outcome.Probe,
         }.ToJsonString(new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reads a request's <c>probe</c> object, or null when there is none. A <c>probe</c> that is
+    /// there but is not an object with a <c>kind</c> string throws, which the caller answers 400.
+    /// </summary>
+    private static Waterfall.TxTestProbe? ReadProbe(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+
+        if (node is not JsonObject probe)
+        {
+            throw new InvalidOperationException("\"probe\" is not an object");
+        }
+
+        string kind = probe["kind"]?.GetValue<string>()
+            ?? throw new InvalidOperationException("\"probe\" has no \"kind\"");
+        return new Waterfall.TxTestProbe(
+            kind,
+            probe["gapSeconds"]?.GetValue<double>() ?? Waterfall.TxTestProbe.DefaultGapSeconds,
+            probe["audioHz"]?.GetValue<double>() ?? Waterfall.TxTestProbe.DefaultAudioHz);
     }
 
     /// <summary>What a stop is answered with, and what it does and does not promise.</summary>
