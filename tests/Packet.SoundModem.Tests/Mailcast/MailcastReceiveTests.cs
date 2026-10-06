@@ -284,6 +284,30 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
     }
 
     [Fact]
+    public void A_Burst_Too_Weak_To_Read_Is_Let_Go_By_The_Modem_Long_Before_The_Limit()
+    {
+        // The modem's own release (issue #553): a weak burst's preamble is acquired, nothing can
+        // be read, and the receiver lets go once its mini-probes show no signal, journalled
+        // once, well inside the 150 s backstop.
+        float[] slot = MailcastSlotAudio.Render(MailcastSlotAudio.Frames().Take(1).ToList(), snrDb: -6);
+        double sigma = Math.Sqrt(slot.TakeLast(MailcastSlotAudio.Rate).Average(s => (double)s * s));
+        var random = new Random(9);
+        var tail = new float[30 * MailcastSlotAudio.Rate];
+        for (int i = 0; i < tail.Length; i++)
+        {
+            tail[i] = (float)(sigma * Math.Sqrt(-2 * Math.Log(1.0 - random.NextDouble())) * Math.Cos(2 * Math.PI * random.NextDouble()));
+        }
+
+        MailcastReceiver receiver = Receiver();
+        Play(receiver.Process, [.. slot, .. tail]);
+
+        receiver.LocksReleased.Should().Be(1);
+        _journal.Should().ContainSingle(line => line.Contains("let go of a wn4 lock")).Which
+            .Should().StartWith("mailcast: ms110d:").And.MatchRegex("^[ -~]+$");
+        _journal.Should().NotContain(line => line.Contains("longer than any GB7RDG sends"));
+    }
+
+    [Fact]
     public void A_Tone_Away_From_A_Slots_Start_Is_Not_Taken_As_GB7RDGs()
     {
         var slots = new MailcastSlots(_time, _journal.Enqueue, null);

@@ -144,3 +144,4 @@ open App D implementation or off-air recording exists (pdn↔pdn only, design Q2
 ## Evidence since
 
 - [evidence/2026-10-04-filter-width](evidence/2026-10-04-filter-width/README.md): what a receiver's SSB filter costs an MS110D signal for each transmit roll-off, and why the broadcast keeps the standard's 0.35.
+- [signal-absent.md](signal-absent.md): why the receiver lets go of a lock once its mini-probes show no signal, and what was measured (issue #553).

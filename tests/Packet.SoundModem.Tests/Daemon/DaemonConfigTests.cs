@@ -501,6 +501,62 @@ public class DaemonConfigTests : IDisposable
         lines.Should().Contain(l => l.Contains("share one burst, up to 60 s"));
     }
 
+    [Theory]
+    [InlineData("", "")]
+    [InlineData(", \"frequency\": 2000", " @ 2000 Hz")]
+    public void An_Ms110d_Modem_Letting_Go_Of_A_Lock_On_Noise_Is_Journalled_Once(string frequency, string at)
+    {
+        // Issue #553: a burst too weak to read is acquired, and the receiver lets go of the lock
+        // once its mini-probes show no signal. The station says so, once, against the modem,
+        // whether the modem sits at 1800 Hz or has been moved.
+        string path = WriteConfig($$"""{"device": "null", "modems": [{"subChannel": 1, "mode": "ms110d-wn4"{{frequency}}}]}""");
+        DaemonConfig config = DaemonConfig.TryLoad(path, out string error)!;
+        config.Should().NotBeNull(error);
+        var lines = new List<string>();
+        var channel = new Packet.SoundModem.Channel.SoundModemChannel(48000);
+        StationFactory.TryAddModems(channel, config.Modems, 48000, null, new StationJournal("", lines.Add, lines.Add))
+            .Should().BeTrue();
+        lines.Should().Contain($"modem 1: ms110d-wn4{at}");
+
+        Packet.SoundModem.Modems.IModem modem = channel.Modems[1];
+        Packet.SoundModem.Modems.IModem tx = Packet.SoundModem.Modems.ModemCatalog.Create(
+            "ms110d-wn4", 48000, _ => { },
+            new Packet.SoundModem.Modems.ModemOptions(CentreFrequencyHz: frequency.Length == 0 ? null : 2000));
+        float[] burst = tx.Modulate(new byte[100], 0);
+        var random = new Random(553);
+        const double sigma = 0.05;
+        double power = burst.Average(x => (double)x * x);
+        double gain = Math.Sqrt(sigma * sigma * 3000 / 24000.0 * Math.Pow(10, -6 / 10.0) / power);
+        float[] Noise(int n)
+        {
+            var b = new float[n];
+            for (int i = 0; i < n; i++)
+            {
+                b[i] = (float)(sigma * Math.Sqrt(-2 * Math.Log(1.0 - random.NextDouble())) * Math.Cos(2 * Math.PI * random.NextDouble()));
+            }
+
+            return b;
+        }
+
+        modem.Process(Noise(48000));
+        float[] weak = Noise(burst.Length);
+        for (int i = 0; i < weak.Length; i++)
+        {
+            weak[i] += (float)(burst[i] * gain);
+        }
+
+        modem.Process(weak);
+        modem.CarrierDetect.Should().BeTrue("the weak burst's preamble is acquired");
+        for (int s = 0; s < 30 && modem.CarrierDetect; s++)
+        {
+            modem.Process(Noise(48000));
+        }
+
+        modem.CarrierDetect.Should().BeFalse();
+        lines.Should().ContainSingle(l => l.Contains("let go of a wn4 lock")).Which.Should()
+            .StartWith("modem 1: ms110d: let go of a wn4 lock").And.MatchRegex("^[ -~]+$");
+    }
+
     [Fact]
     public void Without_Burst_Packing_An_Ms110d_Modem_Sends_One_Frame_Per_Burst()
     {

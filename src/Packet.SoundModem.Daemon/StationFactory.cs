@@ -215,6 +215,13 @@ internal static class StationFactory
             }
 
             journal.Write($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");
+            if (Packet.SoundModem.Ms110d.Ms110dModem.Unwrap(channel.Modems[subChannel]) is { } ms110d)
+            {
+                // Once per lock the receiver lets go of with no signal left under it (issue #553).
+                int journalled = subChannel;
+                ms110d.LockReleased += line => journal.Write($"modem {journalled}: {line}");
+            }
+
             if (modemConfig.MaxBurstSeconds is double maxBurst)
             {
                 double gather = modemConfig.BurstGatherSeconds ?? ModemConfig.DefaultBurstGatherSeconds;
