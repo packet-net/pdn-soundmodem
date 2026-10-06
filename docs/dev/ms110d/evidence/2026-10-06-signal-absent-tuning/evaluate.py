@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Scores signal-absent settings against the traces Ms110dSignalAbsentTuning writes (issue #553).
 
-  evaluate.py TRACES floored|plain WINDOW_S SIGMAS     frames lost against the receiver before #553,
+  evaluate.py TRACES release|plain WINDOW_S SIGMAS     frames lost against the receiver before #553,
                                                       weak bursts left locked, release latency
   evaluate.py TRACES --margin WINDOW_S[,WINDOW_S...]  the lowest window, in noise sigmas, that still
                                                       had a frame to come in its burst

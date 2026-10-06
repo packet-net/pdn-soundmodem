@@ -18,7 +18,9 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// read after the point that setting would have let go is a frame it would have lost.
 /// <c>MS110D_TUNE_SET</c> picks the set: A slow flat Rayleigh, B scripted 4 to 8 s fades, C weak
 /// bursts then noise, D the AWGN and Poor mask points, V the validation seeds for A, E scripted
-/// 10 to 18 s fades. Existing traces are kept, so an interrupted set resumes.
+/// 10 to 18 s fades, K steady carriers on and off the probe lines under a readable burst, T the
+/// same carriers after a weak burst (scored with the C set). Existing traces are kept, so an
+/// interrupted set resumes.
 /// </summary>
 public class Ms110dSignalAbsentTuning(ITestOutputHelper output)
 {
@@ -59,6 +61,14 @@ public class Ms110dSignalAbsentTuning(ITestOutputHelper output)
         }
 
         return b;
+    }
+
+    private static void AddCarrier(float[] air, int from, double hz, double amplitude)
+    {
+        for (int i = from; i < air.Length; i++)
+        {
+            air[i] += (float)(amplitude * Math.Cos(2 * Math.PI * hz * i / Rate));
+        }
     }
 
     private static double Gain(float[] burst, double snr)
@@ -167,6 +177,56 @@ public class Ms110dSignalAbsentTuning(ITestOutputHelper output)
                         float[] audio = tx.Modulate(bits);
                         WattersonPath[] paths = chan == "poor" ? WattersonChannel.Poor : [];
                         float[] air = new WattersonChannel(Rate, cs, paths).Apply(audio, snr, leadInSamples: Rate, leadOutSamples: 30 * Rate);
+                        return Trace(id, wn, air, Rate, Rate + audio.Length);
+                    }));
+                }
+            }
+            else if (set == "K" && wn is 2 or 4 or 6)
+            {
+                double[] tones = wn == 2 ? [1896, 1992, 1850, 1944] : [1650, 1950, 2100, 1875, 2025];
+                foreach (double toneHz in tones)
+                foreach (double aboveDb in new[] { -6.0, 0, 2, 5, 8 })
+                foreach (int seed in new[] { 77, 78 })
+                {
+                    double snr = AwgnMask[wn] + 1;
+                    string id = string.Create(CultureInfo.InvariantCulture, $"K-wn{wn}-f{toneHz}-c{aboveDb}-s{snr}-{seed}");
+                    jobs.Add((id, () =>
+                    {
+                        float[] burst = Packed(wn, 60);
+                        double gain = Gain(burst, snr);
+                        var air = Noise(new Random(seed), Rate + burst.Length + (20 * Rate));
+                        double signalPower = burst.Average(x => (double)x * x) * gain * gain;
+                        double amplitude = Math.Sqrt(2 * signalPower * Math.Pow(10, aboveDb / 10));
+                        for (int i = 0; i < burst.Length; i++)
+                        {
+                            air[Rate + i] += (float)(burst[i] * gain);
+                        }
+
+                        AddCarrier(air, 0, toneHz, amplitude);
+                        return Trace(id, wn, air, Rate, Rate + burst.Length);
+                    }));
+                }
+            }
+            else if (set == "T" && wn is 2 or 4 or 6)
+            {
+                double[] tones = wn == 2 ? [1896, 1992, 1850] : [1950, 2100, 1875];
+                foreach (double toneHz in tones)
+                foreach (double toneDb in new[] { -6.0, 0, 6 })
+                foreach (int seed in new[] { 5, 6 })
+                {
+                    string id = string.Create(CultureInfo.InvariantCulture, $"C-wn{wn}-tone{toneHz}-{toneDb}-{seed}");
+                    jobs.Add((id, () =>
+                    {
+                        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = wn });
+                        var random = new Random(seed);
+                        var bits = new byte[4 * tx.Mode.Bps];
+                        for (int i = 0; i < bits.Length; i++) bits[i] = (byte)random.Next(2);
+                        float[] audio = tx.Modulate(bits);
+                        double gain = Gain(audio, -6);
+                        var air = Noise(random, Rate + audio.Length + (40 * Rate));
+                        for (int i = 0; i < audio.Length; i++) air[Rate + i] += (float)(audio[i] * gain);
+                        double amplitude = Math.Sqrt(2 * Sigma * Sigma * 3000 / (Rate / 2.0) * Math.Pow(10, toneDb / 10));
+                        AddCarrier(air, Rate + audio.Length, toneHz, amplitude);
                         return Trace(id, wn, air, Rate, Rate + audio.Length);
                     }));
                 }
