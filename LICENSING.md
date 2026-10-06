@@ -56,13 +56,14 @@ These files mention a GPL program, or sit in a PROVENANCE row that does, but tak
 | `src/Packet.SoundModem/UberSdr/UberSdrAudioInput.cs`, `UberSdrDevice.cs`, `tools/Packet.SoundModem.UberSdr/UberSdrIqClient.cs` | Independent implementations of the ka9q_ubersdr connection protocol; only `PcmBinaryDecoder.cs` is a port |
 | `src/Packet.SoundModem/Modems/FreeDvDatacModem.cs`, `tools/gen-ldpc-tables/gen.py` | The codec2 lineage is LGPL-2.1, not GPL, and lives in the `M0LTE.Ofdm` and `M0LTE.FecLdpc` packages; this glue and the generator script are original |
 | `src/Packet.SoundModem.Daemon/ArdopChannelBridge.cs`, `ArdopBusyDetector.cs`, `ArdopReplyWindow.cs` | ardopcf is MIT, which an AGPL work can carry; the ported ARDOP code is in the `M0LTE.Ardop` package |
+| `src/Packet.SoundModem.Daemon/Mailcast/*` | The built-in pdn-mailcast receiver. It follows pdn-mailcast's own receiver, which is Tom's, and uses its libraries as packages; nothing in it comes from a third-party GPL program |
 | Tests and tools that run against Dire Wolf, QtSoundModem or multimon-ng (`DirewolfCrossValidationTests.cs`, `QtsmInteropTests.cs`, `Pocsag/MultimonNg.cs`, `tools/Packet.SoundModem.QtsmBench`) | Interoperability checks against those programs; no code taken |
 
 ## Other licences in the tree
 
 - `samples/ardop/gen-reference-vectors.c` (`AGPL-3.0-or-later AND MIT`) contains three functions copied verbatim from ardopcf (`GenCRC16`, `GenCRC8`, `ComputeTypeParity`), MIT, Copyright (c) 2014-2024 Rick Muething, John Wiseman, Peter LaRue; the file carries ardopcf's MIT notice and those functions stay MIT. It is kept because it is the documented generator of `ardop-reference-vectors.txt`, which `M0LTE.Ardop`'s tests still use.
 - Recordings and fixtures under `samples/` and `tests/**/Fixtures/` are data captured from radios or produced by other programs. This page does not relicense them.
-- Dependencies keep their own licences. `M0LTE.Il2p` and `M0LTE.FmChannel` are GPL-3.0-or-later; `M0LTE.Ardop`, `M0LTE.Dsp`, `M0LTE.Fec`, `M0LTE.FecLdpc`, `M0LTE.Flex`, `M0LTE.Ofdm`, `M0LTE.Pocsag`, `M0LTE.Radio.Audio`, `Packet.Ax25` and `Packet.Core` are AGPL-3.0-or-later; the .NET runtime and the other NuGet dependencies are MIT, Apache-2.0 or BSD.
+- Dependencies keep their own licences. `Packet.Mailcast` and `M0LTE.RaptorQ` (pdn-mailcast's libraries, for the built-in receiver) are AGPL-3.0-only, which combines with this repository's AGPL-3.0-or-later under AGPL-3.0; `Packet.Fbb` (from pdn-fbb) is AGPL-3.0-or-later. `M0LTE.Il2p` and `M0LTE.FmChannel` are GPL-3.0-or-later; `M0LTE.Ardop`, `M0LTE.Dsp`, `M0LTE.Fec`, `M0LTE.FecLdpc`, `M0LTE.Flex`, `M0LTE.Ofdm`, `M0LTE.Pocsag`, `M0LTE.Radio.Audio`, `Packet.Ax25` and `Packet.Core` are AGPL-3.0-or-later; the .NET runtime and the other NuGet dependencies are MIT, Apache-2.0 or BSD.
 
 ## Published packages
 

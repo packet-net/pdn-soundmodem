@@ -56,6 +56,14 @@
     <PackageVersion Include="Packet.Ax25" Version="0.37.0" />
     <PackageVersion Include="Packet.Core" Version="0.37.0" />
 
+    <!-- For the built-in mailcast receiver (the "mailcast" section): pdn-mailcast's core (the on-air
+         frame format, bulletins, the directory and timetable and the receiver's store;
+         AGPL-3.0-only, which combines with this repo's AGPL-3.0-or-later under AGPL-3.0, and brings
+         M0LTE.RaptorQ with it) and FBB B1F forwarding from pdn-fbb (AGPL-3.0-or-later). See
+         LICENSING.md. -->
+    <PackageVersion Include="Packet.Mailcast" Version="0.3.2" />
+    <PackageVersion Include="Packet.Fbb" Version="0.1.0" />
+
     <!-- Testing - xUnit v3 with Microsoft Testing Platform (MTP) runner -->
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <PackageVersion Include="AwesomeAssertions" Version="9.2.0" />
