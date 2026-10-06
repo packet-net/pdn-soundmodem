@@ -2283,6 +2283,17 @@ public sealed class SoundModemChannel
                 FaultEverything(deviceFailure);
                 throw;
             }
+            catch (OperationCanceledException cut)
+            {
+                // Cut short by a cancellation: see the same catch in RunTransmitterAsync.
+                foreach (TxItem dying in items)
+                {
+                    dying.Done.TrySetCanceled(cut.CancellationToken);
+                    dying.Rejected?.Invoke(cut);
+                }
+
+                throw;
+            }
         }
         finally
         {
@@ -3016,6 +3027,24 @@ public sealed class SoundModemChannel
                     }
 
                     FaultEverything(deviceFailure);
+                    throw;
+                }
+                catch (OperationCanceledException cut)
+                {
+                    // A cancellation in the middle of a frame: this loop's own, or an output
+                    // whose stream was torn down under the write (Write takes no token, so the
+                    // exception says nothing about whose cancellation it is). The loop ends on it
+                    // exactly as it always has, and what is still queued stays queued for a
+                    // transmitter started again. But the frame that was going out gets an
+                    // answer: it never finished, so its caller must not wait for ever, and
+                    // neither must every frame sent after it, whose announcement waits for this
+                    // one's (SendAndAnnounceAsync).
+                    if (inFlight is { } dying)
+                    {
+                        dying.Done.TrySetCanceled(cut.CancellationToken);
+                        dying.Rejected?.Invoke(cut);
+                    }
+
                     throw;
                 }
             }

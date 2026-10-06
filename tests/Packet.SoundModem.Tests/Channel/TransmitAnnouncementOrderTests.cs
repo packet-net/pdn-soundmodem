@@ -2,6 +2,7 @@ using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.CarrierSense;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems;
+using Packet.SoundModem.Ms110d;
 
 namespace Packet.SoundModem.Tests.Channel;
 
@@ -39,14 +40,33 @@ public class TransmitAnnouncementOrderTests
         return [.. frame, (byte)0xF0, marker];
     }
 
-    [Fact]
-    public async Task A_Keyups_Frames_Are_Announced_One_At_A_Time_In_The_Order_They_Went_Out()
+    private static SoundModemChannel Station()
     {
         var channel = new SoundModemChannel(
             SampleRate, new FakeTimeProvider(), randomSeed: 42, channelBusySource: new Clear());
         channel.AddModem(2, sink => new BpskMultiModem(SampleRate, sink, crc: true, 2150, baud: 300, offsetPairs: 4));
-        channel.Csma.Persistence = 255;
+        channel.Csma.Persistence = 255;   // no roll: the channel is clear, so nothing holds a frame
         channel.Csma.TxTailMilliseconds = 0;
+        return channel;
+    }
+
+    /// <summary>A sound card whose stream is torn down under the first write.</summary>
+    private sealed class TornDownOutput(int sampleRate) : M0LTE.Radio.Audio.IAudioOutput
+    {
+        public int SampleRate { get; } = sampleRate;
+
+        public void Write(ReadOnlySpan<float> samples) =>
+            throw new OperationCanceledException("the device's stream was torn down under the write");
+
+        public void Drain()
+        {
+        }
+    }
+
+    [Fact]
+    public async Task A_Keyups_Frames_Are_Announced_One_At_A_Time_In_The_Order_They_Went_Out()
+    {
+        SoundModemChannel channel = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
 
         using var keyupOver = new ManualResetEventSlim();
@@ -105,6 +125,122 @@ public class TransmitAnnouncementOrderTests
         try
         {
             await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// A frame whose write is cut short by a cancellation gets a definite answer, and does not
+    /// hold up the announcement of anything sent after it.
+    /// </summary>
+    /// <remarks>
+    /// Every frame's announcement waits for the one before it, so a frame that reached the device
+    /// and then never got an answer would hold every later caller for ever. A write can throw
+    /// <see cref="OperationCanceledException"/> without this station shutting down - an output
+    /// whose own stream is torn down, and <see cref="M0LTE.Radio.Audio.IAudioOutput.Write"/> takes
+    /// no token to say whose cancellation it is - and the transmitter can then be started again
+    /// on another output. The frame after that must still go out and be announced.
+    /// </remarks>
+    [Fact]
+    public async Task A_Frame_Whose_Write_Is_Cancelled_Does_Not_Hold_Up_The_Ones_Behind_It()
+    {
+        SoundModemChannel channel = Station();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        var announced = new List<byte>();
+        channel.FrameTransmittedWithReport += (_, frame, _) =>
+        {
+            lock (announced)
+            {
+                announced.Add(frame[^1]);
+            }
+        };
+
+        Task cut = channel.EnqueueTransmit(2, Broadcast(0x41));
+        Task first = channel.RunTransmitterAsync(new TornDownOutput(SampleRate), new RecordingPtt(), cancellation.Token);
+        Func<Task> firstRun = () => first;
+        await firstRun.Should().ThrowAsync<OperationCanceledException>(
+            "a transmitter that hits a cancellation ends on it, as it always has");
+
+        Func<Task> cutAnswer = () => cut;
+        (await Task.WhenAny(cut, Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None))).Should().BeSameAs(cut,
+            "the frame that was cut short must get a definite answer rather than leave its caller waiting");
+        await cutAnswer.Should().ThrowAsync<OperationCanceledException>("it never finished going out");
+
+        Task next = channel.EnqueueTransmit(2, Broadcast(0x42));
+        Task second = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), new RecordingPtt(), cancellation.Token);
+        (await Task.WhenAny(next, Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None))).Should().BeSameAs(next,
+            "the next frame went out on a good output, and its announcement must not wait for the cut one's");
+        await next;
+
+        lock (announced)
+        {
+            announced.Should().Equal([0x42], "only the frame that went out is announced");
+        }
+
+        await cancellation.CancelAsync();
+        try
+        {
+            await second;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// The same for a packed burst: every frame in a burst whose write is cut short gets an
+    /// answer, and a frame sent afterwards is still announced.
+    /// </summary>
+    [Fact]
+    public async Task A_Packed_Burst_Whose_Write_Is_Cancelled_Does_Not_Hold_Up_The_Ones_Behind_It()
+    {
+        const int PackedRate = 9600;
+        var channel = new SoundModemChannel(PackedRate, new FakeTimeProvider(), randomSeed: 42);
+        channel.AddModem(0, sink => new Ms110dModem(PackedRate, sink)
+        {
+            Packing = new FramePacking(TimeSpan.FromSeconds(30), TimeSpan.Zero),
+        });
+        channel.Csma.Persistence = 255;
+        channel.Csma.TxDelayMilliseconds = 100;
+        channel.Csma.TxTailMilliseconds = 0;
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        var announced = new List<byte>();
+        channel.FrameTransmittedWithReport += (_, frame, _) =>
+        {
+            lock (announced)
+            {
+                announced.Add(frame[^1]);
+            }
+        };
+
+        Task[] cut = [channel.EnqueueTransmit(0, Broadcast(0x41)), channel.EnqueueTransmit(0, Broadcast(0x42))];
+        Task first = channel.RunTransmitterAsync(new TornDownOutput(PackedRate), new RecordingPtt(), cancellation.Token);
+        Func<Task> firstRun = () => first;
+        await firstRun.Should().ThrowAsync<OperationCanceledException>(
+            "a transmitter that hits a cancellation ends on it, as it always has");
+
+        Task answered = Task.WhenAll(cut.Select(t => t.ContinueWith(_ => { }, TaskScheduler.Default)));
+        (await Task.WhenAny(answered, Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None))).Should().BeSameAs(answered,
+            "every frame of the burst that was cut short must get a definite answer");
+        cut.Should().AllSatisfy(t => t.IsCanceled.Should().BeTrue("none of them finished going out"));
+
+        Task next = channel.EnqueueTransmit(0, Broadcast(0x43));
+        Task second = channel.RunTransmitterAsync(new FakeAudioOutput(PackedRate), new RecordingPtt(), cancellation.Token);
+        (await Task.WhenAny(next, Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None))).Should().BeSameAs(next,
+            "the next frame went out on a good output, and its announcement must not wait for the cut ones'");
+        await next;
+
+        lock (announced)
+        {
+            announced.Should().Equal([0x43], "only the frame that went out is announced");
+        }
+
+        await cancellation.CancelAsync();
+        try
+        {
+            await second;
         }
         catch (OperationCanceledException)
         {
