@@ -91,7 +91,7 @@ From the repository root, after `dotnet build -c Release`:
 
 ```sh
 t="dotnet run --no-build -c Release --project tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj --"
-$t -class Packet.SoundModem.Tests.Ms110d.Ms110dSignalAbsentTests      # the CI tests, about two and a half minutes
+$t -class Packet.SoundModem.Tests.Ms110d.Ms110dSignalAbsentTests -class Packet.SoundModem.Tests.Ms110d.Ms110dSignalAbsentFadeAndCarrierTests   # the CI tests, about four minutes
 MS110D_SIGNAL_ABSENT_CENSUS=1 MS110D_CENSUS_WORKERS=10 $t -method "*.Release_Latency_Census"   # the wider weak-burst census, about 10 core-hours
 MS110D_LOCK_CPU=1 $t -method "*.Cpu_Per_Simulated_Hour_After_A_Weak_Burst"   # MS110D_LOCK_CPU_RUN=weak or idle for one
 for set in A C D E K M N T; do
