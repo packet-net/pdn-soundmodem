@@ -52,6 +52,13 @@ public class UplinkClientTests
         private readonly CancellationTokenSource _stopping = new();
         private readonly List<(WebSocketMessageType Kind, byte[] Payload)> _received = [];
         private readonly Lock _gate = new();
+
+        /// <summary>
+        /// One send at a time on the socket, and the welcome and the demand that follows it go
+        /// out together under it. A test can only act once the station has seen the welcome, so
+        /// whatever it sends then queues behind the connect-time demand instead of racing it.
+        /// </summary>
+        private readonly SemaphoreSlim _sending = new(1, 1);
         private WebSocket? _socket;
         private Task? _accept;
 
@@ -129,28 +136,33 @@ public class UplinkClientTests
             [.. Received.Where(m => m.Kind == WebSocketMessageType.Binary).Select(m => m.Payload)];
 
         /// <summary>Says how many people are watching, as a real monitor does on every change.</summary>
-        public async Task DemandAsync(int viewers)
-        {
-            WebSocket socket = _socket
-                ?? throw new InvalidOperationException("no station is connected");
-            await socket.SendAsync(
-                Encoding.UTF8.GetBytes($"{{\"type\":\"demand\",\"viewers\":{viewers}}}"),
-                WebSocketMessageType.Text,
-                endOfMessage: true,
-                CancellationToken.None);
-        }
+        public Task DemandAsync(int viewers) => SendAsync(Demand(viewers));
 
         /// <summary>Sends anything at all, for the "everything but demand is dropped" test.</summary>
         public async Task SendAsync(string text)
         {
             WebSocket socket = _socket
                 ?? throw new InvalidOperationException("no station is connected");
-            await socket.SendAsync(
+            await _sending.WaitAsync();
+            try
+            {
+                await SendTextAsync(socket, text, CancellationToken.None);
+            }
+            finally
+            {
+                _sending.Release();
+            }
+        }
+
+        private static string Demand(int viewers) =>
+            $"{{\"type\":\"demand\",\"viewers\":{viewers}}}";
+
+        private static Task SendTextAsync(WebSocket socket, string text, CancellationToken ct) =>
+            socket.SendAsync(
                 Encoding.UTF8.GetBytes(text),
                 WebSocketMessageType.Text,
                 endOfMessage: true,
-                CancellationToken.None);
-        }
+                ct);
 
         private async Task AcceptLoopAsync()
         {
@@ -247,17 +259,27 @@ public class UplinkClientTests
                     if (!welcomed && SendWelcome)
                     {
                         welcomed = true;
-                        await socket.SendAsync(
-                            Encoding.UTF8.GetBytes(
-                                "{\"type\":\"welcome\",\"slug\":\"gb7rdg-2\","
-                                + "\"url\":\"https://monitor.example/r/gb7rdg-2/\"}"),
-                            WebSocketMessageType.Text,
-                            endOfMessage: true,
-                            _stopping.Token);
 
                         // A real monitor says how many people are watching straight away, and it
-                        // is nearly always nobody.
-                        await DemandAsync(0);
+                        // is nearly always nobody. The two go out as one, so a test that sends a
+                        // demand of its own on seeing the welcome cannot get in between them and
+                        // then have this nobody overwrite it, which timed tests out "waiting for
+                        // the demand" on a loaded machine.
+                        await _sending.WaitAsync(_stopping.Token);
+                        try
+                        {
+                            await SendTextAsync(
+                                socket,
+                                "{\"type\":\"welcome\",\"slug\":\"gb7rdg-2\","
+                                + "\"url\":\"https://monitor.example/r/gb7rdg-2/\"}",
+                                _stopping.Token);
+                            await SendTextAsync(socket, Demand(0), _stopping.Token);
+                        }
+                        finally
+                        {
+                            _sending.Release();
+                        }
+
                         if (DropAfterWelcome)
                         {
                             socket.Abort();
