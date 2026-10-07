@@ -184,10 +184,9 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
     [Fact]
     public async Task A_Bbs_That_Cannot_Be_Reached_Keeps_The_Bulletins_And_Says_Why()
     {
-        var unreachable = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        unreachable.Start();
-        int port = ((System.Net.IPEndPoint)unreachable.LocalEndpoint).Port;
-        unreachable.Stop();
+        // Nobody can be listening on it: a port 0 bind elsewhere in the suite could be handed a
+        // number that was merely probed and let go, but never one of these.
+        int port = FreePorts.Next();
         var placement = new MailcastPlacement(false, 1800, 350, 3250);
         MailcastReceiver receiver = MailcastReceiver.Create(
             new MailcastConfig { Bbs = new MailcastBbsConfig { Port = port, Password = "secret" } },
