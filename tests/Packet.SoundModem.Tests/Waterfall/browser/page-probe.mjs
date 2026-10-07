@@ -761,19 +761,22 @@ const mixerPanel = () => ({
 
 // The input level meter, which lives beside the capture slider and is driven by the daemon's
 // "level" messages rather than by anything the page asks for.
-const meterPanel = () => ({
-  hidden: run(`document.getElementById("mixMeter").hidden`),
-  barWidth: run(`String(document.getElementById("mixBar").style.width)`),
-  barClass: run(`document.getElementById("mixBar").className`),
-  rmsLeft: run(`String(document.getElementById("mixRms").style.left)`),
-  zoneLeft: run(`String(document.getElementById("mixZone").style.left)`),
-  zoneWidth: run(`String(document.getElementById("mixZone").style.width)`),
-  hotWidth: run(`String(document.getElementById("mixHot").style.width)`),
-  read: run(`document.getElementById("mixLevelRead").textContent`),
-  advice: run(`document.getElementById("mixAdvice").textContent`),
-  clipHidden: run(`document.getElementById("mixClip").hidden`),
-  clipClass: run(`document.getElementById("mixClip").className`),
-});
+// Written as one expression evaluated inside the page, so it can be read either from here or from
+// inside the page's own level handler (METER, below).
+const meterPanelExpr = `({
+  hidden: document.getElementById("mixMeter").hidden,
+  barWidth: String(document.getElementById("mixBar").style.width),
+  barClass: document.getElementById("mixBar").className,
+  rmsLeft: String(document.getElementById("mixRms").style.left),
+  zoneLeft: String(document.getElementById("mixZone").style.left),
+  zoneWidth: String(document.getElementById("mixZone").style.width),
+  hotWidth: String(document.getElementById("mixHot").style.width),
+  read: document.getElementById("mixLevelRead").textContent,
+  advice: document.getElementById("mixAdvice").textContent,
+  clipHidden: document.getElementById("mixClip").hidden,
+  clipClass: document.getElementById("mixClip").className,
+})`;
+const meterPanel = () => run(meterPanelExpr);
 
 if (process.env.MIXER) {
   await untilTrue(() => run(`document.getElementById("mixerCtl").hidden`) === false, 10000);
@@ -798,13 +801,22 @@ if (process.env.METERTIMERS) {
 
 let meter = null;
 if (process.env.METER) {
-  // The meter appears on the first message and not before, so waiting for it to appear is also
-  // the check that the daemon sent one.
-  await untilTrue(() => run(`document.getElementById("mixMeter").hidden`) === false, 10000);
-  // One more reading, so what is captured is a bar the page has drawn rather than the first
-  // one it happened to be caught in the middle of.
-  await wait(400);
-  meter = meterPanel();
+  // The panel is read inside the page's own level handler, the moment it has drawn a reading,
+  // rather than off the page some time afterwards. The page empties the bar and says "no reading"
+  // once a second goes by without one (mixMeterStale), so reading it later made the result depend
+  // on nothing stalling for a second anywhere between the test's tone, the daemon and this
+  // process - which a loaded runner does, and the meter test then read "no reading". The handler
+  // is called through its global name, so wrapping that name sees every reading.
+  run(`(() => {
+    const drawn = onLevel;
+    globalThis.__meterAtLevel = [];
+    onLevel = function (msg) { drawn(msg); __meterAtLevel.push(${meterPanelExpr}); };
+  })()`);
+  // The meter appears on the first message and not before, so waiting for a reading is also the
+  // check that the daemon sent one. The second is taken, so what is captured is a bar the page
+  // has drawn over a whole interval of the tone rather than whatever the first one caught.
+  await untilTrue(() => run(`__meterAtLevel.length`) >= 2, 20000);
+  meter = run(`__meterAtLevel[1]`);
 }
 
 const mixerOnArrival = mixerPanel();
