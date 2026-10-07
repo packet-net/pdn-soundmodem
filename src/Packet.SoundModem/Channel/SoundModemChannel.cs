@@ -210,6 +210,11 @@ public sealed class SoundModemChannel
     // announcement waits for. See SendAndAnnounceAsync.
     private Task _lastAnnouncement = Task.CompletedTask;
 
+    /// <summary>For tests: the place in the announcement order that the next frame to go out will
+    /// wait for. Completed when every frame sent so far has been announced or given up its
+    /// place.</summary>
+    internal Task LastAnnouncement => Volatile.Read(ref _lastAnnouncement);
+
     /// <summary>Creates a channel.</summary>
     /// <param name="sampleRate">DSP sample rate all modems and TX audio run at.</param>
     /// <param name="time">Clock for CSMA waits (injectable per repo discipline).</param>
@@ -849,7 +854,27 @@ public sealed class SoundModemChannel
         {
             // Whatever happened to this frame - announced, refused after all, faulted with the
             // device - the one behind it must not wait for an announcement that is never coming.
-            announced?.TrySetResult();
+            // But not before the one in front of it has been made either: a frame that failed
+            // after taking its place has not waited for its predecessor, and releasing the next
+            // frame at once would let that one be announced ahead of an earlier frame whose
+            // handlers had not run yet. So its place completes when its predecessor's does, and
+            // this caller is not held for it: its own frame is not being announced.
+            if (announced is not null)
+            {
+                if (previous.IsCompleted)
+                {
+                    announced.TrySetResult();
+                }
+                else
+                {
+                    _ = previous.ContinueWith(
+                        static (_, place) => ((TaskCompletionSource)place!).TrySetResult(),
+                        announced,
+                        CancellationToken.None,
+                        TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
+                }
+            }
         }
     }
 
@@ -1373,12 +1398,39 @@ public sealed class SoundModemChannel
             $"another service is holding the channel (waited {TransmitInhibitTimeout.TotalSeconds:F0}s); "
             + "transmission dropped");
 
-        // Announced BEFORE the task faults, which is the order the wait this replaces used, and it
-        // is load-bearing: a caller awaiting the task is released the instant it faults, and if
-        // the announcement came second that caller could look for the rejection and not find it
-        // yet. TransmitInhibitTests catches exactly that, on a loaded box.
-        item.Rejected?.Invoke(refusal);
-        item.Done.TrySetException(refusal);
+        Refuse(item, refusal);
+    }
+
+    /// <summary>
+    /// Answers an item that is not going out, or not all the way: says so on
+    /// <see cref="TxItem.Rejected"/> (the DROPPED line, a KISS host's ACKMODE answer) and then
+    /// ends its task, faulted with <paramref name="reason"/>, or cancelled when the reason is a
+    /// cancellation.
+    /// </summary>
+    /// <remarks>
+    /// The announcement comes BEFORE the task ends, on every path, and that order is load-bearing:
+    /// a caller awaiting the task is released the instant it ends, and if the announcement came
+    /// second that caller could look for the rejection and not find it yet. TransmitInhibitTests
+    /// caught exactly that on a loaded box, and the paths that ended the task first had the same
+    /// hole. The task ends even if a handler throws, so no caller is left waiting on it.
+    /// </remarks>
+    private static void Refuse(TxItem item, Exception reason)
+    {
+        try
+        {
+            item.Rejected?.Invoke(reason);
+        }
+        finally
+        {
+            if (reason is OperationCanceledException cut)
+            {
+                item.Done.TrySetCanceled(cut.CancellationToken);
+            }
+            else
+            {
+                item.Done.TrySetException(reason);
+            }
+        }
     }
 
     /// <summary>
@@ -2122,8 +2174,7 @@ public sealed class SoundModemChannel
             foreach (TxItem refused in taken)
             {
                 Finish(refused);
-                refused.Done.TrySetException(failed);
-                refused.Rejected?.Invoke(failed);
+                Refuse(refused, failed);
             }
 
             return new PackedAudio([], [], 0);
@@ -2225,13 +2276,25 @@ public sealed class SoundModemChannel
             {
                 foreach (TxItem lost in items)
                 {
-                    lost.Done.TrySetException(keyFailure);
-                    lost.Rejected?.Invoke(keyFailure);
+                    Refuse(lost, keyFailure);
                 }
 
                 FaultAfterKeyFailure(source, keyFailure);
                 PttFailed?.Invoke(keyFailure);
                 return;
+            }
+            catch (OperationCanceledException cut)
+            {
+                // A key cut short by a cancellation. The loop ends on it, as it does for a write
+                // cut short, and what is still queued stays queued for a transmitter started
+                // again. But this burst's frames have already been taken off the queue, so
+                // nothing else will ever answer them: they are dropped, and said to be.
+                foreach (TxItem lost in items)
+                {
+                    Refuse(lost, cut);
+                }
+
+                throw;
             }
 
             try
@@ -2276,8 +2339,7 @@ public sealed class SoundModemChannel
             {
                 foreach (TxItem dying in items)
                 {
-                    dying.Done.TrySetException(deviceFailure);
-                    dying.Rejected?.Invoke(deviceFailure);
+                    Refuse(dying, deviceFailure);
                 }
 
                 FaultEverything(deviceFailure);
@@ -2288,8 +2350,7 @@ public sealed class SoundModemChannel
                 // Cut short by a cancellation: see the same catch in RunTransmitterAsync.
                 foreach (TxItem dying in items)
                 {
-                    dying.Done.TrySetCanceled(cut.CancellationToken);
-                    dying.Rejected?.Invoke(cut);
+                    Refuse(dying, cut);
                 }
 
                 throw;
@@ -2349,14 +2410,7 @@ public sealed class SoundModemChannel
         }
         catch (Exception failure)
         {
-            try
-            {
-                item.Rejected?.Invoke(failure);
-            }
-            finally
-            {
-                item.Done.TrySetException(failure);
-            }
+            Refuse(item, failure);
 
             return;
         }
@@ -2538,8 +2592,7 @@ public sealed class SoundModemChannel
         {
             Finish(item);
             var refusal = new InvalidOperationException(reason);
-            item.Rejected?.Invoke(refusal);
-            item.Done.TrySetException(refusal);
+            Refuse(item, refusal);
             _ = item.Done.Task.Exception;
         }
     }
@@ -2578,8 +2631,7 @@ public sealed class SoundModemChannel
         {
             Finish(item);
             Exception refusal = TransmitLease.Refusal(holder);
-            item.Rejected?.Invoke(refusal);
-            item.Done.TrySetException(refusal);
+            Refuse(item, refusal);
             _ = item.Done.Task.Exception;
         }
     }
@@ -2606,8 +2658,7 @@ public sealed class SoundModemChannel
         foreach (TxItem item in refused)
         {
             Finish(item);
-            item.Rejected?.Invoke(reason);
-            item.Done.TrySetException(reason);
+            Refuse(item, reason);
             _ = item.Done.Task.Exception;
         }
     }
@@ -2661,8 +2712,7 @@ public sealed class SoundModemChannel
         foreach (TxItem item in queued)
         {
             Finish(item);
-            item.Done.TrySetException(reason);
-            item.Rejected?.Invoke(reason);
+            Refuse(item, reason);
         }
     }
 
@@ -2939,8 +2989,7 @@ public sealed class SoundModemChannel
                             // A frame the modem refuses (oversize for the mode, empty) is
                             // dropped - it must not kill the transmitter loop. The enqueuer's
                             // task faults so ACKMODE hosts see the loss.
-                            item.Done.TrySetException(rejection);
-                            item.Rejected?.Invoke(rejection);
+                            Refuse(item, rejection);
                             inFlight = null;
                             continue;
                         }
@@ -3022,8 +3071,7 @@ public sealed class SoundModemChannel
                     // and leaving a healthy-looking receive-only station.
                     if (inFlight is { } dying)
                     {
-                        dying.Done.TrySetException(deviceFailure);
-                        dying.Rejected?.Invoke(deviceFailure);
+                        Refuse(dying, deviceFailure);
                     }
 
                     FaultEverything(deviceFailure);
@@ -3041,8 +3089,7 @@ public sealed class SoundModemChannel
                     // one's (SendAndAnnounceAsync).
                     if (inFlight is { } dying)
                     {
-                        dying.Done.TrySetCanceled(cut.CancellationToken);
-                        dying.Rejected?.Invoke(cut);
+                        Refuse(dying, cut);
                     }
 
                     throw;

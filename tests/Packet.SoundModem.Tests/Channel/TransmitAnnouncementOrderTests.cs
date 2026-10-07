@@ -63,6 +63,88 @@ public class TransmitAnnouncementOrderTests
         }
     }
 
+    /// <summary>A sound card that takes the first write and dies on the second.</summary>
+    private sealed class DiesOnSecondWrite(int sampleRate) : M0LTE.Radio.Audio.IAudioOutput
+    {
+        private int _writes;
+
+        public int SampleRate { get; } = sampleRate;
+
+        public void Write(ReadOnlySpan<float> samples)
+        {
+            if (++_writes > 1)
+            {
+                throw new IOException("the card went away under the second write");
+            }
+        }
+
+        public void Drain()
+        {
+        }
+    }
+
+    /// <summary>A sound card that dies under the first write.</summary>
+    private sealed class DiesOnFirstWrite(int sampleRate) : M0LTE.Radio.Audio.IAudioOutput
+    {
+        public int SampleRate { get; } = sampleRate;
+
+        public void Write(ReadOnlySpan<float> samples) =>
+            throw new IOException("the card went away under the write");
+
+        public void Drain()
+        {
+        }
+    }
+
+    /// <summary>A PTT whose key is cut short by a cancellation.</summary>
+    private sealed class KeyCancelledPtt : M0LTE.Radio.Audio.IPttControl
+    {
+        public void Key() => throw new OperationCanceledException("the radio's session was torn down under the key");
+
+        public void Unkey()
+        {
+        }
+    }
+
+    /// <summary>
+    /// A channel with one packing modem, which puts frames queued together into one burst, at
+    /// its own rate.
+    /// </summary>
+    private static SoundModemChannel PackingStation(int rate)
+    {
+        var channel = new SoundModemChannel(rate, new FakeTimeProvider(), randomSeed: 42);
+        channel.AddModem(0, sink => new Ms110dModem(rate, sink)
+        {
+            Packing = new FramePacking(TimeSpan.FromSeconds(30), TimeSpan.Zero),
+        });
+        channel.Csma.Persistence = 255;
+        channel.Csma.TxDelayMilliseconds = 100;
+        channel.Csma.TxTailMilliseconds = 0;
+        return channel;
+    }
+
+    /// <summary>
+    /// Records, for each frame the channel says it dropped, whether its caller could already see
+    /// the answer at that moment. The handler takes its time over saying so, as a slow log does,
+    /// which gives a task ended first every chance to be seen ending first; it changes nothing
+    /// when the order is right, because then the task cannot end until the handler has returned.
+    /// </summary>
+    private static List<(byte Marker, bool CallerAnsweredFirst)> WatchDrops(
+        SoundModemChannel channel, Func<byte, Task> taskFor)
+    {
+        var drops = new List<(byte, bool)>();
+        channel.TransmitRejected += (_, frame, _) =>
+        {
+            Thread.Sleep(200);
+            bool answered = taskFor(frame[^1]).IsCompleted;
+            lock (drops)
+            {
+                drops.Add((frame[^1], answered));
+            }
+        };
+        return drops;
+    }
+
     [Fact]
     public async Task A_Keyups_Frames_Are_Announced_One_At_A_Time_In_The_Order_They_Went_Out()
     {
@@ -245,5 +327,146 @@ public class TransmitAnnouncementOrderTests
         catch (OperationCanceledException)
         {
         }
+    }
+    /// <summary>
+    /// A frame that fails after taking its place in the announcement order gives the place up
+    /// only once the frame in front of it has been announced, so nothing behind it can be
+    /// announced ahead of that one.
+    /// </summary>
+    /// <remarks>
+    /// Two frames in one keyup on a card that dies under the second write. The first frame's
+    /// announcement is held, as a starved pool holds it; the second frame took its place behind
+    /// it and then failed. Its place must stay open until the first has been announced, or the
+    /// next frame to go out would be announced before the first. Read off the channel's own
+    /// order rather than timed: nothing here waits for anything to be slow.
+    /// </remarks>
+    [Fact]
+    public async Task A_Frame_That_Fails_After_Taking_Its_Place_Lets_Nothing_Past_The_One_Before_It()
+    {
+        SoundModemChannel channel = Station();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        using var holdTheFirst = new ManualResetEventSlim();
+        var announced = new List<byte>();
+        channel.FrameTransmittedWithReport += (_, frame, _) =>
+        {
+            if (frame[^1] == 0x41)
+            {
+                holdTheFirst.Wait(TimeSpan.FromSeconds(60)).Should().BeTrue("the test lets it go");
+            }
+
+            lock (announced)
+            {
+                announced.Add(frame[^1]);
+            }
+        };
+
+        Task a = channel.EnqueueTransmit(2, Broadcast(0x41));
+        Task b = channel.EnqueueTransmit(2, Broadcast(0x42));
+        Task first = channel.RunTransmitterAsync(new DiesOnSecondWrite(SampleRate), new RecordingPtt(), cancellation.Token);
+        Func<Task> firstRun = () => first;
+        await firstRun.Should().ThrowAsync<IOException>("the card died");
+        Func<Task> failed = () => b;
+        await failed.Should().ThrowAsync<IOException>("the second frame never went out");
+
+        channel.LastAnnouncement.IsCompleted.Should().BeFalse(
+            "the failed frame's place opens only once the frame in front of it has been announced");
+
+        holdTheFirst.Set();
+        await a;
+
+        // And once that one has been, the failed frame's place opens behind it. Awaited rather
+        // than read: it completes on the thread pool, after the first frame's place does.
+        await channel.LastAnnouncement.WaitAsync(TimeSpan.FromSeconds(60));
+
+        Task c = channel.EnqueueTransmit(2, Broadcast(0x43));
+        Task second = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), new RecordingPtt(), cancellation.Token);
+        await c.WaitAsync(TimeSpan.FromSeconds(60));
+        lock (announced)
+        {
+            announced.Should().Equal([0x41, 0x43], "the rows are in the order the frames went out");
+        }
+
+        await cancellation.CancelAsync();
+        try
+        {
+            await second;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// A frame lost to the device is said to be dropped before its caller is answered.
+    /// </summary>
+    [Fact]
+    public async Task A_Frame_Lost_To_The_Card_Is_Said_To_Be_Dropped_Before_Its_Caller_Hears()
+    {
+        SoundModemChannel channel = Station();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        var tasks = new Dictionary<byte, Task>();
+        List<(byte Marker, bool CallerAnsweredFirst)> drops = WatchDrops(channel, m => tasks[m]);
+
+        tasks[0x41] = channel.EnqueueTransmit(2, Broadcast(0x41));
+        Task run = channel.RunTransmitterAsync(new DiesOnFirstWrite(SampleRate), new RecordingPtt(), cancellation.Token);
+        Func<Task> running = () => run;
+        await running.Should().ThrowAsync<IOException>("the card died");
+        Func<Task> lost = () => tasks[0x41];
+        await lost.Should().ThrowAsync<IOException>();
+
+        drops.Should().Equal([(0x41, false)],
+            "the DROPPED line is written before the caller is told, so a caller that looks for it finds it");
+    }
+
+    /// <summary>
+    /// The same for a packed burst lost to the device: every frame in it is said to be dropped
+    /// before its caller is answered.
+    /// </summary>
+    [Fact]
+    public async Task A_Packed_Burst_Lost_To_The_Card_Is_Said_To_Be_Dropped_Before_Its_Callers_Hear()
+    {
+        const int PackedRate = 9600;
+        SoundModemChannel channel = PackingStation(PackedRate);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        var tasks = new Dictionary<byte, Task>();
+        List<(byte Marker, bool CallerAnsweredFirst)> drops = WatchDrops(channel, m => tasks[m]);
+
+        tasks[0x41] = channel.EnqueueTransmit(0, Broadcast(0x41));
+        tasks[0x42] = channel.EnqueueTransmit(0, Broadcast(0x42));
+        Task run = channel.RunTransmitterAsync(new DiesOnFirstWrite(PackedRate), new RecordingPtt(), cancellation.Token);
+        Func<Task> running = () => run;
+        await running.Should().ThrowAsync<IOException>("the card died");
+        await Task.WhenAll(tasks.Values.Select(t => t.ContinueWith(_ => { }, TaskScheduler.Default)));
+
+        drops.Should().BeEquivalentTo([(0x41, false), (0x42, false)],
+            "each DROPPED line is written before its caller is told");
+    }
+
+    /// <summary>
+    /// A packed burst whose key is cut short by a cancellation: its frames have already left the
+    /// queue, so they are answered here, as dropped, rather than never.
+    /// </summary>
+    [Fact]
+    public async Task A_Packed_Burst_Whose_Key_Is_Cancelled_Answers_Its_Frames_As_Dropped()
+    {
+        const int PackedRate = 9600;
+        SoundModemChannel channel = PackingStation(PackedRate);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        var tasks = new Dictionary<byte, Task>();
+        List<(byte Marker, bool CallerAnsweredFirst)> drops = WatchDrops(channel, m => tasks[m]);
+
+        tasks[0x41] = channel.EnqueueTransmit(0, Broadcast(0x41));
+        tasks[0x42] = channel.EnqueueTransmit(0, Broadcast(0x42));
+        Task run = channel.RunTransmitterAsync(new FakeAudioOutput(PackedRate), new KeyCancelledPtt(), cancellation.Token);
+        Func<Task> running = () => run;
+        await running.Should().ThrowAsync<OperationCanceledException>(
+            "a transmitter that hits a cancellation ends on it, as it always has");
+
+        Task answered = Task.WhenAll(tasks.Values.Select(t => t.ContinueWith(_ => { }, TaskScheduler.Default)));
+        (await Task.WhenAny(answered, Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None))).Should().BeSameAs(answered,
+            "the burst's frames were taken off the queue, so nothing else will ever answer them");
+        tasks.Values.Should().AllSatisfy(t => t.IsCanceled.Should().BeTrue("none of them went out"));
+        drops.Should().BeEquivalentTo([(0x41, false), (0x42, false)],
+            "each is said to be dropped, and said so before its caller is told");
     }
 }
