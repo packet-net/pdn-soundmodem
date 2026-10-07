@@ -1,4 +1,3 @@
-using System.Net.Sockets;
 using AwesomeAssertions;
 using M0LTE.Radio.Audio;
 using Packet.SoundModem.Channel;
@@ -25,7 +24,7 @@ public class KissDedicatedPortTests : IAsyncLifetime
 
     private readonly SoundModemChannel _channel;
     private readonly FakeAudioOutput _output = new(SampleRate);
-    private readonly CancellationTokenSource _cancellation = new(TimeSpan.FromSeconds(30));
+    private readonly CancellationTokenSource _cancellation = new();
     private readonly List<KissTcpServer> _servers = [];
     private Task? _transmitter;
 
@@ -78,13 +77,6 @@ public class KissDedicatedPortTests : IAsyncLifetime
         _cancellation.Dispose();
     }
 
-    private static async Task<TcpClient> ConnectAsync(KissTcpServer server)
-    {
-        var client = new TcpClient();
-        await client.ConnectAsync("127.0.0.1", server.LocalPort);
-        return client;
-    }
-
     private static byte[] SampleFrame(int seed = 2)
     {
         byte[] frame = new byte[25];
@@ -102,10 +94,12 @@ public class KissDedicatedPortTests : IAsyncLifetime
         channel.Csma.Persistence = 255;
         channel.Csma.TxDelayMilliseconds = 20;
         var output = new FakeAudioOutput(SampleRate);
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var cancellation = new CancellationTokenSource();
         Task transmitter = channel.RunTransmitterAsync(output, new NullPtt(), cancellation.Token);
-        await channel.EnqueueTransmit(0, frame);
-        await SettleAsync(output);
+
+        // Complete once the frame's audio has been written: the trailing silence added below
+        // stands in for whatever tail the transmitter is still writing.
+        await channel.EnqueueTransmit(0, frame).Within("the reference burst to be modulated");
         await cancellation.CancelAsync();
         try
         {
@@ -118,58 +112,21 @@ public class KissDedicatedPortTests : IAsyncLifetime
         return [.. output.Snapshot(), .. new float[SampleRate / 2]];
     }
 
-    /// <summary>Waits until the transmitter has stopped producing samples.</summary>
-    private static async Task SettleAsync(FakeAudioOutput output)
-    {
-        int settled;
-        do
-        {
-            settled = output.WrittenCount;
-            await Task.Delay(150);
-        }
-        while (output.WrittenCount != settled || output.WrittenCount == 0);
-    }
-
-    private static async Task<List<KissFrame>> DrainAsync(TcpClient client, TimeSpan window)
-    {
-        var frames = new List<KissFrame>();
-        var decoder = new KissDecoder(frames.Add);
-        var buffer = new byte[4096];
-        using var cancellation = new CancellationTokenSource(window);
-        NetworkStream stream = client.GetStream();
-        try
-        {
-            while (true)
-            {
-                int got = await stream.ReadAsync(buffer, cancellation.Token);
-                if (got == 0)
-                {
-                    break;
-                }
-
-                decoder.Push(buffer.AsSpan(0, got));
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-
-        return frames;
-    }
-
     [Fact]
     public async Task A_Dedicated_Port_Relabels_Its_Modem_To_Nibble_Zero()
     {
         // The whole point: a host that can only read channel 0 still sees sub-channel 1's traffic.
         byte[] frame = SampleFrame();
         float[] audio = await ModulateAsync("afsk1200-il2p", frame);
-        using TcpClient dedicated = await ConnectAsync(_il2pOnly);
-        using TcpClient shared = await ConnectAsync(_shared);
+        using KissTestClient dedicated = await KissTestClient.ConnectAsync(_il2pOnly);
+        using KissTestClient shared = await KissTestClient.ConnectAsync(_shared);
 
+        // Decoded and queued to every session before this returns, so a fence sent after it
+        // collects everything the burst produced.
         _channel.ProcessReceive(audio);
 
-        List<KissFrame> onDedicated = await DrainAsync(dedicated, TimeSpan.FromSeconds(2));
-        List<KissFrame> onShared = await DrainAsync(shared, TimeSpan.FromSeconds(2));
+        List<KissFrame> onDedicated = await dedicated.FenceAsync();
+        List<KissFrame> onShared = await shared.FenceAsync();
 
         onDedicated.Should().ContainSingle().Which.Port.Should().Be(
             0, "a dedicated port presents its modem as channel 0");
@@ -184,13 +141,13 @@ public class KissDedicatedPortTests : IAsyncLifetime
     {
         byte[] frame = SampleFrame(5);
         float[] audio = await ModulateAsync("afsk1200", frame);   // decodes on sub-channel 0 only
-        using TcpClient wrongModem = await ConnectAsync(_il2pOnly);
-        using TcpClient rightModem = await ConnectAsync(_hdlcOnly);
+        using KissTestClient wrongModem = await KissTestClient.ConnectAsync(_il2pOnly);
+        using KissTestClient rightModem = await KissTestClient.ConnectAsync(_hdlcOnly);
 
         _channel.ProcessReceive(audio);
 
-        List<KissFrame> onWrong = await DrainAsync(wrongModem, TimeSpan.FromSeconds(2));
-        List<KissFrame> onRight = await DrainAsync(rightModem, TimeSpan.FromSeconds(2));
+        List<KissFrame> onWrong = await wrongModem.FenceAsync();
+        List<KissFrame> onRight = await rightModem.FenceAsync();
 
         onRight.Should().ContainSingle("the HDLC modem's port must carry the HDLC frame");
         onWrong.Should().BeEmpty("sub-channel 1's port must not leak sub-channel 0's traffic");
@@ -203,10 +160,11 @@ public class KissDedicatedPortTests : IAsyncLifetime
         // leave on sub-channel 1's modem. Decided by decoding the audio, not by inspection:
         // only an IL2P receiver can read it, so only the IL2P modem can have sent it.
         byte[] frame = SampleFrame(9);
-        using TcpClient client = await ConnectAsync(_il2pOnly);
+        using KissTestClient client = await KissTestClient.ConnectAsync(_il2pOnly);
+        Task<byte[]> transmitted = KissTestWait.NextTransmissionAsync(_channel);
 
-        await client.GetStream().WriteAsync(KissCodec.Encode(new KissFrame(0, KissCommand.Data, frame)));
-        await SettleAsync(_output);
+        await client.SendAsync(new KissFrame(0, KissCommand.Data, frame));
+        await transmitted.Within("the frame to be transmitted");
 
         float[] audio = [.. _output.Snapshot(), .. new float[SampleRate / 2]];
         Decode("afsk1200-il2p", audio).Should().ContainSingle()
@@ -219,11 +177,11 @@ public class KissDedicatedPortTests : IAsyncLifetime
     public async Task The_Shared_Port_Still_Honours_The_Nibble_A_Client_Sends()
     {
         byte[] frame = SampleFrame(11);
-        using TcpClient client = await ConnectAsync(_shared);
+        using KissTestClient client = await KissTestClient.ConnectAsync(_shared);
+        Task<byte[]> transmitted = KissTestWait.NextTransmissionAsync(_channel);
 
-        await client.GetStream().WriteAsync(
-            KissCodec.Encode(new KissFrame(Il2p, KissCommand.Data, frame)));
-        await SettleAsync(_output);
+        await client.SendAsync(new KissFrame(Il2p, KissCommand.Data, frame));
+        await transmitted.Within("the frame to be transmitted");
 
         float[] audio = [.. _output.Snapshot(), .. new float[SampleRate / 2]];
         Decode("afsk1200-il2p", audio).Should().ContainSingle().Which.Should().Equal(frame);

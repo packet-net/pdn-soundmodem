@@ -50,7 +50,7 @@ public class OnDemandUberSdrInputTests
         var session = new FakeSession { SessionLive = true };
         attempt.SetResult(session);
 
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Live);
+        await h.Announced(OnDemandPhase.Live);
         h.Input.SessionLive.Should().BeTrue();
         h.Input.Read(new float[64]).Should().Be(64);
         session.Reads.Should().Be(1);
@@ -120,7 +120,7 @@ public class OnDemandUberSdrInputTests
         var session = new FakeSession();
         attempt.SetResult(session);
 
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Lingering);
+        await h.Announced(OnDemandPhase.Lingering);
         session.Disposed.Should().BeFalse();
         h.Time.Advance(Linger);
         h.Input.Phase.Should().Be(OnDemandPhase.Idle);
@@ -134,7 +134,7 @@ public class OnDemandUberSdrInputTests
 
         h.Input.SetViewers(1);
         (await h.NextAttemptAsync()).SetException(new HttpRequestException("connection refused"));
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await h.Announced(OnDemandPhase.Retrying);
         h.Attempts.Should().Be(1);
 
         // First transient rung is one second.
@@ -145,7 +145,7 @@ public class OnDemandUberSdrInputTests
         h.Input.Phase.Should().Be(OnDemandPhase.Connecting);
 
         second.SetResult(new FakeSession { SessionLive = true });
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Live);
+        await h.Announced(OnDemandPhase.Live);
         h.Attempts.Should().Be(2);
     }
 
@@ -158,7 +158,7 @@ public class OnDemandUberSdrInputTests
         // What the pre-flight throws for "allowed: false" with no transport error underneath.
         (await h.NextAttemptAsync()).SetException(
             new InvalidOperationException("rx.example.org refused the connection: not on the list"));
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await h.Announced(OnDemandPhase.Retrying);
 
         h.Time.Advance(TimeSpan.FromSeconds(59));
         h.Attempts.Should().Be(1, "a refusal is not something to re-ask every second");
@@ -180,20 +180,20 @@ public class OnDemandUberSdrInputTests
         h.Input.SetViewers(1);
         (await h.NextAttemptAsync()).SetException(
             new InvalidOperationException("rx.example.org refused the connection: quota spent"));
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await h.Announced(OnDemandPhase.Retrying);
         h.Input.Refused.Should().BeTrue();
 
         // A transport failure is not a refusal, however it is retried.
         h.Time.Advance(TimeSpan.FromMinutes(1));
         (await h.NextAttemptAsync()).SetException(new HttpRequestException("connection refused"));
-        await Eventually(() => h.Input.Refused == false);
-        h.Input.Phase.Should().Be(OnDemandPhase.Retrying);
+        await h.Announced(OnDemandPhase.Retrying);
+        h.Input.Refused.Should().BeFalse();
 
         // And a session that opens clears it. Past the transient cap, so the rung the ladder has
         // climbed to by now does not matter.
         h.Time.Advance(TimeSpan.FromSeconds(30));
         (await h.NextAttemptAsync()).SetResult(new FakeSession { SessionLive = true });
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Live);
+        await h.Announced(OnDemandPhase.Live);
         h.Input.Refused.Should().BeFalse();
     }
 
@@ -207,7 +207,7 @@ public class OnDemandUberSdrInputTests
         h.Input.SetViewers(0);
         attempt.SetException(new HttpRequestException("connection refused"));
 
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Idle);
+        await h.Announced(OnDemandPhase.Idle);
         h.Time.Advance(TimeSpan.FromMinutes(20));
         h.Attempts.Should().Be(1, "nobody is waiting for a retry");
     }
@@ -219,7 +219,7 @@ public class OnDemandUberSdrInputTests
 
         h.Input.SetViewers(1);
         (await h.NextAttemptAsync()).SetException(new HttpRequestException("connection refused"));
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await h.Announced(OnDemandPhase.Retrying);
 
         h.Input.SetViewers(0);
         h.Input.Phase.Should().Be(OnDemandPhase.Idle);
@@ -235,8 +235,8 @@ public class OnDemandUberSdrInputTests
 
         first.GiveUp("rx.example.org has been unreachable for 5 minutes");
 
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
-        await Eventually(() => first.Disposed);
+        await h.Announced(OnDemandPhase.Retrying);
+        await Within(first.WhenDisposed, "the session that gave up to be disposed");
         h.Input.SessionLive.Should().BeFalse();
         h.Input.Read(new float[64]).Should().Be(0);
 
@@ -244,7 +244,7 @@ public class OnDemandUberSdrInputTests
         TaskCompletionSource<IUberSdrSession> attempt = await h.NextAttemptAsync();
         var second = new FakeSession { SessionLive = true };
         attempt.SetResult(second);
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Live);
+        await h.Announced(OnDemandPhase.Live);
         h.Input.Read(new float[64]).Should().Be(64);
         second.Reads.Should().Be(1);
     }
@@ -256,17 +256,17 @@ public class OnDemandUberSdrInputTests
 
         h.Input.SetViewers(1);
         (await h.NextAttemptAsync()).SetException(new HttpRequestException("refused"));
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await h.Announced(OnDemandPhase.Retrying);
         h.Time.Advance(TimeSpan.FromSeconds(1));
         (await h.NextAttemptAsync()).SetException(new HttpRequestException("refused"));
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await h.Announced(OnDemandPhase.Retrying);
         h.Time.Advance(TimeSpan.FromSeconds(2));
         FakeSession session = new() { SessionLive = true };
         (await h.NextAttemptAsync()).SetResult(session);
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Live);
+        await h.Announced(OnDemandPhase.Live);
 
         session.GiveUp("gone");
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await h.Announced(OnDemandPhase.Retrying);
         h.Time.Advance(TimeSpan.FromSeconds(1));
         await h.NextAttemptAsync();
         h.Attempts.Should().Be(4, "the healthy session put the ladder back to one second");
@@ -295,7 +295,7 @@ public class OnDemandUberSdrInputTests
         var session = new FakeSession();
         attempt.SetResult(session);
 
-        await Eventually(() => session.Disposed);
+        await Within(session.WhenDisposed, "the late session to be disposed");
     }
 
     [Fact]
@@ -411,7 +411,7 @@ public class OnDemandUberSdrInputTests
 
         h.Input.SetViewers(1);
         (await h.NextAttemptAsync()).SetException(new HttpRequestException("connection refused"));
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await h.Announced(OnDemandPhase.Retrying);
         await h.LinesReach(2);
 
         h.Lines[^1].Should().Be(
@@ -428,7 +428,7 @@ public class OnDemandUberSdrInputTests
 
         h.Input.SetViewers(1);
         (await h.NextAttemptAsync()).SetException(new HttpRequestException("connection refused"));
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await h.Announced(OnDemandPhase.Retrying);
         await h.LinesReach(2);
 
         h.Input.SetViewers(0);
@@ -449,7 +449,7 @@ public class OnDemandUberSdrInputTests
         await h.LinesReach(2);
 
         session.GiveUp("stream from rx.example.org ended (connection reset)");
-        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await h.Announced(OnDemandPhase.Retrying);
         await h.LinesReach(4);
 
         h.Lines[2].Should().Be(
@@ -459,25 +459,41 @@ public class OnDemandUberSdrInputTests
             + "5 minutes unreachable); trying again in 1 s");
     }
 
-    private static async Task Eventually(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (!condition())
-        {
-            if (DateTime.UtcNow > deadline)
-            {
-                throw new TimeoutException("condition not met within 5 s");
-            }
+    /// <summary>
+    /// How long a wait goes before it is called a hang. Every wait here is on something the input
+    /// raises (a journal line, a phase announcement, an attempt to open, a session disposed), so a
+    /// slow run only makes the wait longer; this only turns a genuine hang into a failure that says
+    /// what it was waiting for.
+    /// </summary>
+    private static readonly TimeSpan HangGuard = TimeSpan.FromMinutes(1);
 
-            await Task.Delay(5);
+    private static TimeoutException Hung(string what) =>
+        new($"nothing happened for {HangGuard.TotalSeconds:F0} s while waiting for {what}: a hang, not a slow run");
+
+    private static async Task Within(Task task, string what)
+    {
+        try
+        {
+            await task.WaitAsync(HangGuard);
+        }
+        catch (TimeoutException)
+        {
+            throw Hung(what);
         }
     }
 
     private sealed class FakeSession : IUberSdrSession
     {
         public ConnectionResponse Connection { get; } = new() { Allowed = true, MaxSessionTime = 3600 };
+        private readonly TaskCompletionSource _disposed =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public bool SessionLive { get; set; }
-        public bool Disposed { get; private set; }
+        public bool Disposed => _disposed.Task.IsCompleted;
+
+        /// <summary>Completes when the input disposes the session, which it does off the test's
+        /// thread when the session gave up or arrived too late to be wanted.</summary>
+        public Task WhenDisposed => _disposed.Task;
         public int Reads { get; private set; }
         public int SampleRate => 12000;
 
@@ -490,7 +506,7 @@ public class OnDemandUberSdrInputTests
             return destination.Length;
         }
 
-        public void Dispose() => Disposed = true;
+        public void Dispose() => _disposed.TrySetResult();
 
         public void GiveUp(string reason) => Lost?.Invoke(reason);
     }
@@ -504,6 +520,10 @@ public class OnDemandUberSdrInputTests
         private readonly List<string> _lines = [];
         private Action<UberSdrLine>? _sessionJournal;
         private int _attempts;
+
+        /// <summary>Completed, and replaced, each time the input does something a test can wait
+        /// for: writes a journal line, announces a phase, or asks to open a session.</summary>
+        private TaskCompletionSource _changed = NewSignal();
 
         public Harness(string? description = null)
         {
@@ -525,6 +545,7 @@ public class OnDemandUberSdrInputTests
                     }
 
                     _attemptStarted.Release();
+                    Changed();
                     return attempt.Task;
                 },
                 log: line =>
@@ -533,6 +554,8 @@ public class OnDemandUberSdrInputTests
                     {
                         _lines.Add(line);
                     }
+
+                    Changed();
                 },
                 Time);
             Input.PhaseChanged += (phase, sentence) =>
@@ -541,6 +564,8 @@ public class OnDemandUberSdrInputTests
                 {
                     Phases.Add((phase, sentence));
                 }
+
+                Changed();
             };
         }
 
@@ -588,11 +613,53 @@ public class OnDemandUberSdrInputTests
         /// <summary>Waits for the announcement of a phase change to reach the journal: the phase
         /// itself is set under the lock and announced after it, so the two are not simultaneous.
         /// </summary>
-        public Task LinesReach(int count) => Eventually(() => Lines.Count >= count);
+        public Task LinesReach(int count) => Until(() => Lines.Count >= count, $"{count} journal lines");
+
+        /// <summary>
+        /// Waits for <paramref name="phase"/> to be the last phase announced. Not merely for
+        /// <see cref="OnDemandUberSdrInput.Phase"/> to read it: the phase is set under the input's
+        /// lock and announced after it is released, on whichever thread made the change, so a test
+        /// that moved on as soon as the property changed could announce its own next phase first.
+        /// </summary>
+        public Task Announced(OnDemandPhase phase) => Until(
+            () =>
+            {
+                lock (Phases)
+                {
+                    return Phases.Count > 0 && Phases[^1].Phase == phase;
+                }
+            },
+            $"the input to announce {phase}");
+
+        /// <summary>Waits for <paramref name="condition"/>, checking it each time the input does
+        /// something, never on a timer.</summary>
+        public async Task Until(Func<bool> condition, string what)
+        {
+            using var guard = new CancellationTokenSource(HangGuard);
+            while (true)
+            {
+                // Taken before the check, so a change made between the check and the wait still
+                // completes the signal being waited on.
+                Task changed = Volatile.Read(ref _changed).Task;
+                if (condition())
+                {
+                    return;
+                }
+
+                try
+                {
+                    await changed.WaitAsync(guard.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw Hung(what);
+                }
+            }
+        }
 
         public async Task<TaskCompletionSource<IUberSdrSession>> NextAttemptAsync()
         {
-            (await _attemptStarted.WaitAsync(TimeSpan.FromSeconds(5)))
+            (await _attemptStarted.WaitAsync(HangGuard))
                 .Should().BeTrue("the input should have asked to open a session");
             lock (_pending)
             {
@@ -605,10 +672,16 @@ public class OnDemandUberSdrInputTests
             Input.SetViewers(1);
             var session = new FakeSession { SessionLive = true };
             (await NextAttemptAsync()).SetResult(session);
-            await Eventually(() => Input.Phase == OnDemandPhase.Live);
+            await Announced(OnDemandPhase.Live);
             return session;
         }
 
         public void Dispose() => Input.Dispose();
+
+        private static TaskCompletionSource NewSignal() =>
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private void Changed() => Interlocked.Exchange(ref _changed, NewSignal()).TrySetResult();
     }
 }
+

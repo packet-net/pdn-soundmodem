@@ -1,4 +1,5 @@
-using System.Net.Sockets;
+using System.Collections.Concurrent;
+using System.Net;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.Modems;
@@ -34,113 +35,73 @@ public class KissServerRobustnessTests : IAsyncDisposable
         await _server.DisposeAsync();
     }
 
-    private async Task<TcpClient> ConnectAsync(int? receiveBufferBytes = null)
-    {
-        var client = new TcpClient();
-        if (receiveBufferBytes is int bytes)
-        {
-            client.Client.ReceiveBufferSize = bytes;
-        }
-
-        await client.ConnectAsync("127.0.0.1", _server.LocalPort);
-        return client;
-    }
-
     [Fact]
     public async Task A_Host_That_Stops_Reading_Is_Dropped_And_Never_Stalls_The_Broadcast()
     {
-        int accepted = 0;
-        var disconnects = new List<KissClientEvent>();
-        _server.ClientConnected += e => accepted = Math.Max(accepted, e.Clients);
-        _server.ClientDisconnected += disconnects.Add;
-
-        // The wedged host: socket open, receive window pinned small, and it never reads.
-        using TcpClient wedged = await ConnectAsync(receiveBufferBytes: 8192);
-        using TcpClient healthy = await ConnectAsync();
-        await WaitUntilAsync(() => accepted == 2);
-
-        // The healthy host reads continuously, counting the frames it decodes. Never
-        // faults: the test's teardown closes the socket under it.
-        int healthyGot = 0;
-        _ = Task.Run(async () =>
+        var disconnects = new ConcurrentQueue<KissClientEvent>();
+        var dropped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _server.ClientDisconnected += e =>
         {
-            try
-            {
-                // maxFrame above the test's 64 KiB payloads: the decoder's 2 KiB default
-                // exists for radio links, and this test's frames are deliberately huge.
-                var decoder = new KissDecoder(_ => Interlocked.Increment(ref healthyGot), maxFrame: 70000);
-                var buffer = new byte[65536];
-                NetworkStream stream = healthy.GetStream();
-                while (true)
-                {
-                    int got = await stream.ReadAsync(buffer);
-                    if (got == 0)
-                    {
-                        return;
-                    }
+            disconnects.Enqueue(e);
+            dropped.TrySetResult();
+        };
 
-                    decoder.Push(buffer.AsSpan(0, got));
-                }
-            }
-            catch (Exception)
-            {
-            }
-        });
+        // The wedged host: socket open, receive window pinned small, and it never reads. The
+        // healthy one decodes frames above the 64 KiB payloads this test sends; the decoder's
+        // default exists for radio links, and these frames are deliberately huge.
+        using KissTestClient wedged = await KissTestClient.ConnectAsync(_server, receiveBufferBytes: 8192);
+        using KissTestClient healthy = await KissTestClient.ConnectAsync(_server, maxFrame: 70000);
 
-        // 200 large frames, paced so a reading host keeps up while the wedged one first
-        // fills its kernel buffers and then its bounded send queue. Emitted off the test
-        // thread so a regression (a blocking socket write on the receive path) fails this
-        // test by timeout instead of hanging the run.
+        // 200 frames of 64 KiB, 12.8 MiB: more than the kernel will hold for the wedged host (its
+        // send buffer is capped by tcp_wmem, 4 MiB by default) plus the 1 MiB it may have queued,
+        // so its session has to be dropped. Each frame goes out only once the healthy host has
+        // read the one before, so the healthy host is never more than one frame behind and can
+        // never be the one dropped, however slowly this machine runs the server's write loop.
+        // It used to be paced at 5 ms instead, and a write loop held up for a few tens of
+        // milliseconds let the healthy host's queue pass the same 1 MiB budget.
+        //
+        // Each broadcast runs off the test thread, so a regression that makes it block on the
+        // wedged socket fails this test by name instead of hanging the run.
+        const int Frames = 200;
         byte[] big = new byte[65536];
         new Random(3).NextBytes(big);
-        Task emitter = Task.Run(async () =>
+        _modem.Emit = big;
+        float[] silence = new float[16];
+        for (int i = 0; i < Frames; i++)
         {
-            float[] silence = new float[16];
-            for (int i = 0; i < 200; i++)
-            {
-                _modem.Emit = big;
-                _channel.ProcessReceive(silence);
-                await Task.Delay(5);
-            }
+            await Task.Run(() => _channel.ProcessReceive(silence))
+                .Within($"broadcast {i + 1} to return while a host is not reading");
+            int expected = i + 1;
+            await healthy.ReadUntilAsync(frames => frames.Count >= expected, $"frame {expected} on the healthy host");
+        }
 
-            _modem.Emit = null;
-        });
-
-        await emitter.WaitAsync(TimeSpan.FromSeconds(15));
-        await WaitUntilAsync(() => Volatile.Read(ref healthyGot) >= 200);
+        _modem.Emit = null;
+        healthy.Frames.Should().HaveCount(Frames).And.OnlyContain(frame => frame.Payload.SequenceEqual(big));
 
         // The wedged host lost its session, with the reason on the disconnect - not the
         // teardown exception its dead socket produced.
-        await WaitUntilAsync(() => disconnects.Count > 0);
-        disconnects.Should().ContainSingle()
-            .Which.Reason.Should().Contain("stopped reading");
+        await dropped.Task.Within("the wedged host to be dropped");
+        KissClientEvent disconnect = disconnects.Should().ContainSingle().Which;
+        disconnect.Reason.Should().Contain("stopped reading");
+        ((IPEndPoint)disconnect.Remote!).Port.Should().Be(wedged.LocalPort);
     }
 
     [Fact]
     public async Task A_Data_Frame_For_A_Modemless_SubChannel_Is_Announced_As_Rejected()
     {
-        var rejections = new List<(int SubChannel, Exception Reason)>();
-        _channel.TransmitRejected += (subChannel, _, reason) => rejections.Add((subChannel, reason));
+        var rejections = new ConcurrentQueue<(int SubChannel, Exception Reason)>();
+        _channel.TransmitRejected += (subChannel, _, reason) => rejections.Enqueue((subChannel, reason));
 
-        using TcpClient client = await ConnectAsync();
+        using KissTestClient client = await KissTestClient.ConnectAsync(_server);
         byte[] frame = new byte[25];
         new Random(2).NextBytes(frame);
-        await client.GetStream().WriteAsync(KissCodec.Encode(new KissFrame(5, KissCommand.Data, frame)));
+        await client.SendAsync(new KissFrame(5, KissCommand.Data, frame));
 
-        await WaitUntilAsync(() => rejections.Count > 0);
-        rejections.Should().ContainSingle();
-        rejections[0].SubChannel.Should().Be(5);
-        rejections[0].Reason.Message.Should().Contain("no modem on sub-channel 5");
-    }
-
-    private static async Task WaitUntilAsync(Func<bool> condition)
-    {
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!condition())
-        {
-            cancellation.Token.ThrowIfCancellationRequested();
-            await Task.Delay(20, cancellation.Token);
-        }
+        // Rejected as the frame is decoded, on the read loop that answers the fence after it.
+        await client.FenceAsync();
+        (int SubChannel, Exception Reason) rejection = rejections.Should().ContainSingle().Which;
+        rejection.SubChannel.Should().Be(5);
+        rejection.Reason.Message.Should().Contain("no modem on sub-channel 5");
     }
 
     /// <summary>A modem that emits <see cref="Emit"/> to its frame sink on every
