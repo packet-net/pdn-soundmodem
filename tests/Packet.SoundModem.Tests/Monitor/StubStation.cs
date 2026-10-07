@@ -68,7 +68,7 @@ internal sealed class StubStation : IAsyncDisposable
     /// <summary>The welcome, once it has arrived: the slug and the path this station is under.</summary>
     internal JsonElement? Welcome { get; private set; }
 
-    /// <summary>Why the monitor hung up, once it has.</summary>
+    /// <summary>Why the monitor hung up, once it has; read it after <see cref="ClosedAsync"/>.</summary>
     internal string? ClosedBecause { get; private set; }
 
     /// <summary>Whether the socket is still up.</summary>
@@ -307,9 +307,30 @@ internal sealed class StubStation : IAsyncDisposable
     /// <summary>Waits for the welcome, which is what says the monitor accepted this station.</summary>
     internal Task WelcomedAsync() => UntilAsync(() => Welcome is not null, "a welcome");
 
-    /// <summary>Waits for the monitor to hang up.</summary>
-    internal Task ClosedAsync() =>
-        UntilAsync(() => ClosedBecause is not null || !Connected, "the monitor to hang up");
+    /// <summary>
+    /// Waits for the monitor to hang up and for this station to have read why: the reader ends
+    /// on the close, and has written <see cref="ClosedBecause"/> by the time it does.
+    /// </summary>
+    /// <remarks>
+    /// It used to wait for <see cref="ClosedBecause"/> to be set or the socket to stop being
+    /// open, whichever came first. The socket stops being open inside the receive that reads the
+    /// close frame, before that receive has returned to the reader to write the reason down, so
+    /// a test could see the hang-up and read a reason of null. On a loaded machine the gap
+    /// between the two is a thread pool hop, which is plenty.
+    /// </remarks>
+    internal async Task ClosedAsync()
+    {
+        try
+        {
+            // A safety net that names a monitor that never hangs up, not a budget: the close is
+            // one event, and every test that waits for it carries its own 30 s timeout as well.
+            await _reading.WaitAsync(TimeSpan.FromSeconds(20));
+        }
+        catch (TimeoutException)
+        {
+            throw new TimeoutException("waited 20 s for the monitor to hang up and it did not");
+        }
+    }
 
     public async ValueTask DisposeAsync()
     {

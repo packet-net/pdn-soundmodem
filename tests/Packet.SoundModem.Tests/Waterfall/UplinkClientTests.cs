@@ -38,8 +38,12 @@ public class UplinkClientTests
     /// <summary>A token that is long enough to be one; the site issues 43 base64 characters.</summary>
     private const string Token = "pdnsm_0123456789012345678901234567890123456789";
 
-    /// <summary>How long a test waits for something the network has to do before it gives up.</summary>
-    private static readonly TimeSpan Patience = TimeSpan.FromSeconds(20);
+    /// <summary>
+    /// How long a test waits for one thing the network has to do before it gives up: a safety
+    /// net that names a hang, not a budget. Every wait here is for a single event, never for a
+    /// count of polls, so a slow machine takes longer to reach it and does not run out.
+    /// </summary>
+    private static readonly TimeSpan Patience = TimeSpan.FromSeconds(60);
 
     /// <summary>
     /// A monitor, as far as a station can tell: it answers the upgrade, reads the token off the
@@ -192,15 +196,32 @@ public class UplinkClientTests
                 _socket = upgrade.WebSocket;
                 if (DropAtOnce)
                 {
-                    upgrade.WebSocket.Abort();
+                    Drop(context, upgrade.WebSocket);
                     continue;
                 }
 
-                await ReadAsync(upgrade.WebSocket);
+                await ReadAsync(context, upgrade.WebSocket);
             }
         }
 
-        private async Task ReadAsync(WebSocket socket)
+        /// <summary>
+        /// Drops the connection the way a site falling over does: the TCP connection goes, so the
+        /// station hears of it at once.
+        /// </summary>
+        /// <remarks>
+        /// Aborting the WebSocket alone is not that. HttpListener keeps the connection under it
+        /// open, so the station heard nothing and only noticed when its silence watchdog fired on
+        /// the clock or its keepalive gave up 40 real seconds later. The tests used to get there by
+        /// moving the clock under the live session, which made how long a session lasted on the
+        /// clock depend on how fast the machine ran.
+        /// </remarks>
+        private static void Drop(HttpListenerContext context, WebSocket socket)
+        {
+            socket.Abort();
+            context.Response.Abort();
+        }
+
+        private async Task ReadAsync(HttpListenerContext context, WebSocket socket)
         {
             var buffer = new byte[64 * 1024];
             bool welcomed = false;
@@ -282,7 +303,7 @@ public class UplinkClientTests
 
                         if (DropAfterWelcome)
                         {
-                            socket.Abort();
+                            Drop(context, socket);
                             return;
                         }
                     }
@@ -364,30 +385,90 @@ public class UplinkClientTests
     }
 
     /// <summary>
-    /// Waits for something that is behind a wait on the clock, moving the clock on a second at a
-    /// time until it happens.
+    /// The clock a client under test is given: the test's <see cref="FakeTimeProvider"/>, which
+    /// also tells the test about every timer the client makes on it.
     /// </summary>
     /// <remarks>
-    /// A single jump would not do: the client records the wait it is about to take and then takes
-    /// it, so a test that jumped between those two lines would move the clock past a delay that
-    /// had not been registered yet and then wait for ever. Advancing repeatedly cannot miss it.
+    /// <para>The reconnect ladder is a <c>Task.Delay</c> on the injected clock, and a delay is a
+    /// one-shot timer made through <see cref="CreateTimer"/>. So the test does not have to guess
+    /// when the client has started waiting: it is told, with the length of the wait, and moves the
+    /// clock by exactly that much. The clock never moves while a session is in progress, so how
+    /// long a session lasted on the clock, and so which rung it lands on, is a fact of the test
+    /// rather than of how fast the machine ran it.</para>
+    /// <para>This replaces moving the clock on a step at a time every 5 ms until something
+    /// happened. That needed one real-time poll per step - 900 of them for one fifteen-minute
+    /// rung - against a real-time deadline, so a loaded runner ran out of polls before the ladder
+    /// got there; and it moved the clock under live sessions, so a slow one lasted minutes on the
+    /// clock, was classed healthy and broke the journal's rate limit.</para>
+    /// <para>The repeating timer, the silence watchdog, is kept too, so a test can fire a tick by
+    /// hand at the moment the thing it cancels has gone. The station's own server is given the
+    /// fake clock directly, so none of its timers are mistaken for the client's.</para>
     /// </remarks>
-    private static async Task UntilAdvancing(
-        FakeTimeProvider clock, Func<bool> condition, string what, int stepSeconds = 1)
+    private sealed class WatchedClock(FakeTimeProvider inner) : TimeProvider
     {
-        DateTime deadline = DateTime.UtcNow + Patience;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (condition())
-            {
-                return;
-            }
+        private readonly global::System.Threading.Channels.Channel<TimeSpan> _waits =
+            global::System.Threading.Channels.Channel.CreateUnbounded<TimeSpan>();
 
-            clock.Advance(TimeSpan.FromSeconds(stepSeconds));
-            await Task.Delay(5);
+        private readonly List<(TimerCallback Callback, object? State)> _repeating = [];
+
+        public IReadOnlyList<(TimerCallback Callback, object? State)> Repeating
+        {
+            get { lock (_repeating) { return [.. _repeating]; } }
         }
 
-        throw new TimeoutException($"timed out waiting for {what}");
+        public override ITimer CreateTimer(
+            TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            // Made first and only then announced, so a test that hears of a wait and moves the
+            // clock straight away cannot move it past a timer the fake clock has not been given.
+            ITimer timer = inner.CreateTimer(callback, state, dueTime, period);
+            if (period > TimeSpan.Zero && period != Timeout.InfiniteTimeSpan)
+            {
+                lock (_repeating) { _repeating.Add((callback, state)); }
+            }
+            else if (dueTime > TimeSpan.Zero && dueTime != Timeout.InfiniteTimeSpan)
+            {
+                _waits.Writer.TryWrite(dueTime);
+            }
+
+            return timer;
+        }
+
+        /// <summary>
+        /// The next wait the client starts on this clock, in the order it started them, once it
+        /// has started it. Each one is handed out once.
+        /// </summary>
+        public async Task<TimeSpan> NextWaitAsync(string what)
+        {
+            using var giveUp = new CancellationTokenSource(Patience);
+            try
+            {
+                return await _waits.Reader.ReadAsync(giveUp.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                throw new TimeoutException($"timed out waiting for {what}");
+            }
+        }
+
+        /// <summary>
+        /// Waits for the client to start its next wait and then moves the clock through it, which
+        /// is what lets the next attempt go. Returns the wait, for the test to hold to the ladder.
+        /// </summary>
+        public async Task<TimeSpan> SitOutNextWaitAsync(string what)
+        {
+            TimeSpan wait = await NextWaitAsync(what);
+            inner.Advance(wait);
+            return wait;
+        }
+
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
     }
 
     /// <summary>A snapshot of a journal the client is still writing to, taken under its lock.</summary>
@@ -761,13 +842,14 @@ public class UplinkClientTests
     public async Task A_Dropped_Uplink_Retries_On_The_Transport_Ladder()
     {
         var clock = new FakeTimeProvider();
+        var watched = new WatchedClock(clock);
         await using WaterfallWebServer server = StationServer(clock);
 
         // A port nothing is listening on: the connect fails at the transport, which is the
         // outage every home station will actually see.
         int dead = FreePorts.Next();
         await using var client = new UplinkClient(
-            server, SettingsFor($"ws://127.0.0.1:{dead}/uplink"), clock);
+            server, SettingsFor($"ws://127.0.0.1:{dead}/uplink"), watched);
         client.Start();
 
         TimeSpan[] expected =
@@ -780,13 +862,14 @@ public class UplinkClientTests
         for (int step = 0; step < expected.Length; step++)
         {
             int taken = step + 1;
-            await Until(() => client.RetryWaits.Count >= taken, $"failure {taken}");
+            (await watched.SitOutNextWaitAsync($"the wait after failure {taken}"))
+                .Should().Be(expected[step]);
             client.RetryWaits[step].Should().Be(expected[step]);
-            await UntilAdvancing(
-                clock, () => client.ConnectAttempts > taken, $"attempt {taken + 1}");
         }
 
-        client.ConnectAttempts.Should().BeGreaterThanOrEqualTo(expected.Length,
+        // The wait after the last one says the attempt it let go has been made and has failed.
+        await watched.NextWaitAsync($"the wait after failure {expected.Length + 1}");
+        client.ConnectAttempts.Should().Be(expected.Length + 1,
             "it keeps trying, for ever, because a station that quietly stopped publishing would "
             + "not be found out until somebody looked at the site");
         client.RunTask!.IsFaulted.Should().BeFalse();
@@ -796,21 +879,18 @@ public class UplinkClientTests
     /// A token the site will not accept is a mistake somebody has to fix, not a condition that
     /// clears itself: an hour between complaints, and quarter-hours between attempts.
     /// </summary>
-    // QUARANTINED (packet-net/pdn-soundmodem#540): fails intermittently under full-suite load and
-    // passes alone. Excluded from the blocking Test steps in ci.yml and release.yml; still runs,
-    // non-blocking, in ci.yml's Quarantine step. Remove the trait when #540 is fixed.
-    [Trait("Category", "Quarantine")]
     [Fact]
     public async Task A_Refused_Token_Backs_Off_To_Quarter_Hours_And_Says_So_Once()
     {
         var clock = new FakeTimeProvider();
+        var watched = new WatchedClock(clock);
         await using var monitor = new StubMonitor { Refuse = HttpStatusCode.Unauthorized };
         await using WaterfallWebServer server = StationServer(clock);
         var journal = new List<string>();
         await using var client = new UplinkClient(
             server,
             SettingsFor(monitor.Url),
-            clock,
+            watched,
             line => { lock (journal) { journal.Add(line); } });
         client.Start();
 
@@ -823,11 +903,14 @@ public class UplinkClientTests
         for (int step = 0; step < expected.Length; step++)
         {
             int taken = step + 1;
-            await Until(() => client.RetryWaits.Count >= taken, $"refusal {taken}");
+            (await watched.SitOutNextWaitAsync($"the wait after refusal {taken}"))
+                .Should().Be(expected[step]);
             client.RetryWaits[step].Should().Be(expected[step]);
-            await UntilAdvancing(
-                clock, () => monitor.Attempts > taken, $"attempt {taken + 1}");
         }
+
+        // And the attempt the last wait let go has been made, refused and said or not said.
+        await watched.NextWaitAsync($"the wait after refusal {expected.Length + 1}");
+        monitor.Attempts.Should().Be(expected.Length + 1);
 
         // Six refusals over about half an hour, and one line about it.
         string[] said;
@@ -862,13 +945,14 @@ public class UplinkClientTests
     {
         const string Refusal = "says it is GB7RDG-2 and this token was issued to GB7RDG";
         var clock = new FakeTimeProvider();
+        var watched = new WatchedClock(clock);
         await using var monitor = new StubMonitor { RefuseTheHello = Refusal };
         await using WaterfallWebServer server = StationServer(clock);
         var journal = new List<string>();
         await using var client = new UplinkClient(
             server,
             SettingsFor(monitor.Url),
-            clock,
+            watched,
             line => { lock (journal) { journal.Add(line); } });
         client.Start();
 
@@ -895,14 +979,16 @@ public class UplinkClientTests
         for (int step = 0; step < expected.Length; step++)
         {
             int taken = step + 1;
-            await Until(() => client.RetryWaits.Count >= taken, $"refusal {taken}");
+            (await watched.SitOutNextWaitAsync($"the wait after refusal {taken}"))
+                .Should().Be(expected[step]);
             client.RetryWaits[step].Should().Be(expected[step]);
-            await UntilAdvancing(clock, () => monitor.Attempts > taken, $"attempt {taken + 1}");
         }
 
+        await watched.NextWaitAsync($"the wait after refusal {expected.Length + 1}");
+        monitor.Attempts.Should().Be(expected.Length + 1);
         string[] said = Lines(journal);
         said.Where(l => l.Contains(Refusal, StringComparison.Ordinal)).Should().ContainSingle(
-            "three refusals inside seven minutes of the clock, and one line about them: a "
+            "four refusals inside seven minutes of the clock, and one line about them: a "
             + "refusal is said once an hour, as a refused token is");
         said.Should().AllSatisfy(
             l => l.Should().MatchRegex("^[\\x20-\\x7e]*$", "journal lines are plain ASCII"));
@@ -1051,6 +1137,7 @@ public class UplinkClientTests
     {
         int exitCodeBefore = Environment.ExitCode;
         var clock = new FakeTimeProvider();
+        var watched = new WatchedClock(clock);
         await using var monitor = new StubMonitor { DropAtOnce = true };
         var channel = new SoundModemChannel(ChannelRate, randomSeed: 7);
         await using WaterfallWebServer server = WaterfallWebServer.Routed(channel, new WaterfallOptions
@@ -1059,7 +1146,7 @@ public class UplinkClientTests
             DeclaredBands = [new DeclaredBand(0, "afsk1200", 1700, 1200)],
         });
         server.Start();
-        await using var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
+        await using var client = new UplinkClient(server, SettingsFor(monitor.Url), watched);
         server.Relay = client;
         client.Start();
 
@@ -1075,7 +1162,12 @@ public class UplinkClientTests
             }
         }
 
-        await UntilAdvancing(clock, () => client.ConnectAttempts >= 2, "a reconnect");
+        // The clock above may already have let the first wait go, or not. Sitting it out in full
+        // lets it go either way, at the cost of a little more clock if it had gone already, and
+        // the wait after the second attempt is what says that attempt was made.
+        await watched.SitOutNextWaitAsync("the wait after the first drop");
+        await watched.NextWaitAsync("the wait after the reconnect");
+        client.ConnectAttempts.Should().BeGreaterThanOrEqualTo(2);
 
         client.RunTask!.IsFaulted.Should().BeFalse("the uplink is a courtesy and swallows its own");
         client.RunTask.IsCompleted.Should().BeFalse("it retries for ever rather than giving up");
@@ -1271,43 +1363,6 @@ public class UplinkClientTests
     }
 
     /// <summary>
-    /// A clock that hands the test the repeating timers created on it, so a watchdog tick can be
-    /// fired by hand at the moment the thing it cancels has gone.
-    /// </summary>
-    /// <remarks>
-    /// Only repeating timers are kept. <c>Task.Delay</c> on a <see cref="TimeProvider"/> makes a
-    /// one-shot timer through the same method, and the reconnect ladder is full of them.
-    /// </remarks>
-    private sealed class TimerCatcher(FakeTimeProvider inner) : TimeProvider
-    {
-        private readonly List<(TimerCallback Callback, object? State)> _repeating = [];
-
-        public IReadOnlyList<(TimerCallback Callback, object? State)> Repeating
-        {
-            get { lock (_repeating) { return [.. _repeating]; } }
-        }
-
-        public override ITimer CreateTimer(
-            TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-        {
-            if (period > TimeSpan.Zero && period != Timeout.InfiniteTimeSpan)
-            {
-                lock (_repeating) { _repeating.Add((callback, state)); }
-            }
-
-            return inner.CreateTimer(callback, state, dueTime, period);
-        }
-
-        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
-
-        public override long GetTimestamp() => inner.GetTimestamp();
-
-        public override long TimestampFrequency => inner.TimestampFrequency;
-
-        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
-    }
-
-    /// <summary>
     /// The silence watchdog cannot throw, whatever has been torn down under it. An exception out
     /// of a timer callback has no caller to catch it and ends the process, which would be decision
     /// 8 broken by the one part of this class that was outside a try.
@@ -1323,7 +1378,7 @@ public class UplinkClientTests
     public async Task The_Silence_Watchdog_Cannot_Throw_When_The_Session_Ends_Under_It()
     {
         var clock = new FakeTimeProvider();
-        var catcher = new TimerCatcher(clock);
+        var catcher = new WatchedClock(clock);
         await using var monitor = new StubMonitor();
         await using WaterfallWebServer server = StationServer(clock);
         var client = new UplinkClient(server, SettingsFor(monitor.Url), catcher);
@@ -1387,49 +1442,58 @@ public class UplinkClientTests
     public async Task A_Site_That_Welcomes_And_Drops_Over_And_Over_Says_So_Once()
     {
         var clock = new FakeTimeProvider();
+        var watched = new WatchedClock(clock);
         await using var monitor = new StubMonitor { DropAfterWelcome = true };
         await using WaterfallWebServer server = StationServer(clock);
         var journal = new List<string>();
         await using var client = new UplinkClient(
             server,
             SettingsFor(monitor.Url),
-            clock,
+            watched,
             line => { lock (journal) { journal.Add(line); } });
         client.Start();
 
-        await UntilAdvancing(clock, () => client.ConnectAttempts >= 4, "four flaps", stepSeconds: 5);
-
-        string[] said;
-        lock (journal)
+        // Three flaps sat out, and the wait after the fourth says the fourth has been and gone.
+        // The clock only moves between sessions, so every one of them is the short session it
+        // is on a real site, and lands on the short-session rung.
+        for (int flap = 1; flap <= 3; flap++)
         {
-            said = [.. journal];
+            await watched.SitOutNextWaitAsync($"the wait after flap {flap}");
         }
 
+        await watched.NextWaitAsync("the wait after flap 4");
+
+        string[] said = Lines(journal);
         said.Where(l => l.Contains("Retrying in")).Should().ContainSingle(
             "four sessions, each welcomed and dropped, inside fifteen minutes of the clock");
-        client.ConnectAttempts.Should().BeGreaterThanOrEqualTo(4, "it kept trying regardless");
+        client.RetryWaits.Should().Equal(
+            [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(20),
+                TimeSpan.FromSeconds(40)],
+            "a site that welcomes and drops at once is the short session the ladder backs off from");
+        client.ConnectAttempts.Should().Be(4, "it kept trying regardless");
     }
 
     /// <summary>The record of the ladder is capped, so a site that is down for a year costs nothing.</summary>
-    // QUARANTINED (packet-net/pdn-soundmodem#540): fails intermittently under full-suite load and
-    // passes alone. Excluded from the blocking Test steps in ci.yml and release.yml; still runs,
-    // non-blocking, in ci.yml's Quarantine step. Remove the trait when #540 is fixed.
-    [Trait("Category", "Quarantine")]
     [Fact]
     public async Task The_Reconnect_Ladder_Is_Not_Remembered_For_Ever()
     {
         var clock = new FakeTimeProvider();
+        var watched = new WatchedClock(clock);
         await using WaterfallWebServer server = StationServer(clock);
         int dead = FreePorts.Next();
         await using var client = new UplinkClient(
-            server, SettingsFor($"ws://127.0.0.1:{dead}/uplink"), clock);
+            server, SettingsFor($"ws://127.0.0.1:{dead}/uplink"), watched);
         client.Start();
 
-        await UntilAdvancing(
-            clock, () => client.RetryCount > 70, "seventy failures", stepSeconds: 60);
+        for (int failure = 1; failure <= 70; failure++)
+        {
+            await watched.SitOutNextWaitAsync($"the wait after failure {failure}");
+        }
+
+        await watched.NextWaitAsync("the wait after failure 71");
 
         client.RetryWaits.Should().HaveCount(64, "the first 64 are kept and the rest counted");
-        client.RetryCount.Should().BeGreaterThan(70);
+        client.RetryCount.Should().Be(71);
         client.RunTask!.IsFaulted.Should().BeFalse();
     }
 
