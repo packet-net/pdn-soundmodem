@@ -1563,7 +1563,7 @@ if (surveyConfig is not null)
                 surveyBands,
                 surveyOptions.DialFrequencyHz,
                 surveyOptions.Sideband);
-            var prospectorWorker = new ProspectorWorker(prospector, DspRate);
+            var prospectorWorker = new ProspectorWorker(prospector, DspRate, TimeProvider.System);
             prospectorLifetime = prospectorWorker;
             proposals = prospector.Proposals;
             prospectorCounts = () =>
