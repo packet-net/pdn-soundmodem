@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.CarrierSense;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems;
@@ -16,17 +15,11 @@ namespace Packet.SoundModem.Tests.Channel;
 /// window, 1.5 s of channel access and 6.8 s of this station's own two earlier bursts, on a
 /// channel that was working normally. Nothing in the station distinguished the two, and an
 /// operator cannot, because a KISS host cannot see the wait at all.</para>
-/// <para>Every test here runs on a <see cref="FakeTimeProvider"/> with
+/// <para>Every test here runs on a <see cref="VirtualAir.Clock"/> with
 /// <see cref="VirtualAir.PacedSink"/> for a sound card, so a keyup costs the clock what it would
 /// cost the air. That matters more here than anywhere else: with a free write there is no own
 /// airtime for a frame to be behind, and the case this exists to separate would not arise.</para>
 /// </remarks>
-// QUARANTINED (packet-net/pdn-soundmodem#537): these fail intermittently in the full suite on the
-// self-hosted runner and pass alone, apparently from the VirtualAir harness's fake clock being
-// cranked from several threads (and timer callbacks re-entering from the paced write). They are
-// excluded from the blocking Test steps in ci.yml and release.yml and still run, non-blocking, in
-// ci.yml's Quarantine step. Remove the trait when #537 is fixed.
-[Trait("Category", "Quarantine")]
 public class TransmitWaitsTests
 {
     private const int SampleRate = 12000;
@@ -82,10 +75,10 @@ public class TransmitWaitsTests
     /// <summary>An RR poll: an answer is owed, so the turnaround hold runs after it.</summary>
     private static byte[] Poll() => Convert.FromHexString("8E846E9EB08CE48E846EA4888E6551");
 
-    private static (SoundModemChannel Channel, FakeTimeProvider Time, Switch Radio,
+    private static (SoundModemChannel Channel, VirtualAir.Clock Time, Switch Radio,
         Dictionary<int, Switched> Modems) Station(bool withRadio = true)
     {
-        var time = new FakeTimeProvider();
+        var time = new VirtualAir.Clock();
         var radio = new Switch { Busy = withRadio ? false : null };
         var channel = new SoundModemChannel(
             SampleRate, time, randomSeed: 42, channelBusySource: withRadio ? radio : null);
@@ -109,15 +102,10 @@ public class TransmitWaitsTests
         return (channel, time, radio, modems);
     }
 
-    private static async Task<Task> StartAsync(
-        SoundModemChannel channel, FakeTimeProvider time, CancellationToken cancellation)
-    {
-        Task transmitter = channel.RunTransmitterAsync(
+    private static Task Start(
+        SoundModemChannel channel, VirtualAir.Clock time, CancellationToken cancellation) =>
+        channel.RunTransmitterAsync(
             new VirtualAir.PacedSink(SampleRate, time), new RecordingPtt(), cancellation);
-        VirtualAir.Pump(time, cancellation);
-        await Task.Yield();
-        return transmitter;
-    }
 
     /// <summary>Everything the station said about the frames it sent, in the order it sent them.</summary>
     private static List<TransmitReport> Watch(SoundModemChannel channel)
@@ -147,7 +135,7 @@ public class TransmitWaitsTests
     [Fact]
     public async Task A_Frame_Behind_Our_Own_Window_Blames_Our_Own_Transmissions()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, Switch radio, _) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time, Switch radio, _) = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         List<TransmitReport> sent = Watch(channel);
 
@@ -156,12 +144,12 @@ public class TransmitWaitsTests
         Task a = channel.EnqueueTransmit(Bpsk2150, Broadcast());
         Task b = channel.EnqueueTransmit(Bpsk2150, Broadcast(0x42));
         Task c = channel.EnqueueTransmit(Bpsk2150, Broadcast(0x43));
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, time, cancellation.Token);
 
-        await VirtualAir.AdvanceToAsync(time, queued + TimeSpan.FromMilliseconds(800));
+        await time.AdvanceToAsync(queued + TimeSpan.FromMilliseconds(800));
         TimeSpan shut = time.GetUtcNow() - queued;
         radio.Busy = false;
-        await Task.WhenAll(a, b, c).WaitAsync(TimeSpan.FromSeconds(60));
+        await time.RunUntilAsync(Task.WhenAll(a, b, c));
 
         sent.Should().HaveCount(3);
         foreach (TransmitReport report in sent)
@@ -198,7 +186,7 @@ public class TransmitWaitsTests
     public async Task A_Frame_Held_By_Carrier_Sense_Names_The_Sub_Channel()
     {
         // No radio, so the answer comes from the modems' own detectors and can be narrowed.
-        (SoundModemChannel channel, FakeTimeProvider time, _, Dictionary<int, Switched> modems) =
+        (SoundModemChannel channel, VirtualAir.Clock time, _, Dictionary<int, Switched> modems) =
             Station(withRadio: false);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         List<TransmitReport> sent = Watch(channel);
@@ -206,12 +194,12 @@ public class TransmitWaitsTests
         modems[Bpsk2150].Busy = true;
         DateTimeOffset queued = time.GetUtcNow();
         Task held = channel.EnqueueTransmit(Bpsk2150, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, time, cancellation.Token);
 
-        await VirtualAir.AdvanceToAsync(time, queued + TimeSpan.FromMilliseconds(1500));
+        await time.AdvanceToAsync(queued + TimeSpan.FromMilliseconds(1500));
         TimeSpan shut = time.GetUtcNow() - queued;
         modems[Bpsk2150].Busy = false;
-        await held.WaitAsync(TimeSpan.FromSeconds(60));
+        await time.RunUntilAsync(held);
 
         sent.Should().HaveCount(1);
         TransmitWaits waits = sent[0].Waits;
@@ -233,18 +221,18 @@ public class TransmitWaitsTests
     [Fact]
     public async Task A_Radios_Answer_Is_Not_Blamed_On_A_Sub_Channel()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, Switch radio, _) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time, Switch radio, _) = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         List<TransmitReport> sent = Watch(channel);
 
         radio.Busy = true;
         DateTimeOffset queued = time.GetUtcNow();
         Task held = channel.EnqueueTransmit(Bpsk2150, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, time, cancellation.Token);
 
-        await VirtualAir.AdvanceToAsync(time, queued + TimeSpan.FromSeconds(1));
+        await time.AdvanceToAsync(queued + TimeSpan.FromSeconds(1));
         radio.Busy = false;
-        await held.WaitAsync(TimeSpan.FromSeconds(60));
+        await time.RunUntilAsync(held);
 
         TransmitWaits waits = sent[0].Waits;
         PartsAddUp(waits);
@@ -265,7 +253,7 @@ public class TransmitWaitsTests
     [Fact]
     public async Task A_Frame_Held_By_Transmit_Inhibit_Says_So()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, _, _) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time, _, _) = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         List<TransmitReport> sent = Watch(channel);
 
@@ -273,12 +261,12 @@ public class TransmitWaitsTests
         channel.TransmitInhibit = () => inhibited;
         DateTimeOffset queued = time.GetUtcNow();
         Task waiting = channel.EnqueueTransmit(Bpsk2150, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, time, cancellation.Token);
 
-        await VirtualAir.AdvanceToAsync(time, queued + TimeSpan.FromSeconds(2));
+        await time.AdvanceToAsync(queued + TimeSpan.FromSeconds(2));
         TimeSpan shut = time.GetUtcNow() - queued;
         inhibited = false;
-        await waiting.WaitAsync(TimeSpan.FromSeconds(60));
+        await time.RunUntilAsync(waiting);
 
         TransmitWaits waits = sent[0].Waits;
         PartsAddUp(waits);
@@ -298,7 +286,7 @@ public class TransmitWaitsTests
     [Fact]
     public async Task A_Frame_Waiting_Out_A_Turnaround_Hold_Says_So()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, _, _) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time, _, _) = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         List<TransmitReport> sent = Watch(channel);
         channel.QuietAfterTransmit = (_, frame) =>
@@ -306,10 +294,9 @@ public class TransmitWaitsTests
 
         Task poll = channel.EnqueueTransmit(Bpsk2150, Poll());   // an answer is owed after this
         Task other = channel.EnqueueTransmit(Afsk850, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, time, cancellation.Token);
 
-        await poll.WaitAsync(TimeSpan.FromSeconds(60));
-        await other.WaitAsync(TimeSpan.FromSeconds(60));
+        await time.RunUntilAsync(Task.WhenAll(poll, other));
 
         sent.Should().HaveCount(2);
         TransmitWaits waits = sent[1].Waits;
@@ -331,13 +318,13 @@ public class TransmitWaitsTests
     [Fact]
     public async Task A_Frame_That_Did_Not_Wait_Names_No_Cause()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, _, _) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time, _, _) = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         List<TransmitReport> sent = Watch(channel);
 
         Task straight = channel.EnqueueTransmit(Bpsk2150, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
-        await straight.WaitAsync(TimeSpan.FromSeconds(30));
+        Task transmitter = Start(channel, time, cancellation.Token);
+        await time.RunUntilAsync(straight);
 
         TransmitWaits waits = sent[0].Waits;
         PartsAddUp(waits);

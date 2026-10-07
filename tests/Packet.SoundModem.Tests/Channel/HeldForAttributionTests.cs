@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Time.Testing;
 using M0LTE.Radio.Audio;
 using Packet.SoundModem.CarrierSense;
 using Packet.SoundModem.Channel;
@@ -32,16 +31,10 @@ namespace Packet.SoundModem.Tests.Channel;
 /// is reproduced deterministically so the next reader who subtracts those two columns finds out
 /// here rather than on the air
 /// (<see cref="One_Keyups_Frames_Report_Their_Place_In_It"/>).</para>
-/// <para>Everything runs on a <see cref="FakeTimeProvider"/>. The only thing the wall clock is
-/// used for is turning the crank - the pump below advances the fake clock in 10 ms steps and the
-/// paced sink waits for it - and no assertion here reads it.</para>
+/// <para>Everything runs on a <see cref="VirtualAir.Clock"/>, which moves only while the
+/// transmitter is parked on it or writing a burst, so no figure here depends on how fast the box
+/// is. The wall clock appears only as a safety net that names a hang.</para>
 /// </remarks>
-// QUARANTINED (packet-net/pdn-soundmodem#537): these fail intermittently in the full suite on the
-// self-hosted runner and pass alone, apparently from the VirtualAir harness's fake clock being
-// cranked from several threads (and timer callbacks re-entering from the paced write). They are
-// excluded from the blocking Test steps in ci.yml and release.yml and still run, non-blocking, in
-// ci.yml's Quarantine step. Remove the trait when #537 is fixed.
-[Trait("Category", "Quarantine")]
 public class HeldForAttributionTests
 {
     private const int SampleRate = 12000;
@@ -83,9 +76,9 @@ public class HeldForAttributionTests
         return TimeSpan.FromSeconds(modem.Modulate(frame, txDelayMs).Length / (double)SampleRate);
     }
 
-    private static (SoundModemChannel Channel, FakeTimeProvider Time, Switch Busy) Station()
+    private static (SoundModemChannel Channel, VirtualAir.Clock Time, Switch Busy) Station()
     {
-        var time = new FakeTimeProvider();
+        var time = new VirtualAir.Clock();
         var busy = new Switch { Busy = false };
         var channel = new SoundModemChannel(SampleRate, time, randomSeed: 42, channelBusySource: busy);
         channel.AddModem(2, sink => new BpskMultiModem(SampleRate, sink, crc: true, 2150, baud: 300, offsetPairs: 4));
@@ -96,13 +89,11 @@ public class HeldForAttributionTests
         return (channel, time, busy);
     }
 
-    private static async Task<(Task Transmitter, VirtualAir.PacedSink Sink)> StartAsync(
-        SoundModemChannel channel, FakeTimeProvider time, CancellationToken cancellation)
+    private static (Task Transmitter, VirtualAir.PacedSink Sink) Start(
+        SoundModemChannel channel, VirtualAir.Clock time, CancellationToken cancellation)
     {
         var sink = new VirtualAir.PacedSink(SampleRate, time);
         Task transmitter = channel.RunTransmitterAsync(sink, new RecordingPtt(), cancellation);
-        VirtualAir.Pump(time, cancellation);
-        await Task.Yield();
         return (transmitter, sink);
     }
 
@@ -113,56 +104,56 @@ public class HeldForAttributionTests
     [Fact]
     public async Task Each_Frame_Reports_Its_Own_Wait_Across_Several_Keyups()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, Switch busy) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time, Switch busy) = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         var held = new List<TimeSpan>();
         channel.FrameTransmittedWithReport += (_, _, report) => held.Add(report.HeldFor);
 
-        // Whether the station is keyed up, so the second keyup below can be made to be one.
-        var keyed = false;
-        channel.TransmittingChanged += on => Volatile.Write(ref keyed, on);
+        // The first keyup ending, so the second keyup below can be made to be one.
+        var unkeyed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        channel.TransmittingChanged += on =>
+        {
+            if (!on)
+            {
+                unkeyed.TrySetResult();
+            }
+        };
 
-        // Every instant below is READ off the fake clock rather than assumed. The crank runs on
-        // the thread pool and cannot be made to stop exactly on a mark, so a test that took its
-        // own targets for the truth would fail by however far the crank overshot - which is a
-        // property of the box it ran on and nothing to do with the figures under test.
+        // Every instant below is read off the clock rather than assumed, which costs nothing and
+        // keeps the sums honest if a step ever lands somewhere other than its mark.
         busy.Busy = true;
         DateTimeOffset firstQueued = time.GetUtcNow();
         Task first = channel.EnqueueTransmit(2, Broadcast());
-        (Task transmitter, VirtualAir.PacedSink sink) = await StartAsync(channel, time, cancellation.Token);
+        (Task transmitter, VirtualAir.PacedSink sink) = Start(channel, time, cancellation.Token);
 
         // A second frame a second into the first one's wait. Same source, so one queue: it is
         // behind the first frame and it will share the first frame's keyup.
-        await VirtualAir.AdvanceToAsync(time, firstQueued + TimeSpan.FromSeconds(1));
+        await time.AdvanceToAsync(firstQueued + TimeSpan.FromSeconds(1));
         DateTimeOffset secondQueued = time.GetUtcNow();
         Task second = channel.EnqueueTransmit(2, Broadcast(0x42));
 
         // Two seconds after the first was queued, the channel opens.
-        await VirtualAir.AdvanceToAsync(time, firstQueued + TimeSpan.FromSeconds(2));
+        await time.AdvanceToAsync(firstQueued + TimeSpan.FromSeconds(2));
         DateTimeOffset opened = time.GetUtcNow();
         busy.Busy = false;
-        await first.WaitAsync(TimeSpan.FromSeconds(60));
-        await second.WaitAsync(TimeSpan.FromSeconds(60));
+        await time.RunUntilAsync(Task.WhenAll(first, second));
 
         // Wait for the first keyup to END before handing over the next frame. A frame that
         // arrives while the drain loop is still running joins THAT keyup and is picked up the
         // instant it is queued, which is a keyup of three rather than the two-then-one this is
         // about. The enqueue task of the last frame completes inside the keyup, one write before
         // the tail and the unkey, so awaiting it is not the same as waiting for the keyup.
-        while (Volatile.Read(ref keyed))
-        {
-            await Task.Delay(1, CancellationToken.None);
-        }
+        await unkeyed.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
         // Now a second keyup, after a fresh wait of its own, to prove the ledger is per frame and
         // not something cumulative that keeps counting from the first one.
         busy.Busy = true;
         DateTimeOffset thirdQueued = time.GetUtcNow();
         Task third = channel.EnqueueTransmit(2, Broadcast());
-        await VirtualAir.AdvanceToAsync(time, thirdQueued + TimeSpan.FromMilliseconds(1500));
+        await time.AdvanceToAsync(thirdQueued + TimeSpan.FromMilliseconds(1500));
         DateTimeOffset openedAgain = time.GetUtcNow();
         busy.Busy = false;
-        await third.WaitAsync(TimeSpan.FromSeconds(60));
+        await time.RunUntilAsync(third);
 
         held.Should().HaveCount(3);
         TimeSpan opening = Burst(Broadcast(), channel.Csma.TxDelayMilliseconds);
@@ -209,7 +200,7 @@ public class HeldForAttributionTests
     [Fact]
     public async Task One_Keyups_Frames_Report_Their_Place_In_It()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, Switch busy) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time, Switch busy) = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         var held = new List<TimeSpan>();
         channel.FrameTransmittedWithReport += (_, _, report) => held.Add(report.HeldFor);
@@ -219,12 +210,12 @@ public class HeldForAttributionTests
         Task a = channel.EnqueueTransmit(2, Broadcast());
         Task b = channel.EnqueueTransmit(2, Broadcast(0x42));
         Task c = channel.EnqueueTransmit(2, Broadcast(0x43));
-        (Task transmitter, VirtualAir.PacedSink sink) = await StartAsync(channel, time, cancellation.Token);
+        (Task transmitter, VirtualAir.PacedSink sink) = Start(channel, time, cancellation.Token);
 
-        await VirtualAir.AdvanceToAsync(time, queued + TimeSpan.FromMilliseconds(800));
+        await time.AdvanceToAsync(queued + TimeSpan.FromMilliseconds(800));
         DateTimeOffset opened = time.GetUtcNow();
         busy.Busy = false;
-        await Task.WhenAll(a, b, c).WaitAsync(TimeSpan.FromSeconds(60));
+        await time.RunUntilAsync(Task.WhenAll(a, b, c));
 
         held.Should().HaveCount(3);
         TimeSpan opening = Burst(Broadcast(), channel.Csma.TxDelayMilliseconds);
