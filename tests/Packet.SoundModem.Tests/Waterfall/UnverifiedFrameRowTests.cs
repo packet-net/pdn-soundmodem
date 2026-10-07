@@ -183,29 +183,27 @@ public class UnverifiedFrameRowTests
             var verified = new FrameQuality(
                 "bpsk300-il2pc", Frame().Length, CorrectedBytes: 3, CrcValid: true, ChasedBits: 6);
 
+            // The log's writer is a thread of its own, and disposing the log is what waits for it:
+            // it finishes every row it was handed before the file is closed. So the rows are read
+            // back after the restart rather than polled for beforehand. A poll was bounded at a
+            // hundred looks of 20 ms, which is two seconds of wall clock for a writer that a busy
+            // machine (or a slow disk under the first schema write) is entitled to take longer
+            // over, and the rows are the same rows either way.
             await using (FrameLog writing = FrameLog.Open(path))
             {
                 writing.Record(0, Frame(), verified, audioHz: 2150, rfHz: 7_051_600);
                 writing.Record(0, Frame(), chased, audioHz: 2150, rfHz: 7_051_600);
-
-                // The log's writer is a thread of its own, so this waits for the rows rather than
-                // for an interval: nothing here decides anything by the clock, and the loop ends
-                // the moment the condition it is about is true.
-                for (int i = 0; i < 100 && writing.Recent(10).Count < 2; i++)
-                {
-                    await Task.Delay(20);
-                }
-
-                IReadOnlyList<LoggedFrame> logged = writing.Recent(10);
-                logged.Should().HaveCount(2);
-                logged.Should().AllSatisfy(row => row.From.Should().Be("GB7BPQ",
-                    "the log is a record of what was read, and keeps both callsigns"));
-                logged[1].ChasedBits.Should().Be(6, "which is what the verdict is read off");
-                logged[1].CallsignWorthShowing.Should().BeFalse();
-                logged[0].CallsignWorthShowing.Should().BeTrue();
             }
 
             await using FrameLog restarted = FrameLog.Open(path);
+            IReadOnlyList<LoggedFrame> logged = restarted.Recent(10);
+            logged.Should().HaveCount(2);
+            logged.Should().AllSatisfy(row => row.From.Should().Be("GB7BPQ",
+                "the log is a record of what was read, and keeps both callsigns"));
+            logged[1].ChasedBits.Should().Be(6, "which is what the verdict is read off");
+            logged[1].CallsignWorthShowing.Should().BeFalse();
+            logged[0].CallsignWorthShowing.Should().BeTrue();
+
             int port = FreePorts.Next();
             await using var server = new WaterfallWebServer(
                 new SoundModemChannel(SampleRate, randomSeed: 7), port,

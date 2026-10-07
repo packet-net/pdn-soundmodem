@@ -61,9 +61,16 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Waits for work done on the receiver's own threads, a real socket session with the fake BBS
+    /// included, without moving the clock. Bounded by a 90 s safety net for a hang: the count of
+    /// 5 ms looks it used to be bounded by came to about twenty seconds of wall clock, which a
+    /// session on a busy machine is entitled to take.
+    /// </summary>
     private static async Task Eventually(Func<bool> condition, string what)
     {
-        for (int look = 0; look < 4000 && !condition(); look++)
+        var patience = System.Diagnostics.Stopwatch.StartNew();
+        while (!condition() && patience.Elapsed < TimeSpan.FromSeconds(90))
         {
             await Task.Delay(5);
         }
@@ -98,7 +105,10 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
         last.Tone.SnrDb.Should().BeGreaterThan(15);
 
         _ = receiver.RunAsync(_stop.Token);
-        await Eventually(() => _bbs.Taken.Count == 2 && receiver.Intake.Pending().Count == 0, "both bulletins forwarded");
+        // LastSession is set once the session's outcomes are all journalled; the outbox empties
+        // and the BBS has its copies a moment before that.
+        await Eventually(() => _bbs.Taken.Count == 2 && receiver.Delivery.LastSession is not null, "both bulletins forwarded");
+        receiver.Intake.Pending().Should().BeEmpty();
 
         _bbs.Logins.Should().AllSatisfy(login => login.Should().Equal("Q0CAST", "secret", "BBS"));
         _bbs.Taken.Select(t => t.Title).Should().BeEquivalentTo(["Net tonight", "For sale: a TS-50"]);
@@ -173,7 +183,11 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
 
         await receiver.Intake.DrainAsync(CancellationToken.None);
         _ = receiver.RunAsync(_stop.Token);
-        await Eventually(() => receiver.Intake.Pending().Count == 0 && !_bbs.ReverseAnswers.IsEmpty, "a session ran");
+        // Waits for the session to have finished, not for the fake BBS to have seen its answers:
+        // the warning about the mail offered back is journalled after the outbox has emptied and
+        // after the BBS has had its answer, so a test that stopped at either raced the journal.
+        await Eventually(() => receiver.Delivery.LastSession is not null, "a session ran");
+        receiver.Intake.Pending().Should().BeEmpty();
 
         _bbs.Taken.Select(t => t.Bid).Should().Equal("2002_GB7XYZ");
         _bbs.ReverseAnswers.Should().Equal([Packet.Fbb.FsAnswerKind.Defer], "the receiver never takes mail, and never says it has it");
