@@ -41,6 +41,9 @@ public sealed class FlexDaxTransmitterMockTests
         LeadOutSeconds = 0.03,
         // Don't wait the 2 s production inter-burst settle between paced test bursts.
         InterBurstSettle = TimeSpan.FromMilliseconds(1),
+        // A hang guard, not a deadline: the mock always answers, and the library's 5 s default,
+        // counted on the machine's clock, timed out under load before this process had read it.
+        SetupTimeout = TimeSpan.FromMinutes(1),
         // Left at the default (true): the mock serves `meter list`, so the interlock's
         // subscription path is exercised offline rather than switched off.
     };

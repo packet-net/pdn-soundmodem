@@ -163,6 +163,18 @@ public sealed record FlexTransmitterOptions
     public bool RequireMeters { get; init; } = true;
 
     /// <summary>
+    /// How long bring-up waits for the radio to report each object it was asked to create (the
+    /// slice, the DAX streams) before giving up on it.
+    /// </summary>
+    /// <remarks>Handed to M0LTE.Flex as its <c>SetupTimeout</c>, whose default this repeats: 5 s
+    /// is a fair "the radio is not answering" against a real one. The library counts it on the
+    /// machine's own clock (<c>Environment.TickCount64</c>), not on <see cref="Time"/>, and polls
+    /// for the reply rather than waiting on it, so against the in-process mock it is a race with
+    /// the thread pool: a loaded test run has taken longer than 5 s to process a reply the mock
+    /// had already sent. Offline tests therefore set this to a hang guard instead.</remarks>
+    public TimeSpan SetupTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
     /// Clock for every interval this class enforces - the identification period, the inter-burst
     /// settle, the post-transmit observation.
     /// </summary>
@@ -547,6 +559,7 @@ public sealed class FlexIqTransmitter : IOtaTransmitter
                         IqBandReference.LowerEdge),
                     Antenna = options.Antenna,
                     RfPower = options.RfPower,
+                    SetupTimeout = options.SetupTimeout,
                 },
                 cancellation).ConfigureAwait(false);
 
