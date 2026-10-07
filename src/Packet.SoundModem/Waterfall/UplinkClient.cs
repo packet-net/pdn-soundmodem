@@ -962,6 +962,18 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// For tests: run on the receive loop between the two steps of a demand that takes the viewer
+    /// count across zero, after the audio generation has moved on and before the new count is
+    /// published. Null in production.
+    /// </summary>
+    /// <remarks>
+    /// The gap between those two steps is where a block could be lost (#567), and nothing else
+    /// can stop a test thread there. A test that calls <see cref="Audio"/> from here is an audio
+    /// thread arriving at the worst moment there is.
+    /// </remarks>
+    internal Action? BetweenGenerationAndCount { get; set; }
+
     private void ApplyDemand(JsonElement message)
     {
         if (_outgoing is null)
@@ -995,6 +1007,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
         // and a block they started in the gap between the two would be thrown away half built by
         // the generation arriving behind it, losing the first samples a new viewer was sent.
         Interlocked.Increment(ref _generation);
+        BetweenGenerationAndCount?.Invoke();
         Volatile.Write(ref _viewers, viewers);
 
         // Said in pairs or not at all. Rate-limiting both halves through one gate let a viewer who
