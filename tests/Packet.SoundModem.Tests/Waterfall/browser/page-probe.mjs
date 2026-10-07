@@ -286,6 +286,18 @@ sandbox.window = sandbox; sandbox.globalThis = sandbox; sandbox.self = sandbox;
 vm.createContext(sandbox);
 vm.runInContext(script, sandbox, { filename: "waterfall.html" });
 
+// Every probe of /api/mixer the page starts, as the promise initMixer returns. The page decides
+// whether its mixer group is shown from the answer, over a real socket to a server that may be
+// slow to give it, so anything that reads that decision waits for these first rather than for
+// a fixed time. Wrapped synchronously here, before the socket can deliver the config that
+// starts the first probe, and through the page's global name, which is how it calls initMixer.
+vm.runInContext(`(() => {
+  const probe = initMixer;
+  globalThis.__mixerProbes = [];
+  initMixer = function () { const answer = probe(); __mixerProbes.push(answer); return answer; };
+})()`, sandbox);
+const mixerDecided = () => Promise.allSettled(vm.runInContext("__mixerProbes", sandbox));
+
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const run = (expr) => { try { return vm.runInContext(expr, sandbox); } catch (e) { return "THREW: " + e; } };
 
@@ -697,6 +709,9 @@ const levelRows = sandbox.document.getElementById("frames").children.map(c => c.
 // And what it takes away. Read on every run, public or not, so that "the operator's page still
 // has them" is a measurement in the same shape as "the visitor's page does not" rather than an
 // absence somebody has to trust. The ids are the page's own list, so the two cannot drift.
+// The mixer group is one of the ids read here, and the operator's page takes it off only once
+// its probe of /api/mixer has been answered.
+await mixerDecided();
 const publicPage = {
   title: sandbox.document.title,
   bodyClass: sandbox.document.body.className,
@@ -779,7 +794,7 @@ const meterPanelExpr = `({
 const meterPanel = () => run(meterPanelExpr);
 
 if (process.env.MIXER) {
-  await untilTrue(() => run(`document.getElementById("mixerCtl").hidden`) === false, 10000);
+  await mixerDecided();
 }
 
 // The meter's two timers, driven by hand rather than by the server: the case they exist for is
