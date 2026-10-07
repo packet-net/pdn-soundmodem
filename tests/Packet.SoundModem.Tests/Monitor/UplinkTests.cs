@@ -839,16 +839,30 @@ public class UplinkTests
         // A message type the plan's 4.2 does not list and the station's client sends anyway: its
         // radio status sentence, which is the third thing IWaterfallRelay offers. It belongs in
         // the chip a visitor reads, alongside whose station it is.
+        //
+        // A page already open when the sentence arrives is sent it as a "radio" message, and the
+        // site rebuilds the config every later page opens with before it sends that. So the
+        // message reaching the first page is the point after which the second page's config has
+        // to carry the sentence. The picker row is no such point: it is updated first, and a page
+        // opened on the strength of it could be told the config from before the rebuild (and then
+        // the "radio" message, which is why a real visitor never sees the difference).
+        await using Browser watching = await h.WatchAsync(Slug);
+        await watching.UntilTextAsync("config");
         await station.SendAsync(new { type = "radio", status = "IC-7300, 7.049450 MHz USB" });
-        await h.UntilAsync(async () =>
-            (await h.RowAsync(Slug)).GetProperty("status").GetString()!.Contains(
-                "IC-7300", StringComparison.Ordinal));
-
-        await using Browser browser = await h.WatchAsync(Slug);
-        JsonElement config = await browser.UntilTextAsync("config");
-        config.GetProperty("radioStatus").GetString().Should()
+        JsonElement told = await watching.UntilTextAsync(
+            "radio",
+            m => m.GetProperty("status").GetString()!.Contains("IC-7300", StringComparison.Ordinal));
+        told.GetProperty("status").GetString().Should()
             .Contain(Callsign, "the chip always names the station")
             .And.Contain("IC-7300, 7.049450 MHz USB", "and says what its own radio is doing");
+
+        await using Browser arriving = await h.WatchAsync(Slug);
+        JsonElement config = await arriving.UntilTextAsync("config");
+        config.GetProperty("radioStatus").GetString().Should()
+            .Contain(Callsign, "the chip always names the station")
+            .And.Contain("IC-7300, 7.049450 MHz USB", "and a page opened afterwards starts with it");
+        (await h.RowAsync(Slug)).GetProperty("status").GetString().Should()
+            .Contain("IC-7300", "and the picker row says the same");
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1437,7 +1451,10 @@ public class UplinkTests
         }
 
         /// <summary>Waits for the first text message of this kind and returns it.</summary>
-        internal async Task<JsonElement> UntilTextAsync(string type)
+        internal Task<JsonElement> UntilTextAsync(string type) => UntilTextAsync(type, _ => true);
+
+        /// <summary>Waits for the first text message of this kind that matches, and returns it.</summary>
+        internal async Task<JsonElement> UntilTextAsync(string type, Func<JsonElement, bool> matches)
         {
             JsonElement? found = null;
             await StubStation.UntilAsync(
@@ -1449,8 +1466,12 @@ public class UplinkTests
                         {
                             if (!binary && TypeOf(payload) == type)
                             {
-                                found = JsonDocument.Parse(payload).RootElement.Clone();
-                                return true;
+                                JsonElement message = JsonDocument.Parse(payload).RootElement.Clone();
+                                if (matches(message))
+                                {
+                                    found = message;
+                                    return true;
+                                }
                             }
                         }
                     }
