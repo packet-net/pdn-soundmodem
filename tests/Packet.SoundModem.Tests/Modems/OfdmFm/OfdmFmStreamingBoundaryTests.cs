@@ -110,9 +110,18 @@ public class OfdmFmStreamingBoundaryTests
         // A steady tone correlates with itself perfectly and forever, so every sample looks like
         // the top of a sync plateau. Committing at each one means a header read - several
         // transforms - per sample arriving, which does not fall behind gracefully: it falls behind
-        // for as long as somebody holds a PTT down on frequency. Measured against real silence
-        // rather than against a wall-clock budget, so it says something about the work done rather
-        // than about how busy this machine happens to be.
+        // for as long as somebody holds a PTT down on frequency. Measured in header reads, the unit
+        // a commit costs, rather than against a wall-clock budget, so it says something about the
+        // work done rather than about how busy this machine happens to be.
+        //
+        // It used to be measured in bytes allocated on this thread, and that was not as
+        // independent of the machine as it looked: CI run 37358833197 read 1272 bytes for silence
+        // that allocates nothing, and 7720 more for four seconds of tone than for two, with
+        // identical work done. Under the server collector, with the rest of the suite allocating on
+        // other threads, the runtime's per-thread counter moves by up to an allocation quantum on a
+        // thread that allocated nothing (reproduced: silence read 0 alone and 7320 with eight
+        // threads allocating beside it), and tiered compilation shaves a little off a method's
+        // allocations partway through a run. The header reads did not move in any of it.
         var profile = OfdmFmParameters.Synthetic;
 
         // The tone has to repeat over half a transform, or it does not correlate with itself at
@@ -132,43 +141,41 @@ public class OfdmFmStreamingBoundaryTests
         {
             var delivered = new List<byte[]>();
             var modem = new OfdmFmModem("ofdm-fm:test", profile, delivered.Add);
-            long before = GC.GetAllocatedBytesForCurrentThread();
             for (int at = 0; at < audio.Length; at += 1200)
             {
                 modem.Process(audio.AsSpan(at, Math.Min(1200, audio.Length - at)));
             }
 
             delivered.Should().BeEmpty("a tone is not a frame");
-            return GC.GetAllocatedBytesForCurrentThread() - before;
+            return modem.HeaderReads;
         }
 
         long silent = Cost(new float[tone.Length]);
         long carrier = Cost(tone);
         long twiceTheCarrier = Cost([.. tone, .. tone]);
 
-        // The invariant is that the cost is bounded by the number of header reads, and the budget
-        // resets only when the correlation breaks - so a tone that never breaks costs the same
-        // whether it runs for two seconds or four. That is the thing worth pinning: it holds no
-        // matter what a single header read costs, which a fixed multiple of the silent cost does
-        // not. An earlier version of this test asserted such a multiple and had to move the moment
-        // a header read legitimately got more expensive, which told us nothing about the defect it
-        // was there to catch.
-        twiceTheCarrier.Should().BeLessThan(
-            carrier + Math.Max(silent, 1024),
+        silent.Should().Be(0, "silence never crosses the sync threshold, so it commits to nothing");
+        carrier.Should().BePositive(
+            "the tone has to look like a sync plateau to the search, or this proves nothing");
+
+        // The invariant is that the work is a number of header reads, and the budget resets only
+        // when the correlation breaks - so a tone that never breaks costs the same whether it runs
+        // for two seconds or four. That is the thing worth pinning: it holds no matter what a
+        // single header read costs. An earlier version of this test asserted a fixed multiple of
+        // the silent cost and had to move the moment a header read legitimately got more
+        // expensive, which told us nothing about the defect it was there to catch.
+        twiceTheCarrier.Should().Be(
+            carrier,
             "twice the tone must not cost twice the work - the attempts are spent on the carrier "
-            + "appearing, not on its samples going by (two seconds cost {0} bytes, four {1})",
+            + "appearing, not on its samples going by (two seconds cost {0} header reads, four {1})",
             carrier,
             twiceTheCarrier);
 
-        // And it is still a bounded multiple of doing nothing at all, just a looser one: a header
-        // read allocates transforms, tables and an estimate, and a handful of those per carrier-on
-        // event is the design. One per sample would be thousands of times this.
-        carrier.Should().BeLessThan(
-            Math.Max(silent, 1024) * 200,
+        // And the number is the budget for one carrier-on event. One per sample would be 24000.
+        carrier.Should().BeLessThanOrEqualTo(
+            OfdmFmModem.MaxSyncAttemptsPerRun,
             "a permanently correlated signal must cost a bounded number of header reads, not one "
-            + "per sample (silence cost {0} bytes, the carrier {1})",
-            silent,
-            carrier);
+            + "per sample");
     }
 
     [Fact]
