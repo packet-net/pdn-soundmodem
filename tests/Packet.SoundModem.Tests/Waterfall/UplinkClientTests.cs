@@ -1363,6 +1363,67 @@ public class UplinkClientTests
     }
 
     /// <summary>
+    /// Every sample offered once a viewer is wanted reaches the site, even from an audio thread
+    /// that arrives in the middle of the demand that brought the viewer.
+    /// </summary>
+    /// <remarks>
+    /// <para>#567. A demand that takes the count from nobody to somebody does two things: it
+    /// moves the audio generation on, so a half-built block from before is thrown away, and it
+    /// publishes the count, which is what lets audio in. In the other order, an audio call that
+    /// saw the new count in between started a block under the old generation, and the next call
+    /// threw it away: the first samples a new viewer was sent never arrived.</para>
+    /// <para>No timing is involved. The client's test hook runs on its receive loop between the
+    /// two steps, and offers half a block there if, at that instant, the client says audio is
+    /// wanted. The test then offers enough to make exactly two whole blocks of what was offered
+    /// while wanted, and fences the stream with a frame, which goes through the same queue: when
+    /// the frame has arrived, every block before it has too.</para>
+    /// </remarks>
+    [Fact]
+    public async Task A_Viewers_First_Samples_Arrive_Even_From_A_Call_In_The_Middle_Of_The_Demand()
+    {
+        var clock = new FakeTimeProvider();
+        await using var monitor = new StubMonitor();
+        await using WaterfallWebServer server = StationServer(clock);
+        await using var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
+
+        float[] half = Tone(BlockSamples / 2);
+        int offeredInTheGap = 0;
+        var gapPassed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.BetweenGenerationAndCount = () =>
+        {
+            if (client.Wanted)
+            {
+                client.Audio(half, transmitted: false);
+                offeredInTheGap = half.Length;
+            }
+
+            gapPassed.TrySetResult();
+        };
+
+        client.Start();
+        await Until(() => client.Publishing, "the welcome");
+        await monitor.DemandAsync(1);
+
+        // The demand that brought the viewer, all of it, and not merely the moment the count
+        // became visible: in the wrong order that moment comes before the call in the gap.
+        await gapPassed.Task.WaitAsync(Patience);
+        await Until(() => client.Wanted, "the demand");
+
+        // Two whole blocks of what was offered while audio was wanted, however much of it the
+        // call in the gap was.
+        client.Audio(Tone((2 * BlockSamples) - offeredInTheGap), transmitted: false);
+        client.Frame(AFrame("G4FENCE"));
+        await Until(
+            () => monitor.TextMessagesOfType("frame")
+                .Any(f => f.GetProperty("from").GetString() == "G4FENCE"),
+            "the fence frame, which is queued behind every block offered before it");
+
+        monitor.AudioMessages.Should().HaveCount(
+            2, "every sample offered once a viewer was wanted reaches the site, the first ones included");
+        client.DroppedMessages.Should().Be(0);
+    }
+
+    /// <summary>
     /// The silence watchdog cannot throw, whatever has been torn down under it. An exception out
     /// of a timer callback has no caller to catch it and ends the process, which would be decision
     /// 8 broken by the one part of this class that was outside a try.
@@ -1531,7 +1592,7 @@ public class UplinkClientTests
         string[] held = [.. fields.Select(f => f.FieldType.Name).Distinct().Order()];
         held.Should().BeEquivalentTo(
             [
-                "Action`1", "Boolean", "CancellationTokenSource", "Channel`1", "Decimator[]",
+                "Action", "Action`1", "Boolean", "CancellationTokenSource", "Channel`1", "Decimator[]",
                 "Int16[][]", "Int32", "Int32[]", "Int64", "List`1", "Lock", "Single[][]", "Task",
                 "TimeProvider", "UberSdrReconnectPolicy", "UplinkSettings", "Uri",
                 "WaterfallWebServer",
