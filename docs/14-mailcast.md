@@ -124,7 +124,7 @@ The receiver logs in to your BBS as `Q0CAST`, a forwarding partner of its own. N
 
 2. In LinBPQ's web page, open **Mail Mgmt**. Under **Users**, add **Q0CAST** and tick **BBS**.
 
-3. On Q0CAST's **Forwarding** page, tick **Allow Blocked**, **Allow Compressed** and **Use B1 Protocol**. Leave the TO, AT and HR boxes empty, so nothing is ever queued for it. It doesn't need forwarding enabled: LinBPQ never calls it.
+3. On Q0CAST's **Forwarding** page, tick **FBB Blocked** (forward in FBB's binary blocks, not line-by-line text), **Allow Binary** (LinBPQ's label for allowing compressed forwarding, which blocked forwarding also needs) and **Use B1 Protocol** (the simpler of FBB's two binary protocols). Leave the TO, AT, TIMES, Connect Script and HR Routes boxes empty, so nothing is ever queued for it. It doesn't need forwarding enabled: LinBPQ never calls it. Click **Update** to save.
 
 4. Put the same password in `mailcast.bbs.password`. If your `FBBPORT` isn't 8011, set `mailcast.bbs.port` to it.
 
