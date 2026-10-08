@@ -88,6 +88,25 @@ mailcast: the signal on 7.0524 to 7.0552 MHz is outside what this station hears.
 
 Never set `retune` on GB7RDG's own station, or on any head end sending the bulletins: while the rig is away the transmit lease the head end needs is refused, so its slot would never go out.
 
+## Choosing 7.052 or 7.0523
+
+The signal itself does not move: it fills about 7.0524 to 7.0553 MHz whichever USB dial you use. The dial only changes where that fixed signal lands in your own audio, and on a rig with a tight receive filter, where it lands matters.
+
+| Your rig's receive filter | Dial |
+| --- | --- |
+| An SDR, a data-mode audio path, or 2.7 kHz and wider | 7.052 MHz (the default) |
+| 2.4 kHz or narrower | 7.0523 MHz |
+
+On 7.052 the signal's centre lands at 1800 Hz audio, close enough to a 2.4 kHz (or narrower) SSB filter's upper roll-off to lose frames through it. On 7.0523 it lands at 1500 Hz instead, clear of that roll-off, at no cost to a wide filter, a data-mode audio path or an SDR - so 7.0523 works for everyone, but 7.052 is kept as the default because a station already on it keeps working.
+
+If your station retunes for the bulletins (`"retune": true`), set `mailcast.dialKHz` to pick up the narrower-filter dial:
+
+```json
+{ "mailcast": { "bbs": { "password": "pick-one" }, "retune": true, "dialKHz": 7052.3 } }
+```
+
+If your station already hears the signal on its own passband (no `retune`), just set your own dial to whichever of the two suits your filter; pdn-soundmodem accepts either, no `mailcast` setting needed.
+
 ## Your packet traffic while the rig is retuned
 
 While the rig is on 7.052 MHz your station transmits nothing at all, so nothing of yours is ever keyed on the bulletin frequency:

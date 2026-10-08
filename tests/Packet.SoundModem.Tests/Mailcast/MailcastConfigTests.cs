@@ -227,10 +227,11 @@ public sealed class MailcastPlacementTests
 {
     private const double Half = 1450;
 
-    private static MailcastConfig Config(bool retune = false) => new()
+    private static MailcastConfig Config(bool retune = false, double? dialKHz = null) => new()
     {
         Bbs = new MailcastBbsConfig { Password = "x" },
         Retune = retune,
+        DialKHz = dialKHz ?? MailcastConfig.DefaultDialKHz,
     };
 
     [Fact]
@@ -270,6 +271,44 @@ public sealed class MailcastPlacementTests
     }
 
     [Fact]
+    public void A_Radio_On_The_Narrow_Filter_Dial_Hears_It_Too_Whatever_The_Configured_DialKHz()
+    {
+        // 7.0523 MHz: the dial the 2026-10 filter study recommends for a 2.4 kHz or narrower
+        // filter. Accepted whether or not "mailcast"."dialKHz" was ever changed from its default.
+        var radio = new MailcastRadio(MailcastRadioKind.SoundCard, 7_052_300, "usb", 300, 2700, HasRig: false);
+
+        MailcastPlacement? placement = MailcastPlacement.Decide(Config(), radio, Half, out string? why);
+
+        why.Should().BeNull();
+        placement!.Retunes.Should().BeFalse();
+        placement.AudioCentreHz.Should().BeApproximately(1500, 0.001);
+    }
+
+    [Theory]
+    [InlineData(7_051_900)]
+    [InlineData(7_052_400)]
+    public void A_Dial_At_Either_Edge_Of_The_Combined_Tolerance_Band_Still_Counts(double dialHz)
+    {
+        var radio = new MailcastRadio(MailcastRadioKind.SoundCard, dialHz, "usb", 300, 2700, HasRig: false);
+
+        MailcastPlacement.Decide(Config(), radio, Half, out string? why)!.Retunes.Should().BeFalse();
+        why.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(7_051_800)]
+    [InlineData(7_052_500)]
+    public void A_Dial_Just_Outside_The_Combined_Tolerance_Band_Is_Refused_Naming_Both_Recommended_Dials(double dialHz)
+    {
+        var radio = new MailcastRadio(MailcastRadioKind.SoundCard, dialHz, "usb", 300, 2700, HasRig: false);
+
+        MailcastPlacement.Decide(Config(), radio, Half, out string? why).Should().BeNull();
+
+        why.Should().Contain("7.052 MHz USB for a 2.7 kHz filter or wider (or an SDR)")
+            .And.Contain("7.0523 MHz for 2.4 kHz or narrower");
+    }
+
+    [Fact]
     public void An_Ordinary_Rig_On_The_Packet_Channels_Is_Retuned_Around_Each_Slot_When_Allowed()
     {
         var radio = new MailcastRadio(MailcastRadioKind.SoundCard, 7_049_450, "usb", 300, 2700, HasRig: true);
@@ -280,6 +319,20 @@ public sealed class MailcastPlacementTests
         placement!.Retunes.Should().BeTrue();
         placement.AudioCentreHz.Should().Be(1800, "on a retuned rig the signal is where the standard puts it");
         placement.Describe(Config()).Should().Contain("retuned to 7.052 MHz USB from 1 minute before each slot to 12 minutes after");
+    }
+
+    [Fact]
+    public void A_Rig_Retuned_To_A_Configured_Narrow_Filter_Dial_Is_Put_On_The_Signal_At_1500_Hz()
+    {
+        var radio = new MailcastRadio(MailcastRadioKind.SoundCard, 7_049_450, "usb", 300, 2700, HasRig: true);
+        MailcastConfig config = Config(retune: true, dialKHz: 7052.3);
+
+        MailcastPlacement? placement = MailcastPlacement.Decide(config, radio, Half, out string? why);
+
+        why.Should().BeNull();
+        placement!.Retunes.Should().BeTrue();
+        placement.AudioCentreHz.Should().Be(1500, "retuning puts the rig on the configured dial, not always 7.052");
+        placement.Describe(config).Should().Contain("retuned to 7.0523 MHz USB");
     }
 
     [Fact]

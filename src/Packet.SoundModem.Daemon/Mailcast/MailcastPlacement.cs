@@ -33,8 +33,9 @@ internal sealed record MailcastRadio(
 /// <summary>Where the mailcast modem listens.</summary>
 /// <param name="Retunes">True when the rig is retuned around each slot; false when the station's
 /// own passband hears the signal and nothing is retuned.</param>
-/// <param name="AudioCentreHz">Where the signal's centre falls in the station's audio: always
-/// 1800 Hz when retuning, else wherever the station's dial puts it.</param>
+/// <param name="AudioCentreHz">Where the signal's centre falls in the station's audio: wherever
+/// <see cref="MailcastConfig.DialKHz"/> puts it when retuning (1800 Hz for the default
+/// 7.052 MHz), else wherever the station's own dial puts it.</param>
 /// <param name="LowHz">The signal's lower edge in that audio.</param>
 /// <param name="HighHz">Its upper edge.</param>
 internal sealed record MailcastPlacement(bool Retunes, double AudioCentreHz, double LowHz, double HighHz)
@@ -71,11 +72,29 @@ internal sealed record MailcastPlacement(bool Retunes, double AudioCentreHz, dou
     }
 
     /// <summary>
-    /// How close a station's own dial has to be to the mailcast dial to count as tuned to it,
-    /// whatever its nominal window says: it is then set as the standalone receiver tells a
-    /// sound-card station to set its radio.
+    /// Operator slop allowed around either of pdn-mailcast's two recommended dials - 7.052 MHz
+    /// (a wide filter, a data-mode audio path or an SDR) and 7.0523 MHz (a 2.4 kHz or narrower
+    /// filter, recommended since the 2026-10 filter study) - for a station's own dial to count
+    /// as tuned to the signal, whatever its nominal window says.
     /// </summary>
     internal const double OnTheDialToleranceHz = 100;
+
+    /// <summary>The lower recommended dial, in kHz: pdn-mailcast's original, for a wide filter,
+    /// a data-mode audio path or an SDR.</summary>
+    internal const double WideFilterDialKHz = MailcastConfig.DefaultDialKHz;
+
+    /// <summary>The higher recommended dial, in kHz: for a rig whose receive filter is 2.4 kHz
+    /// or narrower, since the 2026-10 filter study.</summary>
+    internal const double NarrowFilterDialKHz = 7052.3;
+
+    /// <summary>The band, in Hz, a station's own dial counts as "on the mailcast dial" within:
+    /// <see cref="OnTheDialToleranceHz"/> below <see cref="WideFilterDialKHz"/> to the same
+    /// above <see cref="NarrowFilterDialKHz"/>, covering both recommended dials and the slop
+    /// around each.</summary>
+    internal const double OnTheDialLowHz = WideFilterDialKHz * 1000 - OnTheDialToleranceHz;
+
+    /// <summary>See <see cref="OnTheDialLowHz"/>.</summary>
+    internal const double OnTheDialHighHz = NarrowFilterDialKHz * 1000 + OnTheDialToleranceHz;
 
     /// <summary>
     /// Decides where the modem listens. The station's own passband first: if it hears the whole
@@ -102,7 +121,7 @@ internal sealed record MailcastPlacement(bool Retunes, double AudioCentreHz, dou
             double centre = config.CentreHz - dial;
             double low = centre - halfWidthHz;
             double high = centre + halfWidthHz;
-            if (Math.Abs(dial - config.DialHz) <= OnTheDialToleranceHz
+            if ((dial >= OnTheDialLowHz && dial <= OnTheDialHighHz)
                 || (low >= radio.WindowLowHz && high <= radio.WindowHighHz))
             {
                 return new MailcastPlacement(false, centre, low, high);
@@ -124,7 +143,7 @@ internal sealed record MailcastPlacement(bool Retunes, double AudioCentreHz, dou
 
         if (config.Retune && radio.HasRig)
         {
-            double centre = MailcastOnAir.CentreAudioHz;
+            double centre = MailcastOnAir.CentreAudioHz(config.DialHz);
             return new MailcastPlacement(true, centre, centre - halfWidthHz, centre + halfWidthHz);
         }
 
@@ -141,10 +160,13 @@ internal sealed record MailcastPlacement(bool Retunes, double AudioCentreHz, dou
                 + "falls inside \"ubersdr\".\"ssbLowHz\" to \"ssbHighHz\".",
             _ when !radio.HasRig =>
                 "Add a \"rig\" section (rigctld) and \"mailcast\".\"retune\": true, and the rig is retuned "
-                + "to it around each slot and put back; or tune the station so the signal is in its passband.",
+                + "to it around each slot and put back; or tune the station so the signal is in its "
+                + "passband - 7.052 MHz USB for a 2.7 kHz filter or wider (or an SDR), 7.0523 MHz for "
+                + "2.4 kHz or narrower.",
             _ =>
                 "Set \"mailcast\".\"retune\": true, and the rig is retuned to it around each slot and put "
-                + "back; or tune the station so the signal is in its passband.",
+                + "back; or tune the station so the signal is in its passband - 7.052 MHz USB for a "
+                + "2.7 kHz filter or wider (or an SDR), 7.0523 MHz for 2.4 kHz or narrower.",
         };
         return null;
     }

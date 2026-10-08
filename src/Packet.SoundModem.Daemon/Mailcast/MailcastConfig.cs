@@ -11,9 +11,10 @@ namespace Packet.SoundModem.Daemon;
 /// the local BBS. Null (the default) is a station that does none of it.
 /// </summary>
 /// <remarks>
-/// <para>Present, the station runs an MS110D receive modem on the mailcast signal (centred
-/// <see cref="DialKHz"/> + 1.8 kHz) beside its own modems. It never transmits on it and it has no
-/// KISS port. Frames to MCAST from one of <see cref="Sources"/> feed a store on disk, and each bulletin rebuilt from them
+/// <para>Present, the station runs an MS110D receive modem on the mailcast signal (a fixed
+/// <see cref="MailcastOnAir.SignalCentreHz"/>, wherever <see cref="DialKHz"/> puts it in audio)
+/// beside its own modems. It never transmits on it and it has no KISS port. Frames to MCAST from
+/// one of <see cref="Sources"/> feed a store on disk, and each bulletin rebuilt from them
 /// is offered to the BBS as the forwarding partner <see cref="MailcastBbsConfig.Login"/>.</para>
 /// <para>Where the modem listens is decided at start-up, see <see cref="MailcastPlacement"/>: on
 /// the station's own passband when that already hears the signal, else by retuning the rig around
@@ -22,7 +23,12 @@ namespace Packet.SoundModem.Daemon;
 /// </remarks>
 public sealed partial class MailcastConfig
 {
-    /// <summary>The usual USB dial, 7.052 MHz, which puts the signal's centre at 1800 Hz audio.</summary>
+    /// <summary>
+    /// The usual USB dial, 7.052 MHz, which puts the signal's centre at 1800 Hz audio: it suits
+    /// a receive filter of 2.7 kHz or wider, a data-mode audio path, or an SDR. A rig with a
+    /// 2.4 kHz or narrower filter hears it better on 7052.3 (<see cref="MailcastPlacement"/>
+    /// accepts a sound-card dial on either without retuning).
+    /// </summary>
     public const double DefaultDialKHz = 7052.0;
 
     /// <summary>The lowest dial accepted: the bottom of 160 m.</summary>
@@ -47,7 +53,11 @@ public sealed partial class MailcastConfig
     /// </summary>
     public List<string?>? Sources { get; set; }
 
-    /// <summary>The USB dial the signal is heard on, in kHz; its centre is 1800 Hz above.</summary>
+    /// <summary>
+    /// The USB dial the signal is heard on, in kHz: where a retuned rig is put, and where a
+    /// station's own passband is checked against. The signal's own centre does not move with
+    /// it; see <see cref="MailcastOnAir.SignalCentreHz"/>.
+    /// </summary>
     public double DialKHz { get; set; } = DefaultDialKHz;
 
     /// <summary>
@@ -77,9 +87,10 @@ public sealed partial class MailcastConfig
     [JsonIgnore]
     public double DialHz => DialKHz * 1000;
 
-    /// <summary>The signal's centre on the band, in Hz.</summary>
+    /// <summary>The signal's actual centre on the band, in Hz: a fixed fact about the
+    /// transmitter, the same whatever <see cref="DialKHz"/> is set to.</summary>
     [JsonIgnore]
-    public double CentreHz => DialHz + MailcastOnAir.CentreAudioHz;
+    public double CentreHz => MailcastOnAir.SignalCentreHz;
 
     /// <summary>Whether <see cref="Sources"/> was left out, so <see cref="DefaultSources"/> is used.</summary>
     [JsonIgnore]

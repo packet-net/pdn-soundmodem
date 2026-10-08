@@ -55,13 +55,13 @@ internal sealed class MailcastReceiver : IAsyncDisposable
         Intake.FrameHeard += Slots.OnFrame;
         Intake.TimetableHeard += Slots.Heard;
 
-        // The modem at the signal's centre in this station's audio: 1800 Hz, the standard's own,
-        // on a retuned rig; wherever the dial puts it otherwise, shifted the way a band plan
-        // places any MS110D modem.
+        // The modem at the signal's centre in this station's audio, wherever placement put it,
+        // shifted the way a band plan places any MS110D modem. A centre equal to the modem's own
+        // native 1800 Hz (the usual case, on the default 7.052 MHz dial) asks for no shift at
+        // all: ModemCatalog.Create returns the bare modem then.
         double centre = placement.AudioCentreHz;
         _modem = ModemCatalog.Create(
-            MailcastOnAir.Mode, dspRate, frame => Intake.Offer(frame),
-            Math.Abs(centre - MailcastOnAir.CentreAudioHz) < 0.5 ? default : new ModemOptions(CentreFrequencyHz: centre));
+            MailcastOnAir.Mode, dspRate, frame => Intake.Offer(frame), new ModemOptions(CentreFrequencyHz: centre));
         if (Packet.SoundModem.Ms110d.Ms110dModem.Unwrap(_modem) is { } ms110d)
         {
             // The receiver's own release (issue #553); the lock limit below stays as a backstop.

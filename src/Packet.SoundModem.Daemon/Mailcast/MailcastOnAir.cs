@@ -16,8 +16,21 @@ internal static class MailcastOnAir
     /// <summary>The waveform: MS110D WN4. Receiving is autobaud, so any waveform decodes.</summary>
     public const string Mode = "ms110d-wn4";
 
-    /// <summary>Where the signal's centre and the opening tone fall above the USB dial.</summary>
-    public const double CentreAudioHz = 1800;
+    /// <summary>
+    /// The signal's own centre frequency: a fixed fact about the transmitter, unmoved by
+    /// whatever a receiving station's dial is read as. 1800 Hz above 7.052 MHz USB, the dial
+    /// pdn-mailcast has recommended since the broadcast began (a wide filter, a data-mode audio
+    /// path or an SDR all suit it); 1500 Hz above 7.0523 MHz, the dial recommended since the
+    /// 2026-10 filter study for a rig whose receive filter is 2.4 kHz or narrower, where 1800 Hz
+    /// sits too close to a typical SSB filter's upper roll-off and loses frames. Either dial
+    /// hears the same signal; only where it lands in audio differs.
+    /// </summary>
+    public const double SignalCentreHz = 7_053_800;
+
+    /// <summary>Where the signal's centre falls in a station's audio for a dial of
+    /// <paramref name="dialHz"/>: the fixed <see cref="SignalCentreHz"/>, read against that
+    /// dial.</summary>
+    public static double CentreAudioHz(double dialHz) => SignalCentreHz - dialHz;
 
     /// <summary>
     /// Half the signal's occupied width when the modem cannot be measured: MS110D with the
