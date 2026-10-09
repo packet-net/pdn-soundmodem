@@ -69,17 +69,9 @@ internal static class MailcastStation
         MailcastRadio radio = RadioFor(
             flex, headless, uberSdr, bandPlan, config.DialFrequency, bandPlan?.DialHz ?? config.DialFrequency,
             sideband, flexTuning, config.UberSdr, hasRig: config.Rig is not null);
-        if (MailcastPlacement.Decide(mailcast, radio, MailcastPlacement.HalfWidthHz(), out string? refusal) is not { } placement)
+        if (MailcastPlacement.Decide(mailcast, radio, MailcastPlacement.HalfWidthHz(), out string? refusal) is null)
         {
             return refusal;
-        }
-
-        if (!MailcastPlacement.CentreIsConstructible(placement.AudioCentreHz))
-        {
-            return $"mailcast: the signal's audio centre would be {placement.AudioCentreHz:F0} Hz, but the "
-                + "receive modem cannot be moved that close to the edge of its own occupied band (almost "
-                + "2.9 kHz wide) without folding noise over DC. Try a dial giving a centre nearer 2000 Hz, "
-                + "or measure the filter again - a wider or DATA filter usually centres higher.";
         }
 
         return StateDirectoryProblem(mailcast.StateDirectoryFor(StationStateDirectory(configPath)));

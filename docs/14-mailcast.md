@@ -111,7 +111,7 @@ You need your passband's edges to do the sum. Two ways to get them:
   It only runs when the station is not transmitting and no mailcast slot is open, so it can take a couple of minutes around a busy slot. A `note` says when the passband came out narrower than about 2.4 kHz, as the FT-450D's default filter above does (switch to your rig's widest or "DATA" filter, which also usually centres higher - see below), or when the measurement itself is unclear (try again, or type the edges by hand).
 - **Type it.** Your rig's or filter's manual gives the passband edges directly; do the sum above by hand.
 
-Either way, set your own dial to the result. A centre right at the low end of 1000 to 2000 Hz can be too close to the receive modem's own band to actually build - if so, the station refuses to start and says so, naming the centre and asking for one nearer 2000 Hz; a wider or "DATA" filter, which a narrow-filter `note` already points you at, is usually the fix, since it centres higher too. If your station retunes for the bulletins instead (`"retune": true`), set `mailcast.dialKHz` to it:
+Either way, set your own dial to the result. If your station retunes for the bulletins instead (`"retune": true`), set `mailcast.dialKHz` to it:
 
 ```json
 { "mailcast": { "bbs": { "password": "pick-one" }, "retune": true, "dialKHz": 7051.85 } }

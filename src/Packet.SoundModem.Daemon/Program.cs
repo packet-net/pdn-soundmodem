@@ -804,20 +804,6 @@ if (mailcastConfig is not null && mailcastPlacement is not null)
             + "the service, or set \"mailcast\".\"stateDirectory\" to a folder that is.");
         return 2;
     }
-    catch (ArgumentException e)
-    {
-        // The placement decision (MailcastPlacement.Decide) accepts any sound-card centre from
-        // 1000 to 2000 Hz, but MS110D's own occupied band - almost 2.9 kHz - means the shift
-        // decorator refuses some of that near its low end rather than fold noise over DC (see
-        // FrequencyShiftedModem.Wrap's guard). Caught here rather than left to crash the
-        // process with a raw stack trace: the message carries the same numbers the guard threw
-        // with, which already say what to change.
-        Console.Error.WriteLine(
-            $"mailcast: cannot place the receive modem there: {e.Message}. Try a dial giving an "
-            + "audio centre nearer 2000 Hz, or measure your filter again - a wider or DATA filter "
-            + "usually centres higher.");
-        return 2;
-    }
 
     mailcast.Attach(channel);
     foreach (string line in mailcast.Describe())

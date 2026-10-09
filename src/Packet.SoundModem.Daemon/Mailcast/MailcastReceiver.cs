@@ -28,6 +28,7 @@ internal sealed class MailcastReceiver : IAsyncDisposable
     private readonly MailcastPlacement _placement;
     private readonly int _rate;
     private readonly IModem _modem;
+    private readonly MailcastReceiveShift _receiveShift;
     private readonly MailcastToneDetector _tone;
     private readonly long _lockLimit;
     private readonly Action<string> _log;
@@ -55,13 +56,17 @@ internal sealed class MailcastReceiver : IAsyncDisposable
         Intake.FrameHeard += Slots.OnFrame;
         Intake.TimetableHeard += Slots.Heard;
 
-        // The modem at the signal's centre in this station's audio, wherever placement put it,
-        // shifted the way a band plan places any MS110D modem. A centre equal to the modem's own
-        // native 1800 Hz (the usual case, on the default 7.052 MHz dial) asks for no shift at
-        // all: ModemCatalog.Create returns the bare modem then.
+        // The modem itself always stays at its own native centre: mailcast moves the audio to
+        // it instead of asking the generic band-plan shift decorator to move the modem (see
+        // MailcastReceiveShift - that decorator's DC/Nyquist guard refuses some of the centres
+        // the sound-card measure-or-type rule accepts, discovered proving this receiver decodes
+        // at one of them). A centre equal to the native one (the usual case, on the default
+        // 7.052 MHz dial) asks for no shift at all: MailcastReceiveShift.Active is then false
+        // and Process below calls the modem directly.
         double centre = placement.AudioCentreHz;
-        _modem = ModemCatalog.Create(
-            MailcastOnAir.Mode, dspRate, frame => Intake.Offer(frame), new ModemOptions(CentreFrequencyHz: centre));
+        double nativeCentreHz = ModemCatalog.DefaultCentreFrequencyFor(MailcastOnAir.Mode) ?? centre;
+        _modem = ModemCatalog.Create(MailcastOnAir.Mode, dspRate, frame => Intake.Offer(frame));
+        _receiveShift = new MailcastReceiveShift(dspRate, centre, nativeCentreHz, MailcastPlacement.HalfWidthHz());
         if (Packet.SoundModem.Ms110d.Ms110dModem.Unwrap(_modem) is { } ms110d)
         {
             // The receiver's own release (issue #553); the lock limit below stays as a backstop.
@@ -150,7 +155,18 @@ internal sealed class MailcastReceiver : IAsyncDisposable
             _locked = 0;
         }
 
-        _modem.Process(samples);
+        if (_receiveShift.Active)
+        {
+            _receiveShift.Process(samples, _modem);
+        }
+        else
+        {
+            _modem.Process(samples);
+        }
+
+        // The tone detector works directly at the signal's own centre, whatever that is - it is
+        // a plain FFT search, not a modem FrequencyShiftedModem's guard applies to - so it always
+        // gets the station's actual audio, never the modem's shifted copy.
         _tone.Process(samples);
         ReleaseStuckLock(samples.Length);
     }

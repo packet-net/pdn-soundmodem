@@ -142,19 +142,22 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
         receiver.Slots.Last!.Tone!.OffsetHz.Should().BeInRange(1.5, 3.5);
     }
 
-    [Fact]
-    public async Task A_Signal_Near_The_Low_End_Of_The_Sound_Card_Band_Is_Heard_Through_The_Modem_Placement()
+    [Theory]
+    [InlineData(1278.0)] // the FT-450D worked example in docs/14-mailcast.md
+    [InlineData(1500.0)] // the old narrow-filter dial's centre
+    [InlineData(1950.0)] // near the sound-card band's high end
+    public async Task A_Signal_In_The_Sound_Card_Band_Is_Heard_Through_The_Modem_Placement(double centreHz)
     {
-        // 1950 Hz: inside the sound-card measure-or-type band of 1000 to 2000 Hz, and the
-        // nearest round figure to that band's low end MS110D's own almost-2.9-kHz occupied
-        // width actually reaches without folding noise over DC once shifted there (see
-        // MailcastPlacementTests.A_Centre_Near_The_Low_End_Of_The_Sound_Card_Band_Cannot_Be_
-        // Built_Yet - 1278 Hz, docs/14-mailcast.md's own FT-450D example, cannot). Proves
-        // decoding at a centre the modem is moved to by placement, the same way the existing
-        // 3700 Hz test above proves it shifted the other way.
+        // Every one of these is below MailcastReceiveShift's own safe margin from the generic
+        // band-plan shift decorator's DC guard (MS110D's native 639-tap Hilbert receive path
+        // would refuse 1278 and 1500 Hz outright - see FrequencyShiftedModem.Wrap). Mailcast
+        // moves the audio to the modem's native centre instead of asking that decorator to move
+        // the modem, so none of these ever reach its guard at all. Proves decoding at a centre
+        // the modem is moved to by placement, the same way the existing 3700 Hz test above
+        // proves it shifted the other way.
         IReadOnlyList<byte[]> frames = MailcastSlotAudio.Frames(MailcastSlotAudio.Bulletins().Take(1).ToList());
-        float[] audio = MailcastSlotAudio.Render(frames, centreHz: 1950, toneOffsetHz: -0.8);
-        MailcastReceiver receiver = Receiver(centreHz: 1950);
+        float[] audio = MailcastSlotAudio.Render(frames, centreHz, toneOffsetHz: -0.8);
+        MailcastReceiver receiver = Receiver(centreHz);
 
         Play(receiver.Process, audio);
         await receiver.Intake.DrainAsync(CancellationToken.None);

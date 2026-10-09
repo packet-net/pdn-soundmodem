@@ -103,29 +103,6 @@ internal sealed record MailcastPlacement(bool Retunes, double AudioCentreHz, dou
     internal const double SoundCardCentreHighHz = 2000;
 
     /// <summary>
-    /// Whether the MS110D receive modem can actually be moved to <paramref name="centreHz"/> of
-    /// audio: the same clear-of-DC-and-Nyquist guard <see cref="FrequencyShiftedModem.Wrap"/>
-    /// enforces when the receiver is actually built. <see cref="Decide"/> accepts any sound-card
-    /// centre from <see cref="SoundCardCentreLowHz"/> to <see cref="SoundCardCentreHighHz"/>
-    /// without asking this - a real analogue filter's roll-off is what bounds that, not MS110D's
-    /// own occupied width - so a caller that is about to build the receiver (start-up, and
-    /// <c>POST /api/config</c>'s dry run) checks this too, and refuses cleanly with the numbers
-    /// rather than discovering an unhandled exception.
-    /// </summary>
-    internal static bool CentreIsConstructible(double centreHz)
-    {
-        try
-        {
-            ModemCatalog.Create(MailcastOnAir.Mode, 48000, static _ => { }, new ModemOptions(CentreFrequencyHz: centreHz));
-            return true;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
     /// Decides where the modem listens. The station's own passband first: if it hears the whole
     /// signal (or the dial is the mailcast dial), nothing is retuned. Otherwise the rig is
     /// retuned around each slot, if the config allows it and there is a rig. Otherwise null, with

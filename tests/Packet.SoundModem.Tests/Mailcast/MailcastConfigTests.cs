@@ -197,20 +197,19 @@ public sealed class MailcastConfigTests : IDisposable
     }
 
     [Fact]
-    public void The_Api_Refuses_A_Dial_Decide_Accepts_But_Ms110D_Cannot_Actually_Reach()
+    public void The_Api_Accepts_The_Ft450D_Worked_Example_Dial()
     {
-        // dialFrequency 7052522 Hz puts the signal's centre at 1278 Hz - inside the 1000 to
-        // 2000 Hz band Decide() accepts, docs/14-mailcast.md's own FT-450D worked example - but
-        // below the roughly 1740 Hz floor MS110D's own occupied width actually allows once
-        // shifted (MailcastPlacementTests.A_Centre_Near_The_Low_End...). The API catches this
-        // before restarting onto it rather than crashing on the restart.
+        // dialFrequency 7052522 Hz puts the signal's centre at 1278 Hz - docs/14-mailcast.md's
+        // own FT-450D worked example, and inside the 1000 to 2000 Hz band Decide() accepts.
+        // MailcastReceiver moves the audio to MS110D's native centre instead of asking the
+        // generic band-plan shift decorator to move the modem there (MailcastReceiveShift), so
+        // this is not just accepted at the config layer, it actually decodes - see
+        // MailcastReceiveTests.A_Signal_At_The_Ft450D_Centre_Is_Heard_Through_The_Modem_Placement.
         string asPath = Path.Combine(_dir.FullName, "soundmodem.json");
 
-        string? why = ConfigApi.Validate(
-            """{"device": "null", "dialFrequency": 7052522, "mailcast": {"bbs": {"password": "x"}}}""", asPath);
-
-        why.Should().Contain("cannot be moved that close to the edge of its own occupied band")
-            .And.Contain("1278 Hz");
+        ConfigApi.Validate(
+            """{"device": "null", "dialFrequency": 7052522, "mailcast": {"bbs": {"password": "x"}}}""", asPath)
+            .Should().BeNull();
     }
 
     [Fact]
@@ -450,27 +449,6 @@ public sealed class MailcastPlacementTests
     public void The_Signal_Is_Measured_Off_The_Modem_As_A_Little_Under_3_Khz_Wide()
     {
         MailcastPlacement.HalfWidthHz().Should().BeInRange(1300, 1650);
-    }
-
-    [Fact]
-    public void A_Centre_Near_The_Low_End_Of_The_Sound_Card_Band_Cannot_Be_Built_Yet()
-    {
-        // 1278 Hz is docs/14-mailcast.md's own FT-450D worked example, and Decide() above
-        // accepts it (it is between 1000 and 2000 Hz). But MS110D's own occupied width is
-        // almost 2.9 kHz, not the 2900 Hz "nominal" figure the placement arithmetic assumes
-        // either side of a centre - shifted down to 1278 Hz its lower edge would reach below
-        // DC, which Packet.SoundModem.Modems.FrequencyShiftedModem.Wrap refuses rather than
-        // fold noise over DC into the demodulator. The measured safe floor is about 1740 Hz;
-        // everything from there to 2000 Hz builds. Flagged for a maintainer: today, a station
-        // whose dial follows this worked example exactly would be refused at start-up (caught
-        // in Program.cs and MailcastStation.Problem, not an unhandled exception) rather than
-        // receive anything - the rule as given accepts more than MS110D can actually reach.
-        MailcastPlacement.CentreIsConstructible(1278).Should().BeFalse(
-            "MS110D's own occupied band reaches below DC once shifted this far down");
-        MailcastPlacement.CentreIsConstructible(1000).Should().BeFalse();
-        MailcastPlacement.CentreIsConstructible(1800).Should().BeTrue("no shift at all");
-        MailcastPlacement.CentreIsConstructible(1950).Should().BeTrue();
-        MailcastPlacement.CentreIsConstructible(2000).Should().BeTrue();
     }
 
     [Fact]
