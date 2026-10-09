@@ -72,29 +72,58 @@ internal sealed record MailcastPlacement(bool Retunes, double AudioCentreHz, dou
     }
 
     /// <summary>
-    /// Operator slop allowed around either of pdn-mailcast's two recommended dials - 7.052 MHz
-    /// (a wide filter, a data-mode audio path or an SDR) and 7.0523 MHz (a 2.4 kHz or narrower
-    /// filter, recommended since the 2026-10 filter study) - for a station's own dial to count
-    /// as tuned to the signal, whatever its nominal window says.
+    /// Operator slop allowed around pdn-mailcast's original recommended dial, 7.052 MHz, for a
+    /// Flex in attach mode or an SDR's own dial to count as tuned to the signal, whatever its
+    /// nominal window says. Untouched by the 2026-10 sound-card filter study: neither has an
+    /// analogue filter whose roll-off the dial needs to dodge, so there is nothing for either to
+    /// gain by moving off 7.052.
     /// </summary>
     internal const double OnTheDialToleranceHz = 100;
 
-    /// <summary>The lower recommended dial, in kHz: pdn-mailcast's original, for a wide filter,
-    /// a data-mode audio path or an SDR.</summary>
+    /// <summary>The recommended dial, in kHz, for a Flex in attach mode or an SDR.</summary>
     internal const double WideFilterDialKHz = MailcastConfig.DefaultDialKHz;
 
-    /// <summary>The higher recommended dial, in kHz: for a rig whose receive filter is 2.4 kHz
-    /// or narrower, since the 2026-10 filter study.</summary>
-    internal const double NarrowFilterDialKHz = 7052.3;
-
-    /// <summary>The band, in Hz, a station's own dial counts as "on the mailcast dial" within:
-    /// <see cref="OnTheDialToleranceHz"/> below <see cref="WideFilterDialKHz"/> to the same
-    /// above <see cref="NarrowFilterDialKHz"/>, covering both recommended dials and the slop
-    /// around each.</summary>
+    /// <summary>The band, in Hz, a Flex-attach or SDR dial counts as "on the mailcast dial"
+    /// within: <see cref="OnTheDialToleranceHz"/> either side of <see cref="WideFilterDialKHz"/>.</summary>
     internal const double OnTheDialLowHz = WideFilterDialKHz * 1000 - OnTheDialToleranceHz;
 
     /// <summary>See <see cref="OnTheDialLowHz"/>.</summary>
-    internal const double OnTheDialHighHz = NarrowFilterDialKHz * 1000 + OnTheDialToleranceHz;
+    internal const double OnTheDialHighHz = WideFilterDialKHz * 1000 + OnTheDialToleranceHz;
+
+    /// <summary>
+    /// The lowest audio centre a sound-card rig's own dial may put the signal at and still count
+    /// as heard on its own passband, no retuning: the 2026-10 filter study's measure-or-type
+    /// rule. See <see cref="OnTheDialHighHz"/>'s counterpart <see cref="SoundCardCentreHighHz"/>
+    /// and <see cref="MailcastOnAir.SuggestedDialHz"/> for how a dial follows from it.
+    /// </summary>
+    internal const double SoundCardCentreLowHz = 1000;
+
+    /// <summary>The highest audio centre a sound-card rig's own dial may put the signal at; see
+    /// <see cref="SoundCardCentreLowHz"/>.</summary>
+    internal const double SoundCardCentreHighHz = 2000;
+
+    /// <summary>
+    /// Whether the MS110D receive modem can actually be moved to <paramref name="centreHz"/> of
+    /// audio: the same clear-of-DC-and-Nyquist guard <see cref="FrequencyShiftedModem.Wrap"/>
+    /// enforces when the receiver is actually built. <see cref="Decide"/> accepts any sound-card
+    /// centre from <see cref="SoundCardCentreLowHz"/> to <see cref="SoundCardCentreHighHz"/>
+    /// without asking this - a real analogue filter's roll-off is what bounds that, not MS110D's
+    /// own occupied width - so a caller that is about to build the receiver (start-up, and
+    /// <c>POST /api/config</c>'s dry run) checks this too, and refuses cleanly with the numbers
+    /// rather than discovering an unhandled exception.
+    /// </summary>
+    internal static bool CentreIsConstructible(double centreHz)
+    {
+        try
+        {
+            ModemCatalog.Create(MailcastOnAir.Mode, 48000, static _ => { }, new ModemOptions(CentreFrequencyHz: centreHz));
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
 
     /// <summary>
     /// Decides where the modem listens. The station's own passband first: if it hears the whole
@@ -121,8 +150,16 @@ internal sealed record MailcastPlacement(bool Retunes, double AudioCentreHz, dou
             double centre = config.CentreHz - dial;
             double low = centre - halfWidthHz;
             double high = centre + halfWidthHz;
-            if ((dial >= OnTheDialLowHz && dial <= OnTheDialHighHz)
-                || (low >= radio.WindowLowHz && high <= radio.WindowHighHz))
+
+            // A sound-card rig: any dial that puts the signal's audio centre in the band a
+            // typical SSB filter's roll-off clears, 1000 to 2000 Hz, is heard where it is, placing
+            // the modem at that exact centre - the 2026-10 filter study's measure-or-type rule.
+            // A Flex in attach mode or an SDR is untouched: both keep the original fixed-dial
+            // tolerance band around 7.052 MHz, having no analogue roll-off to dodge.
+            bool onDial = radio.Kind == MailcastRadioKind.SoundCard
+                ? centre >= SoundCardCentreLowHz && centre <= SoundCardCentreHighHz
+                : dial >= OnTheDialLowHz && dial <= OnTheDialHighHz;
+            if (onDial || (low >= radio.WindowLowHz && high <= radio.WindowHighHz))
             {
                 return new MailcastPlacement(false, centre, low, high);
             }
@@ -160,13 +197,18 @@ internal sealed record MailcastPlacement(bool Retunes, double AudioCentreHz, dou
                 + "falls inside \"ubersdr\".\"ssbLowHz\" to \"ssbHighHz\".",
             _ when !radio.HasRig =>
                 "Add a \"rig\" section (rigctld) and \"mailcast\".\"retune\": true, and the rig is retuned "
-                + "to it around each slot and put back; or tune the station so the signal is in its "
-                + "passband - 7.052 MHz USB for a 2.7 kHz filter or wider (or an SDR), 7.0523 MHz for "
-                + "2.4 kHz or narrower.",
+                + "to it around each slot and put back; or tune so the signal's audio centre falls "
+                + "between 1000 and 2000 Hz: the best dial is 7.0538 MHz minus the middle of your "
+                + "receive passband (an FT-450D at about 367-2190 Hz, centred on 1278 Hz, wants "
+                + "7.05252 MHz) - POST /api/mailcast/measure measures your passband and works the dial "
+                + "out for you, or read the edges off your filter's manual and do the sum by hand.",
             _ =>
                 "Set \"mailcast\".\"retune\": true, and the rig is retuned to it around each slot and put "
-                + "back; or tune the station so the signal is in its passband - 7.052 MHz USB for a "
-                + "2.7 kHz filter or wider (or an SDR), 7.0523 MHz for 2.4 kHz or narrower.",
+                + "back; or tune so the signal's audio centre falls between 1000 and 2000 Hz: the best "
+                + "dial is 7.0538 MHz minus the middle of your receive passband (an FT-450D at about "
+                + "367-2190 Hz, centred on 1278 Hz, wants 7.05252 MHz) - POST /api/mailcast/measure "
+                + "measures your passband and works the dial out for you, or read the edges off your "
+                + "filter's manual and do the sum by hand.",
         };
         return null;
     }

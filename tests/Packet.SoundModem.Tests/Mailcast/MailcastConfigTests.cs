@@ -197,6 +197,23 @@ public sealed class MailcastConfigTests : IDisposable
     }
 
     [Fact]
+    public void The_Api_Refuses_A_Dial_Decide_Accepts_But_Ms110D_Cannot_Actually_Reach()
+    {
+        // dialFrequency 7052522 Hz puts the signal's centre at 1278 Hz - inside the 1000 to
+        // 2000 Hz band Decide() accepts, docs/14-mailcast.md's own FT-450D worked example - but
+        // below the roughly 1740 Hz floor MS110D's own occupied width actually allows once
+        // shifted (MailcastPlacementTests.A_Centre_Near_The_Low_End...). The API catches this
+        // before restarting onto it rather than crashing on the restart.
+        string asPath = Path.Combine(_dir.FullName, "soundmodem.json");
+
+        string? why = ConfigApi.Validate(
+            """{"device": "null", "dialFrequency": 7052522, "mailcast": {"bbs": {"password": "x"}}}""", asPath);
+
+        why.Should().Contain("cannot be moved that close to the edge of its own occupied band")
+            .And.Contain("1278 Hz");
+    }
+
+    [Fact]
     public void The_Api_Refuses_A_State_Directory_That_Cannot_Be_Written()
     {
         string notAFolder = Path.Combine(_dir.FullName, "a-file");
@@ -271,10 +288,10 @@ public sealed class MailcastPlacementTests
     }
 
     [Fact]
-    public void A_Radio_On_The_Narrow_Filter_Dial_Hears_It_Too_Whatever_The_Configured_DialKHz()
+    public void A_Sound_Card_Dial_Giving_1500_Hz_Still_Counts_Whatever_The_Configured_DialKHz()
     {
-        // 7.0523 MHz: the dial the 2026-10 filter study recommends for a 2.4 kHz or narrower
-        // filter. Accepted whether or not "mailcast"."dialKHz" was ever changed from its default.
+        // 7.0523 MHz: centre 1500 Hz, inside the sound-card measure-or-type band (1000 to
+        // 2000 Hz). Accepted whether or not "mailcast"."dialKHz" was ever changed from its default.
         var radio = new MailcastRadio(MailcastRadioKind.SoundCard, 7_052_300, "usb", 300, 2700, HasRig: false);
 
         MailcastPlacement? placement = MailcastPlacement.Decide(Config(), radio, Half, out string? why);
@@ -285,27 +302,58 @@ public sealed class MailcastPlacementTests
     }
 
     [Theory]
-    [InlineData(7_051_900)]
-    [InlineData(7_052_400)]
-    public void A_Dial_At_Either_Edge_Of_The_Combined_Tolerance_Band_Still_Counts(double dialHz)
+    [InlineData(7_052_800, 1000)] // the low edge of the measure-or-type band
+    [InlineData(7_051_800, 2000)] // the high edge
+    public void A_Sound_Card_Dial_At_Either_Edge_Of_1000_To_2000_Hz_Still_Counts(double dialHz, double expectedCentreHz)
     {
         var radio = new MailcastRadio(MailcastRadioKind.SoundCard, dialHz, "usb", 300, 2700, HasRig: false);
 
-        MailcastPlacement.Decide(Config(), radio, Half, out string? why)!.Retunes.Should().BeFalse();
+        MailcastPlacement? placement = MailcastPlacement.Decide(Config(), radio, Half, out string? why);
+
         why.Should().BeNull();
+        placement!.Retunes.Should().BeFalse();
+        placement.AudioCentreHz.Should().BeApproximately(expectedCentreHz, 0.001);
     }
 
     [Theory]
-    [InlineData(7_051_800)]
-    [InlineData(7_052_500)]
-    public void A_Dial_Just_Outside_The_Combined_Tolerance_Band_Is_Refused_Naming_Both_Recommended_Dials(double dialHz)
+    [InlineData(7_052_801)] // 999 Hz: just under the low edge
+    [InlineData(7_051_799)] // 2001 Hz: just over the high edge
+    public void A_Sound_Card_Dial_Just_Outside_1000_To_2000_Hz_Is_Refused_With_The_Rule_And_An_Example(double dialHz)
     {
         var radio = new MailcastRadio(MailcastRadioKind.SoundCard, dialHz, "usb", 300, 2700, HasRig: false);
 
         MailcastPlacement.Decide(Config(), radio, Half, out string? why).Should().BeNull();
 
-        why.Should().Contain("7.052 MHz USB for a 2.7 kHz filter or wider (or an SDR)")
-            .And.Contain("7.0523 MHz for 2.4 kHz or narrower");
+        why.Should().Contain("tune so the signal's audio centre falls between 1000 and 2000 Hz")
+            .And.Contain("7.0538 MHz minus the middle of your receive passband")
+            .And.Contain("FT-450D at about 367-2190 Hz, centred on 1278 Hz, wants 7.05252 MHz")
+            .And.Contain("POST /api/mailcast/measure");
+    }
+
+    [Fact]
+    public void A_Flex_Attach_Dial_Is_Untouched_By_The_Sound_Card_Rule_And_Keeps_The_Fixed_7052_Band()
+    {
+        // 7.0523 MHz (centre 1500 Hz) is well inside the sound-card band, but a Flex in attach
+        // mode has no analogue filter for a dial to dodge, so it keeps the original fixed-dial
+        // tolerance band around 7.052 MHz alone and is refused this one.
+        var radio = new MailcastRadio(MailcastRadioKind.FlexAttach, 7_052_300, "usb", 300, 2700, HasRig: false);
+
+        MailcastPlacement.Decide(Config(), radio, Half, out string? why).Should().BeNull();
+
+        why.Should().Contain("A FlexRadio is not retuned for it");
+    }
+
+    [Theory]
+    [InlineData(7_051_900)]
+    [InlineData(7_052_100)]
+    public void A_Flex_Attach_Dial_At_Either_Edge_Of_Its_Own_Fixed_Band_Still_Counts(double dialHz)
+    {
+        var radio = new MailcastRadio(MailcastRadioKind.FlexAttach, dialHz, "usb", 300, 2700, HasRig: false);
+
+        MailcastPlacement? placement = MailcastPlacement.Decide(Config(), radio, Half, out string? why);
+
+        why.Should().BeNull();
+        placement!.Retunes.Should().BeFalse();
     }
 
     [Fact]
@@ -402,6 +450,27 @@ public sealed class MailcastPlacementTests
     public void The_Signal_Is_Measured_Off_The_Modem_As_A_Little_Under_3_Khz_Wide()
     {
         MailcastPlacement.HalfWidthHz().Should().BeInRange(1300, 1650);
+    }
+
+    [Fact]
+    public void A_Centre_Near_The_Low_End_Of_The_Sound_Card_Band_Cannot_Be_Built_Yet()
+    {
+        // 1278 Hz is docs/14-mailcast.md's own FT-450D worked example, and Decide() above
+        // accepts it (it is between 1000 and 2000 Hz). But MS110D's own occupied width is
+        // almost 2.9 kHz, not the 2900 Hz "nominal" figure the placement arithmetic assumes
+        // either side of a centre - shifted down to 1278 Hz its lower edge would reach below
+        // DC, which Packet.SoundModem.Modems.FrequencyShiftedModem.Wrap refuses rather than
+        // fold noise over DC into the demodulator. The measured safe floor is about 1740 Hz;
+        // everything from there to 2000 Hz builds. Flagged for a maintainer: today, a station
+        // whose dial follows this worked example exactly would be refused at start-up (caught
+        // in Program.cs and MailcastStation.Problem, not an unhandled exception) rather than
+        // receive anything - the rule as given accepts more than MS110D can actually reach.
+        MailcastPlacement.CentreIsConstructible(1278).Should().BeFalse(
+            "MS110D's own occupied band reaches below DC once shifted this far down");
+        MailcastPlacement.CentreIsConstructible(1000).Should().BeFalse();
+        MailcastPlacement.CentreIsConstructible(1800).Should().BeTrue("no shift at all");
+        MailcastPlacement.CentreIsConstructible(1950).Should().BeTrue();
+        MailcastPlacement.CentreIsConstructible(2000).Should().BeTrue();
     }
 
     [Fact]

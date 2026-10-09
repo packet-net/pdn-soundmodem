@@ -804,6 +804,20 @@ if (mailcastConfig is not null && mailcastPlacement is not null)
             + "the service, or set \"mailcast\".\"stateDirectory\" to a folder that is.");
         return 2;
     }
+    catch (ArgumentException e)
+    {
+        // The placement decision (MailcastPlacement.Decide) accepts any sound-card centre from
+        // 1000 to 2000 Hz, but MS110D's own occupied band - almost 2.9 kHz - means the shift
+        // decorator refuses some of that near its low end rather than fold noise over DC (see
+        // FrequencyShiftedModem.Wrap's guard). Caught here rather than left to crash the
+        // process with a raw stack trace: the message carries the same numbers the guard threw
+        // with, which already say what to change.
+        Console.Error.WriteLine(
+            $"mailcast: cannot place the receive modem there: {e.Message}. Try a dial giving an "
+            + "audio centre nearer 2000 Hz, or measure your filter again - a wider or DATA filter "
+            + "usually centres higher.");
+        return 2;
+    }
 
     mailcast.Attach(channel);
     foreach (string line in mailcast.Describe())
@@ -813,6 +827,38 @@ if (mailcastConfig is not null && mailcastPlacement is not null)
 }
 
 await using var mailcastLifetime = mailcast;
+
+// "Measure my filter" (POST /api/mailcast/measure): a receive tap beside the mailcast modem
+// itself, averaging the station's own quiet audio rather than anything mailcast sends. The
+// transmitter and a mailcast slot both shape the spectrum into something that is not the rig's
+// receive filter, so both are skipped - the transmitter through the channel's own event (the
+// same one MailcastReceiver.Attach subscribes to), a mailcast slot through the retuner's own
+// "on the mailcast dial" flag when there is one, else whether the signal's own listening window
+// is open on the station's passband.
+MailcastFilterMeasurer? mailcastMeasure = null;
+if (mailcast is not null)
+{
+    MailcastReceiver measuredReceiver = mailcast;
+    bool measureTransmitting = false;
+    channel.TransmittingChanged += keyed => measureTransmitting = keyed;
+    mailcastMeasure = new MailcastFilterMeasurer(DspRate, () => measureTransmitting || MailcastMeasureInSlot(measuredReceiver));
+    mailcastMeasure.Attach(channel);
+}
+
+// Whether now falls inside a mailcast slot's listening window, for the receiver given: the
+// retuner's own flag on a station that moves its rig for it, else the passband window the
+// receiver itself follows without retuning.
+static bool MailcastMeasureInSlot(MailcastReceiver receiver)
+{
+    if (receiver.Retuner is { } retuner)
+    {
+        return retuner.Listening;
+    }
+
+    DateTimeOffset now = DateTimeOffset.UtcNow;
+    return MailcastHooks.PassbandWindowAt(now, receiver.Slots.Timetable) is { } window
+        && now >= window.Opens && now < window.Closes;
+}
 
 if (modems.Any(m => m.Mode.StartsWith("bpsk", StringComparison.Ordinal)))
 {
@@ -3273,6 +3319,10 @@ var txLeaseJournal = new TxLeaseJournal(
 channel.TransmitLease.Changed += txLeaseJournal.Note;
 channel.TransmitLease.CarrierWaitCutShort += txLeaseJournal.NoteCarrierWaitCutShort;
 runtimeApi?.ServeTxLease(channel, channel.ReceiveOnlyReason);
+if (mailcastMeasure is not null)
+{
+    runtimeApi?.ServeMailcastMeasure(mailcastMeasure);
+}
 if (rig is not null && runtimeApi is not null && waterfallServer is not null)
 {
     runtimeApi.ServeRig(rig);
