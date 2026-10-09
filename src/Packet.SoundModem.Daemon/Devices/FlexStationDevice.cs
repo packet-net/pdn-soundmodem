@@ -355,6 +355,54 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
             Console.Error.WriteLine($"flex: WARNING - {receiveFilterWarning}");
         }
 
+        if (waterfallServer is not null)
+        {
+            // The local channel audio stream (issue #584): a connection can ask for a band to hear,
+            // and while it is asking, the slice's receive filter widens to cover it - the same
+            // thing bring-up above already does for the configured modems and the mailcast signal,
+            // just live rather than once, and never touching the filter until a connection asks.
+            // Put back to exactly what bring-up set the moment the last such connection goes; left
+            // alone entirely (not even logged) when nobody ever asks.
+            (int BaselineLowHz, int BaselineHighHz)? baseline =
+                flex.Station.ReceiveFilter is (int baseLowHz, int baseHighHz) ? (baseLowHz, baseHighHz) : null;
+            string sliceIndex = flex.Station.SliceIndex;
+            var flexClient = flex.Station.Client;
+            waterfallServer.ReceiveBandRequested = requested =>
+            {
+                if (baseline is null)
+                {
+                    // Bring-up never reported a receive filter - ReceiveFilterWarning above already
+                    // said why - so there is nothing known to widen from or restore to. Leaving the
+                    // slice alone is safer than guessing at a filter nobody has confirmed.
+                    return;
+                }
+
+                (int LowHz, int HighHz) target = requested is (int wantLowHz, int wantHighHz)
+                    ? (Math.Min(baseline.Value.BaselineLowHz, BandPlanner.LowCutClearing(wantLowHz)),
+                       Math.Max(baseline.Value.BaselineHighHz, BandPlanner.HighCutClearing(wantHighHz)))
+                    : baseline.Value;
+
+                Console.WriteLine(requested is not null
+                    ? $"flex: widening the slice receive filter to {target.LowHz}-{target.HighHz} Hz "
+                      + "for the channel audio stream"
+                    : $"flex: putting the slice receive filter back to {target.LowHz}-{target.HighHz} "
+                      + "Hz, no channel audio stream connection is asking for a band any more");
+
+                _ = flexClient.SendCommandAsync($"filt {sliceIndex} {target.LowHz} {target.HighHz}")
+                    .ContinueWith(
+                        task =>
+                        {
+                            if (task.IsFaulted)
+                            {
+                                Console.Error.WriteLine(
+                                    "flex: WARNING - could not set the slice receive filter for the "
+                                    + $"channel audio stream: {task.Exception?.GetBaseException().Message}");
+                            }
+                        },
+                        TaskScheduler.Default);
+            };
+        }
+
         return new DeviceOpening
         {
             Ptt = flex.Ptt,

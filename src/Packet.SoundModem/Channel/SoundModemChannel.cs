@@ -646,6 +646,7 @@ public sealed class SoundModemChannel
         _spectrum?.Process(samples);
         if (_transmitting)
         {
+            KeyedReceiveBlock?.Invoke(samples.Length);
             return;
         }
 
@@ -1125,6 +1126,23 @@ public sealed class SoundModemChannel
     /// inferring it from audio that has not arrived yet, or it simply stops for that gap.
     /// </remarks>
     public event Action<bool>? TransmittingChanged;
+
+    /// <summary>
+    /// Raised with the sample count of a receive block that arrived while the channel was
+    /// transmitting - the block <see cref="ProcessReceive"/> skipped its modems and its receive
+    /// taps for (half duplex).
+    /// </summary>
+    /// <remarks>
+    /// A tap sees nothing at all for the length of a keyup, which is fine for anything that only
+    /// cares about decoded signal, but a consumer whose own output has to carry a sample clock
+    /// that never stops - a stream another program reads as though it were a live sound card -
+    /// needs to know a keyup block was skipped, not silently miss it. This event is raised from
+    /// inside <see cref="ProcessReceive"/> at the exact point a block would otherwise be dropped
+    /// on the floor, with the length of that block, so such a consumer can emit a silent block
+    /// of the same length, marked as transmitted, in its place: the reader's clock keeps
+    /// advancing and knows which part of it was us rather than the band.
+    /// </remarks>
+    public event Action<int>? KeyedReceiveBlock;
 
     /// <summary>
     /// A PTT keyup or unkey failed. Raised instead of letting the exception kill the
