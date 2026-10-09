@@ -814,6 +814,38 @@ if (mailcastConfig is not null && mailcastPlacement is not null)
 
 await using var mailcastLifetime = mailcast;
 
+// "Measure my filter" (POST /api/mailcast/measure): a receive tap beside the mailcast modem
+// itself, averaging the station's own quiet audio rather than anything mailcast sends. The
+// transmitter and a mailcast slot both shape the spectrum into something that is not the rig's
+// receive filter, so both are skipped - the transmitter through the channel's own event (the
+// same one MailcastReceiver.Attach subscribes to), a mailcast slot through the retuner's own
+// "on the mailcast dial" flag when there is one, else whether the signal's own listening window
+// is open on the station's passband.
+MailcastFilterMeasurer? mailcastMeasure = null;
+if (mailcast is not null)
+{
+    MailcastReceiver measuredReceiver = mailcast;
+    bool measureTransmitting = false;
+    channel.TransmittingChanged += keyed => measureTransmitting = keyed;
+    mailcastMeasure = new MailcastFilterMeasurer(DspRate, () => measureTransmitting || MailcastMeasureInSlot(measuredReceiver));
+    mailcastMeasure.Attach(channel);
+}
+
+// Whether now falls inside a mailcast slot's listening window, for the receiver given: the
+// retuner's own flag on a station that moves its rig for it, else the passband window the
+// receiver itself follows without retuning.
+static bool MailcastMeasureInSlot(MailcastReceiver receiver)
+{
+    if (receiver.Retuner is { } retuner)
+    {
+        return retuner.Listening;
+    }
+
+    DateTimeOffset now = DateTimeOffset.UtcNow;
+    return MailcastHooks.PassbandWindowAt(now, receiver.Slots.Timetable) is { } window
+        && now >= window.Opens && now < window.Closes;
+}
+
 if (modems.Any(m => m.Mode.StartsWith("bpsk", StringComparison.Ordinal)))
 {
     Console.WriteLine($"psk detector (bpsk): {bpskDetector.ToString().ToLowerInvariant()}"
@@ -3273,6 +3305,10 @@ var txLeaseJournal = new TxLeaseJournal(
 channel.TransmitLease.Changed += txLeaseJournal.Note;
 channel.TransmitLease.CarrierWaitCutShort += txLeaseJournal.NoteCarrierWaitCutShort;
 runtimeApi?.ServeTxLease(channel, channel.ReceiveOnlyReason);
+if (mailcastMeasure is not null)
+{
+    runtimeApi?.ServeMailcastMeasure(mailcastMeasure);
+}
 if (rig is not null && runtimeApi is not null && waterfallServer is not null)
 {
     runtimeApi.ServeRig(rig);

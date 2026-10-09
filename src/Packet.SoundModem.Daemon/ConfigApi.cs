@@ -52,6 +52,7 @@ internal sealed class ConfigApi
     private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
     private MixerRuntime? _mixer;
     private RigControl? _rig;
+    private MailcastFilterMeasurer? _mailcastMeasure;
     private string _mixerWhyNot = "this station has no sound-card mixer";
 
     /// <summary>One mixer change at a time; see the wait in <see cref="MixerAsync"/>.</summary>
@@ -132,6 +133,14 @@ internal sealed class ConfigApi
     /// </summary>
     public void ServeRig(RigControl rig) => _rig = rig;
 
+    // ---------------------------------------------------------------- mailcast filter measurement
+    /// <summary>
+    /// Serves "Measure my filter" at <c>POST /api/mailcast/measure</c>. Installed by the daemon
+    /// when it runs the built-in mailcast receiver. Without it the path 404s, saying the station
+    /// has no mailcast receiver to measure a filter for.
+    /// </summary>
+    public void ServeMailcastMeasure(MailcastFilterMeasurer measurer) => _mailcastMeasure = measurer;
+
     private async Task RigAsync(HttpListenerContext context, string path)
     {
         if (_rig is null)
@@ -168,6 +177,45 @@ internal sealed class ConfigApi
         (int status, JsonObject answer) = TxLeaseApi.Handle(
             _txLease, context.Request.HttpMethod, body, _txLeaseCannot);
         await RespondJsonAsync(context, status, answer.ToJsonString(Pretty)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Runs one "Measure my filter" and answers with what it found. Awaited rather than
+    /// acknowledged, the same reasoning as <see cref="TxTestAsync"/>: the caller wants the answer,
+    /// not a ticket to poll for it, and this one bounds itself at
+    /// <see cref="MailcastFilterMeasurer.Timeout"/>.
+    /// </summary>
+    private async Task MailcastMeasureAsync(HttpListenerContext context)
+    {
+        if (_mailcastMeasure is null)
+        {
+            await RespondAsync(context, 404,
+                "this station has no mailcast receiver to measure a filter for").ConfigureAwait(false);
+            return;
+        }
+
+        if (context.Request.HttpMethod != "POST")
+        {
+            await RespondAsync(context, 405,
+                "POST with no body to measure the rig's receive passband from about "
+                + $"{MailcastFilterMeasurer.TargetSeconds:F0} s of its own quiet audio").ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            MailcastFilterMeasurement measured = await _mailcastMeasure.MeasureAsync(CancellationToken.None)
+                .ConfigureAwait(false);
+            await RespondJsonAsync(context, 200, measured.ToJson().ToJsonString(Pretty)).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException already)
+        {
+            await RespondAsync(context, 409, already.Message).ConfigureAwait(false);
+        }
+        catch (TimeoutException gaveUp)
+        {
+            await RespondAsync(context, 504, gaveUp.Message).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -590,7 +638,7 @@ internal sealed class ConfigApi
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
         if (path is not ("/api/config" or "/api/proposals" or "/api/txtest" or "/api/txlease" or "/api/mixer"
-            or "/api/rig" or "/api/rig/tune"))
+            or "/api/rig" or "/api/rig/tune" or "/api/mailcast/measure"))
         {
             return false;
         }
@@ -635,6 +683,12 @@ internal sealed class ConfigApi
         if (path is "/api/txlease")
         {
             await GuardedAsync(context, () => TxLeaseAsync(context)).ConfigureAwait(false);
+            return true;
+        }
+
+        if (path is "/api/mailcast/measure")
+        {
+            await GuardedAsync(context, () => MailcastMeasureAsync(context)).ConfigureAwait(false);
             return true;
         }
 

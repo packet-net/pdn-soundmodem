@@ -142,6 +142,31 @@ public sealed class MailcastReceiveTests : IAsyncDisposable
         receiver.Slots.Last!.Tone!.OffsetHz.Should().BeInRange(1.5, 3.5);
     }
 
+    [Theory]
+    [InlineData(1278.0)] // the FT-450D worked example in docs/14-mailcast.md
+    [InlineData(1500.0)] // the old narrow-filter dial's centre
+    [InlineData(1950.0)] // near the sound-card band's high end
+    public async Task A_Signal_In_The_Sound_Card_Band_Is_Heard_Through_The_Modem_Placement(double centreHz)
+    {
+        // Every one of these is below MailcastReceiveShift's own safe margin from the generic
+        // band-plan shift decorator's DC guard (MS110D's native 639-tap Hilbert receive path
+        // would refuse 1278 and 1500 Hz outright - see FrequencyShiftedModem.Wrap). Mailcast
+        // moves the audio to the modem's native centre instead of asking that decorator to move
+        // the modem, so none of these ever reach its guard at all. Proves decoding at a centre
+        // the modem is moved to by placement, the same way the existing 3700 Hz test above
+        // proves it shifted the other way.
+        IReadOnlyList<byte[]> frames = MailcastSlotAudio.Frames(MailcastSlotAudio.Bulletins().Take(1).ToList());
+        float[] audio = MailcastSlotAudio.Render(frames, centreHz, toneOffsetHz: -0.8);
+        MailcastReceiver receiver = Receiver(centreHz);
+
+        Play(receiver.Process, audio);
+        await receiver.Intake.DrainAsync(CancellationToken.None);
+
+        receiver.Intake.FramesHeard.Should().Be(frames.Count);
+        receiver.Intake.Pending().Should().ContainSingle().Which.Bid.Should().Be("1001_GB7ABC");
+        receiver.Slots.Last!.Tone!.OffsetHz.Should().BeInRange(-1.3, -0.3);
+    }
+
     [Fact]
     public async Task Rebuilt_Bulletins_Are_Kept_On_Disk_And_Delivered_After_A_Restart()
     {

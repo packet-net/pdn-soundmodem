@@ -18,12 +18,14 @@ internal static class MailcastOnAir
 
     /// <summary>
     /// The signal's own centre frequency: a fixed fact about the transmitter, unmoved by
-    /// whatever a receiving station's dial is read as. 1800 Hz above 7.052 MHz USB, the dial
-    /// pdn-mailcast has recommended since the broadcast began (a wide filter, a data-mode audio
-    /// path or an SDR all suit it); 1500 Hz above 7.0523 MHz, the dial recommended since the
-    /// 2026-10 filter study for a rig whose receive filter is 2.4 kHz or narrower, where 1800 Hz
-    /// sits too close to a typical SSB filter's upper roll-off and loses frames. Either dial
-    /// hears the same signal; only where it lands in audio differs.
+    /// whatever a receiving station's dial is read as. For a sound-card rig, the best dial puts
+    /// the signal's audio centre in the middle of the rig's own receive passband, anywhere from
+    /// <see cref="MailcastPlacement.SoundCardCentreLowHz"/> to
+    /// <see cref="MailcastPlacement.SoundCardCentreHighHz"/> Hz: an FT-450D at about
+    /// 367 to 2190 Hz, centred on 1278 Hz, wants 7.05252 MHz (<see cref="SuggestedDialHz"/>).
+    /// SDRs and FlexRadios are untouched by this and stay on 7.052 MHz, 1800 Hz audio, where
+    /// pdn-mailcast has recommended since the broadcast began: they have no analogue filter
+    /// roll-off for the dial to dodge.
     /// </summary>
     public const double SignalCentreHz = 7_053_800;
 
@@ -31,6 +33,19 @@ internal static class MailcastOnAir
     /// <paramref name="dialHz"/>: the fixed <see cref="SignalCentreHz"/>, read against that
     /// dial.</summary>
     public static double CentreAudioHz(double dialHz) => SignalCentreHz - dialHz;
+
+    /// <summary>
+    /// The best dial for a sound-card rig whose receive passband is centred on
+    /// <paramref name="passbandCentreHz"/> of audio: <see cref="SignalCentreHz"/> minus that
+    /// centre, rounded to the nearest 10 Hz, which is as fine as an operator tunes by hand. An
+    /// FT-450D at about 367 to 2190 Hz is centred on 1278 Hz and gets 7.05252 MHz.
+    /// </summary>
+    public static double SuggestedDialHz(double passbandCentreHz) =>
+        Math.Round((SignalCentreHz - passbandCentreHz) / 10.0) * 10.0;
+
+    /// <summary>The middle of a passband given its edges, the same way a rig's own centre is
+    /// read off a measurement or a datasheet: the plain average, to the nearest Hz.</summary>
+    public static double PassbandCentreHz(double lowHz, double highHz) => Math.Round((lowHz + highHz) / 2);
 
     /// <summary>
     /// Half the signal's occupied width when the modem cannot be measured: MS110D with the

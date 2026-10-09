@@ -610,7 +610,9 @@
       <span class="txfig" title="Bulletins complete / partial / delivered to the BBS"><span class="k">bulletins</span> <b id="mcBulletins">-</b></span>
       <span class="txfig" id="mcBbsFig"><span class="k">BBS</span> <b id="mcBbs">-</b></span>
       <span class="txfig" id="mcRigFig" hidden><span class="k">rig</span> <b id="mcRig">-</b></span>
+      <button class="btn" id="mcMeasureGo" title="Average about 10 s of this station's own quiet receive audio and work out the best dial from its passband edges">Measure my filter</button>
     </div>
+    <span id="mcMeasureResult"></span>
   </div>
 
   <!-- Last on purpose: the header wraps on a narrow window, and this is the control that
@@ -832,6 +834,30 @@ function pollMailcast() {
     .catch(() => setTimeout(pollMailcast, 60 * 1000));
 }
 pollMailcast();
+
+// "Measure my filter": a one-shot POST, not pushed or polled, because it is the operator asking
+// for one answer right now. Uses the same key as the mixer (mixKey, defined below but hoisted -
+// one shared secret for every control on this page) since it is behind the same API key.
+function measureFilterGo() {
+  const go = $("mcMeasureGo"), out = $("mcMeasureResult");
+  go.disabled = true;
+  out.textContent = "measuring (about 10 s of quiet audio)...";
+  const headers = {};
+  const key = mixKey();
+  if (key) headers["X-API-Key"] = key;
+  fetch(`${base}api/mailcast/measure`, { method: "POST", headers })
+    .then(async r => {
+      const text = await r.text();
+      if (!r.ok) { out.textContent = text; return; }
+      const m = JSON.parse(text);
+      if (m.lowHz == null) { out.textContent = m.note || "unclear"; return; }
+      out.textContent = `${m.lowHz.toFixed(0)}-${m.highHz.toFixed(0)} Hz (${m.widthHz.toFixed(0)} Hz wide), `
+        + `dial ${m.suggestedDialMhz.toFixed(5)} MHz` + (m.note ? ` - ${m.note}` : "");
+    })
+    .catch(() => { out.textContent = "could not reach the station"; })
+    .finally(() => { go.disabled = false; });
+}
+$("mcMeasureGo").addEventListener("click", measureFilterGo);
 
 // When the held reading was taken. Minutes of silence look the same as seconds of it, so a held
 // reading has to say when, or it reads as though the station just transmitted.

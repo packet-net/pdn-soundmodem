@@ -88,24 +88,38 @@ mailcast: the signal on 7.0524 to 7.0552 MHz is outside what this station hears.
 
 Never set `retune` on GB7RDG's own station, or on any head end sending the bulletins: while the rig is away the transmit lease the head end needs is refused, so its slot would never go out.
 
-## Choosing 7.052 or 7.0523
+## Choosing your dial
 
-The signal itself does not move: it fills about 7.0524 to 7.0553 MHz whichever USB dial you use. The dial only changes where that fixed signal lands in your own audio, and on a rig with a tight receive filter, where it lands matters.
+The signal itself does not move: it fills about 7.0524 to 7.0553 MHz, centred on 7.0538 MHz, whichever USB dial you use. The dial only changes where that fixed signal lands in your own audio - and on a rig with its own analogue receive filter, where it lands matters: too close to either edge, and the filter's roll-off starts losing frames.
 
-| Your rig's receive filter | Dial |
-| --- | --- |
-| An SDR, a data-mode audio path, or 2.7 kHz and wider | 7.052 MHz (the default) |
-| 2.4 kHz or narrower | 7.0523 MHz |
+**The rule**: the best dial puts the signal's audio centre in the middle of your rig's receive passband. Worked out as arithmetic, that is
 
-On 7.052 the signal's centre lands at 1800 Hz audio, close enough to a 2.4 kHz (or narrower) SSB filter's upper roll-off to lose frames through it. On 7.0523 it lands at 1500 Hz instead, clear of that roll-off, at no cost to a wide filter, a data-mode audio path or an SDR - so 7.0523 works for everyone, but 7.052 is kept as the default because a station already on it keeps working.
-
-If your station retunes for the bulletins (`"retune": true`), set `mailcast.dialKHz` to pick up the narrower-filter dial:
-
-```json
-{ "mailcast": { "bbs": { "password": "pick-one" }, "retune": true, "dialKHz": 7052.3 } }
+```
+dial = 7.0538 MHz - (the middle of your receive passband, in MHz)
 ```
 
-If your station already hears the signal on its own passband (no `retune`), just set your own dial to whichever of the two suits your filter; pdn-soundmodem accepts either, no `mailcast` setting needed.
+For example, an FT-450D's default SSB filter passes about 367 to 2190 Hz of audio, centred on 1278 Hz, so its dial is 7.0538 - 0.001278 = **7.05252 MHz**. pdn-soundmodem accepts any sound-card dial that puts the centre anywhere from 1000 to 2000 Hz - comfortably clear of a typical SSB filter's roll-off at either end - and places the receive modem at whatever centre your dial gives, not at a fixed number.
+
+You need your passband's edges to do the sum. Two ways to get them:
+
+- **Measure it.** `POST /api/mailcast/measure` (the API key, or the "Measure my filter" button on the station's operator page) averages about 10 s of the station's own quiet receive audio and returns the edges it finds, their width, and the dial already worked out, rounded to the nearest 10 Hz:
+
+  ```json
+  { "lowHz": 367, "highHz": 2190, "widthHz": 1823, "suggestedDialMhz": 7.05252, "note": "that is narrower than about 2.4 kHz: switch to your rig's widest or \"DATA\" filter before using this dial, or MS110D will lose frames at its edges" }
+  ```
+
+  It only runs when the station is not transmitting and no mailcast slot is open, so it can take a couple of minutes around a busy slot. A `note` says when the passband came out narrower than about 2.4 kHz, as the FT-450D's default filter above does (switch to your rig's widest or "DATA" filter, which also usually centres higher - see below), or when the measurement itself is unclear (try again, or type the edges by hand).
+- **Type it.** Your rig's or filter's manual gives the passband edges directly; do the sum above by hand.
+
+Either way, set your own dial to the result. If your station retunes for the bulletins instead (`"retune": true`), set `mailcast.dialKHz` to it:
+
+```json
+{ "mailcast": { "bbs": { "password": "pick-one" }, "retune": true, "dialKHz": 7052.52 } }
+```
+
+If your station already hears the signal on its own passband (no `retune`), just set your own dial; nothing in `mailcast` needs to change.
+
+**SDR or Flex users: nothing to do.** Neither has an analogue filter whose roll-off a dial needs to dodge, so both stay on the original 7.052 MHz dial (1800 Hz audio), untouched by any of the above.
 
 ## Your packet traffic while the rig is retuned
 

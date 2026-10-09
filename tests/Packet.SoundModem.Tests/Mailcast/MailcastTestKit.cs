@@ -237,10 +237,24 @@ internal static class MailcastSlotAudio
     /// </summary>
     internal static float[] Render(IReadOnlyList<byte[]> frames, double centreHz = 1800, double snrDb = 20, int seed = 3, double toneOffsetHz = 0)
     {
-        IModem modem = ModemCatalog.Create(
-            "ms110d-wn4", Rate, static _ => { },
-            Math.Abs(centreHz - 1800) < 0.5 ? default : new ModemOptions(CentreFrequencyHz: centreHz));
-        var bursts = frames.Select(f => modem.Modulate(f, 0)).ToList();
+        // Modulated at MS110D's native 1800 Hz always, then shifted to centreHz with the same
+        // M0LTE.Dsp.FrequencyShifter MailcastReceiveShift uses - not the generic band-plan shift
+        // decorator (ModemOptions.CentreFrequencyHz), whose DC/Nyquist guard would refuse a
+        // centre this fixture needs to render below its floor (the FT-450D's 1278 Hz among
+        // them) even though MailcastReceiveShift's own narrower-bandpass version of the same
+        // shift reaches it fine.
+        IModem modem = ModemCatalog.Create("ms110d-wn4", Rate, static _ => { });
+        List<float[]> bursts = frames.Select(f => modem.Modulate(f, 0)).ToList();
+        if (Math.Abs(centreHz - 1800) >= 0.5)
+        {
+            var shifter = new M0LTE.Dsp.FrequencyShifter(Rate, centreHz - 1800, taps: 639);
+            bursts = bursts.Select(burst =>
+            {
+                var shifted = new float[burst.Length];
+                shifter.Process(burst, shifted);
+                return shifted;
+            }).ToList();
+        }
         double power = bursts.Average(b => b.Average(s => (double)s * s));
         var audio = new List<float>();
         void Silence(double seconds) => audio.AddRange(new float[(int)(seconds * Rate)]);
