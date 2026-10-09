@@ -114,7 +114,7 @@ You need your passband's edges to do the sum. Two ways to get them:
 Either way, set your own dial to the result. If your station retunes for the bulletins instead (`"retune": true`), set `mailcast.dialKHz` to it:
 
 ```json
-{ "mailcast": { "bbs": { "password": "pick-one" }, "retune": true, "dialKHz": 7051.85 } }
+{ "mailcast": { "bbs": { "password": "pick-one" }, "retune": true, "dialKHz": 7052.52 } }
 ```
 
 If your station already hears the signal on its own passband (no `retune`), just set your own dial; nothing in `mailcast` needs to change.
