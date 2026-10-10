@@ -29,6 +29,11 @@ internal sealed class SimModem
     /// <summary>Modem options (detector override etc.) applied to both directions.</summary>
     public ModemOptions Options { get; init; }
 
+    /// <summary>Build both directions as a station's channel would, through
+    /// <see cref="ModemCatalog.CreateForChannel"/>: on a channel faster than the mode's own rate
+    /// that is the mode at its own rate behind a <see cref="RateBridgedModem"/> (issue #648).</summary>
+    public bool Bridged { get; init; }
+
     /// <summary>Builds the adapter for a catalogue mode.</summary>
     /// <param name="mode">A <see cref="ModemCatalog"/> mode string (e.g. <c>freedv-datac0</c>).</param>
     /// <param name="rate">DSP sample rate; defaults to <see cref="ModemCatalog.DspRateFor"/>. The
@@ -52,6 +57,10 @@ internal sealed class SimModem
     /// <summary>The DSP audio rate the mode's mod/demod run at.</summary>
     public int Rate { get; }
 
+    private IModem Build(Action<byte[]> sink) => Bridged
+        ? ModemCatalog.CreateForChannel(Mode, Rate, sink, Options)
+        : ModemCatalog.Create(Mode, Rate, sink, Options);
+
     /// <summary>
     /// Renders one burst carrying <paramref name="frame"/>, with modulator silence trimmed so the
     /// channel calibrates its noise against the burst's own power (the trailing guard tail and any
@@ -68,7 +77,7 @@ internal sealed class SimModem
     /// dilute the SNR calibration.</param>
     public float[] RenderBurst(ReadOnlySpan<byte> frame, int txDelayMilliseconds = 0)
     {
-        IModem tx = ModemCatalog.Create(Mode, Rate, static _ => { }, Options);
+        IModem tx = Build(static _ => { });
         float[] audio = tx.Modulate(frame, txDelayMilliseconds);
         return TrimSilence(audio);
     }
@@ -83,7 +92,7 @@ internal sealed class SimModem
     {
         var received = new List<byte[]>();
         int correctedBytes = 0;
-        IModem rx = ModemCatalog.Create(Mode, Rate, received.Add, Options);
+        IModem rx = Build(received.Add);
         rx.FrameDecoded += (frame, quality) =>
         {
             if (BytesEqual(frame, sentFrame) && quality.CorrectedBytes is int c)

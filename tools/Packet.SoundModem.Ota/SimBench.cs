@@ -62,7 +62,7 @@ internal static class SimBench
         string mode, int? rate, SimLayer layer, SimChannelKind kind, double snrDb,
         int bursts, int frameBytes, int firstSeed, int workers, double levelDb = 0,
         int txDelayMs = 0, double cfoHz = 0, PskDetector? detector = null, double? centreHz = null,
-        PskDetector? secondDetector = null, double impulseRatePerMinute = 0)
+        PskDetector? secondDetector = null, double impulseRatePerMinute = 0, bool bridged = false)
     {
         var options = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, workers) };
         float levelScale = (float)Math.Pow(10, levelDb / 20.0);
@@ -106,6 +106,7 @@ internal static class SimBench
                 {
                     var sm = new SimModem(mode, rate)
                     {
+                        Bridged = bridged,
                         Options = new ModemOptions(CentreFrequencyHz: centreHz, Detector: detector,
                             SecondDetector: secondDetector),
                     };

@@ -148,7 +148,7 @@ public sealed class IdBeaconGhost
         // own event, and the modem must exist before the ghost can hold it. Nothing can fire in
         // between: a modem decodes nothing until it is fed audio, which is the caller's next move.
         IdBeaconGhost? ghost = null;
-        IModem modem = ModemCatalog.Create(
+        IModem modem = ModemCatalog.CreateForChannel(
             BeaconMode,
             dspRate,
             // The plain frame sink goes nowhere: a beacon has no host to be delivered to, and
