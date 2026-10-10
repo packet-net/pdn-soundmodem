@@ -121,8 +121,11 @@ internal sealed class ChannelAudioStream
     /// <summary>Serves one already-accepted, already-checked WebSocket until it closes.</summary>
     /// <param name="socket">The accepted socket.</param>
     /// <param name="remoteDescription">For the journal: who connected, e.g. an address and port.</param>
+    /// <param name="dialHz">The rig's dial frequency if the station knows one (rig or Flex
+    /// slice), for the hello message; 0 for "not known", the same sentinel the page's own
+    /// config message uses.</param>
     /// <param name="serverStopping">Cancelled when the whole server is going down.</param>
-    public async Task ServeAsync(WebSocket socket, string remoteDescription, CancellationToken serverStopping)
+    public async Task ServeAsync(WebSocket socket, string remoteDescription, double dialHz, CancellationToken serverStopping)
     {
         var queue = new AudioQueue(QueueCapacity);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(serverStopping);
@@ -134,7 +137,12 @@ internal sealed class ChannelAudioStream
         Task send = SendLoopAsync(client, stop.Token);
         try
         {
-            byte[] hello = JsonSerializer.SerializeToUtf8Bytes(new { type = "hello", rateHz = _sampleRate });
+            byte[] hello = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                type = "hello",
+                rateHz = _sampleRate,
+                dialHz = dialHz > 0 ? dialHz : (double?)null,
+            });
             await socket.SendAsync(hello, WebSocketMessageType.Text, true, stop.Token).ConfigureAwait(false);
 
             var buffer = new byte[4096];

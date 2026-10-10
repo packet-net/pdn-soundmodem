@@ -220,7 +220,7 @@ No config and no key: nothing changes for anyone who does not use it, and a conn
 - Refused unless the request's remote address is loopback (`127.0.0.1` or `::1`), whatever the station's own `bind` is.
 - Refused if the request carries an `Origin` header at all. A browser sets `Origin` itself and page script cannot remove it, so a WebSocket upgrade with no `Origin` header is exactly the one request a browser can never produce; this closes the DNS-rebinding route a key alone would not (see issue #423).
 
-A refused upgrade gets a plain `403` with a one-line reason; nothing beyond that is replied to. An accepted connection is sent one text message first, `{"type":"hello","rateHz":N}`, naming the channel's own sample rate (mono float32, the channel's native DSP rate - 12000 or 48000 depending on what modems the station runs; never resampled for this stream). A connection may then send a text message naming itself, any time, more than once:
+A refused upgrade gets a plain `403` with a one-line reason; nothing beyond that is replied to. An accepted connection is sent one text message first, `{"type":"hello","rateHz":N,"dialHz":N}`, naming the channel's own sample rate (mono float32, the channel's native DSP rate - 12000 or 48000 depending on what modems the station runs; never resampled for this stream) and, when the station knows one (a `rig` section or a Flex slice), the dial frequency; `dialHz` is `null` otherwise. A connection may then send a text message naming itself, any time, more than once:
 
 ```json
 {"name": "pdn-mailcast-receiver", "pagePort": 18135, "band": {"lowHz": 1000, "highHz": 2000}}

@@ -2875,7 +2875,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 string remoteDescription = context.Request.RemoteEndPoint?.ToString() ?? "a client";
                 HttpListenerWebSocketContext streamUpgrade =
                     await context.AcceptWebSocketAsync(null).ConfigureAwait(false);
-                await _channelAudioStream.ServeAsync(streamUpgrade.WebSocket, remoteDescription, _stopping.Token)
+                await _channelAudioStream.ServeAsync(
+                        streamUpgrade.WebSocket, remoteDescription, _options.DialFrequencyHz, _stopping.Token)
                     .ConfigureAwait(false);
                 return true;
             }
