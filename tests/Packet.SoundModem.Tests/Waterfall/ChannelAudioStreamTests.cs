@@ -83,6 +83,25 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         using JsonDocument hello = JsonDocument.Parse(payload);
         hello.RootElement.GetProperty("type").GetString().Should().Be("hello");
         hello.RootElement.GetProperty("rateHz").GetInt32().Should().Be(SampleRate);
+        hello.RootElement.GetProperty("dialHz").ValueKind.Should().Be(
+            JsonValueKind.Null, "this station was never given a dial");
+    }
+
+    [Fact]
+    public async Task Says_The_Dial_In_The_Hello_When_The_Station_Knows_One()
+    {
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 13);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(
+            channel, port, new WaterfallOptions { DialFrequencyHz = 7052000 });
+        server.Start();
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{port}{ChannelAudioStream.Path}"), _cancellation.Token);
+        (_, byte[] payload) = await Receive(socket);
+        using JsonDocument hello = JsonDocument.Parse(payload);
+        hello.RootElement.GetProperty("dialHz").GetDouble().Should().Be(7052000);
     }
 
     [Fact]
