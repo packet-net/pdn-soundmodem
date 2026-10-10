@@ -149,24 +149,21 @@ internal static class TxLeaseApi
 
         double max = TransmitLease.MaxDuration.TotalSeconds;
         bool capped = seconds > max;
-        TransmitLeaseGrant grant;
         // A receive window (issue #585) and a transmit lease can never both be held: the window
         // takes the station off the air for another program's purposes, and a lease granted
-        // underneath it would be a promise this station could not keep. The check and the Take
-        // are one step under the lease's object, which the receive window holds across its own
-        // check of the lease and its tune, so neither can slip in while the other is deciding.
-        lock (lease)
+        // underneath it would be a promise this station could not keep. The lease decides the two
+        // against each other, so neither can slip in while the other is deciding.
+        TransmitLeaseGrant? taken = lease.TakeUnlessWindow(
+            () => rig?.Snapshot().Window is { Owner: Waterfall.WaterfallWebServer.ReceiveWindowOwner },
+            sub, TimeSpan.FromSeconds(Math.Min(seconds, max)),
+            maxCarrierWait is double limit ? TimeSpan.FromSeconds(limit) : null);
+        if (taken is not TransmitLeaseGrant grant)
         {
-            if (rig?.Snapshot().Window is { Owner: Waterfall.WaterfallWebServer.ReceiveWindowOwner } open)
-            {
-                return (409, Conflict(channel,
-                    $"a receive window holds the rig on {open.Tuning} until {Utc(open.Expires)}, so "
-                    + "the transmit lease is refused until it ends"));
-            }
-
-            grant = lease.Take(
-                sub, TimeSpan.FromSeconds(Math.Min(seconds, max)),
-                maxCarrierWait is double limit ? TimeSpan.FromSeconds(limit) : null);
+            return (409, Conflict(channel,
+                rig?.Snapshot().Window is { Owner: Waterfall.WaterfallWebServer.ReceiveWindowOwner } open
+                    ? $"a receive window holds the rig on {open.Tuning} until {Utc(open.Expires)}, so "
+                      + "the transmit lease is refused until it ends"
+                    : "a receive window is being opened, so the transmit lease is refused until it ends"));
         }
 
         if (!grant.Granted)

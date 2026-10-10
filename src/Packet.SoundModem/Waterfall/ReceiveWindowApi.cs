@@ -156,25 +156,27 @@ internal static class ReceiveWindowApi
             ? plan.Mode.ToUpperInvariant()
             : "USB";
 
-        // The lease check and the tune are one step, under the lease's object, which the daemon's
-        // TxLeaseApi also holds across its own check of this window and its Take. Without it a
-        // lease asked for while this tune was still talking to rigctld would find no window yet,
-        // and both would be granted. A tune takes as long as rigctld does to answer, and only a
-        // lease request ever waits for it.
-        RigTuneResult result;
-        lock (lease)
+        // A lease and this window are decided against each other in the lease, never across the
+        // tune's talk to rigctld: while this window is opening a lease is refused at once, and
+        // once the tune returns the rig shows the window itself.
+        if (!lease.TryBeginOpeningWindow(out int? holder))
         {
-            if (lease.Holder is int holder)
-            {
-                JsonObject refused = Describe(rig);
-                refused["refused"] =
-                    $"sub-channel {holder} holds the transmit lease, so a receive window is refused "
-                    + "until it ends";
-                return (409, refused);
-            }
+            JsonObject refused = Describe(rig);
+            refused["refused"] =
+                $"sub-channel {holder} holds the transmit lease, so a receive window is refused "
+                + "until it ends";
+            return (409, refused);
+        }
 
+        RigTuneResult result;
+        try
+        {
             result = rig.Tune(
                 new RigTuning((long)dial, mode, widthHz), TimeSpan.FromSeconds(clamped), Owner);
+        }
+        finally
+        {
+            lease.EndOpeningWindow();
         }
 
         switch (result.Outcome)

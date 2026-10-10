@@ -270,13 +270,13 @@ A refused request gets a plain `403` with a one-line reason.
 
 | Endpoint | Method | Request | Response |
 |---|---|---|---|
-| `/rig-window` | `POST` | `{"dialHz": 7052000, "seconds": 60}`, optionally with `"widthHz"` (the band in Hz this caller needs to hear, 3000 by default, up to 20000) - at most 300 s at a time, renewable with another POST before it ends; `{"release": true}` to put the rig back now | 200 with the rig's state plus `"renewed"`, `"seconds"` and `"capped"` for a tune, or `"released"` for a release; 409 while the transmitter is keyed, while something else holds a window, or while a transmit lease is held; 400 for a missing or fractional `dialHz`, `seconds` of 0 or less, or `widthHz` outside 1 to 20000 |
+| `/rig-window` | `POST` | `{"dialHz": 7052000, "seconds": 60}`, optionally with `"widthHz"` (the band in Hz this caller needs to hear, 3000 by default, up to 20000) - at most 300 s at a time, renewable with another POST before it ends; `{"release": true}` to put the rig back now | 200 with the rig's state plus `"renewed"`, `"seconds"` and `"capped"` for a tune, or `"released"` for a release; 409 while the transmitter is keyed, while something else holds a window, or while a transmit lease is held; 400 for a missing or fractional `dialHz`, `seconds` of 0 or less, or `widthHz` outside 1 to 20000; 413 for a body over 4096 bytes |
 | `/rig-window` | `GET` | none | the rig's state: `{"connected", "dialHz", "mode", "passbandHz", "transmitHeld", "window": null or {"owner", "dialHz", "mode", "passbandHz", "expires"}, "problem"}` |
 | any other method | | | 405 with a one-line hint |
 
 There is nothing to tell two local callers apart, so they share the one window a station offers: the mode is never named by the caller, only the dial and the band it needs - this station asks for its own band plan's USB-family data mode (PKTUSB and the like) if it has one, else plain USB, the same choice the built-in mailcast receiver's retuner makes. A caller that goes quiet simply stops renewing, and the window runs out and puts the rig back on its own within 5 minutes - the same cap `/api/rig/tune` has, and the same restore-file guarantee across a crash (see [rig tuning windows](#rig-tuning-windows)).
 
-A window here is refused while a [transmit lease](#the-transmit-lease) is held, and a lease is refused while this window is open, so a listener's receive window and a head end's broadcast can never both be granted.
+A window here is refused while a [transmit lease](#the-transmit-lease) is held, and a lease is refused while this window is open or still being opened, so a listener's receive window and a head end's broadcast can never both be granted.
 
 ### The API under /api
 
