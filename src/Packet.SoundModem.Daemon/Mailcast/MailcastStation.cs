@@ -14,12 +14,13 @@ internal static class MailcastStation
     /// window, or an ordinary SSB passband without one, which is all that can be known of a rig
     /// the daemon does not set the filters of.
     /// </summary>
+    /// <param name="kind">What the device is, as <see cref="StationDevice.MailcastKind"/> says.</param>
     internal static MailcastRadio RadioFor(
-        bool deviceIsFlex, bool flexIsHeadless, bool deviceIsUberSdr, RfPlan.Result? bandPlan,
+        MailcastRadioKind kind, RfPlan.Result? bandPlan,
         double? dialFrequency, double? receiveDialHz, string sideband, FlexTuning flexTuning,
         UberSdrConfig? uberSdrConfig, bool hasRig)
     {
-        if (flexIsHeadless)
+        if (kind == MailcastRadioKind.FlexHeadless)
         {
             double? dial = bandPlan?.DialHz
                 ?? (double.TryParse(flexTuning.Frequency, NumberStyles.Float, CultureInfo.InvariantCulture, out double mhz) ? Math.Round(mhz * 1e6) : null);
@@ -28,7 +29,7 @@ internal static class MailcastStation
                 Passband.Nominal.LowHz, Passband.WideCeilingHz, hasRig);
         }
 
-        if (deviceIsUberSdr)
+        if (kind == MailcastRadioKind.UberSdr)
         {
             return new MailcastRadio(
                 MailcastRadioKind.UberSdr, receiveDialHz, bandPlan?.Sideband ?? sideband,
@@ -37,9 +38,21 @@ internal static class MailcastStation
 
         Passband window = bandPlan?.Window ?? Passband.Nominal;
         return new MailcastRadio(
-            deviceIsFlex ? MailcastRadioKind.FlexAttach : MailcastRadioKind.SoundCard,
-            bandPlan?.DialHz ?? dialFrequency, bandPlan?.Sideband ?? sideband, window.LowHz, window.HighHz, hasRig);
+            kind, bandPlan?.DialHz ?? dialFrequency, bandPlan?.Sideband ?? sideband, window.LowHz, window.HighHz, hasRig);
     }
+
+    /// <summary>The same, from the three device flags start-up used to carry before the device
+    /// kinds answered it (#595).</summary>
+    internal static MailcastRadio RadioFor(
+        bool deviceIsFlex, bool flexIsHeadless, bool deviceIsUberSdr, RfPlan.Result? bandPlan,
+        double? dialFrequency, double? receiveDialHz, string sideband, FlexTuning flexTuning,
+        UberSdrConfig? uberSdrConfig, bool hasRig) =>
+        RadioFor(
+            flexIsHeadless ? MailcastRadioKind.FlexHeadless
+            : deviceIsUberSdr ? MailcastRadioKind.UberSdr
+            : deviceIsFlex ? MailcastRadioKind.FlexAttach
+            : MailcastRadioKind.SoundCard,
+            bandPlan, dialFrequency, receiveDialHz, sideband, flexTuning, uberSdrConfig, hasRig);
 
     /// <summary>
     /// Why a configuration's mailcast section could not start, or null if it could: where the
@@ -57,9 +70,8 @@ internal static class MailcastStation
             return null;
         }
 
-        bool flex = FlexDevice.IsFlex(config.Device);
-        bool headless = flex && FlexDevice.Parse(config.Device).Headless;
-        bool uberSdr = Packet.SoundModem.UberSdr.UberSdrDevice.IsUberSdr(config.Device);
+        MailcastRadioKind kind = DeviceKinds.Of(config.Device).MailcastKindOf(config.Device);
+        bool headless = kind == MailcastRadioKind.FlexHeadless;
         var flexTuning = new FlexTuning
         {
             Frequency = config.Flex?.Frequency ?? "14.100000",
@@ -67,7 +79,7 @@ internal static class MailcastStation
         };
         string sideband = headless && RfPlan.SidebandForSliceMode(flexTuning.Mode) is { } implied ? implied : config.Sideband;
         MailcastRadio radio = RadioFor(
-            flex, headless, uberSdr, bandPlan, config.DialFrequency, bandPlan?.DialHz ?? config.DialFrequency,
+            kind, bandPlan, config.DialFrequency, bandPlan?.DialHz ?? config.DialFrequency,
             sideband, flexTuning, config.UberSdr, hasRig: config.Rig is not null);
         if (MailcastPlacement.Decide(mailcast, radio, MailcastPlacement.HalfWidthHz(), out string? refusal) is null)
         {

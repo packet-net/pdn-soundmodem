@@ -1966,9 +1966,7 @@ public sealed class DaemonConfig
     /// <param name="device">The <c>device</c> setting.</param>
     public static bool IsSoundCard(string device) =>
         !string.IsNullOrWhiteSpace(device)
-        && !FlexRadio.FlexDevice.IsFlex(device)
-        && !UberSdrDevice.IsUberSdr(device)
-        && !PipeAudio.IsPipe(device);
+        && DeviceKinds.Of(device).HasMixer;
 
     /// <summary>
     /// Refuses a burst-packing setting that would not do what it says: on a mode that cannot pack,

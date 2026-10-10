@@ -352,13 +352,11 @@ if (DaemonConfig.ParseBind(bindAddress) is null)
     return 2;
 }
 
-// A web receiver has no transmitter, so a bench test on one is refused before anything is built
+// A receiver has no transmitter, so a bench test on one is refused before anything is built
 // rather than after the station has come up around a page that will not exist.
-if (benchTxTest is not null && device.StartsWith("ubersdr:", StringComparison.OrdinalIgnoreCase))
+if (benchTxTest is not null && DeviceKinds.Of(device).TransmitTestRefusal is string receiverTxTestRefusal)
 {
-    Console.Error.WriteLine(
-        "tx test: refused, this station's audio comes from a web receiver, which is a receiver "
-        + "and has no transmitter - there is nothing here to key");
+    Console.Error.WriteLine(receiverTxTestRefusal);
     return 1;
 }
 
@@ -392,7 +390,7 @@ var flexTuning = new FlexTuning
     // so defaulting elsewhere makes the order they are started in stop mattering. Attach mode
     // is SmartSDR's slice by definition, so it keeps 1.
     DaxChannel = flexDaxCh ?? flexConfig?.DaxChannel
-        ?? (FlexDevice.IsFlex(device) && FlexDevice.Parse(device).Headless
+        ?? (DeviceKinds.Of(device).OwnsTheRadio(device)
             ? FlexConfig.DefaultHeadlessDaxChannel
             : "1"),
     TxPowerWatts = flexConfig?.TxPowerWatts,
@@ -464,7 +462,7 @@ foreach (string spec in modemSpecs)
 // On a Flex the slice mode states the sideband, so it is not something to be configured
 // separately and disagreed with: DIGL alongside the default "usb" would mirror every modem
 // about the dial and say nothing.
-if (FlexDevice.IsFlex(device) && FlexDevice.Parse(device).Headless)
+if (DeviceKinds.Of(device).OwnsTheRadio(device))
 {
     string? impliedSideband = RfPlan.SidebandForSliceMode(flexTuning.Mode);
 
@@ -564,11 +562,9 @@ catch (InvalidDataException malformed)
     return 2;
 }
 
-bool deviceIsFlex = FlexDevice.IsFlex(device);
 // Whether the daemon owns the radio, and so sets the dial and the transmit filter: a headless
 // Flex only - in attach mode SmartSDR owns the slice and we would be fighting it.
 bool ownsTheRadio = stationDevice.OwnsTheRadio;
-bool deviceIsUberSdr = UberSdrDevice.IsUberSdr(device);
 // Refusals the device can make from its settings alone, before any band plan is worked out.
 if (stationDevice.SettingsProblem is string deviceSettingsProblem)
 {
@@ -673,7 +669,7 @@ MailcastPlacement? mailcastPlacement = null;
 if (mailcastConfig is not null)
 {
     MailcastRadio mailcastRadio = MailcastStation.RadioFor(
-        deviceIsFlex, ownsTheRadio, deviceIsUberSdr, bandPlan, dialFrequency, receiveDialHz, sideband,
+        stationDevice.MailcastKind, bandPlan, dialFrequency, receiveDialHz, sideband,
         flexTuning, uberSdrConfig, hasRig: rigConfig is not null);
     mailcastPlacement = MailcastPlacement.Decide(
         mailcastConfig, mailcastRadio, MailcastPlacement.HalfWidthHz(), out string? mailcastRefusal);
@@ -2769,14 +2765,9 @@ if (identifiers.Count > 0)
 // implementations and the two real incidents, and is written down on
 // StationOptions.DeviceKind, beside the thresholds it decides.
 //
-// flex:mock counts as a bench device, not a Flex: its DAX-RX path deliberately delivers
-// nothing between injected frames, which a starvation watch would read as a dead radio
-// 30 s into every idle bench session.
-DeadFeedDevice deadFeedDevice =
-    wavLoopPath is not null ? DeadFeedDevice.WavLoop
-    : deviceIsUberSdr ? DeadFeedDevice.UberSdr
-    : deviceIsFlex ? (flex!.Mock is null ? DeadFeedDevice.Flex : DeadFeedDevice.WavLoop)
-    : DeadFeedDevice.Alsa;
+// Which family a device is in is the device's own answer (flex:mock, for one, counts as a bench
+// device rather than a Flex - see FlexStationDevice.DeadFeedKind).
+DeadFeedDevice deadFeedDevice = stationDevice.DeadFeedKind;
 
 // The uplink to a public monitor site: this station's own display stream, offered outward over
 // one socket the station dials out on. Nothing here is reachable without a "publish" block, and

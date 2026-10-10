@@ -27,9 +27,20 @@ internal abstract class DeviceKind
     /// <summary>Whether a device of this kind is a sound card with a mixer.</summary>
     public virtual bool HasMixer => false;
 
+    /// <summary>
+    /// Whether the daemon owns the radio <paramref name="device"/> names, and so sets its dial and
+    /// filters itself; see <see cref="StationDevice.OwnsTheRadio"/>. Answered from the string
+    /// alone, for the settings read before the device is made.
+    /// </summary>
+    public virtual bool OwnsTheRadio(string device) => false;
+
     /// <summary>What the mailcast receiver's placement is told a station on
     /// <paramref name="device"/> is.</summary>
     public virtual MailcastRadioKind MailcastKindOf(string device) => MailcastRadioKind.SoundCard;
+
+    /// <summary>Why a bench transmit test (<c>--two-tone</c>, <c>--tone</c>) is refused on a
+    /// device of this kind, or null where it can transmit.</summary>
+    public virtual string? TransmitTestRefusal => null;
 
     /// <summary>Why a <c>"rig"</c> section is refused on <paramref name="device"/>, or null
     /// where a rig is taken.</summary>

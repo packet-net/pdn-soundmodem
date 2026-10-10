@@ -22,9 +22,12 @@ internal sealed class FlexDeviceKind : DeviceKind
     public override StationDevice Create(string device, DeviceSettings settings) =>
         new FlexStationDevice(this, device, FlexDevice.Parse(device));
 
+    /// <summary>Headless (no <c>@station</c>) only: in attach mode SmartSDR owns the slice.</summary>
+    public override bool OwnsTheRadio(string device) => FlexDevice.Parse(device).Headless;
+
     /// <inheritdoc/>
     public override MailcastRadioKind MailcastKindOf(string device) =>
-        FlexDevice.Parse(device).Headless ? MailcastRadioKind.FlexHeadless : MailcastRadioKind.FlexAttach;
+        OwnsTheRadio(device) ? MailcastRadioKind.FlexHeadless : MailcastRadioKind.FlexAttach;
 
     /// <inheritdoc/>
     public override string? RigRefusal(string device) =>

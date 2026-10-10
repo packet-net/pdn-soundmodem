@@ -26,6 +26,11 @@ internal sealed class UberSdrDeviceKind : DeviceKind
     public override MailcastRadioKind MailcastKindOf(string device) => MailcastRadioKind.UberSdr;
 
     /// <inheritdoc/>
+    public override string? TransmitTestRefusal =>
+        "tx test: refused, this station's audio comes from a web receiver, which is a receiver "
+        + "and has no transmitter - there is nothing here to key";
+
+    /// <inheritdoc/>
     public override string? RigRefusal(string device) =>
         $"\"rig\" is set and \"device\" is \"{device}\", a web receiver, which is tuned "
         + "by the band plan itself and has no rig to control - remove \"rig\".";
