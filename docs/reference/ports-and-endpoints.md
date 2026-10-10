@@ -264,6 +264,7 @@ No config and no key, restricted the same way as the channel audio stream above:
 
 - Refused unless the request's remote address is loopback (`127.0.0.1` or `::1`), whatever the station's own `bind` is.
 - Refused if the request carries an `Origin` header at all.
+- Refused if the request carries `X-Forwarded-For`, `Forwarded` or `X-Real-IP`, for the same reason as the stream: a reverse proxy on the same machine makes what it relays arrive from `127.0.0.1`. Do not point a proxy at `/rig-window`.
 
 A refused request gets a plain `403` with a one-line reason.
 
