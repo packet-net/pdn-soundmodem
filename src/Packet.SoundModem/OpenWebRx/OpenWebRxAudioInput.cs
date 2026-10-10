@@ -471,14 +471,14 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
         // started demodulator to deliver. Running out closes the session, so a receiver that
         // never delivers costs a short session rather than a hung one. Stopped while the
         // receiver's band does not reach the dial, which is quiet on purpose.
-        using var silent = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        silent.CancelAfter(StartupTimeout);
+        using var silent = new CancellationTokenSource(StartupTimeout, _time);
+        using var session = CancellationTokenSource.CreateLinkedTokenSource(cancellation, silent.Token);
 
         try
         {
             foreach (string message in OpenWebRxConversation.Opening())
             {
-                await SendAsync(socket, message, silent.Token).ConfigureAwait(false);
+                await SendAsync(socket, message, session.Token).ConfigureAwait(false);
             }
 
             while (true)
@@ -487,7 +487,7 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
                 WebSocketReceiveResult result;
                 do
                 {
-                    result = await socket.ReceiveAsync(receive, silent.Token).ConfigureAwait(false);
+                    result = await socket.ReceiveAsync(receive, session.Token).ConfigureAwait(false);
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
                         string? refusal = conversation.Refusal;
@@ -515,7 +515,7 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
                         reaction = conversation.OnText(Encoding.UTF8.GetString(accumulator.WrittenSpan));
                     }
 
-                    await ActAsync(socket, reaction, silent.Token).ConfigureAwait(false);
+                    await ActAsync(socket, reaction, session.Token).ConfigureAwait(false);
                     if (conversation.Adpcm != adpcm)
                     {
                         adpcm = conversation.Adpcm;
