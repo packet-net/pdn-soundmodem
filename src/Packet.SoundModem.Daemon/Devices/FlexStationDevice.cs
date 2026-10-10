@@ -83,6 +83,53 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
     /// <summary>The <see cref="FlexRuntime"/> closes the DAX streams when it is disposed.</summary>
     public override bool ClosesItsOwnStreams => true;
 
+    /// <summary>
+    /// The local channel audio stream's band (issue #584) on this radio: a connection can ask for
+    /// a band to hear, and while it is asking, a headless slice's receive filter widens to cover
+    /// it - the same thing bring-up already does for the configured modems and the mailcast
+    /// signal, just live rather than once, and never touching the filter until a connection asks.
+    /// Put back to exactly what bring-up set the moment the last such connection goes.
+    /// </summary>
+    /// <remarks>
+    /// Headless only: in attach mode the slice and its filter are SmartSDR's, and nothing is
+    /// installed. And only with a filter bring-up read back; without one (the receive filter
+    /// warning at bring-up said why) there is nothing known to widen from or put back to, and
+    /// guessing is worse than leaving it.
+    /// </remarks>
+    /// <returns>What now answers the stream's band, or null where nothing does.</returns>
+    internal static FlexStreamFilter? StreamFilterFor(
+        FlexDevice.FlexSpec flexSpec,
+        M0LTE.Flex.FlexStation station,
+        (int LowHz, int HighHz)? baseline,
+        WaterfallWebServer waterfallServer,
+        CancellationToken cancellation)
+    {
+        if (!flexSpec.Headless || baseline is not (int baseLowHz, int baseHighHz))
+        {
+            return null;
+        }
+
+        // The slice and the session are read when a command goes, so a rebuilt slice is followed.
+        var streamFilter = new FlexStreamFilter(
+            (baseLowHz, baseHighHz),
+            () => station.SliceIndex,
+            command => station.Client.SendCommandExpectOkAsync(command, cancellation),
+            Console.WriteLine,
+            Console.Error.WriteLine);
+
+        // A rebuilt slice comes up on bring-up's filter; a standing widening goes back on it.
+        station.HealthChanged += report =>
+        {
+            if (report.Health == M0LTE.Flex.FlexStationHealth.Healthy)
+            {
+                streamFilter.SliceRebuilt();
+            }
+        };
+
+        waterfallServer.ReceiveBandRequested = streamFilter.Request;
+        return streamFilter;
+    }
+
     /// <inheritdoc/>
     public override async Task<DeviceOpening> OpenAsync(DeviceOpenContext context)
     {
@@ -357,50 +404,7 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
 
         if (waterfallServer is not null)
         {
-            // The local channel audio stream (issue #584): a connection can ask for a band to hear,
-            // and while it is asking, the slice's receive filter widens to cover it - the same
-            // thing bring-up above already does for the configured modems and the mailcast signal,
-            // just live rather than once, and never touching the filter until a connection asks.
-            // Put back to exactly what bring-up set the moment the last such connection goes; left
-            // alone entirely (not even logged) when nobody ever asks.
-            (int BaselineLowHz, int BaselineHighHz)? baseline =
-                flex.Station.ReceiveFilter is (int baseLowHz, int baseHighHz) ? (baseLowHz, baseHighHz) : null;
-            string sliceIndex = flex.Station.SliceIndex;
-            var flexClient = flex.Station.Client;
-            waterfallServer.ReceiveBandRequested = requested =>
-            {
-                if (baseline is null)
-                {
-                    // Bring-up never reported a receive filter - ReceiveFilterWarning above already
-                    // said why - so there is nothing known to widen from or restore to. Leaving the
-                    // slice alone is safer than guessing at a filter nobody has confirmed.
-                    return;
-                }
-
-                (int LowHz, int HighHz) target = requested is (int wantLowHz, int wantHighHz)
-                    ? (Math.Min(baseline.Value.BaselineLowHz, BandPlanner.LowCutClearing(wantLowHz)),
-                       Math.Max(baseline.Value.BaselineHighHz, BandPlanner.HighCutClearing(wantHighHz)))
-                    : baseline.Value;
-
-                Console.WriteLine(requested is not null
-                    ? $"flex: widening the slice receive filter to {target.LowHz}-{target.HighHz} Hz "
-                      + "for the channel audio stream"
-                    : $"flex: putting the slice receive filter back to {target.LowHz}-{target.HighHz} "
-                      + "Hz, no channel audio stream connection is asking for a band any more");
-
-                _ = flexClient.SendCommandAsync($"filt {sliceIndex} {target.LowHz} {target.HighHz}")
-                    .ContinueWith(
-                        task =>
-                        {
-                            if (task.IsFaulted)
-                            {
-                                Console.Error.WriteLine(
-                                    "flex: WARNING - could not set the slice receive filter for the "
-                                    + $"channel audio stream: {task.Exception?.GetBaseException().Message}");
-                            }
-                        },
-                        TaskScheduler.Default);
-            };
+            StreamFilterFor(flexSpec, flex.Station, flex.Station.ReceiveFilter, waterfallServer, context.Cancellation);
         }
 
         return new DeviceOpening
