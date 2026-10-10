@@ -33,15 +33,22 @@
          `-p:Ax25SourcePath=/path/to/packet.net/src/Packet.Ax25/Packet.Ax25.csproj`, the
          same pattern as FlexSourcePath, while the two are developed together. -->
     <PackageReference Include="Packet.Ax25" Condition="'$(Ax25SourcePath)' == ''" />
-    <PackageReference Include="M0LTE.Radio.Audio" />
+    <!-- The audio, PTT and IQ source interfaces. Build against a local checkout with
+         `-p:RadioAudioSourcePath=/path/to/M0LTE.Radio.Audio/src/M0LTE.Radio.Audio/M0LTE.Radio.Audio.csproj`,
+         the same pattern as FlexSourcePath, while the interfaces move between the two repos. -->
+    <PackageReference Include="M0LTE.Radio.Audio" Condition="'$(RadioAudioSourcePath)' == ''" />
     <!-- Same local-checkout override pattern as FlexSourcePath, for the FEC, IL2P and
          ARDOP packages - the receive campaigns iterate across these repos. -->
     <PackageReference Include="M0LTE.Fec" Condition="'$(FecSourcePath)' == ''" />
     <PackageReference Include="M0LTE.Il2p" Condition="'$(Il2pSourcePath)' == ''" />
     <PackageReference Include="M0LTE.Ardop" Condition="'$(ArdopSourcePath)' == ''" />
     <PackageReference Include="M0LTE.Pocsag" />
-    <!-- DSP primitives, OFDM modem and LDPC codec, each lifted out into its own package. -->
-    <PackageReference Include="M0LTE.Dsp" />
+    <!-- DSP primitives, OFDM modem and LDPC codec, each lifted out into its own package.
+         Build against a local M0LTE.Dsp checkout with
+         `-p:DspSourcePath=/path/to/M0LTE.Dsp/src/M0LTE.Dsp/M0LTE.Dsp.csproj`; the tools that
+         name M0LTE.Dsp directly drop their own reference when it is set and take the
+         checkout through this project. -->
+    <PackageReference Include="M0LTE.Dsp" Condition="'$(DspSourcePath)' == ''" />
     <PackageReference Include="M0LTE.FecLdpc" />
     <PackageReference Include="M0LTE.Ofdm" />
     <PackageReference Include="Packet.Radio.Tait" />
@@ -67,6 +74,14 @@
 
   <ItemGroup Condition="'$(ArdopSourcePath)' != ''">
     <ProjectReference Include="$(ArdopSourcePath)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RadioAudioSourcePath)' != ''">
+    <ProjectReference Include="$(RadioAudioSourcePath)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(DspSourcePath)' != ''">
+    <ProjectReference Include="$(DspSourcePath)" />
   </ItemGroup>
 
   <ItemGroup>
