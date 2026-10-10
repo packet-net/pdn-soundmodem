@@ -53,9 +53,12 @@ internal static class DeviceKinds
     /// <summary>Two named pipes standing in for a sound card and a radio.</summary>
     public static readonly DeviceKind Pipe = new PipeDeviceKind();
 
+    /// <summary>An UberSDR web receiver, receive only.</summary>
+    public static readonly DeviceKind UberSdr = new UberSdrDeviceKind();
+
     /// <summary>Every kind, in the order a device string is tried against them; the sound card
     /// is last because it claims everything.</summary>
-    public static IReadOnlyList<DeviceKind> All { get; } = [Pipe, Alsa];
+    public static IReadOnlyList<DeviceKind> All { get; } = [Pipe, UberSdr, Alsa];
 
     /// <summary>The kind <paramref name="device"/> names.</summary>
     public static DeviceKind Of(string device)

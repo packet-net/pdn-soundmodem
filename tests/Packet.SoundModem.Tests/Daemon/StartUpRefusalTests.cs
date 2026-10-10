@@ -65,7 +65,9 @@ public class StartUpRefusalTests
     {
         // A web receiver hands the daemon single-sideband IQ. Left to run, the tuning below takes
         // "not LSB" as USB and the station demodulates one sideband of an FM signal in silence.
-        string source = Program();
+        // The UberSDR open is the device's own now (#595), so the file read is the device's.
+        string source = File.ReadAllText(Path.Combine(
+            FindRepoRoot(), "src", "Packet.SoundModem.Daemon", "Devices", "UberSdrStationDevice.cs"));
 
         int refusal = source.IndexOf(
             "cannot be served by {uberSdrEndpoint}", StringComparison.Ordinal);

@@ -573,38 +573,14 @@ bool deviceIsFlex = FlexDevice.IsFlex(device);
 // fighting it.
 bool flexIsHeadless = deviceIsFlex && FlexDevice.Parse(device).Headless;
 bool deviceIsUberSdr = UberSdrDevice.IsUberSdr(device);
-UberSdrEndpoint uberSdrEndpoint = default;
-if (deviceIsUberSdr)
+// Refusals the device can make from its settings alone, before any band plan is worked out.
+if (stationDevice.SettingsProblem is string deviceSettingsProblem)
 {
-    try
-    {
-        uberSdrEndpoint = UberSdrDevice.Parse(device);
-    }
-    catch (InvalidDataException malformed)
-    {
-        Console.Error.WriteLine(malformed.Message);
-        return 2;
-    }
-
-    if (uberSdrConfig?.OnDemand == true)
-    {
-        if (uberSdrConfig.LingerSeconds < 0)
-        {
-            Console.Error.WriteLine("\"ubersdr\".\"lingerSeconds\" cannot be negative");
-            return 2;
-        }
-
-        if (waterfallConfig is null)
-        {
-            Console.Error.WriteLine(
-                "\"ubersdr\".\"onDemand\" needs a \"waterfall\" section: the page's viewers are "
-                + "what asks for the receiver, and without one the station would never hear anything");
-            return 2;
-        }
-    }
+    Console.Error.WriteLine(deviceSettingsProblem);
+    return 2;
 }
 
-if (!deviceIsFlex && !deviceIsUberSdr && captureRate % DspRate != 0)
+if (!deviceIsFlex && stationDevice.CaptureRateApplies && captureRate % DspRate != 0)
 {
     Console.Error.WriteLine($"--capture-rate must be a multiple of {DspRate}");
     return 2;
@@ -633,19 +609,16 @@ catch (InvalidDataException planFailure)
 // Where a self-tuning receiver has to point. A band plan says it outright; failing that the
 // operator has to, because an SDR has no dial of its own to read a number off.
 double? receiveDialHz = bandPlan?.DialHz ?? dialFrequency;
-if (deviceIsUberSdr && receiveDialHz is null)
+if (stationDevice.NoReceiveDialRefusal is string noReceiveDial && receiveDialHz is null)
 {
-    Console.Error.WriteLine(
-        $"the UberSDR instance at {uberSdrEndpoint} has to be told where to listen. Give every "
-        + "modem an \"rfFrequency\" and the dial is worked out from them, or set "
-        + "\"dialFrequency\" to pin it - unlike a radio there is no dial already set to read off.");
+    Console.Error.WriteLine(noReceiveDial);
     return 2;
 }
 
 if (bandPlan is not null)
 {
     BandPlanner.Report(
-        bandPlan, Console.Out, radioIsSelfTuning: flexIsHeadless || deviceIsUberSdr || rigConfig is not null);
+        bandPlan, Console.Out, radioIsSelfTuning: flexIsHeadless || stationDevice.SelfTunes || rigConfig is not null);
     foreach (string warning in bandPlan.Warnings)
     {
         Console.Error.WriteLine($"band plan: WARNING - {warning}");
@@ -742,13 +715,11 @@ else if (carrierSenseFromAudio)
 
 var channel = new SoundModemChannel(
     DspRate, channelBusySource: carrierSense, audioFallback: carrierSenseFromAudio);
-if (deviceIsUberSdr)
+if (stationDevice.ReceiveOnlyReason is string receiveOnlyReason)
 {
     // Said once, here, so every path that could put something on the air - KISS, paging, ARDOP -
     // gets the same answer for the same reason, rather than each discovering it differently.
-    channel.ReceiveOnlyReason =
-        $"this station receives only: its audio comes from the UberSDR instance at "
-        + $"{uberSdrEndpoint}, which is a receiver and has no transmitter.";
+    channel.ReceiveOnlyReason = receiveOnlyReason;
 }
 
 // Channel access (TXDELAY, P, SLOTTIME, TXTAIL) belongs to the host, which sets it over KISS
@@ -1768,11 +1739,9 @@ if (deviceIsFlex && (pttSpec is not null || pttConfig is not null))
     return 2;
 }
 
-if (deviceIsUberSdr && (pttSpec is not null || pttConfig is not null))
+if (stationDevice.PttRefusal is string pttRefusal && (pttSpec is not null || pttConfig is not null))
 {
-    Console.Error.WriteLine(
-        $"--device ubersdr: is a receive-only station - the instance at {uberSdrEndpoint} has no "
-        + "transmitter, so there is nothing for a PTT line to key. Remove \"ptt\".");
+    Console.Error.WriteLine(pttRefusal);
     return 2;
 }
 
@@ -2502,7 +2471,6 @@ if (mailcast is not null && mailcastPlacement is { Retunes: true })
 // documented way (a "mode": "ardop" modem entry) wants the deeper buffer just as much.
 int flexPacketBuffer = ardopModem is null ? 3 : 6;
 FlexRuntime? flex = null;
-UberSdrAudioInput? uberSdr = null;
 // Whether the UberSDR input, in either of its forms, has a session to be starved of. Null for
 // every other device: their quiet is never deliberate.
 Func<bool>? uberSdrSessionLive = null;
@@ -2569,139 +2537,6 @@ if (opened is not null)
     playbackMixer = opened.PlaybackMixer;
     mixerRuntime = opened.MixerRuntime;
     mixerWhyNot = opened.MixerWhyNot;
-}
-else if (deviceIsUberSdr)
-{
-    string planSideband = bandPlan?.Sideband ?? sideband;
-
-    // A web receiver hands this daemon single-sideband IQ and nothing else, so "fm" here is not
-    // a radio it can be: taken as USB, as everything that is not LSB is below, it would
-    // demodulate the wrong thing and say nothing about it.
-    if (RfPlan.IsFmRadio(planSideband))
-    {
-        Console.Error.WriteLine(
-            $"\"sideband\": \"fm\" cannot be served by {uberSdrEndpoint}: a web receiver is an "
-            + "SSB receiver, and this station would be demodulating one sideband of an FM "
-            + "signal. Point \"device\" at a sound card fed by the FM radio instead.");
-        return 2;
-    }
-
-    var uberSdrTuning = new UberSdrTuning
-    {
-        // The receiver is tuned to the dial itself, so the suppressed carrier lands at DC in the
-        // IQ and the demodulator's own NCO has nothing left to do.
-        FrequencyHz = (int)Math.Round(receiveDialHz!.Value),
-        Sideband = planSideband.Equals("lsb", StringComparison.OrdinalIgnoreCase)
-            ? Sideband.Lower
-            : Sideband.Upper,
-        OutputRate = DspRate,
-        Mode = uberSdrConfig?.Mode ?? "iq48",
-        Password = uberSdrConfig?.Password,
-        SsbLowHz = uberSdrConfig?.SsbLowHz ?? 150,
-        SsbHighHz = uberSdrConfig?.SsbHighHz ?? 3450,
-        StartupGuardMs = uberSdrConfig?.StartupGuardMs ?? 1000,
-        Gain = (float)(uberSdrConfig?.Gain ?? 1.0),
-    };
-
-    string audioBanner =
-        $"audio: {uberSdrEndpoint} {uberSdrTuning.Mode} IQ at {RfPlan.Mhz(receiveDialHz.Value)} -> "
-        + $"{planSideband.ToUpperInvariant()} {uberSdrTuning.SsbLowHz:F0}-{uberSdrTuning.SsbHighHz:F0} Hz "
-        + $"audio at {DspRate} Hz (RECEIVE ONLY";
-    ConnectionResponse uberSdrConnection;
-    string? uberSdrReceiver;
-
-    if (uberSdrConfig?.OnDemand == true)
-    {
-        // A public monitor on somebody else's receiver: the session exists only while a browser
-        // has the waterfall open, and is held for the linger after the last one leaves. The
-        // pre-flight still runs here, so a wrong host or a refused IQ mode is still an error
-        // at start-up; but a receiver that is merely down is not fatal - the page stays up and
-        // says so, and the input keeps trying for as long as anyone is waiting.
-        OnDemandUberSdrInput onDemand;
-        try
-        {
-            // Its phase lines are this station's, so they go out through the station's journal
-            // and pick up its tag when it has one.
-            onDemand = await OnDemandUberSdrInput.OpenAsync(
-                uberSdrEndpoint, uberSdrTuning, TimeSpan.FromSeconds(uberSdrConfig.LingerSeconds),
-                stationJournal.ErrorSink, cancellation.Token);
-        }
-        catch (Exception e) when (e is InvalidOperationException or WebSocketException
-                                    or HttpRequestException or IOException)
-        {
-            Console.Error.WriteLine(DeviceDiagnostics.UberSdr(device, configPath, e));
-            return 1;
-        }
-
-        input = onDemand;
-        uberSdrSessionLive = () => onDemand.SessionLive;
-        uberSdrConnection = onDemand.Connection;
-        uberSdrReceiver = onDemand.ReceiverDescription;
-        stationJournal.Write($"{audioBanner}, on demand: connected while the waterfall has a viewer, "
-            + $"held {uberSdrConfig.LingerSeconds} s after the last leaves)");
-
-        // The page shows the input's own sentence for what it is doing, and credits the
-        // receiver whether or not a session is up. The viewer count flows the other way.
-        waterfallServer!.SetReceiver(uberSdrReceiver, uberSdrEndpoint.PublicUrl);
-        waterfallServer.SetRadioStatus(onDemand.Status);
-        onDemand.PhaseChanged += (_, sentence) => waterfallServer.SetRadioStatus(sentence);
-        waterfallServer.ViewersChanged += onDemand.SetViewers;
-    }
-    else
-    {
-        try
-        {
-            uberSdr = await UberSdrAudioInput.OpenAsync(
-                uberSdrEndpoint, uberSdrTuning, stationJournal.ErrorSink, cancellation.Token);
-        }
-        catch (Exception e) when (e is InvalidOperationException or WebSocketException
-                                    or HttpRequestException or IOException)
-        {
-            Console.Error.WriteLine(DeviceDiagnostics.UberSdr(device, configPath, e));
-            return 1;
-        }
-
-        input = uberSdr;
-        uberSdrSessionLive = () => uberSdr.SessionLive;
-        uberSdrConnection = uberSdr.Connection;
-        uberSdrReceiver = uberSdr.ReceiverDescription;
-        stationJournal.Write($"{audioBanner})");
-        if (uberSdrReceiver is not null)
-        {
-            waterfallServer?.SetRadioStatus(uberSdrReceiver);
-        }
-
-        // A receiver that stays unreachable is not something to sit quietly on. Exit 1 so the
-        // unit restarts and tries afresh, exactly as for a Flex whose session dies (exit 2 is
-        // reserved for "your configuration is wrong", which restarting could never fix).
-        uberSdr.Lost += reason =>
-        {
-            stationJournal.WriteError($"ubersdr: {reason}");
-            radioLost = true;
-            cancellation.Cancel();
-        };
-    }
-
-    ptt = new NullPtt();
-    playback = new NullAudioOutput(DspRate);
-    if (uberSdrReceiver is not null)
-    {
-        stationJournal.Write($"ubersdr: {uberSdrReceiver}");
-    }
-
-    if (uberSdrConnection.RefusedForNow)
-    {
-        stationJournal.WriteError(
-            "ubersdr: the receiver is refusing this address for now "
-            + $"({uberSdrConnection.Reason ?? "daily listening allowance exhausted"}). The station "
-            + "is up and will start hearing audio when the receiver lets us back in.");
-    }
-    else
-    {
-        stationJournal.Write(
-            $"ubersdr: session limit {uberSdrConnection.MaxSessionTime} s - the stream is picked up "
-            + "again each time the receiver ends one");
-    }
 }
 else if (deviceIsFlex)
 {
