@@ -82,7 +82,7 @@ internal static class DeviceKinds
     /// operator.</exception>
     public static StationDevice Resolve(string device, string? wavLoopPath, DeviceSettings settings)
     {
-        _ = wavLoopPath;
-        return Of(device).Create(device, settings);
+        StationDevice named = Of(device).Create(device, settings);
+        return wavLoopPath is null ? named : new WavLoopStationDevice(named, wavLoopPath);
     }
 }

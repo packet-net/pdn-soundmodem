@@ -2524,7 +2524,7 @@ AlsaMixer? playbackMixer = null;
 MixerRuntime? mixerRuntime = null;
 string mixerWhyNot = "this station has no sound card, so it has no mixer";
 
-DeviceOpening? opened = wavLoopPath is not null ? null : await stationDevice.OpenAsync(new DeviceOpenContext
+DeviceOpening? opened = await stationDevice.OpenAsync(new DeviceOpenContext
 {
     DspRate = DspRate,
     ConfigPath = configPath,
@@ -2569,21 +2569,6 @@ if (opened is not null)
     playbackMixer = opened.PlaybackMixer;
     mixerRuntime = opened.MixerRuntime;
     mixerWhyNot = opened.MixerWhyNot;
-}
-else if (wavLoopPath is not null)
-{
-    // A recording standing in for the capture device: same decimation path, no TX side.
-    var wavLoop = new WavLoopAudioInput(wavLoopPath);
-    if (wavLoop.SampleRate % DspRate != 0)
-    {
-        Console.Error.WriteLine($"--wav-loop rate {wavLoop.SampleRate} is not a multiple of {DspRate}");
-        return 2;
-    }
-
-    ptt = new NullPtt();
-    playback = new NullAudioOutput(DspRate);
-    input = wavLoop;
-    Console.WriteLine($"audio: wav-loop {wavLoopPath} {wavLoop.SampleRate} Hz -> {DspRate} Hz");
 }
 else if (deviceIsUberSdr)
 {
