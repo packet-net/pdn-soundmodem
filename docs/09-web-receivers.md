@@ -223,7 +223,19 @@ openwebrx: the receiver compresses its audio to 4-bit ADPCM, a setting of its ow
 
 ### What ADPCM costs
 
-ADPCM_RESULTS
+Measured in the simulator, not yet on air: each mode's ladder run twice, once as it is and once through the same 12 kHz ADPCM round trip a receiver puts its audio through (`sm-ota sim --adpcm`), 100 bursts a rung. The figure is where half the frames come through.
+
+| Mode | Channel | 50% point, plain | 50% point, ADPCM | Cost |
+|---|---|---|---|---|
+| `bpsk300` | AWGN | -5.6 dB | -5.5 dB | about 0.1 dB |
+| `afsk300-il2pc` | AWGN | -2.0 dB | -1.8 dB | about 0.2 dB |
+| `qpsk600` | AWGN | -1.7 dB | -1.6 dB | about 0.1 dB |
+| `bpsk1200` | AWGN | +0.4 dB | +0.5 dB | none measurable |
+| `qpsk2400` | AWGN | +3.9 dB | +4.3 dB | about 0.4 dB |
+| `afsk1200` | FM, data port | +10.0 dB | +9.9 dB | none measurable |
+| `qpsk3600` | FM, data port | +7.3 dB | +7.4 dB | about 0.1 dB |
+
+The fading channels (`bpsk300` on Moderate, `qpsk2400` on Good) showed no difference beyond the spread of 100 bursts. The cost hardly moves with level: coding at -6, -20, -40 and -50 dBFS gave the same results within that spread. So ADPCM is not what limits the faster modes. Their limits are the receiver's passband, its AGC and its demodulator, which the simulator does not model and only an on-air test will show. 9600 baud and faster cannot pass through 12 kHz audio at all.
 
 ## How it works
 
