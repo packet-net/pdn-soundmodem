@@ -34,11 +34,13 @@ public sealed class RateBridgedModem : IModem, IFrameSpanSource, IConstellationS
 {
     /// <summary>
     /// The highest a bridged modem's measured band may reach, as a fraction of the inner rate:
-    /// 4320 Hz at 12 kHz. The probe reports 99 % occupied-bandwidth edges, which sit a couple of
-    /// hundred Hz inside the real skirts, and the decimator is flat to about 4.4 kHz, so this
-    /// leaves the skirts in the passband.
+    /// 3900 Hz at 12 kHz. The decimator is flat to about 4.4 kHz. The probe measures what the
+    /// modem transmits, as 99 % occupied-bandwidth edges a couple of hundred Hz inside the real
+    /// skirts, and a receiver reaches further than its own transmission: a diversity bank's comb
+    /// (about 175 Hz either side by default) and a sender tuned off frequency. The 500 Hz between
+    /// the two figures is for those.
     /// </summary>
-    public const double BandLimitFraction = 0.36;
+    public const double BandLimitFraction = 0.325;
 
     /// <summary>The decimator's and upsampler's FIR length, M0LTE.Dsp's default for both.</summary>
     private const int FilterTaps = 96;
