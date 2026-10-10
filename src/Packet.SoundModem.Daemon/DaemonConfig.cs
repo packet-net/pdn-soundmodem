@@ -1896,18 +1896,9 @@ public sealed class DaemonConfig
             return;
         }
 
-        if (FlexRadio.FlexDevice.IsFlex(config.Device))
+        if (DeviceKinds.Of(config.Device).RigRefusal(config.Device) is string rigRefusal)
         {
-            throw new InvalidDataException(
-                $"\"rig\" is set and \"device\" is \"{config.Device}\". A FlexRadio is tuned and keyed "
-                + "over its own API, so it needs no rigctld - remove \"rig\".");
-        }
-
-        if (UberSdrDevice.IsUberSdr(config.Device))
-        {
-            throw new InvalidDataException(
-                $"\"rig\" is set and \"device\" is \"{config.Device}\", a web receiver, which is tuned "
-                + "by the band plan itself and has no rig to control - remove \"rig\".");
+            throw new InvalidDataException(rigRefusal);
         }
 
         if (RigctldEndpoint.TryParse(rig.Rigctld, out string why) is null)
@@ -1975,9 +1966,7 @@ public sealed class DaemonConfig
     /// <param name="device">The <c>device</c> setting.</param>
     public static bool IsSoundCard(string device) =>
         !string.IsNullOrWhiteSpace(device)
-        && !FlexRadio.FlexDevice.IsFlex(device)
-        && !UberSdrDevice.IsUberSdr(device)
-        && !PipeAudio.IsPipe(device);
+        && DeviceKinds.Of(device).HasMixer;
 
     /// <summary>
     /// Refuses a burst-packing setting that would not do what it says: on a mode that cannot pack,
@@ -2428,17 +2417,10 @@ public sealed class DaemonConfig
                 + "\"monitor\".\"uplinks\", not through a \"publish\" block of its own.");
         }
 
-        // Tom's decision of 2026-09-04, and the sentence says why rather than just refusing.
-        if (UberSdrDevice.IsUberSdr(config.Device))
+        // A kind that cannot be published says why rather than just refusing.
+        if (DeviceKinds.Of(config.Device).PublishRefusal(config.Device) is string publishRefusal)
         {
-            throw new InvalidDataException(
-                $"\"publish\" on \"device\": \"{config.Device}\", which is somebody else's public "
-                + "web receiver. A receiver like that is already on the monitor site in its own "
-                + "right, so relaying it a second time through this daemon would show one "
-                + "operator's antenna twice under two names and spend that receiver's daily "
-                + "listening allowance on the site's behalf without the site knowing. Publish "
-                + "from a station with a radio of its own; to have a say about which receivers "
-                + "the site lists, use the site's own \"monitor\".\"allow\" and \"deny\".");
+            throw new InvalidDataException(publishRefusal);
         }
 
         if (config.Waterfall is null)

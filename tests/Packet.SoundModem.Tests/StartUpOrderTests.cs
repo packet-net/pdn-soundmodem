@@ -8,8 +8,9 @@ namespace Packet.SoundModem.Tests;
 /// <remarks>
 /// <para>The same trick as <see cref="SourceTextTests"/>, and for the same reason: the property
 /// is real, it is not expressible as a unit test, and it is cheaper to read the file than to
-/// leave it unguarded. The ordering here lives in top-level statements that no test exercises,
-/// so nothing else in the suite would notice it moving.</para>
+/// leave it unguarded. The ordering here lives in the sound card device's open
+/// (<c>AlsaStationDevice.Open</c> in <c>Devices/AlsaStationDevice.cs</c>, since #595), which only
+/// runs against a real card, so nothing else in the suite would notice it moving.</para>
 /// <para>Ugly, and much better than nothing for a rule whose violation is invisible in CI and
 /// intermittent on hardware.</para>
 /// </remarks>
@@ -39,8 +40,9 @@ public class StartUpOrderTests
     [Fact]
     public void The_Mixer_Is_Read_And_Set_Before_The_Capture_Stream_Is_Opened()
     {
+        // The ALSA open, mixer pass included, is the sound card device's own since #595.
         string program = Path.Combine(
-            FindRepoRoot(), "src", "Packet.SoundModem.Daemon", "Program.cs");
+            FindRepoRoot(), "src", "Packet.SoundModem.Daemon", "Devices", "AlsaStationDevice.cs");
         string source = File.ReadAllText(program);
 
         int mixerOpened = source.IndexOf("AlsaMixer.TryOpen(mixerCard", StringComparison.Ordinal);
@@ -94,7 +96,7 @@ public class StartUpOrderTests
     public void The_Mixer_Is_Also_Read_Before_The_Playback_Stream_Is_Opened()
     {
         string source = File.ReadAllText(Path.Combine(
-            FindRepoRoot(), "src", "Packet.SoundModem.Daemon", "Program.cs"));
+            FindRepoRoot(), "src", "Packet.SoundModem.Daemon", "Devices", "AlsaStationDevice.cs"));
 
         int playbackOpened = source.IndexOf("new AlsaAudioOutput(", StringComparison.Ordinal);
 
@@ -109,6 +111,37 @@ public class StartUpOrderTests
                 playbackOpened,
                 "MixerRuntime.Start is where the card is actually read and set, so it is the call "
                 + "that has to be finished with before either stream on the device is opened");
+    }
+
+    /// <summary>
+    /// And no mixer work comes back into <c>Program.cs</c> after the device is opened, where the
+    /// two tests above, which read the device's own file, could not see it.
+    /// </summary>
+    /// <remarks>
+    /// Anchored on the open rather than on the whole file, because <c>--mixer-show</c> reads and
+    /// sets a card near the top of <c>Program.cs</c> and exits before any PCM is opened, which is
+    /// allowed.
+    /// </remarks>
+    [Fact]
+    public void Program_Cs_Does_No_Mixer_Work_Once_The_Device_Is_Open()
+    {
+        string source = File.ReadAllText(Path.Combine(
+            FindRepoRoot(), "src", "Packet.SoundModem.Daemon", "Program.cs"));
+
+        int opened = source.IndexOf("stationDevice.OpenAsync(", StringComparison.Ordinal);
+        opened.Should().BeGreaterThan(
+            -1, "the station's device is opened with stationDevice.OpenAsync(...); if that moved "
+              + "or was renamed, this test needs updating rather than deleting");
+
+        string afterOpen = source[opened..];
+        foreach (string mixerCall in new[] { "AlsaMixer.TryOpen(", "MixerRuntime.Start(", "MixerSetup.TryApply(" })
+        {
+            afterOpen.Should().NotContain(
+                mixerCall,
+                "every ALSA mixer call must finish before the PCM is opened, so it belongs in "
+                + "AlsaStationDevice.Open above the AlsaAudioOutput/AlsaAudioInput construction, "
+                + "not in Program.cs after the device has opened its streams");
+        }
     }
 
     private static string FindRepoRoot()

@@ -352,13 +352,11 @@ if (DaemonConfig.ParseBind(bindAddress) is null)
     return 2;
 }
 
-// A web receiver has no transmitter, so a bench test on one is refused before anything is built
+// A receiver has no transmitter, so a bench test on one is refused before anything is built
 // rather than after the station has come up around a page that will not exist.
-if (benchTxTest is not null && device.StartsWith("ubersdr:", StringComparison.OrdinalIgnoreCase))
+if (benchTxTest is not null && DeviceKinds.Of(device).TransmitTestRefusal is string receiverTxTestRefusal)
 {
-    Console.Error.WriteLine(
-        "tx test: refused, this station's audio comes from a web receiver, which is a receiver "
-        + "and has no transmitter - there is nothing here to key");
+    Console.Error.WriteLine(receiverTxTestRefusal);
     return 1;
 }
 
@@ -392,7 +390,7 @@ var flexTuning = new FlexTuning
     // so defaulting elsewhere makes the order they are started in stop mattering. Attach mode
     // is SmartSDR's slice by definition, so it keeps 1.
     DaxChannel = flexDaxCh ?? flexConfig?.DaxChannel
-        ?? (FlexDevice.IsFlex(device) && FlexDevice.Parse(device).Headless
+        ?? (DeviceKinds.Of(device).OwnsTheRadio(device)
             ? FlexConfig.DefaultHeadlessDaxChannel
             : "1"),
     TxPowerWatts = flexConfig?.TxPowerWatts,
@@ -464,7 +462,7 @@ foreach (string spec in modemSpecs)
 // On a Flex the slice mode states the sideband, so it is not something to be configured
 // separately and disagreed with: DIGL alongside the default "usb" would mirror every modem
 // about the dial and say nothing.
-if (FlexDevice.IsFlex(device) && FlexDevice.Parse(device).Headless)
+if (DeviceKinds.Of(device).OwnsTheRadio(device))
 {
     string? impliedSideband = RfPlan.SidebandForSliceMode(flexTuning.Mode);
 
@@ -550,47 +548,34 @@ if (publishConfig is not null
     return 2;
 }
 
+// The device the station runs on. Every question start-up asks about it from here on, what it
+// can do and how to open it, is asked of this rather than of the device string.
+StationDevice stationDevice;
+try
+{
+    stationDevice = DeviceKinds.Resolve(
+        device, wavLoopPath, new DeviceSettings(uberSdrConfig, HasWaterfall: waterfallConfig is not null));
+}
+catch (InvalidDataException malformed)
+{
+    Console.Error.WriteLine(malformed.Message);
+    return 2;
+}
+
+// Whether the daemon owns the radio, and so sets the dial and the transmit filter: a headless
+// Flex only - in attach mode SmartSDR owns the slice and we would be fighting it.
+bool ownsTheRadio = stationDevice.OwnsTheRadio;
+// Refusals the device can make from its settings alone, before any band plan is worked out.
+if (stationDevice.SettingsProblem is string deviceSettingsProblem)
+{
+    Console.Error.WriteLine(deviceSettingsProblem);
+    return 2;
+}
+
 // A FlexRadio provides its own DAX sample clock (24/48 kHz auto-picked from the DSP rate), and
 // an UberSDR its own 48 kHz IQ clock, so --capture-rate (an ALSA concept) does not apply to
 // either.
-bool deviceIsFlex = FlexDevice.IsFlex(device);
-// Headless is the deployment where the daemon owns the radio, and so the only one where it sets
-// the dial and the transmit filter - in attach mode SmartSDR owns the slice and we would be
-// fighting it.
-bool flexIsHeadless = deviceIsFlex && FlexDevice.Parse(device).Headless;
-bool deviceIsUberSdr = UberSdrDevice.IsUberSdr(device);
-UberSdrEndpoint uberSdrEndpoint = default;
-if (deviceIsUberSdr)
-{
-    try
-    {
-        uberSdrEndpoint = UberSdrDevice.Parse(device);
-    }
-    catch (InvalidDataException malformed)
-    {
-        Console.Error.WriteLine(malformed.Message);
-        return 2;
-    }
-
-    if (uberSdrConfig?.OnDemand == true)
-    {
-        if (uberSdrConfig.LingerSeconds < 0)
-        {
-            Console.Error.WriteLine("\"ubersdr\".\"lingerSeconds\" cannot be negative");
-            return 2;
-        }
-
-        if (waterfallConfig is null)
-        {
-            Console.Error.WriteLine(
-                "\"ubersdr\".\"onDemand\" needs a \"waterfall\" section: the page's viewers are "
-                + "what asks for the receiver, and without one the station would never hear anything");
-            return 2;
-        }
-    }
-}
-
-if (!deviceIsFlex && !deviceIsUberSdr && captureRate % DspRate != 0)
+if (stationDevice.CaptureRateApplies && captureRate % DspRate != 0)
 {
     Console.Error.WriteLine($"--capture-rate must be a multiple of {DspRate}");
     return 2;
@@ -608,7 +593,7 @@ try
     // since one cannot fit inside an ordinary passband however the dial is chosen.
     bandPlan = BandPlanner.Plan(
         modems, sideband, dialFrequency, DspRate,
-        flexIsHeadless ? Passband.WideCeilingHz : null);
+        ownsTheRadio ? Passband.WideCeilingHz : null);
 }
 catch (InvalidDataException planFailure)
 {
@@ -619,19 +604,16 @@ catch (InvalidDataException planFailure)
 // Where a self-tuning receiver has to point. A band plan says it outright; failing that the
 // operator has to, because an SDR has no dial of its own to read a number off.
 double? receiveDialHz = bandPlan?.DialHz ?? dialFrequency;
-if (deviceIsUberSdr && receiveDialHz is null)
+if (stationDevice.NoReceiveDialRefusal is string noReceiveDial && receiveDialHz is null)
 {
-    Console.Error.WriteLine(
-        $"the UberSDR instance at {uberSdrEndpoint} has to be told where to listen. Give every "
-        + "modem an \"rfFrequency\" and the dial is worked out from them, or set "
-        + "\"dialFrequency\" to pin it - unlike a radio there is no dial already set to read off.");
+    Console.Error.WriteLine(noReceiveDial);
     return 2;
 }
 
 if (bandPlan is not null)
 {
     BandPlanner.Report(
-        bandPlan, Console.Out, radioIsSelfTuning: flexIsHeadless || deviceIsUberSdr || rigConfig is not null);
+        bandPlan, Console.Out, radioIsSelfTuning: stationDevice.SelfTunes || rigConfig is not null);
     foreach (string warning in bandPlan.Warnings)
     {
         Console.Error.WriteLine($"band plan: WARNING - {warning}");
@@ -641,7 +623,7 @@ if (bandPlan is not null)
     // only - in attach mode SmartSDR owns the slice and we would be fighting it. The transmit
     // filter is a global, persistent radio setting, so state its high cut from the plan or a
     // previous session's narrow filter silently truncates the top of the band.
-    if (flexIsHeadless)
+    if (ownsTheRadio)
     {
         // Overwriting a stated slice frequency without a word would leave someone upgrading a
         // working Flex config with a number that has quietly stopped meaning anything.
@@ -687,7 +669,7 @@ MailcastPlacement? mailcastPlacement = null;
 if (mailcastConfig is not null)
 {
     MailcastRadio mailcastRadio = MailcastStation.RadioFor(
-        deviceIsFlex, flexIsHeadless, deviceIsUberSdr, bandPlan, dialFrequency, receiveDialHz, sideband,
+        stationDevice.MailcastKind, bandPlan, dialFrequency, receiveDialHz, sideband,
         flexTuning, uberSdrConfig, hasRig: rigConfig is not null);
     mailcastPlacement = MailcastPlacement.Decide(
         mailcastConfig, mailcastRadio, MailcastPlacement.HalfWidthHz(), out string? mailcastRefusal);
@@ -728,13 +710,11 @@ else if (carrierSenseFromAudio)
 
 var channel = new SoundModemChannel(
     DspRate, channelBusySource: carrierSense, audioFallback: carrierSenseFromAudio);
-if (deviceIsUberSdr)
+if (stationDevice.ReceiveOnlyReason is string receiveOnlyReason)
 {
     // Said once, here, so every path that could put something on the air - KISS, paging, ARDOP -
     // gets the same answer for the same reason, rather than each discovering it differently.
-    channel.ReceiveOnlyReason =
-        $"this station receives only: its audio comes from the UberSDR instance at "
-        + $"{uberSdrEndpoint}, which is a receiver and has no transmitter.";
+    channel.ReceiveOnlyReason = receiveOnlyReason;
 }
 
 // Channel access (TXDELAY, P, SLOTTIME, TXTAIL) belongs to the host, which sets it over KISS
@@ -1007,7 +987,7 @@ foreach (ModemConfig modemConfig in modems)
 // Where each modem sits in the audio band, for the radio's transmit filter: from the plan when
 // there is one, else measured off the modems as configured. Flex only - it is the one device
 // whose transmit filter the daemon can see, and the measurement costs a modulate per modem.
-IReadOnlyList<TransmitFilterPlan.Band> txBands = !deviceIsFlex
+IReadOnlyList<TransmitFilterPlan.Band> txBands = !stationDevice.ReportsTransmitFilter
     ? []
     : bandPlan is not null
         ? [.. bandPlan.Modems.Select(m => new TransmitFilterPlan.Band(
@@ -1021,7 +1001,7 @@ IReadOnlyList<TransmitFilterPlan.Band> txBands = !deviceIsFlex
 // than it (ms110d-* reaches past 3.1 kHz against a 3000 Hz default) is truncated on air with
 // nothing said. The band-planned path states the high cut above; this is the same for a station
 // with no plan to read it off.
-if (flexIsHeadless && deriveTransmitFilter && flexTuning.TransmitFilterHighHz is null
+if (ownsTheRadio && deriveTransmitFilter && flexTuning.TransmitFilterHighHz is null
     && TransmitFilterPlan.HighCutFor(txBands) is int derivedFilterHigh)
 {
     TransmitFilterPlan.Band widest = txBands.MaxBy(b => b.HighHz);
@@ -1043,7 +1023,7 @@ if (mailcastPlacement is { Retunes: false } mailcastHeard)
     heardBands.Add((mailcastHeard.LowHz, mailcastHeard.HighHz));
 }
 
-if (flexIsHeadless && heardBands.Count > 0)
+if (ownsTheRadio && heardBands.Count > 0)
 {
     int receiveLow = BandPlanner.LowCutClearing(heardBands.Min(b => b.LowHz));
     int receiveHigh = BandPlanner.HighCutClearing(heardBands.Max(b => b.HighHz));
@@ -1742,23 +1722,11 @@ if (idBeacons)
 M0LTE.Flex.FlexMeters? flexMeters = null;
 using var flexMetersLifetime = new Disposer(() => flexMeters?.Dispose());
 
-/// <summary>Below this the transmitter is not keyed and the readout is meaningless.</summary>
-const double TransmitReadoutFloorWatts = 0.1;
-
-// The Flex owns keying (the slice PTT is an API command), so a conflicting --ptt /
-// configured PTT is rejected - matching how --device flex: implicitly keys the radio.
-if (deviceIsFlex && (pttSpec is not null || pttConfig is not null))
+// A device that keys itself (a Flex: the slice PTT is an API command) or cannot transmit at all
+// (an UberSDR) refuses a conflicting --ptt or configured PTT, in its own words.
+if (stationDevice.PttRefusal is string pttRefusal && (pttSpec is not null || pttConfig is not null))
 {
-    Console.Error.WriteLine(
-        "--device flex: keys the radio itself; remove the conflicting --ptt (serial:/cm108:)");
-    return 2;
-}
-
-if (deviceIsUberSdr && (pttSpec is not null || pttConfig is not null))
-{
-    Console.Error.WriteLine(
-        $"--device ubersdr: is a receive-only station - the instance at {uberSdrEndpoint} has no "
-        + "transmitter, so there is nothing for a PTT line to key. Remove \"ptt\".");
+    Console.Error.WriteLine(pttRefusal);
     return 2;
 }
 
@@ -2480,697 +2448,67 @@ if (mailcast is not null && mailcastPlacement is { Retunes: true })
         MailcastStation.Journal(stationJournal), mailcast.Hooks);
 }
 
-// Audio + PTT: a FlexRadio DAX triplet (--device flex:…), an UberSDR web receiver's IQ stream
-// (--device ubersdr:…, receive only), or an ALSA card. Each surfaces through the same
-// IAudioInput/IAudioOutput/IPttControl the channel already speaks, so KISS packet, POCSAG
-// paging and ARDOP all get every transport for free.
+// Audio + PTT: the device opens itself (see StationDevice and the kinds in Devices/): a FlexRadio
+// DAX triplet (--device flex:...), an UberSDR web receiver's IQ stream (--device ubersdr:...,
+// receive only), a pair of pipes, a recording (--wav-loop), or an ALSA card. Each surfaces
+// through the same IAudioInput/IAudioOutput/IPttControl the channel already speaks, so KISS
+// packet, POCSAG paging and ARDOP all get every transport for free.
 // Keyed off the modem entry, not the legacy --ardop flag: a station configuring ARDOP the
 // documented way (a "mode": "ardop" modem entry) wants the deeper buffer just as much.
 int flexPacketBuffer = ardopModem is null ? 3 : 6;
-FlexRuntime? flex = null;
-UberSdrAudioInput? uberSdr = null;
+DeviceOpening opened = await stationDevice.OpenAsync(new DeviceOpenContext
+{
+    DspRate = DspRate,
+    ConfigPath = configPath,
+    Journal = stationJournal,
+    Channel = channel,
+    Waterfall = waterfallServer,
+    RadioLost = () =>
+    {
+        radioLost = true;
+        cancellation.Cancel();
+    },
+    Cancellation = cancellation.Token,
+    Sideband = bandPlan?.Sideband ?? sideband,
+    ReceiveDialHz = receiveDialHz,
+    FlexPacketBuffer = flexPacketBuffer,
+    FlexTuning = flexTuning,
+    TransmitBands = txBands,
+    CaptureRate = captureRate,
+    CaptureDeviceKey = captureDeviceKey,
+    PlaybackDeviceKey = playbackDeviceKey,
+    Alsa = alsaConfig,
+    Ptt = pttConfig,
+    Rig = rig,
+});
+
+if (opened.ExitCode is int openRefused)
+{
+    return openRefused;
+}
+
+IPttControl ptt = opened.Ptt;
+IAudioOutput playback = opened.Playback;
+IAudioInput input = opened.Input;
+FlexRuntime? flex = opened.Flex;
+flexMeters = opened.FlexMeters;
 // Whether the UberSDR input, in either of its forms, has a session to be starved of. Null for
 // every other device: their quiet is never deliberate.
-Func<bool>? uberSdrSessionLive = null;
-IPttControl ptt;
-IAudioOutput playback;
-IAudioInput input;
+Func<bool>? uberSdrSessionLive = opened.SessionLive;
 // Set only on the ALSA path: the sound card is the one device with xrun counters, and they are
 // the difference between "the band is quiet" and "this machine will not schedule us".
-AlsaAudioOutput? alsaOut = null;
-AlsaAudioInput? alsaIn = null;
+AlsaAudioOutput? alsaOut = opened.AlsaOut;
+AlsaAudioInput? alsaIn = opened.AlsaIn;
 // The card's mixer, on the ALSA path only. Opened whether or not the configuration sets
 // anything, so the start-up log records the level the station is actually listening at - but
 // nothing is written to the card unless a key in "alsa"."mixer", or a change remembered in the
 // state file from an earlier run, said so.
-AlsaMixer? mixer = null;
+AlsaMixer? mixer = opened.Mixer;
 // The transmit card's mixer, on a station that transmits through a different card from the one
 // it receives on; null everywhere else, where "mixer" does both.
-AlsaMixer? playbackMixer = null;
-MixerRuntime? mixerRuntime = null;
-string mixerWhyNot = "this station has no sound card, so it has no mixer";
-
-if (PipeAudio.IsPipe(device) && wavLoopPath is null)
-{
-    // Two FIFOs standing in for a sound card and a radio, so two daemons can be on the same air
-    // with no hardware between them. See PipeAudio for what this deliberately does not model.
-    try
-    {
-        (string inPipe, string outPipe, int pipeRate) = PipeAudio.Parse(device);
-        if (pipeRate % DspRate != 0)
-        {
-            Console.Error.WriteLine(
-                $"pipe rate {pipeRate} is not a multiple of the channel's {DspRate} Hz");
-            return 2;
-        }
-
-        ptt = new NullPtt();
-        var pipeOut = new PipeAudioOutput(outPipe, pipeRate);
-        playback = pipeRate == DspRate
-            ? pipeOut
-            : new UpsamplingAudioOutput(pipeOut, DspRate);
-        input = new PipeAudioInput(inPipe, pipeRate);
-        Console.WriteLine($"audio: pipe in={inPipe} out={outPipe} {pipeRate} Hz -> {DspRate} Hz");
-    }
-    catch (Exception failure) when (failure is InvalidDataException or IOException
-        or UnauthorizedAccessException)
-    {
-        Console.Error.WriteLine($"audio: {failure.Message}");
-        return 2;
-    }
-}
-else if (wavLoopPath is not null)
-{
-    // A recording standing in for the capture device: same decimation path, no TX side.
-    var wavLoop = new WavLoopAudioInput(wavLoopPath);
-    if (wavLoop.SampleRate % DspRate != 0)
-    {
-        Console.Error.WriteLine($"--wav-loop rate {wavLoop.SampleRate} is not a multiple of {DspRate}");
-        return 2;
-    }
-
-    ptt = new NullPtt();
-    playback = new NullAudioOutput(DspRate);
-    input = wavLoop;
-    Console.WriteLine($"audio: wav-loop {wavLoopPath} {wavLoop.SampleRate} Hz -> {DspRate} Hz");
-}
-else if (deviceIsUberSdr)
-{
-    string planSideband = bandPlan?.Sideband ?? sideband;
-
-    // A web receiver hands this daemon single-sideband IQ and nothing else, so "fm" here is not
-    // a radio it can be: taken as USB, as everything that is not LSB is below, it would
-    // demodulate the wrong thing and say nothing about it.
-    if (RfPlan.IsFmRadio(planSideband))
-    {
-        Console.Error.WriteLine(
-            $"\"sideband\": \"fm\" cannot be served by {uberSdrEndpoint}: a web receiver is an "
-            + "SSB receiver, and this station would be demodulating one sideband of an FM "
-            + "signal. Point \"device\" at a sound card fed by the FM radio instead.");
-        return 2;
-    }
-
-    var uberSdrTuning = new UberSdrTuning
-    {
-        // The receiver is tuned to the dial itself, so the suppressed carrier lands at DC in the
-        // IQ and the demodulator's own NCO has nothing left to do.
-        FrequencyHz = (int)Math.Round(receiveDialHz!.Value),
-        Sideband = planSideband.Equals("lsb", StringComparison.OrdinalIgnoreCase)
-            ? Sideband.Lower
-            : Sideband.Upper,
-        OutputRate = DspRate,
-        Mode = uberSdrConfig?.Mode ?? "iq48",
-        Password = uberSdrConfig?.Password,
-        SsbLowHz = uberSdrConfig?.SsbLowHz ?? 150,
-        SsbHighHz = uberSdrConfig?.SsbHighHz ?? 3450,
-        StartupGuardMs = uberSdrConfig?.StartupGuardMs ?? 1000,
-        Gain = (float)(uberSdrConfig?.Gain ?? 1.0),
-    };
-
-    string audioBanner =
-        $"audio: {uberSdrEndpoint} {uberSdrTuning.Mode} IQ at {RfPlan.Mhz(receiveDialHz.Value)} -> "
-        + $"{planSideband.ToUpperInvariant()} {uberSdrTuning.SsbLowHz:F0}-{uberSdrTuning.SsbHighHz:F0} Hz "
-        + $"audio at {DspRate} Hz (RECEIVE ONLY";
-    ConnectionResponse uberSdrConnection;
-    string? uberSdrReceiver;
-
-    if (uberSdrConfig?.OnDemand == true)
-    {
-        // A public monitor on somebody else's receiver: the session exists only while a browser
-        // has the waterfall open, and is held for the linger after the last one leaves. The
-        // pre-flight still runs here, so a wrong host or a refused IQ mode is still an error
-        // at start-up; but a receiver that is merely down is not fatal - the page stays up and
-        // says so, and the input keeps trying for as long as anyone is waiting.
-        OnDemandUberSdrInput onDemand;
-        try
-        {
-            // Its phase lines are this station's, so they go out through the station's journal
-            // and pick up its tag when it has one.
-            onDemand = await OnDemandUberSdrInput.OpenAsync(
-                uberSdrEndpoint, uberSdrTuning, TimeSpan.FromSeconds(uberSdrConfig.LingerSeconds),
-                stationJournal.ErrorSink, cancellation.Token);
-        }
-        catch (Exception e) when (e is InvalidOperationException or WebSocketException
-                                    or HttpRequestException or IOException)
-        {
-            Console.Error.WriteLine(DeviceDiagnostics.UberSdr(device, configPath, e));
-            return 1;
-        }
-
-        input = onDemand;
-        uberSdrSessionLive = () => onDemand.SessionLive;
-        uberSdrConnection = onDemand.Connection;
-        uberSdrReceiver = onDemand.ReceiverDescription;
-        stationJournal.Write($"{audioBanner}, on demand: connected while the waterfall has a viewer, "
-            + $"held {uberSdrConfig.LingerSeconds} s after the last leaves)");
-
-        // The page shows the input's own sentence for what it is doing, and credits the
-        // receiver whether or not a session is up. The viewer count flows the other way.
-        waterfallServer!.SetReceiver(uberSdrReceiver, uberSdrEndpoint.PublicUrl);
-        waterfallServer.SetRadioStatus(onDemand.Status);
-        onDemand.PhaseChanged += (_, sentence) => waterfallServer.SetRadioStatus(sentence);
-        waterfallServer.ViewersChanged += onDemand.SetViewers;
-    }
-    else
-    {
-        try
-        {
-            uberSdr = await UberSdrAudioInput.OpenAsync(
-                uberSdrEndpoint, uberSdrTuning, stationJournal.ErrorSink, cancellation.Token);
-        }
-        catch (Exception e) when (e is InvalidOperationException or WebSocketException
-                                    or HttpRequestException or IOException)
-        {
-            Console.Error.WriteLine(DeviceDiagnostics.UberSdr(device, configPath, e));
-            return 1;
-        }
-
-        input = uberSdr;
-        uberSdrSessionLive = () => uberSdr.SessionLive;
-        uberSdrConnection = uberSdr.Connection;
-        uberSdrReceiver = uberSdr.ReceiverDescription;
-        stationJournal.Write($"{audioBanner})");
-        if (uberSdrReceiver is not null)
-        {
-            waterfallServer?.SetRadioStatus(uberSdrReceiver);
-        }
-
-        // A receiver that stays unreachable is not something to sit quietly on. Exit 1 so the
-        // unit restarts and tries afresh, exactly as for a Flex whose session dies (exit 2 is
-        // reserved for "your configuration is wrong", which restarting could never fix).
-        uberSdr.Lost += reason =>
-        {
-            stationJournal.WriteError($"ubersdr: {reason}");
-            radioLost = true;
-            cancellation.Cancel();
-        };
-    }
-
-    ptt = new NullPtt();
-    playback = new NullAudioOutput(DspRate);
-    if (uberSdrReceiver is not null)
-    {
-        stationJournal.Write($"ubersdr: {uberSdrReceiver}");
-    }
-
-    if (uberSdrConnection.RefusedForNow)
-    {
-        stationJournal.WriteError(
-            "ubersdr: the receiver is refusing this address for now "
-            + $"({uberSdrConnection.Reason ?? "daily listening allowance exhausted"}). The station "
-            + "is up and will start hearing audio when the receiver lets us back in.");
-    }
-    else
-    {
-        stationJournal.Write(
-            $"ubersdr: session limit {uberSdrConnection.MaxSessionTime} s - the stream is picked up "
-            + "again each time the receiver ends one");
-    }
-}
-else if (deviceIsFlex)
-{
-    try
-    {
-        flex = await FlexDevice.OpenAsync(device, DspRate, flexPacketBuffer, flexTuning, cancellation.Token);
-    }
-    catch (Exception e) when (e is not OperationCanceledException)
-    {
-        // The one device path that had no catch: a radio still booting at daemon start
-        // escaped as a raw stack trace with an abort exit code, instead of the
-        // DeviceDiagnostics message and the exit 1 (retry) contract the ALSA and UberSDR
-        // paths honour. Broad on purpose - whatever the radio library throws, the answer
-        // is the same: say what to check, and let the unit retry.
-        Console.Error.WriteLine(DeviceDiagnostics.Flex(device, configPath, e));
-        return 1;
-    }
-
-    ptt = flex.Ptt;
-    playback = flex.Output;
-    input = flex.Input;
-
-    // Arbitrated keying: ordinary queued frames also defer BEFORE they are rendered while
-    // another station transmits - the same polite hold ARDOP sessions get - rather than
-    // discovering the busy radio inside Key(). Composed over whatever inhibit is already
-    // installed (ARDOP's ARQ gate lands earlier), never instead of it. ARDOP's own bursts
-    // bypass the inhibit by design and rely on the in-Key wait alone.
-    if (flex.Ptt is M0LTE.Flex.FlexArbitratedPtt arbitratedPtt)
-    {
-        Func<bool>? priorInhibit = channel.TransmitInhibit;
-        channel.TransmitInhibit = () =>
-            (priorInhibit?.Invoke() ?? false) || arbitratedPtt.AnotherStationTransmitting;
-        Console.WriteLine(
-            "flex: arbitrated keying - every keyup waits out other stations, re-asserts the "
-            + "transmit filter and the TX slice, and is confirmed against the interlock");
-    }
-    FlexDevice.FlexSpec flexSpec = FlexDevice.Parse(device);
-    string flexModeDesc = flexSpec.Headless
-        ? $"headless {flexTuning.Frequency} MHz {flexTuning.Antenna} {flexTuning.Mode}"
-        : $"attach station '{flexSpec.Station}'";
-    Console.WriteLine(
-        $"audio: {device} DAX {input.SampleRate} Hz -> {DspRate} Hz "
-        + $"(slice {flexSpec.SliceLetter}, dax {flexTuning.DaxChannel}, {flexModeDesc})");
-    if (flex.Station.TuneWarning is string tuneWarning)
-    {
-        Console.Error.WriteLine($"flex: {tuneWarning}");
-    }
-
-    // Two headless instances that both take the default DAX channel displace each other, which
-    // is exactly how this station lost its slice for six days (docs/dev/archive/flex-integration.md §12).
-    // Said at bring-up, while it can still be acted on.
-    if (flex.Station.DaxChannelWarning is string daxWarning)
-    {
-        Console.Error.WriteLine($"flex: {daxWarning}");
-    }
-
-    // The radio's global transmit filter, read back at bring-up (Flex 0.7.0) - it, not the
-    // slice, limits transmitted DAX audio bandwidth, and it is whatever last touched the radio
-    // (a 300 Hz CW filter would silently crush a 3 kHz mode). We deliberately never set it;
-    // reporting it makes a stale value visible. Headless only - attach leaves it to SmartSDR.
-    // A radio that reboots, or a network that blips, ends the session - and nothing used to
-    // notice. The modem then sat with a dead socket: no audio, no waterfall, and nothing said
-    // why. Stop instead, with exit 1 so the unit restarts and rediscovers the radio rather
-    // than staying down (exit 2 is reserved for "your configuration is wrong", which a restart
-    // could never fix).
-    flex.Station.Client.Disconnected += () =>
-    {
-        Console.Error.WriteLine(
-            "flex: the radio's session ended - rebooted, dropped off the network, or closed the "
-            + "connection. Stopping so the service restarts and rediscovers it.");
-        radioLost = true;
-        cancellation.Cancel();
-    };
-
-    // Losing the SLICE is not the same as losing the session, and it used to be invisible. The
-    // socket stays up, the modem keeps queueing, and every keyup is accepted by the radio and
-    // does nothing - a station deaf and mute with a healthy-looking connection. Say so once,
-    // clearly, and rebuild.
-    flex.Station.SliceLost += check =>
-        Console.Error.WriteLine($"flex: lost our slice - {check.Detail}");
-
-    // State the starting point explicitly. The station reaches Healthy inside the bring-up
-    // above, so the HealthChanged subscription below is attached after that first transition
-    // has already fired and can only ever report LATER ones. Without this line the journal
-    // never says that ownership was checked at all, which is exactly the reassurance a
-    // six-day silent outage taught us to want.
-    Console.WriteLine(
-        $"flex: slice {flex.Station.SliceIndex} health {flex.Station.Health} at bring-up "
-        + $"({flex.Station.VerifyOwnership().Detail switch
-        {
-            "" => "owned by this client",
-            string detail => detail,
-        }})");
-
-    flex.Station.HealthChanged += report =>
-    {
-        switch (report.Health)
-        {
-            case M0LTE.Flex.FlexStationHealth.Healthy:
-                Console.WriteLine($"flex: slice healthy - {report.Detail}");
-                break;
-
-            case M0LTE.Flex.FlexStationHealth.Contended:
-                // Deliberately not an exit. Restarting would recreate the slice, which is the
-                // same move the other client is making, and two daemons rebuilding at each
-                // other churns the radio for both. Stay up, stay off the air, and be loud.
-                Console.Error.WriteLine(
-                    $"flex: STANDING DOWN - {report.Detail} This station is now off the air and "
-                    + "will not retake the slice. Check what else is connected to the radio "
-                    + "(SmartSDR, a capture tool, a second modem), stop it, and restart this "
-                    + "service.");
-                break;
-
-            case M0LTE.Flex.FlexStationHealth.Disposed:
-                // Shutdown. The daemon already says it is stopping; "Disposed - disposed"
-                // adds nothing but a line to read past.
-                break;
-
-            case M0LTE.Flex.FlexStationHealth.Recovering:
-            case M0LTE.Flex.FlexStationHealth.SliceLost:
-            case M0LTE.Flex.FlexStationHealth.Unbound:
-            default:
-                Console.Error.WriteLine($"flex: {report.Health} - {report.Detail}");
-                break;
-        }
-    };
-
-    // Rebuild off the status thread: RecoverAsync serialises itself and returns immediately
-    // when the slice is already ours, so a duplicate trigger is free.
-    M0LTE.Flex.FlexStation flexStation = flex.Station;
-    flexStation.SliceLost += lostCheck =>
-    {
-        _ = lostCheck;
-        _ = Task.Run(
-            async () =>
-            {
-                try
-                {
-                    M0LTE.Flex.FlexRecoveryResult result =
-                        await flexStation.RecoverAsync(cancellation.Token);
-                    if (!result.Recovered)
-                    {
-                        Console.Error.WriteLine(
-                            $"flex: could not rebuild the slice after {result.Attempts} "
-                            + $"attempt(s) - {result.Detail}");
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                    // Shutting down.
-                }
-            },
-            CancellationToken.None);
-    };
-
-    // The radio's frequency reference, into the waterfall's top bar and kept current. Only a
-    // Flex reports one; a soundcard station shows nothing rather than an empty label.
-    if (waterfallServer is not null)
-    {
-        void PublishReference(M0LTE.Flex.FlexReferenceStatus reference) =>
-            waterfallServer.SetRadioStatus(reference.Describe());
-
-        PublishReference(flex.Station.Client.Reference);
-        flex.Station.Client.ReferenceChanged += PublishReference;
-        Console.WriteLine($"flex: reference {flex.Station.Client.Reference.Describe()}");
-    }
-
-    // What the transmitter is actually doing, live, in the page's top bar. The meters are the
-    // radio's own - forward power and SWR - so this reports the transmission rather than what we
-    // asked for, which is the difference that matters when an antenna is wrong.
-    if (waterfallServer is not null)
-    {
-        try
-        {
-            M0LTE.Flex.FlexMeters txMeters =
-                await M0LTE.Flex.FlexMeters.SubscribeAsync(flex.Station.Client);
-            flexMeters = txMeters;
-            txMeters.Updated += reading =>
-            {
-                if (!reading.Descriptor.Name.Equals("FWDPWR", StringComparison.OrdinalIgnoreCase))
-                {
-                    return;   // one update per keyed sample is plenty; SWR is read alongside it
-                }
-
-                double watts = M0LTE.Flex.FlexMeters.DbmToWatts(reading.Value);
-                if (watts < TransmitReadoutFloorWatts)
-                {
-                    // Key-up: the display averages what it was given and holds that average,
-                    // because a packet burst is over before an operator can read a live figure.
-                    waterfallServer.SetTransmitReading(null, null);
-                    return;
-                }
-
-                waterfallServer.SetTransmitReading(watts, txMeters.SwrFromPowers());
-            };
-        }
-        catch (Exception e) when (e is M0LTE.Flex.FlexProtocolException or IOException)
-        {
-            // A station that cannot read its meters still transmits perfectly well.
-            Console.Error.WriteLine($"flex: no transmit metering - {e.Message}");
-        }
-    }
-
-    // Always reported, set or not: an inherited power shapes every transmission just as much as
-    // a configured one, and it is the number the operator will be asked about on the air.
-    if (flex.Station.RfPowerApplied is int rfPower)
-    {
-        double watts = rfPower / 100.0 * FlexDevice.PaWatts;
-        string ceiling = flex.Station.MaxPowerLevel is int max
-            ? $", limit {max / 100.0 * FlexDevice.PaWatts:0.#} W"
-            : "";
-        string source = flexTuning.TxPowerWatts is null ? " (radio's own setting)" : "";
-        Console.WriteLine($"flex: transmit power {watts:0.#} W{ceiling}{source}");
-    }
-
-    if (flex.Station.TransmitFilter is (int txFilterLow, int txFilterHigh))
-    {
-        Console.WriteLine($"flex: transmit filter {txFilterLow}..{txFilterHigh} Hz (radio global - limits TX audio bandwidth)");
-
-        // What the filter passes is checked against where the modems actually are, rather than
-        // assumed: a modem outside it transmits a truncated signal, or nothing at all, and does
-        // so silently. The high cut we ask for can still come back narrower - it is a radio-wide
-        // setting and the radio has the last word - and in attach mode we never set it at all.
-        foreach (TransmitFilterPlan.Band band in txBands
-                     .Where(b => b.LowHz < txFilterLow || b.HighHz > txFilterHigh))
-        {
-            // Only the high cut is settable through the station API, so a modem under the low
-            // edge is something only the operator can fix. Telling someone to move a modem that
-            // has nowhere to go - the freedv-*/ms110d-* centres are pinned by their specs - is
-            // worse than saying nothing.
-            string remedy = band.LowHz < txFilterLow
-                ? "The low cut is not settable from here; widen it on the radio."
-                : ModemCatalog.AcceptsCentreFrequency(band.Mode)
-                    ? "Widen the high cut on the radio, or move the modem down the passband."
-                    : "Widen the high cut on the radio - this mode's centre is fixed by its spec.";
-            Console.Error.WriteLine(
-                $"flex: WARNING - modem {band.SubChannel} ({band.Mode}) occupies "
-                + $"{band.LowHz:F0}-{band.HighHz:F0} Hz, outside the radio's "
-                + $"{txFilterLow}..{txFilterHigh} Hz transmit filter - it will be clipped. "
-                + remedy);
-        }
-    }
-
-    if (flex.Station.ReceiveFilter is (int rxFilterLow, int rxFilterHigh))
-    {
-        Console.WriteLine(
-            $"flex: slice receive filter {rxFilterLow}..{rxFilterHigh} Hz (what the modems can hear)");
-
-        // Deaf rather than clipped, and just as quiet about it: a modem outside the slice's filter
-        // decodes nothing at all and looks exactly like a dead band.
-        foreach (TransmitFilterPlan.Band band in txBands
-                     .Where(b => b.LowHz < rxFilterLow || b.HighHz > rxFilterHigh))
-        {
-            Console.Error.WriteLine(
-                $"flex: WARNING - modem {band.SubChannel} ({band.Mode}) occupies "
-                + $"{band.LowHz:F0}-{band.HighHz:F0} Hz, outside the slice's "
-                + $"{rxFilterLow}..{rxFilterHigh} Hz receive filter - it will hear nothing there.");
-        }
-    }
-
-    if (flex.Station.ReceiveFilterWarning is string receiveFilterWarning)
-    {
-        // The radio's ceiling on receive width is not measured, so this is how a radio that will
-        // not go as wide as asked says so, rather than the modem quietly going deaf.
-        Console.Error.WriteLine($"flex: WARNING - {receiveFilterWarning}");
-    }
-}
-else
-{
-    ptt = new NullPtt();
-
-    // Hardware the config names but the box does not have is the single most likely thing to
-    // go wrong on a first install (the seeded config points at a CM108 on /dev/hidraw0). Say
-    // which setting, which file, and how to list what is really there - but exit 1, not 2, so
-    // the unit keeps retrying and comes up by itself if the device was only slow to appear.
-    try
-    {
-        switch (pttConfig?.Type)
-        {
-            case null:
-                break;
-            case "serial":
-                string serialLine = pttConfig.Line ?? "rts";
-                ptt = new SerialPtt(pttConfig.Device, useRts: serialLine != "dtr", useDtr: serialLine == "dtr");
-                Console.WriteLine($"ptt: serial {pttConfig.Device} ({serialLine})");
-                break;
-            case "cm108":
-                int gpio = pttConfig.Gpio ?? 3;
-                ptt = new Cm108Ptt(pttConfig.Device, gpio);
-                Console.WriteLine($"ptt: cm108 {pttConfig.Device} (gpio {gpio})");
-                break;
-            case "rigctld" when rig is not null:
-                ptt = rig.KeyingPtt();
-                Console.WriteLine($"ptt: rigctld {rig.Endpoint} (T 1 to key, T 0 to unkey)");
-                break;
-            default:
-                Console.Error.WriteLine($"unknown ptt type '{pttConfig.Type}'");
-                return 2;
-        }
-    }
-    catch (Exception e) when (e is IOException or UnauthorizedAccessException
-                                or InvalidOperationException or ArgumentException)
-    {
-        Console.Error.WriteLine(DeviceDiagnostics.Ptt(pttConfig!, configPath, e));
-        return 1;
-    }
-
-    // The card's mixer, BEFORE the PCM is opened, and finished with before it is.
-    //
-    // The order is the point, and it was found the hard way on radio1 (2026-09-06): with the
-    // mixer pass between the open and the first read, the station stopped receiving about a
-    // second after start-up on 10 runs out of 13, with "receive feed dead: the input device
-    // failed (snd_pcm_readi: Input/output error)".
-    //
-    // What that window really is, from the strace of the same failure on a qpsk3600 station
-    // later the same day: everything between the open and the first steady reads is time the
-    // capture stream can overrun in, and an overrun the recovery cannot get out of comes back
-    // from snd_pcm_readi as -EIO, which reads as a dead device rather than as a late reader. It
-    // was blamed at the time on a mixer control transfer colliding with the URB submission the
-    // first read makes; that was a guess from the symptom, and the qpsk3600 failure had no mixer
-    // traffic in this window at all. AlsaPcm holds the actual fix (a 500 ms capture buffer, a
-    // start threshold of 1 so the stream starts on the first read, and a recovery that prepares,
-    // starts, pauses and retries), and this ordering is what keeps the gap short to begin with.
-    // Nothing here needs the PCM - reading a mixer never did, which is why --mixer-show works on
-    // a running station - so the window costs nothing to close.
-    //
-    // Read even when the configuration asks for nothing, because a station's capture gain is the
-    // difference between clean audio and clipped audio and the start-up log should say what it
-    // is; written only where a key said so, so a file with no "alsa" section leaves every control
-    // alone.
-    //
-    // A station that receives on one card and transmits through another ("captureDevice",
-    // "playbackDevice") has two mixers: the capture gain, AGC and mic boost are on the receive
-    // card, the playback level on the transmit card. Both are opened here, above the PCMs, for
-    // the same reason. "alsa"."mixer"."card" names one mixer for both sides when it is set.
-    string captureDevice = captureDeviceKey ?? device;
-    string playbackDevice = playbackDeviceKey ?? device;
-    string mixerCard = alsaConfig?.Mixer?.Card ?? AlsaMixer.CardFor(captureDevice);
-    string playbackMixerCard = alsaConfig?.Mixer?.Card ?? AlsaMixer.CardFor(playbackDevice);
-    bool mixerSplit = !string.Equals(mixerCard, playbackMixerCard, StringComparison.Ordinal);
-    if (mixerSplit)
-    {
-        if (AlsaMixer.TryOpen(playbackMixerCard, out AlsaMixer? openedPlayback, out string playbackWhy))
-        {
-            playbackMixer = openedPlayback;
-        }
-        else
-        {
-            Console.WriteLine(
-                $"{MixerSetup.JournalPrefix}{playbackMixerCard} (transmit) has no mixer "
-                + $"({playbackWhy}); the transmit level is left as the card has it");
-        }
-    }
-
-    bool captureMixerOpened = AlsaMixer.TryOpen(mixerCard, out AlsaMixer? openedMixer, out string mixerWhy);
-    if (mixerSplit && !captureMixerOpened)
-    {
-        Console.WriteLine(
-            $"{MixerSetup.JournalPrefix}{mixerCard} (receive) has no mixer ({mixerWhy}); the "
-            + "capture gain is left as the card has it, and there is no AGC or mic boost to "
-            + "switch off");
-    }
-
-    if (captureMixerOpened || playbackMixer is not null)
-    {
-        mixer = openedMixer;
-
-        // A split station whose one card has no mixer still sets the other: the missing side is
-        // a stand-in with no controls, so its levels are simply not found.
-        IAlsaMixer captureSide = openedMixer is not null ? openedMixer : new AbsentMixer(mixerCard);
-        IAlsaMixer playbackSide = !mixerSplit ? captureSide
-            : playbackMixer is not null ? playbackMixer
-            : new AbsentMixer(playbackMixerCard);
-
-        // Guarded, not bare: these are top-level statements with nothing above them to catch
-        // anything, and TryOpen only proves the ten entry points it uses itself. A libasound
-        // missing one of the twenty the apply reaches would otherwise be a crash at every
-        // start-up and a systemd restart loop, over a mixer. It costs the mixer instead.
-        //
-        // This is also where the state file is read and the precedence is decided: what
-        // "alsa"."mixer" pins is applied and wins, what it says nothing about comes from a
-        // change made on the page in some earlier run, and the rest is left as the card has it.
-        // "." for a station configured entirely on the command line, which puts the state file
-        // in the working directory. Nothing writes it on such a station anyway - the config API
-        // refuses to be served without a --config file - but the read still has to have a path.
-        mixerRuntime = MixerRuntime.Start(
-            captureSide, playbackSide, alsaConfig?.Mixer, configPath ?? ".",
-            MixerStateFile.StampFor(captureDevice, playbackDevice), Console.WriteLine,
-            out string applyWhy);
-        if (mixerRuntime is null)
-        {
-            string unread = !mixerSplit || playbackMixer is null ? mixerCard
-                : openedMixer is null ? playbackMixerCard
-                : $"{mixerCard} and {playbackMixerCard}";
-            mixerWhyNot = $"{unread} could not be read or set: {applyWhy}";
-            openedMixer?.Dispose();
-            mixer = null;
-            playbackMixer?.Dispose();
-            playbackMixer = null;
-        }
-    }
-    else if (mixerSplit)
-    {
-        // Both lines are already in the journal, one per card.
-        mixerWhyNot = $"neither {mixerCard} nor {playbackMixerCard} has a mixer";
-    }
-    else
-    {
-        // Not a failure. A card with no mixer at all is a real thing (a bare I2S codec, a loopback
-        // device), and so is a libasound with no mixer functions in it - neither is a reason for
-        // a station to stop receiving.
-        mixerWhyNot = $"{mixerCard} has no mixer: {mixerWhy}";
-        Console.WriteLine(
-            $"{MixerSetup.JournalPrefix}{mixerCard} has no mixer ({mixerWhy}); the capture gain "
-            + "and the transmit level are left as the card has them, and there is no AGC or mic "
-            + "boost to switch off");
-    }
-
-    // Which key chose the device being opened, so a failure names the one to fix: on a split
-    // station either side can be the card that is missing.
-    string opening = playbackDevice;
-    string openingKey = playbackDeviceKey is null ? "device" : "playbackDevice";
-    bool openingCapture = false;
-    try
-    {
-        // Transmit: modulate at the DSP rate; play at the card-native capture rate through the
-        // image-rejecting upsampler (cards commonly refuse to open 12 kHz playback directly).
-        var alsaPlayback = new AlsaAudioOutput(
-            playbackDevice, captureRate == DspRate ? DspRate : captureRate);
-        alsaOut = alsaPlayback;
-        playback = captureRate == DspRate
-            ? alsaPlayback
-            : new UpsamplingAudioOutput(alsaPlayback, DspRate);
-        // Receive: capture at the card-native rate, into the half-second buffer AlsaAudioInput
-        // asks for by default. It used to be 120 ms here, with 500 ms for ARDOP alone on the
-        // grounds that only snd-aloop hiccupped; a qpsk3600 start-up on the bench CM108 overran
-        // the 120 ms one on every run, so every station gets the deep buffer now.
-        opening = captureDevice;
-        openingKey = captureDeviceKey is null ? "device" : "captureDevice";
-        openingCapture = true;
-        var alsaInput = new AlsaAudioInput(captureDevice, captureRate);
-        alsaIn = alsaInput;
-        input = alsaInput;
-    }
-    catch (Exception e) when (e is IOException or UnauthorizedAccessException
-                                or InvalidOperationException or ArgumentException)
-    {
-        Console.Error.WriteLine(DeviceDiagnostics.Audio(
-            opening, configPath, e, openingKey,
-            split: !string.Equals(captureDevice, playbackDevice, StringComparison.Ordinal),
-            capture: openingCapture));
-        return 1;
-    }
-
-    Console.WriteLine(string.Equals(captureDevice, playbackDevice, StringComparison.Ordinal)
-        ? $"audio: {captureDevice} capture {captureRate} Hz -> {DspRate} Hz"
-        : $"audio: capture {captureDevice} {captureRate} Hz -> {DspRate} Hz, "
-            + $"playback {playbackDevice}");
-
-    // What the card actually gave us, because the buffer is the difference between a station
-    // that survives a slow first pass through the modem and one that dies at every start-up,
-    // and "what did it negotiate" was previously only answerable with a strace. Said even when
-    // the answer is that it would not say, for the same reason.
-    if (alsaIn is AlsaAudioInput openedInput)
-    {
-        Console.WriteLine(openedInput.BufferMilliseconds > 0
-            ? $"audio: capture buffer {openedInput.BufferMilliseconds} ms, "
-              + $"period {openedInput.PeriodMilliseconds} ms"
-            : "audio: capture buffer: the card would not say");
-    }
-
-    // And what it refused, if it refused anything. A card that will not take the deep buffer
-    // still runs, on the configuration the daemon always used, but it is now a station one
-    // stalled start-up away from the bug this was all about, so it says so rather than leaving
-    // the next person to strace it.
-    if (alsaIn?.ConfigurationWarning is string captureRefusal)
-    {
-        Console.Error.WriteLine($"audio: {captureRefusal}");
-    }
-
-    if (alsaOut?.ConfigurationWarning is string playbackRefusal)
-    {
-        Console.Error.WriteLine($"audio: {playbackRefusal}");
-    }
-}
+AlsaMixer? playbackMixer = opened.PlaybackMixer;
+MixerRuntime? mixerRuntime = opened.MixerRuntime;
+string mixerWhyNot = opened.MixerWhyNot;
 
 using AlsaMixer? mixerLifetime = mixer;
 using AlsaMixer? playbackMixerLifetime = playbackMixer;
@@ -3427,14 +2765,9 @@ if (identifiers.Count > 0)
 // implementations and the two real incidents, and is written down on
 // StationOptions.DeviceKind, beside the thresholds it decides.
 //
-// flex:mock counts as a bench device, not a Flex: its DAX-RX path deliberately delivers
-// nothing between injected frames, which a starvation watch would read as a dead radio
-// 30 s into every idle bench session.
-DeadFeedDevice deadFeedDevice =
-    wavLoopPath is not null ? DeadFeedDevice.WavLoop
-    : deviceIsUberSdr ? DeadFeedDevice.UberSdr
-    : deviceIsFlex ? (flex!.Mock is null ? DeadFeedDevice.Flex : DeadFeedDevice.WavLoop)
-    : DeadFeedDevice.Alsa;
+// Which family a device is in is the device's own answer (flex:mock, for one, counts as a bench
+// device rather than a Flex - see FlexStationDevice.DeadFeedKind).
+DeadFeedDevice deadFeedDevice = stationDevice.DeadFeedKind;
 
 // The uplink to a public monitor site: this station's own display stream, offered outward over
 // one socket the station dials out on. Nothing here is reachable without a "publish" block, and
@@ -3683,7 +3016,7 @@ if (benchTxTest is not null)
     // open either way - but it gets its five seconds to come out on its own first.
     listening.Join(TimeSpan.FromSeconds(5));
 
-    if (!deviceIsFlex)
+    if (!stationDevice.ClosesItsOwnStreams)
     {
         (ptt as IDisposable)?.Dispose();
         (playback as IDisposable)?.Dispose();
@@ -3721,7 +3054,7 @@ if (mailcastRun is not null)
     }
 }
 
-if (!deviceIsFlex)
+if (!stationDevice.ClosesItsOwnStreams)
 {
     (ptt as IDisposable)?.Dispose();
     (playback as IDisposable)?.Dispose();
