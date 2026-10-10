@@ -16,10 +16,16 @@ namespace Packet.SoundModem.Daemon;
 /// <para><b>What is measured.</b> Per <c>Read</c>, the samples delivered and the wall time since
 /// the previous one, and of that time how much the loop spent processing rather than waiting in
 /// <c>Read</c>. Over a window the first two give the share of real time that reached the
-/// station; the third says why it fell short. A loop busy nearly all the time is the bottleneck:
-/// the modems want more than the core gives, and whatever buffer the device has overflows. A loop
-/// mostly waiting while samples are still missing means the audio was lost before it arrived:
-/// the network, the radio or the device. The two need different fixes, so the line says which.</para>
+/// station; the third says why it fell short. Busy share over delivered share is the processing
+/// the loop needed per second of audio. Audio lost on the way in leaves a loop that keeps up with
+/// what does arrive, so that figure stays under one; a loop that is itself the bottleneck needs
+/// more than a second per second, and whatever buffer the device has overflows. The two need
+/// different fixes, so the line says which.</para>
+/// <para>Busy share alone is not the test, though it was the first one: a thread starved of CPU
+/// (a cgroup quota, a contended host) is descheduled inside <c>Read</c> as well as outside it,
+/// so its busy share reads low. Measured on GB7RDG with a 15 % quota on 2026-10-10: busy 82 %,
+/// 57 % delivered, which the first cut blamed on the network. 0.82 / 0.57 is 1.44 seconds per
+/// second, the loop's fault, which it was.</para>
 /// <para><b>What is left out.</b> Spans while this station is keyed (a keyed radio's receive
 /// stream is not a measurement of anything) and while the host says the session is idle on
 /// purpose (an on-demand receiver nobody is watching). Short dropouts inside a window do count:
@@ -37,8 +43,9 @@ internal sealed class RealTimeWatch
     /// Higher than <see cref="BehindBelow"/> so a station hovering at the line says it once.</summary>
     internal const double RecoveredAt = 0.99;
 
-    /// <summary>Above this share of the window spent processing, the loop is the bottleneck.</summary>
-    internal const double BusyBottleneck = 0.9;
+    /// <summary>At or above this much processing per second of delivered audio, the loop is the
+    /// bottleneck. A little under one, for the time a starved thread loses inside <c>Read</c>.</summary>
+    internal const double BottleneckSecondsPerSecond = 0.95;
 
     /// <summary>How much measured wall time one verdict is taken over.</summary>
     internal static readonly TimeSpan Window = TimeSpan.FromSeconds(60);
@@ -176,12 +183,17 @@ internal sealed class RealTimeWatch
         string head = $"receive: BEHIND real time - {Pct(ratio)} of the audio reached the station "
             + $"over the last {seconds:F0} s, so about {Pct(1 - ratio)} of it was lost before any "
             + "modem saw it (frames missed, the waterfall slow, Listen chopped)";
-        string why = busy >= BusyBottleneck
-            ? $". The receive loop was busy {Pct(busy)} of that time: it is the bottleneck. The "
-                + "modems on this channel want more than one core gives - fewer or cheaper modems, "
-                + "a faster machine, or less else running on it"
-            : $". The receive loop was busy only {Pct(busy)} of that time, so the audio went missing "
-                + "before it arrived: look at the network, the radio or the device";
+        // Processing needed per second of the audio that did arrive; see the type remarks.
+        double perSecond = ratio > 0 ? busy / ratio : double.PositiveInfinity;
+        string why = perSecond >= BottleneckSecondsPerSecond
+            ? $". The receive loop was busy {Pct(busy)} of that time, about "
+                + $"{perSecond.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} s "
+                + "of work per second of audio: it is the bottleneck. The modems on this channel "
+                + "want more CPU than this station is getting - fewer or cheaper modems, a faster "
+                + "machine, or less else running on it"
+            : $". The receive loop was busy only {Pct(busy)} of that time and kept up with what "
+                + "arrived, so the audio went missing before it got here: look at the network, the "
+                + "radio or the device";
         string concealed = lost > 0
             ? $". The input itself concealed {lost} lost packet{(lost == 1 ? "" : "s")} in that window"
             : "";

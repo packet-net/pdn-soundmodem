@@ -84,6 +84,20 @@ public class RealTimeWatchTests
     }
 
     [Fact]
+    public void A_Loop_Starved_Of_Cpu_Is_Still_Called_The_Bottleneck_Though_Its_Busy_Share_Reads_Low()
+    {
+        // Measured on GB7RDG under a 15 % CPU quota: the thread is descheduled inside Read too, so
+        // it read busy 82 % with 57 % delivered. That is 1.4 s of work per second of audio.
+        var clock = new FakeTimeProvider();
+        var watch = new RealTimeWatch(clock, Rate);
+
+        List<string> lines = Run(clock, watch, TimeSpan.FromMinutes(1.1), share: 0.57, busy: 0.82);
+
+        lines.Should().ContainSingle().Which.Should()
+            .Contain("bottleneck").And.Contain("1.4 s of work per second").And.NotContain("network");
+    }
+
+    [Fact]
     public void No_Verdict_Is_Taken_Before_A_Minute_Has_Been_Measured()
     {
         var clock = new FakeTimeProvider();
