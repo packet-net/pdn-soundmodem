@@ -2916,8 +2916,18 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 string windowBody = "";
                 if (context.Request.HttpMethod == "POST")
                 {
+                    // Keyless, so its body is capped: a real request is a few dozen bytes.
+                    char[] read = new char[4097];
                     using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
-                    windowBody = await reader.ReadToEndAsync().ConfigureAwait(false);
+                    int got = await reader.ReadBlockAsync(read, 0, read.Length).ConfigureAwait(false);
+                    if (got == read.Length)
+                    {
+                        await RespondPlainAsync(context, 413, "a receive window request is at most 4096 bytes")
+                            .ConfigureAwait(false);
+                        return true;
+                    }
+
+                    windowBody = new string(read, 0, got);
                 }
 
                 (int windowStatus, JsonObject windowAnswer) = ReceiveWindowApi.Handle(
