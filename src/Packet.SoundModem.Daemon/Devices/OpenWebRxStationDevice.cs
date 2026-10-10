@@ -193,7 +193,7 @@ internal sealed class OpenWebRxStationDevice(
         if (input.Adpcm)
         {
             journal.Write("openwebrx: the receiver compresses its audio to 4-bit ADPCM, a setting of its "
-                + "own that a listener cannot change; the faster PSK modes pay for that in margin");
+                + "own that a listener cannot change");
         }
 
         if (input.RefusedAtStartup is string refusal)

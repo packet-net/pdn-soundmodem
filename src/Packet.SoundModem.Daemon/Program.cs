@@ -2496,9 +2496,9 @@ IAudioOutput playback = opened.Playback;
 IAudioInput input = opened.Input;
 FlexRuntime? flex = opened.Flex;
 flexMeters = opened.FlexMeters;
-// Whether the UberSDR input, in either of its forms, has a session to be starved of. Null for
-// every other device: their quiet is never deliberate.
-Func<bool>? uberSdrSessionLive = opened.SessionLive;
+// Whether a web receiver input (UberSDR in either of its forms, or OpenWebRX) has a session to be
+// starved of. Null for every other device: their quiet is never deliberate.
+Func<bool>? webReceiverSessionLive = opened.SessionLive;
 // Set only on the ALSA path: the sound card is the one device with xrun counters, and they are
 // the difference between "the band is quiet" and "this machine will not schedule us".
 AlsaAudioOutput? alsaOut = opened.AlsaOut;
@@ -2884,7 +2884,7 @@ using var station = new Station(
         DeviceKind = deadFeedDevice,
         DeadFeed = deadFeedConfig,
         BlockMilliseconds = ardopModem is null ? 100 : 20,
-        SessionLive = uberSdrSessionLive,
+        SessionLive = webReceiverSessionLive,
 
         // Built above: the page's clip pill on every station with a meter, and the frame's own
         // clip flag only where there is a converter to have run out of codes.

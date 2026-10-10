@@ -6,6 +6,8 @@ pdn-soundmodem can take its audio from a public UberSDR web receiver instead of 
 
 The one difference is that it receives and never transmits.
 
+Most of this page is about UberSDR. An OpenWebRX or OpenWebRX+ receiver works too, with some differences, which [Listen through an OpenWebRX receiver](#listen-through-an-openwebrx-receiver) covers.
+
 ## Before you start
 
 - pdn-soundmodem installed, with the config file at `/etc/pdn-soundmodem/soundmodem.json`. See [01-install.md](01-install.md).
@@ -163,9 +165,69 @@ rx[0] afsk300-il2pc M0LTE>GB7IOW-1 15 bytes  crc ok  fec 0  -5 Hz
 
 The waterfall moves but nothing decodes. Check the modem is on the right `rfFrequency` and the right mode for what is on air; see [05-modes.md](05-modes.md) and the checklist in [12-troubleshooting.md](12-troubleshooting.md).
 
+## Listen through an OpenWebRX receiver
+
+OpenWebRX is the other common web receiver software, and OpenWebRX+ is a fork of it; both work. Set `device` to `openwebrx:` followed by the address you would open in a browser:
+
+```json
+"device": "openwebrx:http://sdr.example.org:8073/"
+```
+
+Give the whole URL, path included, if the receiver lives under one (`openwebrx:https://example.org/owrx/`). A bare host or `host:port` is taken as plain HTTP on port 8073, where OpenWebRX installs.
+
+The band plan tunes it exactly as it tunes an UberSDR, so every modem needs an `rfFrequency` or the file needs a `dialFrequency`.
+
+### What is different
+
+An OpenWebRX receiver sends demodulated audio, not IQ. Its demodulator, its passband filter and its AGC are in the path, and none of them is ours.
+
+- **The sideband picks the demodulator.** `usb` and `lsb` use the receiver's SSB demodulator. `"sideband": "fm"` uses its narrow FM demodulator, which an UberSDR cannot do, so a VHF FM packet channel can be heard this way.
+- **The audio is 12 kHz.** That suits the 12 kHz and 48 kHz mode families. Anything faster than 1200 baud through FM audio, such as 9600 GFSK, is not realistic.
+- **The audio may be compressed.** Many receivers send 4-bit ADPCM. That is the receiver operator's setting and a listener cannot turn it off. The start-up line says which you are getting. What it costs each mode is under [What ADPCM costs](#what-adpcm-costs).
+- **The receiver is on one band at a time.** Its operator, or another listener, chooses a profile, and that profile sets the band the receiver covers. If that band does not reach your dial, start-up stops and lists the profiles on offer:
+
+```
+cannot listen through "openwebrx:http://sdr.example.org:8073/"
+  sdr.example.org:8073 is on 445.506250 to 446.506250 MHz (profile "PMR 446"), which does not reach the dial 7.074000 MHz. Choose the profile that does with "openwebrx": { "profile": "..." }; it offers "HF 40 Metri" (rtlsdr|5849...), "PMR 446" (rtlsdr|2a7b...).
+```
+
+Name the one you want in the [`openwebrx`](reference/config.md#openwebrx) section:
+
+```json
+"openwebrx": { "profile": "HF 40 Metri" }
+```
+
+Choosing a profile moves the receiver for everyone listening to it, so the station asks once each time it connects, and never fights another listener. If somebody moves the receiver away later, the journal says so and the station waits for it to come back. Some receivers lock their profiles, and some say "Ask before tuning" on their page. Ask before you name a profile on a receiver like that.
+
+### The rest of the section
+
+```json
+"openwebrx": { "profile": "HF 40 Metri", "ssbLowHz": 150, "ssbHighHz": 3450, "gain": 1.0 }
+```
+
+`ssbLowHz` and `ssbHighHz` are the SSB passband the receiver is asked for, in Hz from the dial; the defaults clear the whole 300 to 2700 Hz band a plan can place modems in. `fmHalfWidthHz` is half the FM channel filter's width, 5000 by default. `gain` and `startupGuardMs` are as for `ubersdr`.
+
+`onDemand` is UberSDR only for now; an OpenWebRX station connects at start-up and stays connected.
+
+### Read the journal
+
+```
+audio: sdr.example.org:8073 USB at 7.048800 MHz, passband 150 to 3450 Hz, ADPCM audio at 12000 Hz (RECEIVE ONLY)
+openwebrx: openwebrx v1.2.2, Example SDR, Somewhere, on 5.900000 to 8.300000 MHz (profile "HF 40 Metri")
+openwebrx: the receiver compresses its audio to 4-bit ADPCM, a setting of its own that a listener cannot change
+```
+
+- `is refusing us for now (Too many clients)` means every listener slot is taken; OpenWebRX+ also says `Client address banned` to an address that reconnected too often. The station stays up and asks again, waiting longer each time, up to 15 minutes.
+- `the receiver is on X to Y MHz, which does not reach Z` mid-run means somebody moved it. Listening resumes when it comes back.
+- `has been unreachable for 5 minutes` stops the station with exit 1, as on UberSDR, and systemd restarts it.
+
+### What ADPCM costs
+
+ADPCM_RESULTS
+
 ## How it works
 
-The modem takes IQ rather than the instance's demodulated audio, so the receive filter is set here. `captureRate` does not apply; the stream brings its own clock.
+On UberSDR the modem takes IQ rather than the instance's demodulated audio, so the receive filter is set here. On OpenWebRX the receiver's own demodulator, filter and AGC are in the path. `captureRate` does not apply to either; the stream brings its own clock.
 
 Public instances cap a session, three hours on the ones measured, and report the cap at start-up. A closed stream is ordinary, and the modem picks it up again, losing about a second each time to the start-of-stream ramp.
 
@@ -175,6 +237,6 @@ These are somebody else's receivers. One long session is kinder to the receiver 
 
 - [10-public-monitor.md](10-public-monitor.md) puts many web receivers behind one site with a picker, which is the [`monitor`](reference/config.md#monitor) section rather than this one.
 - [08-hf.md](08-hf.md) for band plans, sidebands and several modes sharing one passband.
-- [reference/config.md](reference/config.md#ubersdr) for every `ubersdr` and `waterfall` key with its default.
+- [reference/config.md](reference/config.md#ubersdr) for every `ubersdr`, [`openwebrx`](reference/config.md#openwebrx) and `waterfall` key with its default.
 - [reference/ports-and-endpoints.md](reference/ports-and-endpoints.md#http-on-the-page-port) for what the page port serves.
 - [13-decode-a-recording.md](13-decode-a-recording.md) if you would rather work from a recording than a live receiver.
