@@ -152,21 +152,31 @@ internal static class ReceiveWindowApi
             return (400, Error($"{dial} Hz is not a dial frequency"));
         }
 
-        if (lease.Holder is int holder)
-        {
-            JsonObject refused = Describe(rig);
-            refused["refused"] =
-                $"sub-channel {holder} holds the transmit lease, so a receive window is refused "
-                + "until it ends";
-            return (409, refused);
-        }
-
         string mode = rig.Plan is { } plan && RigModes.SidebandOf(plan.Mode) == "usb"
             ? plan.Mode.ToUpperInvariant()
             : "USB";
 
-        RigTuneResult result = rig.Tune(
-            new RigTuning((long)dial, mode, widthHz), TimeSpan.FromSeconds(clamped), Owner);
+        // The lease check and the tune are one step, under the lease's object, which the daemon's
+        // TxLeaseApi also holds across its own check of this window and its Take. Without it a
+        // lease asked for while this tune was still talking to rigctld would find no window yet,
+        // and both would be granted. A tune takes as long as rigctld does to answer, and only a
+        // lease request ever waits for it.
+        RigTuneResult result;
+        lock (lease)
+        {
+            if (lease.Holder is int holder)
+            {
+                JsonObject refused = Describe(rig);
+                refused["refused"] =
+                    $"sub-channel {holder} holds the transmit lease, so a receive window is refused "
+                    + "until it ends";
+                return (409, refused);
+            }
+
+            result = rig.Tune(
+                new RigTuning((long)dial, mode, widthHz), TimeSpan.FromSeconds(clamped), Owner);
+        }
+
         switch (result.Outcome)
         {
             case RigTuneOutcome.Invalid:
