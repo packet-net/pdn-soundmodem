@@ -1896,13 +1896,6 @@ public sealed class DaemonConfig
             return;
         }
 
-        if (FlexRadio.FlexDevice.IsFlex(config.Device))
-        {
-            throw new InvalidDataException(
-                $"\"rig\" is set and \"device\" is \"{config.Device}\". A FlexRadio is tuned and keyed "
-                + "over its own API, so it needs no rigctld - remove \"rig\".");
-        }
-
         if (DeviceKinds.Of(config.Device).RigRefusal(config.Device) is string rigRefusal)
         {
             throw new InvalidDataException(rigRefusal);

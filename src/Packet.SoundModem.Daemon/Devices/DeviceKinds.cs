@@ -56,9 +56,12 @@ internal static class DeviceKinds
     /// <summary>An UberSDR web receiver, receive only.</summary>
     public static readonly DeviceKind UberSdr = new UberSdrDeviceKind();
 
+    /// <summary>A FlexRadio's DAX audio and slice PTT.</summary>
+    public static readonly DeviceKind Flex = new FlexDeviceKind();
+
     /// <summary>Every kind, in the order a device string is tried against them; the sound card
     /// is last because it claims everything.</summary>
-    public static IReadOnlyList<DeviceKind> All { get; } = [Pipe, UberSdr, Alsa];
+    public static IReadOnlyList<DeviceKind> All { get; } = [Pipe, UberSdr, Flex, Alsa];
 
     /// <summary>The kind <paramref name="device"/> names.</summary>
     public static DeviceKind Of(string device)
