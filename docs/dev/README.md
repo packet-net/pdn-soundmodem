@@ -1,6 +1,6 @@
 # Developer documents
 
-Status: current as of 2026-09-17. Describes what is in docs/dev and what each file is for.
+Status: current as of 2026-10-10. Describes what is in docs/dev and what each file is for, how open work is tracked, and the rules all work follows.
 
 This folder is for people changing the code. Nothing here is user documentation: the guide starts at [docs/README.md](../README.md), and the reference tables are under [docs/reference](../reference/config.md).
 
@@ -10,7 +10,7 @@ Every file here opens, under its H1, with a status line: whether it is current, 
 
 | Path | What it is |
 |---|---|
-| [roadmap.md](roadmap.md) | The one living roadmap: what is open, parked and ruled out. It absorbed waveform-roadmap.md, and the open receive workstreams of rx-roadmap.md, whose record is [archive/rx-roadmap.md](archive/rx-roadmap.md). |
+| [roadmap.md](roadmap.md) | A pointer: open work is tracked as GitHub issues (below). The roadmap as it stood until 2026-10-10 is frozen at [archive/roadmap-2026-10.md](archive/roadmap-2026-10.md), with a table of which issue each of its items became. |
 | [plan.md](plan.md) | The plan record: the decisions of 2026-07-14, the four build phases and what each still owes. Its amendment log is closed at [archive/plan-amendment-log.md](archive/plan-amendment-log.md). |
 | [mode-validation.md](mode-validation.md) | The validation ledger: how each mode string in the catalogue has been proven, with a dated append-only record. |
 | [ardop-design.md](ardop-design.md) | ARDOP design and scoping, written before the implementation. The implementation is the M0LTE.Ardop package; the bridge onto the shared channel is still here. |
@@ -29,3 +29,30 @@ Every file here opens, under its H1, with a status line: whether it is current, 
 | [refs/](refs/) | Verbatim transcriptions of other people's specifications. Never edited. |
 | [plans/](plans/) | Plans for work not started: 2G ALE. |
 | [archive/](archive/) | Frozen records of closed work: plans, campaign evidence, handovers and closeouts. Its [README](archive/README.md) states the rules. |
+
+## How open work is tracked
+
+Open work is [GitHub issues](https://github.com/packet-net/pdn-soundmodem/issues), and nothing in this repository keeps a second list of it. A `#N` in a current document, comment or commit means GitHub issue or pull request N; the frozen roadmap's own item numbers (#4 to #19) were different and survive only in the archive.
+
+- A programme of work is an issue labelled `epic`, with its pieces as sub-issues.
+- `needs-radio`: needs Tom, a radio and bench or air time. Each such issue is self-contained and none is blocking. Operate as M0LTE.
+- `parked`: a request or a sized idea recorded with the decisions taken at the time, not scheduled.
+- `ruled-out`: closed as not planned, with the reason, so the question does not get re-asked. Proprietary waveforms and modes already covered by an existing one are filed this way.
+
+New work gets an issue before it gets a branch; a pull request says `Closes #N` for what it finishes. A design that needs more room than an issue body goes in a document under docs/dev (or [plans/](plans/) before it starts), and the issue links to it.
+
+## Standing directives
+
+These apply to every piece of work.
+
+- Proven reliable rather than barely working: bit-exact against an oracle, then the channel models, then a real radio loop before anything is called done.
+- Occupied bandwidth never exceeds the reference implementation's, and CI enforces it.
+- NinoTNC compatibility is never traded away. New modes are additive, never a reshaping of an existing NinoTNC-compatible mode to suit a different peer.
+- Every mode is labelled with the modem or TNC it interoperates with. Candidates rank by: an open spec we can implement from scratch, then guaranteed real-world interop, then packet-data transport over keyboard, beacon or voice modes. See [PROVENANCE.md](../../PROVENANCE.md).
+- Anything that changes decode behaviour lands with its sim-ladder A/B and a corpus re-score, and gets a dated entry in [mode-validation.md](mode-validation.md). A mask moves only with a ledger entry that justifies it, and masks come from measured reality, never from aspiration.
+- Nothing in the receive work changes a transmitted bit: the parity, QtSM and off-air suites stay the regression gate.
+- The 37-frame corpus is exhausted as a discriminator: do not tune against its tail. New tuning decisions go against the capture campaign's `misses-v2`.
+
+## Hardware available
+
+A Flex 6500 (10.45.0.76, on the bench with an ANT1 dummy load, into which GB7RDG's transceiver couples), GB7RDG's HF port, radio1 (a Pi with a CM108 and a radio on a dummy load), and an FM radio loop.

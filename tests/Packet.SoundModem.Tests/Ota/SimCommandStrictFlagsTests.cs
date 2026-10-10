@@ -5,8 +5,8 @@ namespace Packet.SoundModem.Tests.Ota;
 
 /// <summary>
 /// The instrument hazard this fixes: <c>sm-ota sim</c> invoked with a mistyped or
-/// not-yet-supported flag (the roadmap's own example is <c>--impulse</c> against a build that
-/// predates it) used to be silently accepted, run every requested burst anyway with the flag's
+/// not-yet-supported flag (the roadmap's own example at the time is <c>--impulse</c> against a
+/// build that predates it) used to be silently accepted, run every requested burst anyway with the flag's
 /// effect simply missing, and report numbers for the wrong experiment as if they were the one
 /// asked for. <see cref="SimCommand.Run"/> now calls <c>Args.RejectUnknown</c> before the burst
 /// loop starts, so a bogus flag fails loudly - and fast - instead.

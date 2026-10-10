@@ -21,7 +21,7 @@ namespace Packet.SoundModem.Channel;
 /// gate pull-down (the CM108 Radio Widget is one, see
 /// docs/dev/hardware/cm108-widget-netlist.md) a floating gate holds its charge, so that is a
 /// transmitter released by leakage or not at all. Nobody has yet watched the pin on a scope to
-/// say which it was; docs/dev/roadmap.md carries that as open bench work.</para>
+/// say which it was; issue #633 is that bench work.</para>
 /// </remarks>
 public sealed class Cm108Ptt : IPttControl, IDisposable
 {

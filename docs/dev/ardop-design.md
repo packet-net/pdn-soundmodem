@@ -12,7 +12,7 @@ Status: design record as of 2026-09-17. Describes the ARDOP scoping and design w
 
 ### 1.1 What ARDOP is
 
-Amateur Radio Digital Open Protocol (Rick Muething KN6KB): an HF/VHF sound-card ARQ + FEC data protocol in four bandwidth classes (200/500/1000/2000 Hz at the −26 dB points, spec §2.2), designed as a virtual TNC that host programs drive over TCP (spec §8). It is the open substitute for the closed VARA HF / PACTOR modes on the live Winlink network (`docs/dev/roadmap.md` "Cannot implement", ardopcf `docs/Motivation.md:9`).
+Amateur Radio Digital Open Protocol (Rick Muething KN6KB): an HF/VHF sound-card ARQ + FEC data protocol in four bandwidth classes (200/500/1000/2000 Hz at the −26 dB points, spec §2.2), designed as a virtual TNC that host programs drive over TCP (spec §8). It is the open substitute for the closed VARA HF / PACTOR modes on the live Winlink network (#636 and #637, closed as ruled out; ardopcf `docs/Motivation.md:9`).
 
 ### 1.2 Protocol version: there is exactly one interoperable ARDOP
 
@@ -37,7 +37,7 @@ So "Winlink interop" = §3 + §4 + §6 validated against ardopcf, then one real 
 
 **In scope:** the full ARDOP 1 SSB-mode inventory (200-2000 Hz, 4FSK/4PSK/8PSK/16QAM); FEC (connectionless) mode; the ARQ engine; PING/PINGACK; ID frames + optional CW ID; the ardopcf-compatible TCP host interface; ardopcf-oracle validation.
 **Deferred (flagged, not designed here):** the 600-baud FM-only modes (`4FSK.2000.600/600S`, gated behind `USE600MODES`, off by default - `docs/Host_Interface_Commands.md` §USE600MODES); serial/WA8DED host mode (ardopcf itself is TCP-only); the webgui (ardopcf's `Webgui.c` - our daemon has its own UI story); RXO receive-only monitor mode (`RXO.c`, 332 lines - cheap, nice-to-have, not needed for interop).
-**Out of scope:** B2F/CMS (Pat's job); "improved" non-spec waveforms (that's the greenfield HF OFDM item, roadmap #6/#9).
+**Out of scope:** B2F/CMS (Pat's job); "improved" non-spec waveforms (that's the greenfield HF OFDM item, #609).
 
 ---
 
