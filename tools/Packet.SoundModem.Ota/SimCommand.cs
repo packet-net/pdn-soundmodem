@@ -78,6 +78,8 @@ internal static class SimCommand
                   --rate <Hz>          DSP rate. Default 8000 for freedv-* (engine-native, the rate
                                        FreeDV's own figures are measured at), else DspRateFor(mode).
                                        Pass 48000 to exercise the ×6/÷6 deployment path.
+                  --bridged            build the mode as a station's channel does at --rate: at its
+                                       own rate behind the rate bridge when --rate is faster (#648)
                   --seed <n>           first burst seed (default 1)
                   --workers <n>        bounded parallelism (default 4 - shared box)
                   --csv <path>         write one row per point
@@ -117,6 +119,7 @@ internal static class SimCommand
                 : PskDetector.Coherent
             : null;
         double? centreHz = a.Has("centre") ? a.Dbl("centre", 0) : null;
+        bool bridged = a.Has("bridged");
         bool quiet = a.Has("quiet");
         string? csvPath = a.Str("csv", null);
 
@@ -162,7 +165,7 @@ internal static class SimCommand
                     {
                     SimPointResult r = SimBench.RunPoint(
                         mode, rateArg, layer, kind, snr, bursts, frameBytes, firstSeed, workers, level,
-                        txDelayMs, cfo, detector, centreHz, detector2, impulseRate);
+                        txDelayMs, cfo, detector, centreHz, detector2, impulseRate, bridged);
                     rows.Add(r);
                     if (level == 0)
                     {

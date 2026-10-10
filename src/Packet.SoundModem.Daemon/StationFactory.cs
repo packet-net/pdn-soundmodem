@@ -194,7 +194,7 @@ internal static class StationFactory
 
             try
             {
-                channel.AddModem(subChannel, sink => ModemCatalog.Create(mode, dspRate, sink,
+                channel.AddModem(subChannel, sink => ModemCatalog.CreateForChannel(mode, dspRate, sink,
                     new ModemOptions(
                         CentreFrequencyHz: frequency,
                         OffsetPairs: modemConfig.OffsetPairs,
@@ -214,7 +214,10 @@ internal static class StationFactory
                 return false;
             }
 
-            journal.Write($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");
+            journal.Write($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}"
+                + (channel.Modems[subChannel] is RateBridgedModem bridged
+                    ? $" (runs at {dspRate / bridged.Factor} Hz inside the {dspRate} Hz channel)"
+                    : ""));
             if (Packet.SoundModem.Ms110d.Ms110dModem.Unwrap(channel.Modems[subChannel]) is { } ms110d)
             {
                 // Once per lock the receiver lets go of with no signal left under it (issue #553).

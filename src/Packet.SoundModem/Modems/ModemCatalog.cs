@@ -506,6 +506,51 @@ public static class ModemCatalog
     }
 
     /// <summary>
+    /// Builds a mode for a shared channel running at <paramref name="channelRate"/>: at its own
+    /// DSP rate behind a <see cref="RateBridgedModem"/> when the channel runs faster, otherwise
+    /// exactly as <see cref="Create"/> does.
+    /// </summary>
+    /// <remarks>
+    /// <para>A built-in 12 kHz mode is rate-parameterised and works at 48 kHz too, which is how a
+    /// channel carrying any 48 kHz mode used to build every modem on it - at four times the cost
+    /// (issue #648). Here it is built at 12 kHz and bridged, unless its band will not fit under
+    /// the 12 kHz Nyquist with the decimator's transition (see <see cref="RateBridgedModem.TryWrap"/>),
+    /// in which case it is built at the channel rate as before.</para>
+    /// <para><see cref="Create"/> keeps its contract of building at the rate it is asked for:
+    /// the band planner's probes, the mode reader and the tests ask for a rate and mean it. A
+    /// plugin mode always goes through <see cref="Create"/>, which builds it at its declared rate
+    /// or not at all.</para>
+    /// </remarks>
+    public static IModem CreateForChannel(
+        string mode, int channelRate, Action<byte[]> frameReceived, ModemOptions options = default)
+    {
+        if (ByName.TryGetValue(mode, out ModeDescriptor? descriptor)
+            && descriptor.DspRate < channelRate
+            && channelRate % descriptor.DspRate == 0)
+        {
+            IModem? native = null;
+            try
+            {
+                native = Create(mode, descriptor.DspRate, frameReceived, options);
+            }
+            catch (ArgumentException)
+            {
+                // A setting the native rate cannot carry (a centre above its Nyquist) and the
+                // channel rate can: build it at the channel rate below, which also gives the
+                // operator the channel-rate refusal if it is wrong there too.
+            }
+
+            if (native is not null
+                && RateBridgedModem.TryWrap(native, descriptor.DspRate, channelRate, out IModem? bridged))
+            {
+                return bridged!;
+            }
+        }
+
+        return Create(mode, channelRate, frameReceived, options);
+    }
+
+    /// <summary>
     /// Builds a plugin mode: the same option rules as a built-in, applied against the descriptor
     /// the plugin declared, then the plugin asked to construct it.
     /// </summary>
