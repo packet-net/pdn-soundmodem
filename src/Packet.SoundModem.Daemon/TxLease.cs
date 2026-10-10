@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Packet.SoundModem.Channel;
+using Packet.SoundModem.Rig;
 
 namespace Packet.SoundModem.Daemon;
 
@@ -38,8 +39,13 @@ internal static class TxLeaseApi
     /// <param name="method">The HTTP method.</param>
     /// <param name="body">The request body, possibly empty.</param>
     /// <param name="cannot">Why this station cannot transmit at all, or null.</param>
+    /// <param name="rig">
+    /// The station's rig, or null without one. A lease is refused while a receive window
+    /// (issue #585) holds it, so a listener's receive window and a head end's broadcast lease
+    /// can never both be granted; see <see cref="Waterfall.WaterfallWebServer.ReceiveWindowOwner"/>.
+    /// </param>
     internal static (int Status, JsonObject Answer) Handle(
-        SoundModemChannel channel, string method, string body, string? cannot)
+        SoundModemChannel channel, string method, string body, string? cannot, RigControl? rig = null)
     {
         TransmitLease lease = channel.TransmitLease;
         if (method == "GET")
@@ -139,6 +145,16 @@ internal static class TxLeaseApi
         {
             return (400, Error(
                 $"\"maxCarrierWaitSeconds\" must be 1 to {MaxCarrierWaitCeiling:0}, or left out for ordinary carrier sense"));
+        }
+
+        // A receive window (issue #585) and a transmit lease can never both be held: the window
+        // takes the station off the air for another program's purposes, and a lease granted
+        // underneath it would be a promise this station could not keep.
+        if (rig?.Snapshot().Window is { Owner: Waterfall.WaterfallWebServer.ReceiveWindowOwner } open)
+        {
+            return (409, Conflict(channel,
+                $"a receive window holds the rig on {open.Tuning} until {Utc(open.Expires)}, so "
+                + "the transmit lease is refused until it ends"));
         }
 
         double max = TransmitLease.MaxDuration.TotalSeconds;
