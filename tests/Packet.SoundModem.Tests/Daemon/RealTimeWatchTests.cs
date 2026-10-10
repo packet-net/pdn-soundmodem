@@ -98,6 +98,18 @@ public class RealTimeWatchTests
     }
 
     [Fact]
+    public void No_Audio_At_All_Is_Blamed_On_The_Path_Not_On_An_Infinitely_Slow_Loop()
+    {
+        var clock = new FakeTimeProvider();
+        var watch = new RealTimeWatch(clock, Rate);
+
+        List<string> lines = Run(clock, watch, TimeSpan.FromMinutes(1.1), share: 0, busy: 0.01);
+
+        lines.Should().ContainSingle().Which.Should()
+            .Contain("network").And.NotContain("bottleneck").And.NotContain("Infinity");
+    }
+
+    [Fact]
     public void No_Verdict_Is_Taken_Before_A_Minute_Has_Been_Measured()
     {
         var clock = new FakeTimeProvider();

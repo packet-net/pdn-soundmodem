@@ -189,7 +189,7 @@ internal sealed class RealTimeWatch
             + $"over the last {seconds:F0} s; the other {Pct(1 - ratio)} is lost or queued behind "
             + "(frames missed or late, the waterfall slow, Listen chopped)";
         // Processing needed per second of the audio that did arrive; see the type remarks.
-        double perSecond = ratio > 0 ? busy / ratio : double.PositiveInfinity;
+        double perSecond = ratio > 0 ? busy / ratio : 0;
         string why = perSecond >= BottleneckSecondsPerSecond
             ? $". The receive loop was busy {Pct(busy)} of that time, about "
                 + $"{perSecond.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} s "

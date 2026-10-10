@@ -212,7 +212,10 @@ internal sealed class Station : IDisposable
                 // Never a busy spin: every input that can return 0 has already waited inside Read
                 // (100 ms ubersdr, 200 ms flex; ALSA and wav-loop never return 0) - see the
                 // dead-feed notes on StationOptions.DeviceKind.
-                _realTime.ReadEnded(0, leaveOut: Volatile.Read(ref _keyedNow) == 1 || SessionIdle());
+                // The sticky flag is read, not taken: the next block that delivers takes it. An
+                // empty read straight after an unkey is our own transmission, not lost audio.
+                _realTime.ReadEnded(0, leaveOut: Volatile.Read(ref _keyedSinceRead) == 1
+                    || Volatile.Read(ref _keyedNow) == 1 || NotMeasured());
                 continue;
             }
 
@@ -226,7 +229,7 @@ internal sealed class Station : IDisposable
                 || Volatile.Read(ref _keyedNow) == 1;
 
             // Before anything below can skip the rest of the block: every read is measured.
-            _realTime.ReadEnded(got, leaveOut: keyedThisBlock || SessionIdle());
+            _realTime.ReadEnded(got, leaveOut: keyedThisBlock || NotMeasured());
 
             if (_deadFeedWatch is not null
                 && _deadFeedWatch.Observe(_inputBuffer.AsSpan(0, got), keyedThisBlock))
@@ -305,9 +308,14 @@ internal sealed class Station : IDisposable
         }
     }
 
-    /// <summary>Whether the host says this station's quiet is deliberate right now (an on-demand
-    /// receiver with no session), which is not a measurement of keeping up.</summary>
-    private bool SessionIdle() => _options.SessionLive?.Invoke() == false;
+    /// <summary>
+    /// Whether this span says nothing about keeping up: the host says the quiet is deliberate
+    /// right now (an on-demand receiver with no session), or the input is a bench one. A wav-loop
+    /// paces itself, and <c>flex:mock</c> delivers nothing between injected frames, which would read
+    /// as a station losing all its audio - the same reason the starvation watch exempts them.
+    /// </summary>
+    private bool NotMeasured() =>
+        _options.DeviceKind == DeadFeedDevice.WavLoop || _options.SessionLive?.Invoke() == false;
 
     /// <inheritdoc />
     public void Dispose()
