@@ -54,17 +54,17 @@ internal sealed class WavLoopStationDevice(StationDevice named, string path)
     public override string? SettingsProblem => Named.SettingsProblem;
 
     /// <inheritdoc/>
-    public override Task<DeviceOpening?> OpenAsync(DeviceOpenContext context)
+    public override Task<DeviceOpening> OpenAsync(DeviceOpenContext context)
     {
         var wavLoop = new WavLoopAudioInput(Recording);
         if (wavLoop.SampleRate % context.DspRate != 0)
         {
             Console.Error.WriteLine($"--wav-loop rate {wavLoop.SampleRate} is not a multiple of {context.DspRate}");
-            return Task.FromResult<DeviceOpening?>(DeviceOpening.Refused(2));
+            return Task.FromResult(DeviceOpening.Refused(2));
         }
 
         Console.WriteLine($"audio: wav-loop {Recording} {wavLoop.SampleRate} Hz -> {context.DspRate} Hz");
-        return Task.FromResult<DeviceOpening?>(new DeviceOpening
+        return Task.FromResult(new DeviceOpening
         {
             Ptt = new M0LTE.Radio.Audio.NullPtt(),
             Playback = new NullAudioOutput(context.DspRate),

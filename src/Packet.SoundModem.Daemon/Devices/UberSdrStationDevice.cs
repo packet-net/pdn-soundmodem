@@ -104,7 +104,7 @@ internal sealed class UberSdrStationDevice(
     }
 
     /// <inheritdoc/>
-    public override async Task<DeviceOpening?> OpenAsync(DeviceOpenContext context)
+    public override async Task<DeviceOpening> OpenAsync(DeviceOpenContext context)
     {
         UberSdrConfig? uberSdrConfig = _uberSdrConfig;
         StationJournal stationJournal = context.Journal;

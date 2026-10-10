@@ -81,7 +81,7 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
     public override bool ClosesItsOwnStreams => true;
 
     /// <inheritdoc/>
-    public override async Task<DeviceOpening?> OpenAsync(DeviceOpenContext context)
+    public override async Task<DeviceOpening> OpenAsync(DeviceOpenContext context)
     {
         int dspRate = context.DspRate;
         FlexTuning flexTuning = context.FlexTuning;

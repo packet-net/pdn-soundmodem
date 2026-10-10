@@ -33,7 +33,7 @@ internal sealed class PipeDeviceKind : DeviceKind
 internal sealed class PipeStationDevice(DeviceKind kind, string spec) : StationDevice(kind, spec)
 {
     /// <inheritdoc/>
-    public override Task<DeviceOpening?> OpenAsync(DeviceOpenContext context)
+    public override Task<DeviceOpening> OpenAsync(DeviceOpenContext context)
     {
         int dspRate = context.DspRate;
         try
@@ -43,7 +43,7 @@ internal sealed class PipeStationDevice(DeviceKind kind, string spec) : StationD
             {
                 Console.Error.WriteLine(
                     $"pipe rate {pipeRate} is not a multiple of the channel's {dspRate} Hz");
-                return Task.FromResult<DeviceOpening?>(DeviceOpening.Refused(2));
+                return Task.FromResult(DeviceOpening.Refused(2));
             }
 
             var pipeOut = new PipeAudioOutput(outPipe, pipeRate);
@@ -52,7 +52,7 @@ internal sealed class PipeStationDevice(DeviceKind kind, string spec) : StationD
                 : new UpsamplingAudioOutput(pipeOut, dspRate);
             var input = new PipeAudioInput(inPipe, pipeRate);
             Console.WriteLine($"audio: pipe in={inPipe} out={outPipe} {pipeRate} Hz -> {dspRate} Hz");
-            return Task.FromResult<DeviceOpening?>(new DeviceOpening
+            return Task.FromResult(new DeviceOpening
             {
                 Ptt = new NullPtt(),
                 Playback = playback,
@@ -63,7 +63,7 @@ internal sealed class PipeStationDevice(DeviceKind kind, string spec) : StationD
             or UnauthorizedAccessException)
         {
             Console.Error.WriteLine($"audio: {failure.Message}");
-            return Task.FromResult<DeviceOpening?>(DeviceOpening.Refused(2));
+            return Task.FromResult(DeviceOpening.Refused(2));
         }
     }
 }

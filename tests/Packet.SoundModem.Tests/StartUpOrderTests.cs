@@ -39,8 +39,9 @@ public class StartUpOrderTests
     [Fact]
     public void The_Mixer_Is_Read_And_Set_Before_The_Capture_Stream_Is_Opened()
     {
+        // The ALSA open, mixer pass included, is the sound card device's own since #595.
         string program = Path.Combine(
-            FindRepoRoot(), "src", "Packet.SoundModem.Daemon", "Program.cs");
+            FindRepoRoot(), "src", "Packet.SoundModem.Daemon", "Devices", "AlsaStationDevice.cs");
         string source = File.ReadAllText(program);
 
         int mixerOpened = source.IndexOf("AlsaMixer.TryOpen(mixerCard", StringComparison.Ordinal);
@@ -94,7 +95,7 @@ public class StartUpOrderTests
     public void The_Mixer_Is_Also_Read_Before_The_Playback_Stream_Is_Opened()
     {
         string source = File.ReadAllText(Path.Combine(
-            FindRepoRoot(), "src", "Packet.SoundModem.Daemon", "Program.cs"));
+            FindRepoRoot(), "src", "Packet.SoundModem.Daemon", "Devices", "AlsaStationDevice.cs"));
 
         int playbackOpened = source.IndexOf("new AlsaAudioOutput(", StringComparison.Ordinal);
 

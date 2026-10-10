@@ -100,10 +100,8 @@ internal abstract class StationDevice
     /// Opens the device: its input, its output and its PTT, plus whatever the rest of start-up
     /// needs from the kind that opened them.
     /// </summary>
-    /// <returns>The opened device, or one carrying the exit code start-up stops with; null
-    /// while this kind is still opened by Program.cs itself.</returns>
-    public virtual Task<DeviceOpening?> OpenAsync(DeviceOpenContext context) =>
-        Task.FromResult<DeviceOpening?>(null);
+    /// <returns>The opened device, or one carrying the exit code start-up stops with.</returns>
+    public abstract Task<DeviceOpening> OpenAsync(DeviceOpenContext context);
 }
 
 /// <summary>
