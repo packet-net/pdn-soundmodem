@@ -2895,8 +2895,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
             // The receive window (issue #585): a program on the same machine retunes this
             // station's rig and holds all transmitting for a while, then gets it back. The same
-            // loopback-plus-no-Origin rule as the channel audio stream above, and for the same
-            // reason: no key, so loopback plus no Origin is the whole of its authentication.
+            // local-program rule as the channel audio stream above, and for the same reason: no
+            // key, so loopback, no Origin and no proxy is the whole of its authentication.
             if (requestPath == ReceiveWindowApi.Path)
             {
                 if (ReceiveWindowRig is not { } rig)
@@ -2907,16 +2907,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                     return true;
                 }
 
-                bool fromLoopback = ChannelAudioStream.IsLoopbackAddress(context.Request.RemoteEndPoint?.Address);
-                bool declaresOrigin = !string.IsNullOrEmpty(context.Request.Headers["Origin"]);
-                if (!fromLoopback || declaresOrigin)
+                if (await RefusedUnlessLocalProgramAsync(context, "rig-window", "the receive window")
+                        .ConfigureAwait(false))
                 {
-                    Journal(
-                        $"rig-window: refused {context.Request.RemoteEndPoint} - "
-                        + (declaresOrigin ? "it declared an Origin (a browser)" : "it is not loopback"));
-                    await RespondPlainAsync(context, 403,
-                        "the receive window is for a program on this machine only")
-                        .ConfigureAwait(false);
                     return true;
                 }
 

@@ -17,11 +17,11 @@ namespace Packet.SoundModem.Waterfall;
 /// <remarks>
 /// <para><b>The request handling without the HTTP</b>, the same split <c>TxLeaseApi</c> and
 /// <c>RigApi</c> keep in the daemon: <see cref="WaterfallWebServer"/> checks the remote address
-/// and the <c>Origin</c> header, reads the body and writes the answer, and everything else is
+/// and the headers, reads the body and writes the answer, and everything else is
 /// here, so a test can reach it with a fake clock and no listener.</para>
 /// <para><b>Loopback only, no key.</b> The same rule as the channel audio stream (issue #584,
 /// <see cref="ChannelAudioStream"/>): refused unless the request's remote address is loopback,
-/// and refused if it carries an <c>Origin</c> header at all. There is nobody to tell two local
+/// and refused if it carries an <c>Origin</c> header or a proxy's forwarding header at all. There is nobody to tell two local
 /// callers apart, so they share the one window a station offers - the same owner name is used
 /// whoever asks, and a second local caller's request behaves exactly as a renewal or a refusal of
 /// the first one would, through <see cref="RigControl.Tune"/>'s own owner check.</para>

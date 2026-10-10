@@ -95,6 +95,28 @@ public sealed class ReceiveWindowRouteTests : IAsyncDisposable
         _fake.Sets.Should().BeEmpty();
     }
 
+    [Theory]
+    [InlineData("X-Forwarded-For", "203.0.113.7")]
+    [InlineData("Forwarded", "for=203.0.113.7")]
+    [InlineData("X-Real-IP", "203.0.113.7")]
+    public async Task Refuses_A_Request_Relayed_By_A_Reverse_Proxy(string header, string value)
+    {
+        await StartWithRigAsync();
+        var request = new HttpRequestMessage(HttpMethod.Post, Url)
+        {
+            Content = new StringContent(
+                """{"dialHz": 7052000, "seconds": 60}""", Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add(header, value);
+
+        HttpResponseMessage answer = await _client.SendAsync(request, _cancellation.Token);
+
+        answer.StatusCode.Should().Be(
+            HttpStatusCode.Forbidden,
+            "a proxy on this machine makes anyone's request arrive from loopback with no Origin");
+        _fake.Sets.Should().BeEmpty();
+    }
+
     [Fact]
     public async Task Refuses_A_Request_From_An_Address_That_Is_Not_Loopback()
     {
