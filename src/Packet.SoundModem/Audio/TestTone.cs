@@ -42,8 +42,9 @@ public sealed class TestTone
     /// calibrated deviation.
     /// </summary>
     /// <remarks>The exact first zero is 2.404826; 2.405 is the figure the amateur literature and
-    /// the roadmap entry both quote, and the difference is 0.4 Hz of deviation at 2 kHz - far
-    /// inside the accuracy of reading a null off a panadapter.</remarks>
+    /// the roadmap entry that asked for this (commit ab43489) both quote, and the difference is
+    /// 0.4 Hz of deviation at 2 kHz - far inside the accuracy of reading a null off a
+    /// panadapter.</remarks>
     public const double BesselNullIndex = 2.405;
 
     /// <summary>

@@ -112,7 +112,7 @@ export class SerialPtt {
  * blocklist either, which is a FIDO measure. What has NOT been confirmed against a real dongle
  * is the report descriptor itself: if a device turned out to declare its collection on one of
  * those protected pages, Chrome would hide it from the picker and there is no way round that.
- * Nobody has had one in front of this yet; see docs/dev/roadmap.md.
+ * Nobody has had one in front of this yet; see issue #634.
  *
  * On Linux the browser still needs permission on the hidraw node, and the daemon's rule is the
  * wrong shape for it - that one grants a service account through a group, where a browser runs

@@ -10,8 +10,19 @@ A headless (no GUI) soundcard packet modem in C#/.NET 10, serving both the PDN n
 `packet.net/docs/research/headless-soundmodem.md` for the full design rationale. The plan's
 amendment log is closed and lives in
 [docs/dev/archive/plan-amendment-log.md](docs/dev/archive/plan-amendment-log.md); do not add to
-it. Open work is tracked in one place, [docs/dev/roadmap.md](docs/dev/roadmap.md), and
-[docs/dev/mode-validation.md](docs/dev/mode-validation.md) is the ledger.
+it. [docs/dev/mode-validation.md](docs/dev/mode-validation.md) is the ledger.
+
+## Where open work lives
+
+Open work is tracked as GitHub issues and nowhere else; [docs/dev/README.md](docs/dev/README.md)
+has the labels (`epic` with sub-issues, `needs-radio`, `parked`, `ruled-out`) and the standing
+directives every piece of work follows. Do not add a list of open work to any file in this repo:
+file an issue, and if the design needs room, a document under `docs/dev` that the issue links to.
+A `#N` in a current document, comment or commit means GitHub issue or PR N. The old roadmap's own
+item numbers, #4 to #19, were different (roadmap #11 was the Flex work; issue #11 is a qpsk600 bug); it is
+frozen at [docs/dev/archive/roadmap-2026-10.md](docs/dev/archive/roadmap-2026-10.md) with a
+table from each of its numbers to the issue it became. Before filing, search open and closed
+issues, including `label:ruled-out`, so a settled question is not reopened by accident.
 
 ## Licence rules (hard)
 
@@ -84,7 +95,9 @@ row in the matrix. A fix isn't finished until the ledger records it.
   nothing in the mixer pass needs the PCM (`--mixer-show` reads a card on a running station) and
   a shorter gap is still worth having: keep the whole block above the
   `AlsaAudioOutput`/`AlsaAudioInput` construction in `Program.cs`. `StartUpOrderTests` pins it;
-  [docs/dev/roadmap.md](docs/dev/roadmap.md) #17 has the measurements.
+  the measurements are above and in
+  [docs/dev/archive/plan-amendment-log.md](docs/dev/archive/plan-amendment-log.md), and #632 is
+  the start-up on a card other than the bench CM108 that has not been run yet.
 - CI: every job that builds, tests or packages MUST target `[self-hosted, Linux, X64]` - no
   GitHub-hosted runners (no minutes budget). Same rule as packet.net. **One carve-out, added
   2026-09-17**: a job that only moves files about may use `ubuntu-latest`, and `pages.yml`
@@ -126,7 +139,7 @@ docs/05-modes.md             the mode table, exact against the catalogue
 docs/13-decode-a-recording.md  the sweep tool, and why its default set is the whole catalogue
 docs/hardware/               the Tait TM8100 wiring guide, a user document
 docs/dev/                    developer documents; nothing here is user documentation
-docs/dev/roadmap.md          the one place open work is tracked
+docs/dev/roadmap.md          a pointer: open work is GitHub issues
 docs/dev/plan.md             the plan record: decisions and phases; its amendment log is closed
 docs/dev/mode-validation.md  the ledger
 docs/dev/bench/tnc-test-cd.md  the WA8LMF corpus benchmark, its scoring rules and standing scores

@@ -189,8 +189,9 @@ public class TestToneTests
     [Fact]
     public void The_Bessel_Null_Presets_Are_The_Four_Deviations_An_Fm_Station_Wants()
     {
-        // Tom's four pairs, from the roadmap: the carrier of an FM signal vanishes at a
-        // modulation index of 2.405, so a tone of f nulls at 2.405f of deviation.
+        // Tom's four pairs, from the roadmap entry that asked for this (commit ab43489): the carrier
+        // of an FM signal vanishes at a modulation index of 2.405, so a tone of f nulls at 2.405f
+        // of deviation.
         TestTone.BesselNullTonesHz.Should().Equal(500, 999, 1248, 2079);
 
         TestTone.BesselNullDeviationHz(500).Should().BeApproximately(1200, 5);

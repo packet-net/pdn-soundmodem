@@ -59,7 +59,7 @@ dotnet test
 packaging/build-deb.sh 0.69.0 amd64    # also arm64, armhf; cross-builds from any host
 ```
 
-[docs/dev/README.md](docs/dev/README.md) is the index of developer documents: the roadmap, the validation ledger, the modem plugin contract, the bench rigs and the archive.
+[docs/dev/README.md](docs/dev/README.md) is the index of developer documents and says how open work is tracked (GitHub issues): the validation ledger, the modem plugin contract, the bench rigs and the archive.
 
 ## Licence and credits
 

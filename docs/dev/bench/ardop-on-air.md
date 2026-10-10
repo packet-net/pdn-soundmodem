@@ -1,8 +1,8 @@
 # ARDOP on-air acceptance bench (GB7RDG, 40 m slot 2)
 
-Status: reference as of 2026-09-17. Describes the acceptance procedure for the one ARDOP rung that needed a real transmitter on a shared band segment, and the state of the station it was written against. The session ran on 2026-09-12 and passed (PR #462); its results are recorded in [roadmap.md](../roadmap.md) and [mode-validation.md](../mode-validation.md) rather than in a Results section here. The protocol engine and the waveforms ship as the M0LTE.Ardop package; what is left in this repository is `src/Packet.SoundModem.Daemon/ArdopChannelBridge.cs` and `ArdopBusyDetector.cs`.
+Status: reference as of 2026-09-17. Describes the acceptance procedure for the one ARDOP rung that needed a real transmitter on a shared band segment, and the state of the station it was written against. The session ran on 2026-09-12 and passed (PR #462); its results are recorded in [the roadmap of the time](../archive/roadmap-2026-10.md) and [mode-validation.md](../mode-validation.md) rather than in a Results section here. The protocol engine and the waveforms ship as the M0LTE.Ardop package; what is left in this repository is `src/Packet.SoundModem.Daemon/ArdopChannelBridge.cs` and `ArdopBusyDetector.cs`. Its roadmap references (items 6, 11 and 18, and the "Needs Tom + a radio" list) are to the roadmap as it stood then, now frozen at [archive/roadmap-2026-10.md](../archive/roadmap-2026-10.md); they are not GitHub issue numbers.
 
-The procedure for the one rung of the ARDOP acceptance ladder that had never been climbed when this was written: a real ARDOP transmission from a real transmitter on a shared band segment. Written 2026-09-12, before the session, because [docs/roadmap.md](../roadmap.md) #6 and its "Needs Tom + a radio" item 3 both say to write it first.
+The procedure for the one rung of the ARDOP acceptance ladder that had never been climbed when this was written: a real ARDOP transmission from a real transmitter on a shared band segment. Written 2026-09-12, before the session, because [docs/roadmap.md](../archive/roadmap-2026-10.md) item 6 and its "Needs Tom + a radio" item 3 both say to write it first.
 
 Everything below is grounded in this repository, or in a read-only probe of the live station taken on 2026-09-12 and quoted as such. Where a number or a behaviour is not grounded it says **unverified**, and is not to be quoted as measured.
 
@@ -12,9 +12,9 @@ This is an operator's document. It assumes a human at the radio for every transm
 
 **Validated:** our ARDOP transmit chain and our ARQ engine, over a real HF path, against a peer we do not control and did not configure.
 
-**Exit criterion**, stated identically in two places and not to be widened here: **one real ARQ connection with a deployed peer, logged** ([docs/ardop/plan.md](../archive/ardop/plan.md), "Open legs" leg 2; [docs/roadmap.md](../roadmap.md) #6). A ping answered, an ID heard by somebody, or an FEC frame decoded elsewhere are all useful and none of them is the exit. The exit is `CONNECTED <call> <bw>` followed by data moving and an orderly `DISCONNECTED`, with a transcript.
+**Exit criterion**, stated identically in two places and not to be widened here: **one real ARQ connection with a deployed peer, logged** ([docs/ardop/plan.md](../archive/ardop/plan.md), "Open legs" leg 2; [docs/roadmap.md](../archive/roadmap-2026-10.md) item 6). A ping answered, an ID heard by somebody, or an FEC frame decoded elsewhere are all useful and none of them is the exit. The exit is `CONNECTED <call> <bw>` followed by data moving and an orderly `DISCONNECTED`, with a transcript.
 
-A Winlink gateway session is explicitly optional gravy (roadmap #6). Pat already works through the host interface and has the Rung 4 evidence to prove it; a gateway adds no information this rung is short of.
+A Winlink gateway session is explicitly optional gravy (roadmap item 6). Pat already works through the host interface and has the Rung 4 evidence to prove it; a gateway adds no information this rung is short of.
 
 ## 2. What is already proven, and where
 
@@ -38,7 +38,7 @@ What the wild-corpus campaign adds is receive only, and says so: 749 frames acqu
 
 ### 2.1 What has never happened at all
 
-- **pdn-soundmodem has never keyed any transmitter with an ARDOP waveform**, not on air and not into a load. The dummy-load procedure exists and is unexecuted: [docs/flex-integration.md](../archive/flex-integration.md) §8 item 2, and roadmap #11's remaining item is exactly "a FreeDV-datac / ARDOP frame into the dummy load".
+- **pdn-soundmodem has never keyed any transmitter with an ARDOP waveform**, not on air and not into a load. The dummy-load procedure exists and is unexecuted: [docs/flex-integration.md](../archive/flex-integration.md) §8 item 2, and roadmap item 11's remaining item at the time was exactly "a FreeDV-datac / ARDOP frame into the dummy load".
 - **No live ARQ session has ever exercised the ConAck acceptance shipped in M0LTE.Ardop 0.4.0.** It has bench and wild-replay evidence only ([docs/ardop/plan.md](../archive/ardop/plan.md), leg 2). That change is on the connection path, so rung 4 of this document is the first thing that will ever exercise it for real.
 - **No ARDOP session of any kind over RF, at any centre.**
 
@@ -148,7 +148,7 @@ The consequence is not a defect and is not up for debate on the day: **the opera
 Two corollaries worth knowing before you key.
 
 - **The station is deaf while it transmits.** Receive processing is gated off for the length of every keyup (half duplex, `SoundModemChannel.cs`, the `TransmittedAudio` remarks). It cannot hear a collision it is causing, and it cannot tell you afterwards that it caused one. Only a second receiver can (section 11).
-- **Two different two-tone tests exist and they behave oppositely.** The daemon's operator-page test transmission and `--two-tone` are queued like a frame and **do** defer to carrier sense and to an ARQ hold (PR #415, roadmap #18). The ARDOP host command `TWOTONETEST` goes out through the TNC's transmitter, which is the bypassing path, and **does not defer** (`ArdopHostTnc.cs:984-993`). If a level check is wanted on this slot, prefer the daemon's.
+- **Two different two-tone tests exist and they behave oppositely.** The daemon's operator-page test transmission and `--two-tone` are queued like a frame and **do** defer to carrier sense and to an ARQ hold (PR #415, roadmap item 18). The ARDOP host command `TWOTONETEST` goes out through the TNC's transmitter, which is the bypassing path, and **does not defer** (`ArdopHostTnc.cs:984-993`). If a level check is wanted on this slot, prefer the daemon's.
 
 ### 4.3 What an ARQ session of ours does to the node
 
@@ -225,11 +225,11 @@ Two notes. Attaching displaces whatever host was on those sockets: the TNC accep
 
 ### Rung 0b: one ID frame into a dummy load. First key ever.
 
-Owed by roadmap #11 regardless of this campaign, and the only rung on this ladder with no channel risk at all. Terminate the transmit path in a load, then run rung 1's two commands unchanged. This is the first time any ARDOP audio from this codebase reaches a PA.
+Owed by roadmap item 11 regardless of this campaign, and the only rung on this ladder with no channel risk at all. Terminate the transmit path in a load, then run rung 1's two commands unchanged. This is the first time any ARDOP audio from this codebase reaches a PA.
 
 - **Success:** `PTT TRUE` then `PTT FALSE` in the transcript, the Flex reporting `interlock=TRANSMITTING`, RF into the load, no setup errors. The existing procedure and its success criteria are at [docs/flex-integration.md](../archive/flex-integration.md) §8 item 2.
 - **Failure:** no keying, keying with no RF, a `FAULT`, or audio that is obviously wrong on the panadapter.
-- **Decision:** a failure here is a transmit-path fault and **stops the ladder**. A pass closes roadmap #11's last item and should be recorded as such.
+- **Decision:** a failure here is a transmit-path fault and **stops the ladder**. A pass closes roadmap item 11's last item and should be recorded as such.
 
 ### Rung 1: give the station a callsign, then send one ID frame
 
@@ -364,7 +364,7 @@ What that means for the day: **if rung 4 produces a connect that does not establ
 
 ### 9.2 We can transmit over a session we cannot hear
 
-Sections 4.1 and 4.2 together. Mitigations are all procedural: rung 0 first, the listening window in pre-flight items 8 to 10, bounded attempt counts, and a human present. There is no software mitigation available and none is claimed. The busy-detector port is drafted as an issue (`/home/tf/ardopcall/docs/issue-busy-detector.md`), and the roadmap already flags it: "add the busy-detector port if channel-sharing needs it on air" (roadmap #6).
+Sections 4.1 and 4.2 together. Mitigations are all procedural: rung 0 first, the listening window in pre-flight items 8 to 10, bounded attempt counts, and a human present. There is no software mitigation available and none is claimed. The busy-detector port is drafted as an issue (`/home/tf/ardopcall/docs/issue-busy-detector.md`), and the roadmap already flags it: "add the busy-detector port if channel-sharing needs it on air" (roadmap item 6).
 
 ### 9.3 `ARQBW` is not what the config says it is
 
@@ -430,7 +430,7 @@ sm-ota ardop-monitor --raw <capture dir> --centre 1500 --quiet --csv "$EV/sessio
 1. **This file**: results written into a new "Results" section, the way [docs/freedv-hf-loop.md](../archive/freedv-hf-loop.md) says to ("Record results in this file (replace the blank matrix)").
 2. **[docs/mode-validation.md](../mode-validation.md)**: a dated ledger entry. The standing rule in CLAUDE.md is explicit that a proven mode gets one, naming the transition and the PR or issue that did it. `ardop` has no matrix row (it is a daemon modem entry, not a `ModemCatalog` mode) and the 2026-08-02 entry sets the precedent for recording it anyway.
 3. **[docs/ardop/plan.md](../archive/ardop/plan.md)**: leg 2 of "Open legs" closed, with the exit criterion quoted and answered.
-4. **[docs/roadmap.md](../roadmap.md)**: #6 closed, and #11's dummy-load item closed if rung 0b ran.
-5. **[docs/dev/archive/plan-amendment-log.md](../archive/plan-amendment-log.md)**: an amendment-log entry. That log is closed now and [roadmap.md](../roadmap.md) is the one roadmap, so a disagreement between documents is settled there.
+4. **[docs/roadmap.md](../archive/roadmap-2026-10.md)**: item 6 closed, and item 11's dummy-load item closed if rung 0b ran.
+5. **[docs/dev/archive/plan-amendment-log.md](../archive/plan-amendment-log.md)**: an amendment-log entry. That log is closed now. The roadmap that settled disagreements between documents when this was written is frozen at [archive/roadmap-2026-10.md](../archive/roadmap-2026-10.md); open work is GitHub issues.
 
 **Honest negatives are recorded with their mechanism**, which is the campaign's own standing discipline. A session that did not connect, a ping that was never answered, a peer that behaved unlike ardopcf: all of those are results, and the one thing that must not happen is a ladder run whose failures go unwritten because the exit criterion was not reached.

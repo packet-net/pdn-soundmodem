@@ -1,6 +1,6 @@
 # pdn-soundmodem - plan
 
-Status: design record as of 2026-09-17. Describes the founding decisions of 2026-07-14 and the four build phases as they were worked through, with what each phase still owes. Decisions taken since are recorded here; the amendment log that used to run alongside it is closed at [archive/plan-amendment-log.md](archive/plan-amendment-log.md), and open work is tracked in [roadmap.md](roadmap.md), which is the one living roadmap.
+Status: design record as of 2026-09-17. Describes the founding decisions of 2026-07-14 and the four build phases as they were worked through, with what each phase still owes. Decisions taken since are recorded here; the amendment log that used to run alongside it is closed at [archive/plan-amendment-log.md](archive/plan-amendment-log.md), and open work is tracked as GitHub issues ([README.md](README.md#how-open-work-is-tracked)).
 
 Founding research: [packet.net `docs/research/headless-soundmodem.md`](https://github.com/packet-net/packet.net/blob/main/docs/research/headless-soundmodem.md) -
 read it before substantive work; the decisions in its §Decisions bind this repo.
@@ -274,4 +274,4 @@ ways, the spec QPSK phase map is NinoTNC-compatible, and the legacy-max-FEC bit 
 right; see § Results in [bench/ninotnc-loop.md](bench/ninotnc-loop.md)). The Pi arrived too:
 radio1 runs the arm64 package. What is still owed to hardware, here and in the phases above, is
 an over-air RF NinoTNC pair run and the per-mode WAV corpus off the rig. Everything else that
-needs Tom and a radio is listed in [roadmap.md](roadmap.md).
+needs Tom and a radio is a GitHub issue labelled `needs-radio`.
