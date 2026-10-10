@@ -213,38 +213,45 @@ A `txtest` from a browser is acted on only when the request's `Origin` header na
 
 ### The channel audio stream
 
-`/channel-audio` is a second, separate WebSocket, for a program on the same machine rather than a browser - pdn-mailcast-receiver is the first one (see the one-receiver plan, packet-net/pdn-mailcast#75). It carries none of the page's own protocol above; it is nothing but the channel's receive audio, plus the one small identify message a connection can send it.
+`/channel-audio` is a second, separate WebSocket, for a program on the same machine rather than a browser. pdn-mailcast-receiver is the first one (see the one-receiver plan, packet-net/pdn-mailcast#75). It carries none of the page's own protocol above; it is nothing but the channel's receive audio, plus the one small identify message a connection can send it.
 
 No config and no key: nothing changes for anyone who does not use it, and a connection to it needs none. Instead it is restricted by where it comes from:
 
 - Refused unless the request's remote address is loopback (`127.0.0.1` or `::1`), whatever the station's own `bind` is.
 - Refused if the request carries an `Origin` header at all. A browser sets `Origin` itself and page script cannot remove it, so a WebSocket upgrade with no `Origin` header is exactly the one request a browser can never produce; this closes the DNS-rebinding route a key alone would not (see issue #423).
+- Refused if the request carries `X-Forwarded-For`, `Forwarded` or `X-Real-IP`. A reverse proxy on the same machine (see [the station page](../07-station-page.md)) makes everything it relays arrive from `127.0.0.1` with no `Origin`; a proxy that adds any of these headers, as the usual ones do, is refused. A proxy that adds none of them cannot be told from a local program, so do not point one at `/channel-audio`.
 
-A refused upgrade gets a plain `403` with a one-line reason; nothing beyond that is replied to. An accepted connection is sent one text message first, `{"type":"hello","rateHz":N,"dialHz":N}`, naming the channel's own sample rate (mono float32, the channel's native DSP rate - 12000 or 48000 depending on what modems the station runs; never resampled for this stream) and, when the station knows one (a `rig` section or a Flex slice), the dial frequency; `dialHz` is `null` otherwise. A connection may then send a text message naming itself, any time, more than once:
+A refused upgrade gets a plain `403` with a one-line reason, and the journal says why (`channel-audio: refused ...`). An accepted connection is sent one text message first, before any audio, `{"type":"hello","rateHz":N,"dialHz":N}`: the channel's own sample rate (mono float32 at the channel's DSP rate, 12000 or 48000 depending on what modems the station runs, never resampled for this stream) and, when the station knows one (a `rig` section or a Flex slice), the dial frequency; `dialHz` is `null` otherwise. A connection may then send a text message naming itself, any time, more than once:
 
 ```json
-{"name": "pdn-mailcast-receiver", "pagePort": 18135, "band": {"lowHz": 1000, "highHz": 2000}}
+{"name": "pdn-mailcast-receiver", "pagePort": 18135, "band": {"lowHz": 300, "highHz": 3000}}
 ```
 
-All three fields are optional. `name` and `pagePort` are recorded for the station page to show a link to (a later step; nothing reads them yet). `band` is the audio band, in Hz either side of the channel's own centre, this connection needs to hear; see below for what it does on a headless Flex. Sending `"band": null` (or simply never sending a band) withdraws it.
+All three fields are optional. `name` and `pagePort` are recorded for the station page to show a link to (a later step; nothing reads them yet). `band` is the stretch of the channel's audio this connection needs to hear, in absolute audio Hz from 0 to half the channel's rate (the same audio frequencies a modem's centre is given in); values outside that are clamped to it. Sending `"band": null` (or never sending a band) withdraws it. A message that is not a JSON object, a field of the wrong type, a band whose low edge is not below its high edge, or a message longer than 4096 bytes is ignored; the connection carries on.
 
-Audio flows as soon as the connection is accepted, with no need to send anything first, as binary messages:
+Audio flows as soon as the hello has gone, with no need to send anything first, as binary messages:
 
 ```
 byte 0       kind, always 1
 byte 1       flags: bit 0 transmitted, bit 1 gap
 bytes 2-3    reserved, always 0
-bytes 4-11   sample index since this station started streaming, u64 little-endian
+bytes 4-11   sample index of this block's first sample, u64 little-endian
 bytes 12-15  sample count in this block, i32 little-endian
 bytes 16...  that many float32 samples, little-endian, mono
 ```
 
-The sample index is continuous and never restarts: it is the channel's own clock, not this connection's, so a client that connects after the station has been running a while sees its first block start at a non-zero index. `transmitted` marks a block that stands in for one the channel's receive taps never saw at all, because the station was keyed (half duplex: see `SoundModemChannel.ProcessReceive`) - silence, the same length the skipped block would have been, so the sample clock never stops for the length of a keyup. `gap` marks the first block delivered after this connection's own queue overflowed and dropped something - a slow reader loses blocks rather than slowing the modem or any other reader, and finds out with this flag rather than having to notice a jump in the sample index for itself. A stream-mode decoder should reset its state on either flag.
+Blocks are 100 ms of audio (1200 samples at 12 kHz, 4800 at 48 kHz), whatever size the station itself reads in. A block is shorter only just before the transmitted flag changes, or just before a gap: each block is all heard audio or all keyed silence, and a gap always starts a new block.
 
-On a headless Flex (`flex:` with no `@station`), a slice left on its own data filter hears nothing much above about 3 kHz, whatever band a connection asks for - the same problem the built-in mailcast receiver already has at bring-up (see [`mailcast`](config.md#mailcast)), solved here live rather than once. While at least one connection has a `band`, the slice's receive filter is widened to cover the union of every connected band plus whatever bring-up already set it to; the moment the last such connection goes (closes, or clears its band), the filter goes back to exactly what bring-up set. A connection with no `band` never touches the filter at all, and a station with no Flex, or a Flex in attach mode, ignores `band` entirely - there is nothing for it to widen.
+- **The sample index** is the channel's own count of samples since the station started, not this connection's, so a reader that connects later sees its first block start at a non-zero index. It counts every sample the channel was given, plus the keyed silence, and nothing else.
+- **`transmitted`** marks silence standing in for audio the channel never heard because the station was keyed (half duplex: see `SoundModemChannel.ProcessReceive`). It is the same length the skipped audio was, so the sample index runs straight through a keyup.
+- **`gap`** marks the first block after audio was lost, from either of two places. If this reader fell behind, its own queue (6.4 seconds) dropped the oldest whole blocks; the index jumps by exactly the samples dropped, and other readers lose nothing. If the input lost audio (a sound card's capture overrun, a DAX packet the radio never delivered, an input that stopped delivering for a while and came back), the index does not jump: none of those inputs says how much it lost, so the index keeps counting what was actually delivered and the flag alone says the two sides are not one signal. Either way, a stream-mode decoder should reset on it, as on a transmitted block.
+
+On a headless Flex (`flex:` with no `@station`), a slice left on its own data filter hears nothing much above about 3 kHz, whatever band a connection asks for: the same problem the built-in mailcast receiver already has at bring-up (see [`mailcast`](config.md#mailcast)), solved here live rather than once. While at least one connection has a `band`, the slice's receive filter is widened to cover the union of every connected band (with 200 Hz to spare each side, in 50 Hz steps) as well as whatever bring-up set; the moment the last such connection goes, however it goes, the filter goes back to exactly what bring-up set. Nothing is sent to the radio, and nothing is journalled, when the filter already covers what is asked for. A connection with no `band` never touches the filter. A station with no Flex, or a Flex in attach mode, where the slice is SmartSDR's, ignores `band` entirely.
+
+For example, on a slice bring-up left on 300-2700 Hz, a connection asking for 500-3000 Hz:
 
 ```
-flex: widening the slice receive filter to 1000-2000 Hz for the channel audio stream
+flex: widening the slice receive filter to 300-3200 Hz for the channel audio stream
 flex: putting the slice receive filter back to 300-2700 Hz, no channel audio stream connection is asking for a band any more
 ```
 

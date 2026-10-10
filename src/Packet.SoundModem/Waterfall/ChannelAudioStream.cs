@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Specialized;
 using System.Net;
 using System.Net.WebSockets;
 using System.Text.Json;
@@ -13,59 +14,122 @@ namespace Packet.SoundModem.Waterfall;
 /// blocks, marked with a gap, rather than slowing the modem or any other reader.
 /// </summary>
 /// <remarks>
-/// <para><b>Loopback only, no key.</b> The server checks the remote address and the
-/// <c>Origin</c> header before accepting the upgrade (see <see cref="IsLoopbackAddress"/> and the
-/// caller in <see cref="WaterfallWebServer"/>); this class assumes that has already happened and
-/// serves anything handed to it.</para>
+/// <para><b>Loopback only, no key.</b> The server checks the request with
+/// <see cref="LocalProgramRefusal"/> before accepting the upgrade; this class assumes that has
+/// already happened and serves anything handed to it.</para>
+/// <para><b>100 ms blocks.</b> The channel's own blocks are whatever the station reads (100 ms,
+/// or 20 ms with an ARDOP modem), so the audio is gathered here into blocks of a tenth of a
+/// second, once for every connection. A block is shorter than that only where the transmitted
+/// flag changes, or where the input lost audio: each block is wholly one or the other, and a gap
+/// always starts a new one.</para>
 /// <para><b>Keyed blocks.</b> <see cref="SoundModemChannel.ProcessReceive"/> skips every receive
 /// tap while the channel is transmitting (half duplex), so an ordinary tap simply sees nothing
 /// for the length of a keyup. <see cref="OnKeyedBlock"/> is wired to
 /// <see cref="SoundModemChannel.KeyedReceiveBlock"/> instead, which fires from exactly that gate
-/// with the length of the block that was skipped - a silent block of the same length, marked
+/// with the length of the block that was skipped - silence of the same length, marked
 /// transmitted, takes its place, so a reader's sample clock never stops and it can tell a keyup
 /// from a gap.</para>
+/// <para><b>Gaps.</b> Two kinds of loss are marked the same way. A slow reader's own queue
+/// overflowing drops whole blocks, and the sample index jumps by exactly what was dropped. Audio
+/// the input lost (<see cref="OnInputLost"/>, from <see cref="SoundModemChannel.ReceiveAudioLost"/>:
+/// an overrun, a lost radio packet, a stalled input) never reached the channel at all and nobody
+/// knows how much it was, so the index does not move for it; the gap flag alone says the two
+/// sides of it are not one signal.</para>
 /// <para><b>The requested band.</b> A connection may name a band it needs to hear
 /// (<see cref="Client.Band"/>, set from the identify message); <see cref="BandRequested"/> fires
 /// with the union of every connected band whenever that union changes, null when none is asked
-/// for. What that is used for - widening a headless Flex's slice filter - is the caller's, not
+/// for. What that is used for, widening a headless Flex's slice filter, is the caller's, not
 /// this class's: it knows nothing about Flex.</para>
+/// <para><b>Allocation.</b> Nothing on the receive thread allocates once a connection is open:
+/// the block being gathered is one buffer, and each connection's queue is a ring of
+/// preallocated blocks it copies into.</para>
 /// </remarks>
 internal sealed class ChannelAudioStream
 {
     /// <summary>The path this stream is served under, under whatever base the station page is.</summary>
     internal const string Path = "/channel-audio";
 
+    /// <summary>How long a whole block is.</summary>
+    internal const int BlockMilliseconds = 100;
+
+    /// <summary>
+    /// Blocks held per connection before the oldest is dropped: 6.4 seconds at 100 ms a block,
+    /// generous for a reader on the same machine.
+    /// </summary>
+    internal const int QueueCapacity = 64;
+
+    /// <summary>The longest identify message read; anything longer is ignored whole.</summary>
+    internal const int MaxIdentifyBytes = 4096;
+
     private const byte AudioKind = 0x01;
     private const byte FlagTransmitted = 0x01;
     private const byte FlagGap = 0x02;
     private const int HeaderBytes = 16;
 
-    /// <summary>
-    /// Blocks held per connection before the oldest is dropped. Generous for a reader on the same
-    /// machine: audio typically arrives in blocks well under 100 ms, so this is several seconds
-    /// of headroom, not a tight budget.
-    /// </summary>
-    private const int QueueCapacity = 64;
+    /// <summary>The proxy headers that say a request was relayed rather than made here.</summary>
+    private static readonly string[] ForwardingHeaders = ["X-Forwarded-For", "Forwarded", "X-Real-IP"];
 
     private readonly int _sampleRate;
+    private readonly int _blockSamples;
     private readonly Action<string>? _log;
-    private readonly object _clientsLock = new();
+
+    // Clients and bands, changed only under this lock. The receive thread reads _clients without
+    // it: the array is replaced, never changed in place.
+    private readonly object _gate = new();
     private volatile Client[] _clients = [];
-    private ulong _sampleCounter;
     private (int LowHz, int HighHz)? _lastReportedBand;
+    private Action<(int LowHz, int HighHz)?>? _bandRequested;
+
+    // The block being gathered: the receive thread's alone.
+    private readonly float[] _block;
+    private int _blockFill;
+    private ulong _blockStart;
+    private bool _blockTransmitted;
+    private bool _blockGap;
+    private bool _inputGapPending;
+    private ulong _sampleCounter;
 
     public ChannelAudioStream(int sampleRate, Action<string>? log)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(sampleRate, 10);
         _sampleRate = sampleRate;
+        _blockSamples = sampleRate * BlockMilliseconds / 1000;
+        _block = new float[_blockSamples];
         _log = log;
     }
 
     /// <summary>
-    /// Fired with the union of every connected client's requested band (see the identify
+    /// Called with the union of every connected client's requested band (see the identify
     /// message, <see cref="ApplyIdentify"/>) whenever it changes; null when no connected client
-    /// has asked for one. Never fired at all for a station nobody has asked for a band on.
+    /// has asked for one. Setting it while a band is already asked for calls it straight away
+    /// with that band, so a handler installed after the first connection still hears it. Called
+    /// under this stream's own lock, in order, so it must return promptly.
     /// </summary>
-    public Action<(int LowHz, int HighHz)?>? BandRequested { get; set; }
+    public Action<(int LowHz, int HighHz)?>? BandRequested
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _bandRequested;
+            }
+        }
+
+        set
+        {
+            lock (_gate)
+            {
+                _bandRequested = value;
+                if (_lastReportedBand is not null)
+                {
+                    value?.Invoke(_lastReportedBand);
+                }
+            }
+        }
+    }
+
+    /// <summary>How many samples a whole block holds.</summary>
+    internal int BlockSamples => _blockSamples;
 
     /// <summary>How many clients are connected right now, for the journal and for tests.</summary>
     internal int ClientCount => _clients.Length;
@@ -77,45 +141,62 @@ internal sealed class ChannelAudioStream
     /// </summary>
     public static bool IsLoopbackAddress(IPAddress? address) => address is not null && IPAddress.IsLoopback(address);
 
-    /// <summary>The channel's own receive tap: every block of audio it hears, in order.</summary>
-    public void OnReceive(ReadOnlySpan<float> samples)
+    /// <summary>
+    /// Why a request may not use something meant only for a program on this machine, or null
+    /// when it may. Refused: anything not from a loopback address; anything carrying an
+    /// <c>Origin</c> header (a browser sets it and page script cannot remove it); and anything
+    /// carrying a proxy's forwarding header, because a reverse proxy on this machine makes every
+    /// request it relays arrive from loopback with no <c>Origin</c>.
+    /// </summary>
+    /// <param name="remote">The request's remote address.</param>
+    /// <param name="headers">The request's headers.</param>
+    public static string? LocalProgramRefusal(IPAddress? remote, NameValueCollection headers)
     {
-        Client[] clients = _clients;
-        ulong index = _sampleCounter;
-        _sampleCounter += (ulong)samples.Length;
-        if (clients.Length == 0)
+        if (!IsLoopbackAddress(remote))
         {
-            // No client to tell, and nothing to copy for one - the point of checking first.
-            return;
+            return "it is not loopback";
         }
 
-        float[] copy = samples.ToArray();
-        foreach (Client client in clients)
+        if (!string.IsNullOrEmpty(headers["Origin"]))
         {
-            client.Queue.Enqueue(index, copy, transmitted: false);
+            return "it declared an Origin (a browser)";
         }
+
+        foreach (string header in ForwardingHeaders)
+        {
+            if (headers[header] is not null)
+            {
+                return $"it carries {header} (relayed by a proxy)";
+            }
+        }
+
+        return null;
     }
+
+    /// <summary>The channel's own receive tap: every block of audio it hears, in order.</summary>
+    public void OnReceive(ReadOnlySpan<float> samples) => Append(samples, samples.Length, transmitted: false);
 
     /// <summary>
     /// The channel's keyed-block callback: a block of this many samples was skipped because the
     /// station was transmitting. Fed to every client as silence, marked transmitted, so its
     /// sample clock keeps pace with the channel's own.
     /// </summary>
-    public void OnKeyedBlock(int length)
+    public void OnKeyedBlock(int length) => Append(default, Math.Max(0, length), transmitted: true);
+
+    /// <summary>
+    /// The input lost audio before the next block: whatever has been gathered so far goes out as
+    /// it is, and the next block on every connection is marked as following a gap.
+    /// </summary>
+    public void OnInputLost()
     {
         Client[] clients = _clients;
-        ulong index = _sampleCounter;
-        _sampleCounter += (ulong)length;
-        if (clients.Length == 0 || length <= 0)
+        if (clients.Length == 0)
         {
             return;
         }
 
-        float[] silence = new float[length];
-        foreach (Client client in clients)
-        {
-            client.Queue.Enqueue(index, silence, transmitted: true);
-        }
+        Flush(clients);
+        _inputGapPending = true;
     }
 
     /// <summary>Serves one already-accepted, already-checked WebSocket until it closes.</summary>
@@ -127,16 +208,14 @@ internal sealed class ChannelAudioStream
     /// <param name="serverStopping">Cancelled when the whole server is going down.</param>
     public async Task ServeAsync(WebSocket socket, string remoteDescription, double dialHz, CancellationToken serverStopping)
     {
-        var queue = new AudioQueue(QueueCapacity);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(serverStopping);
-        var client = new Client(socket, queue);
-
-        AddClient(client);
-        Journal($"channel-audio: {remoteDescription} connected - {ClientCount} client{Plural(ClientCount)}");
-
-        Task send = SendLoopAsync(client, stop.Token);
+        var client = new Client(socket, new AudioQueue(QueueCapacity, _blockSamples));
+        Task? send = null;
+        bool added = false;
         try
         {
+            // The hello goes before the connection joins the fan-out, so it is always the first
+            // message: nothing else can be sending on this socket yet.
             byte[] hello = JsonSerializer.SerializeToUtf8Bytes(new
             {
                 type = "hello",
@@ -145,20 +224,48 @@ internal sealed class ChannelAudioStream
             });
             await socket.SendAsync(hello, WebSocketMessageType.Text, true, stop.Token).ConfigureAwait(false);
 
-            var buffer = new byte[4096];
+            AddClient(client);
+            added = true;
+            Journal($"channel-audio: {remoteDescription} connected - {ClientCount} client{Plural(ClientCount)}");
+            send = SendLoopAsync(client, stop.Token);
+
+            // An identify message may arrive in fragments; it is gathered up to its end, and one
+            // longer than the cap is read to its end and ignored whole.
+            var buffer = new byte[MaxIdentifyBytes];
+            int filled = 0;
+            bool tooLong = false;
             while (socket.State == WebSocketState.Open && !stop.IsCancellationRequested)
             {
-                WebSocketReceiveResult received =
-                    await socket.ReceiveAsync(buffer, stop.Token).ConfigureAwait(false);
+                if (!tooLong && filled == buffer.Length)
+                {
+                    tooLong = true;
+                }
+
+                Memory<byte> into = tooLong ? buffer : buffer.AsMemory(filled);
+                ValueWebSocketReceiveResult received =
+                    await socket.ReceiveAsync(into, stop.Token).ConfigureAwait(false);
                 if (received.MessageType == WebSocketMessageType.Close)
                 {
                     break;
                 }
 
-                if (received.MessageType == WebSocketMessageType.Text && received.Count > 0)
+                if (!tooLong)
                 {
-                    ApplyIdentify(client, buffer.AsSpan(0, received.Count));
+                    filled += received.Count;
                 }
+
+                if (!received.EndOfMessage)
+                {
+                    continue;
+                }
+
+                if (received.MessageType == WebSocketMessageType.Text && !tooLong && filled > 0)
+                {
+                    ApplyIdentify(client, buffer.AsMemory(0, filled));
+                }
+
+                filled = 0;
+                tooLong = false;
             }
         }
         catch (Exception)
@@ -167,19 +274,24 @@ internal sealed class ChannelAudioStream
         }
         finally
         {
-            queue.Complete();
+            client.Queue.Complete();
             await stop.CancelAsync().ConfigureAwait(false);
-            try
+            if (send is not null)
             {
-                await send.ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
+                try
+                {
+                    await send.ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                }
             }
 
-            RemoveClient(client);
-            RecomputeBand();
-            Journal($"channel-audio: {remoteDescription} disconnected - {ClientCount} client{Plural(ClientCount)} left");
+            if (added)
+            {
+                RemoveClient(client);
+                Journal($"channel-audio: {remoteDescription} disconnected - {ClientCount} client{Plural(ClientCount)} left");
+            }
 
             try
             {
@@ -201,7 +313,7 @@ internal sealed class ChannelAudioStream
     public void Shutdown()
     {
         Client[] clients;
-        lock (_clientsLock)
+        lock (_gate)
         {
             clients = _clients;
             _clients = [];
@@ -213,28 +325,22 @@ internal sealed class ChannelAudioStream
         }
     }
 
-    private void AddClient(Client client)
-    {
-        lock (_clientsLock)
-        {
-            _clients = [.. _clients, client];
-        }
-    }
-
-    private void RemoveClient(Client client)
-    {
-        lock (_clientsLock)
-        {
-            _clients = Array.FindAll(_clients, c => !ReferenceEquals(c, client));
-        }
-    }
-
-    private void ApplyIdentify(Client client, ReadOnlySpan<byte> payload)
+    /// <summary>
+    /// Reads one identify message. Anything it does not understand is ignored rather than
+    /// ending the connection: a root that is not an object, a field of the wrong type, a band
+    /// that is not a band.
+    /// </summary>
+    internal void ApplyIdentify(Client client, ReadOnlyMemory<byte> payload)
     {
         try
         {
-            using JsonDocument doc = JsonDocument.Parse(payload.ToArray());
+            using JsonDocument doc = JsonDocument.Parse(payload);
             JsonElement root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return;
+            }
+
             if (root.TryGetProperty("name", out JsonElement nameElement)
                 && nameElement.ValueKind == JsonValueKind.String)
             {
@@ -243,28 +349,34 @@ internal sealed class ChannelAudioStream
 
             if (root.TryGetProperty("pagePort", out JsonElement portElement)
                 && portElement.ValueKind == JsonValueKind.Number
-                && portElement.TryGetInt32(out int pagePort))
+                && portElement.TryGetInt32(out int pagePort)
+                && pagePort is > 0 and <= 65535)
             {
                 client.PagePort = pagePort;
             }
 
-            if (root.TryGetProperty("band", out JsonElement bandElement))
+            if (!root.TryGetProperty("band", out JsonElement bandElement))
             {
-                if (bandElement.ValueKind == JsonValueKind.Null)
-                {
-                    client.Band = null;
-                }
-                else if (bandElement.ValueKind == JsonValueKind.Object
-                    && bandElement.TryGetProperty("lowHz", out JsonElement lowElement)
-                    && lowElement.TryGetInt32(out int lowHz)
-                    && bandElement.TryGetProperty("highHz", out JsonElement highElement)
-                    && highElement.TryGetInt32(out int highHz)
-                    && lowHz < highHz)
-                {
-                    client.Band = (lowHz, highHz);
-                }
+                return;
+            }
 
-                RecomputeBand();
+            if (bandElement.ValueKind == JsonValueKind.Null)
+            {
+                SetBand(client, null);
+            }
+            else if (bandElement.ValueKind == JsonValueKind.Object
+                && TryReadHz(bandElement, "lowHz", out int lowHz)
+                && TryReadHz(bandElement, "highHz", out int highHz))
+            {
+                // Clamped to what the channel can carry at all, before it goes anywhere near a
+                // radio: the band is audio Hz on this channel, from 0 to half its rate.
+                int nyquist = _sampleRate / 2;
+                lowHz = Math.Clamp(lowHz, 0, nyquist);
+                highHz = Math.Clamp(highHz, 0, nyquist);
+                if (lowHz < highHz)
+                {
+                    SetBand(client, (lowHz, highHz));
+                }
             }
         }
         catch (JsonException)
@@ -274,7 +386,117 @@ internal sealed class ChannelAudioStream
         }
     }
 
-    private void RecomputeBand()
+    private static bool TryReadHz(JsonElement band, string name, out int hz)
+    {
+        hz = 0;
+        return band.TryGetProperty(name, out JsonElement element)
+            && element.ValueKind == JsonValueKind.Number
+            && element.TryGetInt32(out hz);
+    }
+
+    private void Append(ReadOnlySpan<float> samples, int length, bool transmitted)
+    {
+        Client[] clients = _clients;
+        if (clients.Length == 0)
+        {
+            // Nobody to tell. The clock still runs, and a half-gathered block or a pending gap
+            // means nothing to a connection that arrives later.
+            _sampleCounter += (ulong)length;
+            _blockFill = 0;
+            _inputGapPending = false;
+            return;
+        }
+
+        int offset = 0;
+        while (offset < length)
+        {
+            if (_blockFill > 0 && _blockTransmitted != transmitted)
+            {
+                Flush(clients);
+            }
+
+            if (_blockFill == 0)
+            {
+                _blockStart = _sampleCounter;
+                _blockTransmitted = transmitted;
+                _blockGap = _inputGapPending;
+                _inputGapPending = false;
+            }
+
+            int take = Math.Min(_blockSamples - _blockFill, length - offset);
+            Span<float> into = _block.AsSpan(_blockFill, take);
+            if (transmitted)
+            {
+                into.Clear();
+            }
+            else
+            {
+                samples.Slice(offset, take).CopyTo(into);
+            }
+
+            _blockFill += take;
+            _sampleCounter += (ulong)take;
+            offset += take;
+            if (_blockFill == _blockSamples)
+            {
+                Flush(clients);
+            }
+        }
+    }
+
+    private void Flush(Client[] clients)
+    {
+        if (_blockFill == 0)
+        {
+            return;
+        }
+
+        byte flags = (byte)((_blockTransmitted ? FlagTransmitted : 0) | (_blockGap ? FlagGap : 0));
+        ReadOnlySpan<float> block = _block.AsSpan(0, _blockFill);
+        foreach (Client client in clients)
+        {
+            client.Queue.Enqueue(_blockStart, block, flags);
+        }
+
+        _blockFill = 0;
+    }
+
+    private void AddClient(Client client)
+    {
+        lock (_gate)
+        {
+            _clients = [.. _clients, client];
+        }
+    }
+
+    private void RemoveClient(Client client)
+    {
+        lock (_gate)
+        {
+            _clients = Array.FindAll(_clients, c => !ReferenceEquals(c, client));
+            client.Band = null;
+            RecomputeBandLocked();
+        }
+    }
+
+    private void SetBand(Client client, (int LowHz, int HighHz)? band)
+    {
+        lock (_gate)
+        {
+            // A client already removed (its connection went while this message was being read)
+            // must not bring its band back.
+            if (Array.IndexOf(_clients, client) < 0)
+            {
+                return;
+            }
+
+            client.Band = band;
+            RecomputeBandLocked();
+        }
+    }
+
+    /// <summary>Under <see cref="_gate"/>, so each change is computed and reported in order.</summary>
+    private void RecomputeBandLocked()
     {
         (int LowHz, int HighHz)? union = null;
         foreach (Client client in _clients)
@@ -290,7 +512,14 @@ internal sealed class ChannelAudioStream
         if (!Nullable.Equals(union, _lastReportedBand))
         {
             _lastReportedBand = union;
-            BandRequested?.Invoke(union);
+            try
+            {
+                _bandRequested?.Invoke(union);
+            }
+            catch (Exception e)
+            {
+                Journal($"channel-audio: the band handler failed: {e.Message}");
+            }
         }
     }
 
@@ -314,14 +543,14 @@ internal sealed class ChannelAudioStream
         {
             while (true)
             {
-                QueuedBlock? block = await client.Queue.DequeueAsync(cancellation).ConfigureAwait(false);
-                if (block is null)
+                int length = await client.Queue.DequeueAsync(client.Message, cancellation).ConfigureAwait(false);
+                if (length < 0)
                 {
                     return;
                 }
 
-                byte[] message = Encode(block.Value);
-                await client.Socket.SendAsync(message, WebSocketMessageType.Binary, true, cancellation)
+                await client.Socket.SendAsync(
+                        client.Message.AsMemory(0, length), WebSocketMessageType.Binary, true, cancellation)
                     .ConfigureAwait(false);
             }
         }
@@ -338,42 +567,35 @@ internal sealed class ChannelAudioStream
 
     /// <summary>
     /// <c>[kind 1][flags 1][reserved 2][sampleIndex u64 LE][count i32 LE][samples f32 LE ...]</c>.
-    /// Flags: bit 0 transmitted (a silent block generated for a keyup), bit 1 gap (audio was lost
-    /// before this block - a slow reader's own queue dropped something, not the channel).
+    /// Flags: bit 0 transmitted (silence standing in for a keyup), bit 1 gap (audio was lost
+    /// before this block, by this reader's own queue or by the input).
     /// </summary>
-    private static byte[] Encode(QueuedBlock block)
+    /// <returns>The message length.</returns>
+    internal static int Encode(Span<byte> message, ulong sampleIndex, ReadOnlySpan<float> samples, byte flags)
     {
-        int count = block.Samples.Length;
-        byte[] message = new byte[HeaderBytes + (count * 4)];
         message[0] = AudioKind;
-        byte flags = 0;
-        if (block.Transmitted)
-        {
-            flags |= FlagTransmitted;
-        }
-
-        if (block.Gap)
-        {
-            flags |= FlagGap;
-        }
-
         message[1] = flags;
-        BinaryPrimitives.WriteUInt64LittleEndian(message.AsSpan(4, 8), block.SampleIndex);
-        BinaryPrimitives.WriteInt32LittleEndian(message.AsSpan(12, 4), count);
-        ReadOnlySpan<float> samples = block.Samples.Span;
-        for (int i = 0; i < count; i++)
+        message[2] = 0;
+        message[3] = 0;
+        BinaryPrimitives.WriteUInt64LittleEndian(message.Slice(4, 8), sampleIndex);
+        BinaryPrimitives.WriteInt32LittleEndian(message.Slice(12, 4), samples.Length);
+        for (int i = 0; i < samples.Length; i++)
         {
-            BinaryPrimitives.WriteSingleLittleEndian(message.AsSpan(HeaderBytes + (i * 4), 4), samples[i]);
+            BinaryPrimitives.WriteSingleLittleEndian(message.Slice(HeaderBytes + (i * 4), 4), samples[i]);
         }
 
-        return message;
+        return HeaderBytes + (samples.Length * 4);
     }
 
-    private sealed class Client(WebSocket socket, AudioQueue queue)
+    /// <summary>One connection: its socket, its queue, and what it said about itself.</summary>
+    internal sealed class Client(WebSocket socket, AudioQueue queue)
     {
         public WebSocket Socket { get; } = socket;
 
         public AudioQueue Queue { get; } = queue;
+
+        /// <summary>The message being sent, reused for every block.</summary>
+        public byte[] Message { get; } = new byte[HeaderBytes + (queue.BlockSamples * 4)];
 
         public string? Name { get; set; }
 
@@ -382,77 +604,125 @@ internal sealed class ChannelAudioStream
         public (int LowHz, int HighHz)? Band { get; set; }
     }
 
-    internal readonly record struct QueuedBlock(ulong SampleIndex, ReadOnlyMemory<float> Samples, bool Transmitted, bool Gap);
-
     /// <summary>
-    /// A fixed-capacity queue of audio blocks for one connection: the oldest block is dropped to
-    /// make room for a new one, and whichever block is actually handed to the reader next
-    /// carries the gap flag - so a reader finds out audio was lost exactly once, on the first
-    /// block it sees after the hole, rather than having to notice a jump in the sample counter
-    /// for itself. The flag is decided when a block leaves the queue, not when it enters it: a
-    /// drop can be followed by several more blocks arriving before the reader catches up, and it
-    /// is whichever of those the reader actually sees first that must carry the mark, not
-    /// whichever one happened to be the drop's own replacement.
+    /// A fixed ring of preallocated blocks for one connection: a block is copied in on the
+    /// receive thread and encoded straight out of its slot by the sender, so neither side
+    /// allocates. The oldest block is dropped to make room for a new one, and whichever block is
+    /// actually handed to the reader next carries the gap flag, so a reader finds out audio was
+    /// lost exactly once, on the first block it sees after the hole. The flag is decided when a
+    /// block leaves the queue, not when it enters it: a drop can be followed by several more
+    /// blocks arriving before the reader catches up, and it is whichever of those the reader
+    /// actually sees first that must carry the mark.
     /// </summary>
-    internal sealed class AudioQueue(int capacity)
+    internal sealed class AudioQueue
     {
-        private readonly object _gate = new();
-        private readonly Queue<QueuedBlock> _items = new();
+        private readonly object _lock = new();
         private readonly SemaphoreSlim _signal = new(0);
+        private readonly float[][] _slots;
+        private readonly int[] _counts;
+        private readonly ulong[] _indices;
+        private readonly byte[] _flags;
+        private int _head;
+        private int _size;
         private bool _gapPending;
         private bool _completed;
 
-        public void Enqueue(ulong sampleIndex, ReadOnlyMemory<float> samples, bool transmitted)
+        public AudioQueue(int capacity, int blockSamples)
         {
-            lock (_gate)
+            BlockSamples = blockSamples;
+            _slots = new float[capacity][];
+            for (int i = 0; i < capacity; i++)
+            {
+                _slots[i] = new float[blockSamples];
+            }
+
+            _counts = new int[capacity];
+            _indices = new ulong[capacity];
+            _flags = new byte[capacity];
+        }
+
+        /// <summary>The most samples one block can hold.</summary>
+        public int BlockSamples { get; }
+
+        public void Enqueue(ulong sampleIndex, ReadOnlySpan<float> samples, byte flags)
+        {
+            lock (_lock)
             {
                 if (_completed)
                 {
                     return;
                 }
 
-                if (_items.Count >= capacity)
+                if (_size == _slots.Length)
                 {
-                    _items.Dequeue();
+                    _head = (_head + 1) % _slots.Length;
+                    _size--;
                     _gapPending = true;
                 }
 
-                _items.Enqueue(new QueuedBlock(sampleIndex, samples, transmitted, Gap: false));
+                int slot = (_head + _size) % _slots.Length;
+                samples.CopyTo(_slots[slot]);
+                _counts[slot] = samples.Length;
+                _indices[slot] = sampleIndex;
+                _flags[slot] = flags;
+                _size++;
             }
 
             _signal.Release();
         }
 
-        public async ValueTask<QueuedBlock?> DequeueAsync(CancellationToken cancellation)
+        /// <summary>
+        /// Waits for the next block and encodes it into <paramref name="message"/>.
+        /// </summary>
+        /// <returns>The encoded length, or -1 once the queue is completed.</returns>
+        public async ValueTask<int> DequeueAsync(byte[] message, CancellationToken cancellation)
         {
             while (true)
             {
-                await _signal.WaitAsync(cancellation).ConfigureAwait(false);
-                lock (_gate)
+                int length = TryDequeue(message);
+                if (length != 0)
                 {
-                    if (_items.Count > 0)
-                    {
-                        QueuedBlock block = _items.Dequeue();
-                        if (_gapPending)
-                        {
-                            block = block with { Gap = true };
-                            _gapPending = false;
-                        }
-
-                        return block;
-                    }
-
-                    if (_completed)
-                    {
-                        return null;
-                    }
+                    return length;
                 }
+
+                await _signal.WaitAsync(cancellation).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>Encodes the next block if there is one.</summary>
+        /// <returns>The encoded length; 0 for nothing waiting; -1 once completed.</returns>
+        public int TryDequeue(Span<byte> message)
+        {
+            lock (_lock)
+            {
+                if (_completed)
+                {
+                    return -1;
+                }
+
+                if (_size == 0)
+                {
+                    return 0;
+                }
+
+                int slot = _head;
+                byte flags = _flags[slot];
+                if (_gapPending)
+                {
+                    flags |= FlagGap;
+                    _gapPending = false;
+                }
+
+                int length = Encode(message, _indices[slot], _slots[slot].AsSpan(0, _counts[slot]), flags);
+                _head = (_head + 1) % _slots.Length;
+                _size--;
+                return length;
             }
         }
 
         public void Complete()
         {
-            lock (_gate)
+            lock (_lock)
             {
                 _completed = true;
             }
