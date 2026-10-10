@@ -550,6 +550,20 @@ if (publishConfig is not null
     return 2;
 }
 
+// The device the station runs on. Every question start-up asks about it from here on, what it
+// can do and how to open it, is asked of this rather than of the device string.
+StationDevice stationDevice;
+try
+{
+    stationDevice = DeviceKinds.Resolve(
+        device, wavLoopPath, new DeviceSettings(uberSdrConfig, HasWaterfall: waterfallConfig is not null));
+}
+catch (InvalidDataException malformed)
+{
+    Console.Error.WriteLine(malformed.Message);
+    return 2;
+}
+
 // A FlexRadio provides its own DAX sample clock (24/48 kHz auto-picked from the DSP rate), and
 // an UberSDR its own 48 kHz IQ clock, so --capture-rate (an ALSA concept) does not apply to
 // either.
@@ -2510,34 +2524,51 @@ AlsaMixer? playbackMixer = null;
 MixerRuntime? mixerRuntime = null;
 string mixerWhyNot = "this station has no sound card, so it has no mixer";
 
-if (PipeAudio.IsPipe(device) && wavLoopPath is null)
+DeviceOpening? opened = wavLoopPath is not null ? null : await stationDevice.OpenAsync(new DeviceOpenContext
 {
-    // Two FIFOs standing in for a sound card and a radio, so two daemons can be on the same air
-    // with no hardware between them. See PipeAudio for what this deliberately does not model.
-    try
+    DspRate = DspRate,
+    ConfigPath = configPath,
+    Journal = stationJournal,
+    Channel = channel,
+    Waterfall = waterfallServer,
+    RadioLost = () =>
     {
-        (string inPipe, string outPipe, int pipeRate) = PipeAudio.Parse(device);
-        if (pipeRate % DspRate != 0)
-        {
-            Console.Error.WriteLine(
-                $"pipe rate {pipeRate} is not a multiple of the channel's {DspRate} Hz");
-            return 2;
-        }
+        radioLost = true;
+        cancellation.Cancel();
+    },
+    Cancellation = cancellation.Token,
+    Sideband = bandPlan?.Sideband ?? sideband,
+    ReceiveDialHz = receiveDialHz,
+    FlexPacketBuffer = flexPacketBuffer,
+    FlexTuning = flexTuning,
+    TransmitBands = txBands,
+    CaptureRate = captureRate,
+    CaptureDeviceKey = captureDeviceKey,
+    PlaybackDeviceKey = playbackDeviceKey,
+    Alsa = alsaConfig,
+    Ptt = pttConfig,
+    Rig = rig,
+});
 
-        ptt = new NullPtt();
-        var pipeOut = new PipeAudioOutput(outPipe, pipeRate);
-        playback = pipeRate == DspRate
-            ? pipeOut
-            : new UpsamplingAudioOutput(pipeOut, DspRate);
-        input = new PipeAudioInput(inPipe, pipeRate);
-        Console.WriteLine($"audio: pipe in={inPipe} out={outPipe} {pipeRate} Hz -> {DspRate} Hz");
-    }
-    catch (Exception failure) when (failure is InvalidDataException or IOException
-        or UnauthorizedAccessException)
+if (opened is not null)
+{
+    if (opened.ExitCode is int openRefused)
     {
-        Console.Error.WriteLine($"audio: {failure.Message}");
-        return 2;
+        return openRefused;
     }
+
+    ptt = opened.Ptt;
+    playback = opened.Playback;
+    input = opened.Input;
+    flex = opened.Flex;
+    flexMeters = opened.FlexMeters;
+    uberSdrSessionLive = opened.SessionLive;
+    alsaOut = opened.AlsaOut;
+    alsaIn = opened.AlsaIn;
+    mixer = opened.Mixer;
+    playbackMixer = opened.PlaybackMixer;
+    mixerRuntime = opened.MixerRuntime;
+    mixerWhyNot = opened.MixerWhyNot;
 }
 else if (wavLoopPath is not null)
 {
