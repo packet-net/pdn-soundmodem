@@ -111,8 +111,8 @@ row in the matrix. A fix isn't finished until the ledger records it.
   the rule: npm refuses a provenance attestation built on a self-hosted runner.
 - PRs merge on locally-run green tests (`dotnet test`); fix forward.
 - **Cross-repo iteration**: the co-developed packages swap to local checkouts with
-  `-p:FecSourcePath=... -p:Il2pSourcePath=... -p:FlexSourcePath=...` (see
-  `Packet.SoundModem.csproj`) - no pack/publish round trip per change. Unset, CI and
+  `-p:FecSourcePath=... -p:Il2pSourcePath=... -p:FlexSourcePath=...
+  -p:RadioAudioSourcePath=... -p:DspSourcePath=...` (see `Packet.SoundModem.csproj`) - no pack/publish round trip per change. Unset, CI and
   everyone else consume the published packages; version pins in
   `Directory.Packages.props` only move when a package actually ships.
 - **Watterson masks** (`WattersonMaskTests`, rx-roadmap workstream 0): each audio mode's

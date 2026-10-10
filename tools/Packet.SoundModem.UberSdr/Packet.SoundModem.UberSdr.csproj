@@ -7,7 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="M0LTE.Dsp" />
+    <!-- With -p:DspSourcePath set, M0LTE.Dsp comes from the checkout through Packet.SoundModem. -->
+    <PackageReference Include="M0LTE.Dsp" Condition="'$(DspSourcePath)' == ''" />
   </ItemGroup>
 
   <ItemGroup>
