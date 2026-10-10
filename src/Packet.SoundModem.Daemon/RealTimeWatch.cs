@@ -147,8 +147,10 @@ internal sealed class RealTimeWatch
         if (wasBehind && ratio >= RecoveredAt)
         {
             Volatile.Write(ref _behind, 0);
+            // Over 100 % is a backlog the input had queued being worked off.
             return $"receive: caught up - {Pct(ratio)} of real time over the last {seconds:F0} s, "
-                + $"the loop busy {Pct(busy)} of it";
+                + $"the loop busy {Pct(busy)} of it"
+                + (ratio > 1.05 ? " (working off audio the input had queued, so some frames arrive late)" : "");
         }
 
         return null;
@@ -180,9 +182,12 @@ internal sealed class RealTimeWatch
 
     private string BehindLine(double ratio, double busy, double seconds, long lost)
     {
-        string head = $"receive: BEHIND real time - {Pct(ratio)} of the audio reached the station "
-            + $"over the last {seconds:F0} s, so about {Pct(1 - ratio)} of it was lost before any "
-            + "modem saw it (frames missed, the waterfall slow, Listen chopped)";
+        // "Lost or late": an input with a deep buffer queues what the loop cannot take, and hands
+        // it over late once the loop catches up (measured on a Flex: 192 % of real time for the
+        // minute after a CPU squeeze ended). Which share is which is the input's business.
+        string head = $"receive: BEHIND real time - {Pct(ratio)} of the audio reached the modems "
+            + $"over the last {seconds:F0} s; the other {Pct(1 - ratio)} is lost or queued behind "
+            + "(frames missed or late, the waterfall slow, Listen chopped)";
         // Processing needed per second of the audio that did arrive; see the type remarks.
         double perSecond = ratio > 0 ? busy / ratio : double.PositiveInfinity;
         string why = perSecond >= BottleneckSecondsPerSecond
