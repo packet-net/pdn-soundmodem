@@ -26,6 +26,9 @@ internal sealed class FlexStreamFilter
     private (int LowHz, int HighHz) _target;
     private (int LowHz, int HighHz)? _applied;
     private bool _sending;
+    // Counts slice rebuilds, so a command in flight across one is not taken as applied to the
+    // new slice: it went to the old one, and the new one came up on the baseline.
+    private int _rebuilds;
 
     /// <param name="baseline">The filter bring-up left the slice on.</param>
     /// <param name="sliceIndex">The slice's index, read each time a command is sent.</param>
@@ -97,6 +100,7 @@ internal sealed class FlexStreamFilter
         lock (_gate)
         {
             _applied = _baseline;
+            _rebuilds++;
             StartSendingLocked();
         }
     }
@@ -117,6 +121,7 @@ internal sealed class FlexStreamFilter
         while (true)
         {
             (int LowHz, int HighHz) target;
+            int rebuilds;
             lock (_gate)
             {
                 if (Nullable.Equals(_applied, _target))
@@ -126,6 +131,7 @@ internal sealed class FlexStreamFilter
                 }
 
                 target = _target;
+                rebuilds = _rebuilds;
             }
 
             _say(target != _baseline
@@ -138,7 +144,10 @@ internal sealed class FlexStreamFilter
                 await _send($"filt {_sliceIndex()} {target.LowHz} {target.HighHz}").ConfigureAwait(false);
                 lock (_gate)
                 {
-                    _applied = target;
+                    if (rebuilds == _rebuilds)
+                    {
+                        _applied = target;
+                    }
                 }
             }
             catch (Exception e)
@@ -148,6 +157,13 @@ internal sealed class FlexStreamFilter
                     + $"stream: {e.GetBaseException().Message}");
                 lock (_gate)
                 {
+                    if (rebuilds != _rebuilds)
+                    {
+                        // It failed on a slice that has since been replaced; the new one is
+                        // still owed whatever is asked for now.
+                        continue;
+                    }
+
                     // Not known any more; the next request tries again rather than this one
                     // retrying at a radio that has just refused it.
                     _applied = null;
