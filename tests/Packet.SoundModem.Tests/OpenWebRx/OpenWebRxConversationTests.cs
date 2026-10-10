@@ -153,6 +153,45 @@ public class OpenWebRxConversationTests
     }
 
     [Fact]
+    public void A_Profile_Is_Not_Asked_For_Until_The_Input_Says_It_May_Be()
+    {
+        var conversation = new OpenWebRxConversation(Usb with { Profile = "rtl|40m" });
+
+        conversation.OnText(Config(centre: 145_000_000, rate: 2_400_000, sdr: "rtl", profile: "2m"), mayAskProfile: false)
+            .Send.Should().BeEmpty();
+        conversation.OutOfBand.Should().BeFalse("the band it is on now is not the one it will be asked onto");
+
+        conversation.OnText("""{"type":"smeter","value":-90.0}""", mayAskProfile: true).Send.Should().Equal(
+            ["""{"type":"selectprofile","params":{"profile":"rtl|40m"}}"""],
+            "whatever the receiver says next carries the ask that was held back");
+    }
+
+    [Fact]
+    public void A_Profile_The_Receiver_Keeps_Is_A_Fault_Rather_Than_A_Wait()
+    {
+        var conversation = new OpenWebRxConversation(Usb with { Profile = "rtl|40m" });
+        conversation.OnText(Config(centre: 145_000_000, rate: 2_400_000, sdr: "rtl", profile: "2m"));
+
+        conversation.OnText(Config(centre: 145_000_000, rate: 2_400_000, sdr: "rtl", profile: "2m"));
+
+        conversation.Fault.Should().Be(
+            "the receiver kept profile rtl|2m rather than moving to rtl|40m; it may be locked by its operator");
+    }
+
+    [Fact]
+    public void A_Demodulator_On_A_New_Sdr_Is_Started_Again()
+    {
+        var conversation = new OpenWebRxConversation(Usb);
+        conversation.OnText(Config(centre: 7_100_000, rate: 2_400_000, sdr: "rtl", profile: "40m"));
+
+        OpenWebRxReaction reaction = conversation.OnText(
+            Config(centre: 7_100_000, rate: 2_400_000, sdr: "airspy", profile: "40m"));
+
+        reaction.Send.Should().HaveCount(2);
+        reaction.Send[1].Should().Be("""{"type":"dspcontrol","action":"start"}""");
+    }
+
+    [Fact]
     public void A_Profile_The_Receiver_Is_Already_On_Is_Not_Asked_For()
     {
         var conversation = new OpenWebRxConversation(Usb with { Profile = "rtl|40m" });

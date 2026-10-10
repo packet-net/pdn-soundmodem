@@ -37,7 +37,12 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
     private const string UserAgent = "pdn-soundmodem (openwebrx: receive device)";
 
     /// <summary>How long a new session may take to answer the handshake and say where it is.</summary>
-    internal static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(20);
+    internal static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>How long into a session before a profile is asked for. OpenWebRX+ scores a profile
+    /// change against the client by how soon it follows the last one, counting the connect as
+    /// one, and bans an address that scores too high; ten seconds scores nothing.</summary>
+    internal static readonly TimeSpan ProfileAskDelay = TimeSpan.FromSeconds(10);
 
     /// <summary>How long a started demodulator may stay silent before the session is given up as
     /// one that will not deliver.</summary>
@@ -70,6 +75,7 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
     private long _published;
     private bool _ended;
     private bool _sessionLive;
+    private int _disposed;
     private Task? _pump;
 
     private OpenWebRxAudioInput(
@@ -193,12 +199,14 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
         try
         {
             input._pump = Task.Run(() => input.PumpAsync(first), CancellationToken.None);
-            Task timeout = Task.Delay(StartupTimeout, input._time, cancellation);
+            // A little longer than the session's own clock, so the session's more exact account of
+            // what it was waiting for is the one that is given.
+            Task timeout = Task.Delay(StartupTimeout + TimeSpan.FromSeconds(5), input._time, cancellation);
             if (await Task.WhenAny(input._firstVerdict.Task, timeout).ConfigureAwait(false) != input._firstVerdict.Task)
             {
                 cancellation.ThrowIfCancellationRequested();
                 throw new InvalidOperationException(
-                    $"{endpoint} did not say where it is listening within {StartupTimeout.TotalSeconds:F0} s "
+                    $"{endpoint} did not say where it is listening within {(StartupTimeout + TimeSpan.FromSeconds(5)).TotalSeconds:F0} s "
                     + "of connecting. Is that an OpenWebRX receiver's address, as you would open it in a browser?");
             }
 
@@ -254,29 +262,38 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
     /// <inheritdoc />
     public async Task<bool> TuneAsync(double dialHz, CancellationToken cancellation)
     {
-        OpenWebRxReaction reaction;
         WebSocket? socket;
-        bool reaches;
+        OpenWebRxConversation? conversation;
         lock (_conversationGate)
         {
             _tuning = _tuning with { FrequencyHz = (long)Math.Round(dialHz) };
             socket = _socket;
-            if (_conversation is not { } conversation)
-            {
-                return true; // between sessions: the next one opens on the new dial
-            }
-
-            reaction = conversation.Retune(_tuning);
-            reaches = !conversation.OutOfBand;
+            conversation = _conversation;
         }
 
-        await ActAsync(socket, reaction, cancellation).ConfigureAwait(false);
+        if (conversation is null)
+        {
+            return true; // between sessions: the next one opens on the new dial
+        }
+
+        bool reaches = true;
+        await ReactAsync(socket, () =>
+        {
+            OpenWebRxReaction reaction = conversation.Retune(_tuning);
+            reaches = !conversation.OutOfBand;
+            return reaction;
+        }, cancellation).ConfigureAwait(false);
         return reaches;
     }
 
     /// <inheritdoc />
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         _stopping.Cancel();
         lock (_gate)
         {
@@ -446,6 +463,7 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
     private async Task<(SessionEnd End, string? Why)> RunSessionAsync(
         WebSocket socket, bool firstSession, CancellationToken cancellation)
     {
+        long sessionOpened = _time.GetTimestamp();
         OpenWebRxConversation conversation;
         lock (_conversationGate)
         {
@@ -509,13 +527,10 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
 
                 if (result.MessageType == WebSocketMessageType.Text)
                 {
-                    OpenWebRxReaction reaction;
-                    lock (_conversationGate)
-                    {
-                        reaction = conversation.OnText(Encoding.UTF8.GetString(accumulator.WrittenSpan));
-                    }
-
-                    await ActAsync(socket, reaction, session.Token).ConfigureAwait(false);
+                    string text = Encoding.UTF8.GetString(accumulator.WrittenSpan);
+                    bool mayAskProfile = _time.GetElapsedTime(sessionOpened) >= ProfileAskDelay;
+                    await ReactAsync(socket, () => conversation.OnText(text, mayAskProfile), session.Token)
+                        .ConfigureAwait(false);
                     if (conversation.Adpcm != adpcm)
                     {
                         adpcm = conversation.Adpcm;
@@ -584,7 +599,9 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
                 if (!listening)
                 {
                     // Audio from before the demodulator was placed, or from a band that has
-                    // moved away from the dial: not this station's signal, so not delivered.
+                    // moved away from the dial: not this station's signal, so not delivered, and
+                    // quiet on purpose rather than a hung stream.
+                    Volatile.Write(ref _sessionLive, false);
                     continue;
                 }
 
@@ -732,28 +749,49 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
               + $"{conversation.ProfileList}."
             : $", even on the profile asked for. It offers {conversation.ProfileList}.");
 
-    private async Task ActAsync(WebSocket? socket, OpenWebRxReaction reaction, CancellationToken cancellation)
+    /// <summary>
+    /// Works out what to send and sends it, holding the send gate across both, so that what the
+    /// conversation records as sent reaches the server in the order it was decided.
+    /// </summary>
+    private async Task ReactAsync(
+        WebSocket? socket, Func<OpenWebRxReaction> decide, CancellationToken cancellation)
     {
-        foreach (string line in reaction.Lines)
+        await _sendGate.WaitAsync(cancellation).ConfigureAwait(false);
+        try
         {
-            Write(line);
-        }
-
-        if (socket is null)
-        {
-            return;
-        }
-
-        foreach (string message in reaction.Send)
-        {
-            try
+            OpenWebRxReaction reaction;
+            lock (_conversationGate)
             {
-                await SendAsync(socket, message, cancellation).ConfigureAwait(false);
+                reaction = decide();
             }
-            catch (Exception e) when (e is WebSocketException or ObjectDisposedException or InvalidOperationException)
+
+            foreach (string line in reaction.Lines)
             {
-                return; // the session is going; the next one is opened on the same tuning
+                Write(line);
             }
+
+            if (socket is null)
+            {
+                return;
+            }
+
+            foreach (string message in reaction.Send)
+            {
+                try
+                {
+                    await socket.SendAsync(
+                        Encoding.UTF8.GetBytes(message), WebSocketMessageType.Text, endOfMessage: true, cancellation)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception e) when (e is WebSocketException or ObjectDisposedException or InvalidOperationException)
+                {
+                    return; // the session is going; the next one is opened on the same tuning
+                }
+            }
+        }
+        finally
+        {
+            _sendGate.Release();
         }
     }
 

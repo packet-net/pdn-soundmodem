@@ -33,6 +33,7 @@ internal sealed class OpenWebRxConversation
     private string? _wantedProfileId;
     private bool _profileAsked;
     private bool _awaitingProfile;
+    private bool _mayAskProfile = true;
     private bool _started;
     private long? _sentOffset;
     private OpenWebRxTuning? _sentTuning;
@@ -107,8 +108,13 @@ internal sealed class OpenWebRxConversation
         [OpenWebRxProtocol.Handshake, OpenWebRxProtocol.ConnectionProperties()];
 
     /// <summary>Takes one text message from the server.</summary>
-    public OpenWebRxReaction OnText(string text)
+    /// <param name="text">The message.</param>
+    /// <param name="mayAskProfile">Whether a profile may be asked for yet. OpenWebRX+ counts a
+    /// profile change soon after connecting against the client as a robot, so the input holds
+    /// the ask back for the first seconds of a session; any later message then carries it.</param>
+    public OpenWebRxReaction OnText(string text, bool mayAskProfile = true)
     {
+        _mayAskProfile = mayAskProfile;
         var lines = new List<string>();
         switch (OpenWebRxProtocol.Parse(text))
         {
@@ -121,10 +127,26 @@ internal sealed class OpenWebRxConversation
             case OpenWebRxMessage.Config config:
                 bool moved = (config.CentreHz is long c && c != CentreHz)
                     || (config.SampleRate is long r && r != SampleRate);
+                if (config.SdrId is string sdr && SdrId is not null && sdr != SdrId)
+                {
+                    // The server builds a fresh, unstarted demodulator for another SDR, as when one
+                    // fails; the browser starts its own again, and so does this.
+                    _started = false;
+                    _sentOffset = null;
+                }
+
                 CentreHz = config.CentreHz ?? CentreHz;
                 SampleRate = config.SampleRate ?? SampleRate;
                 SdrId = config.SdrId ?? SdrId;
                 ProfileId = config.ProfileId ?? ProfileId;
+                if (_awaitingProfile && config.ProfileId is not null && CurrentProfileId != _wantedProfileId)
+                {
+                    // OpenWebRX+ answers a locked profile by sending the current one again.
+                    Fault = $"the receiver kept profile {ProfileName(CurrentProfileId ?? "?")} rather than "
+                        + $"moving to {ProfileName(_wantedProfileId!)}; it may be locked by its operator";
+                    return new([], lines);
+                }
+
                 if (config.AudioCompression is string compression)
                 {
                     Adpcm = compression.Equals("adpcm", StringComparison.OrdinalIgnoreCase);
@@ -155,7 +177,11 @@ internal sealed class OpenWebRxConversation
                 return new([], [$"the receiver says: {OpenWebRxProtocol.Ascii(log.Message)}"]);
 
             default:
-                return OpenWebRxReaction.None;
+                // A profile held back for the first seconds of a session is asked on whatever
+                // arrives next, which is usually a meter reading.
+                return _tuning.Profile is not null && !_profileAsked && mayAskProfile
+                    ? Evaluate(lines, moved: false)
+                    : OpenWebRxReaction.None;
         }
     }
 
@@ -194,6 +220,11 @@ internal sealed class OpenWebRxConversation
                     // Otherwise wait for the list: the name may be on it.
                     return new(send, lines);
                 }
+            }
+
+            if (CurrentProfileId != _wantedProfileId && !_mayAskProfile)
+            {
+                return new(send, lines);
             }
 
             _profileAsked = true;

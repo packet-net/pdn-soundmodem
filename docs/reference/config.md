@@ -533,7 +533,7 @@ Read for an `openwebrx:` device. Ignored otherwise. The receiver demodulates: th
 | `gain` | number | `1.0` | Linear gain on the received audio. |
 
 - The receiver is tuned by the band plan, as for `ubersdr`: every modem needs an `rfFrequency`, or `dialFrequency` must be set (`the OpenWebRX receiver at X has to be told where to listen ...`).
-- Asking for a `profile` moves the receiver for everyone listening to it, so it is asked once per session. If somebody else moves the receiver off the dial later, the station says so in the journal and waits for it to come back; the next session asks again.
+- Asking for a `profile` moves the receiver for everyone listening to it, so it is asked once per session, ten seconds after connecting (OpenWebRX+ counts a quicker change against the client as a robot). If somebody else moves the receiver off the dial later, the station says so in the journal and waits for it to come back; the next session asks again.
 - Without a `profile`, a receiver whose band does not reach the dial stops start-up with exit 1, naming the band it is on and the profiles it offers.
 - The receiver sends 12 kHz audio. The channel's DSP rate has to be a whole multiple of 12000; the 12 kHz and 48 kHz mode families both are.
 - The audio may be 4-bit ADPCM. That is the receiver operator's setting, and the start-up line says which.

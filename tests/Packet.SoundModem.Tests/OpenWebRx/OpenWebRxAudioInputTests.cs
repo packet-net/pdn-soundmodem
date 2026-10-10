@@ -215,12 +215,19 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
     [Fact]
     public async Task A_Profile_In_The_Config_Is_Asked_For_Before_The_Demodulator_Is_Placed()
     {
-        Task<OpenWebRxAudioInput> opening = OpenAsync(Tuning() with { Profile = "40m" });
+        var time = new FakeTimeProvider();
+        Task<OpenWebRxAudioInput> opening = OpenAsync(Tuning() with { Profile = "40m" }, time);
         FakeReceiver receiver = await NextReceiverAsync();
         await receiver.ExpectOpeningAsync();
         await receiver.SendTextAsync("CLIENT DE SERVER server=openwebrx version=v1.2.2");
         await receiver.SendTextAsync(FakeReceiver.Config(centre: 145_000_000, compression: "none"));
         await receiver.SendTextAsync(FakeReceiver.Profiles);
+
+        // Not asked at once: OpenWebRX+ counts a quick change against the client. The next
+        // message after ten seconds carries the ask.
+        await Task.Delay(200, TestContext.Current.CancellationToken);
+        time.Advance(OpenWebRxAudioInput.ProfileAskDelay);
+        await receiver.SendTextAsync("""{"type":"smeter","value":-90.0}""");
 
         (await receiver.ReceiveTextAsync()).Should().Be("""{"type":"selectprofile","params":{"profile":"rtl|40m"}}""");
         await receiver.SendTextAsync(FakeReceiver.Config(centre: 7_100_000, profile: "40m"));
@@ -248,7 +255,7 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
 
         Func<Task> open = () => opening;
         (await open.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Contain(
-            "did not say where it is listening within 20 s");
+            "did not say where it is listening within 30 s");
     }
 
     [Fact]
