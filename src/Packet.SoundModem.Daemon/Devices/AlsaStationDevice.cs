@@ -166,8 +166,8 @@ internal sealed class AlsaStationDevice(DeviceKind kind, string spec) : StationD
                 : playbackMixer is not null ? playbackMixer
                 : new AbsentMixer(playbackMixerCard);
 
-            // Guarded, not bare: these are top-level statements with nothing above them to catch
-            // anything, and TryOpen only proves the ten entry points it uses itself. A libasound
+            // Guarded, not bare: this open is called from the daemon's top-level statements, and
+            // nothing between here and there catches anything, and TryOpen only proves the ten entry points it uses itself. A libasound
             // missing one of the twenty the apply reaches would otherwise be a crash at every
             // start-up and a systemd restart loop, over a mixer. It costs the mixer instead.
             //
