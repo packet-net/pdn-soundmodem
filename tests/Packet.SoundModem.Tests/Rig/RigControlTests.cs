@@ -770,6 +770,71 @@ public sealed class RigControlTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_Station_Killed_During_A_Receive_Window_Puts_The_Rig_Back_At_Its_Next_Start()
+    {
+        RigControl first = await Started(persist: true);
+        SoundModemChannel channel = Channel(28);
+        ReceiveWindowApi.Handle(
+            first, channel.TransmitLease, "POST", """{"dialHz": 7052000, "seconds": 60}""").Status.Should().Be(200);
+        byte[] leftBehind = await File.ReadAllBytesAsync(RestorePath);
+
+        // A SIGKILL never gets to put the rig back: what it leaves is the rig where the window put
+        // it and the file the window wrote. Stopped cleanly here (which puts the rig back), then
+        // both set back to exactly that, so the next start-up is the only thing that can restore it.
+        await first.DisposeAsync();
+        _fake.DialHz = 7_052_000;
+        _fake.PassbandHz = ReceiveWindowApi.DefaultWidthHz;
+        await File.WriteAllBytesAsync(RestorePath, leftBehind);
+
+        RigControl next = Rig(persist: true);
+        await next.StartAsync(CancellationToken.None);
+
+        await Eventually(() => !next.HoldsTransmitter, "the restore is done on connecting", TimeSpan.FromSeconds(1));
+        _said.Should().Contain(s => s.Contains("stopped during a tuning window last time"));
+        _fake.DialHz.Should().Be(14_074_000);
+        _fake.PassbandHz.Should().Be(2400);
+        File.Exists(RestorePath).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_Receive_Window_Holds_Kiss_Frames_And_Refuses_The_Key_Until_It_Ends()
+    {
+        // The receive window is an ordinary rig window, so everything RigControl.HoldsTransmitter
+        // holds is held by it; MailcastRetuneTests.Every_Source_Of_Transmission_Is_Held_While_The_Rig_Is_On_The_Mailcast_Dial
+        // goes through every source (KISS, idents, paging, the transmitter test, ARDOP) for any
+        // window. This pins that a window opened here is one of them.
+        RigControl rig = await Started();
+        var channel = new SoundModemChannel(12000, randomSeed: 29);
+        channel.AddModem(0, sink => ModemCatalog.Create("afsk1200", 12000, sink));
+        channel.Csma.Persistence = 255;
+        var line = new CountingPtt();
+        var output = new Packet.SoundModem.Tests.Channel.FakeAudioOutput(12000);
+        using var stop = new CancellationTokenSource();
+        Task transmitter = channel.RunTransmitterAsync(output, rig.HoldTransmissions(channel, line), stop.Token);
+        ReceiveWindowApi.Handle(
+            rig, channel.TransmitLease, "POST", """{"dialHz": 7052000, "seconds": 60}""").Status.Should().Be(200);
+
+        Task kiss = channel.EnqueueTransmit(
+            0, Packet.SoundModem.Tests.Mailcast.MailcastSlotAudio.Ui("G8ABC", "GB7TST", "hello"u8));
+        await Task.Delay(TimeSpan.FromMilliseconds(300));
+
+        rig.HoldsTransmitter.Should().BeTrue("idents read this, and are not sent while it is true");
+        kiss.IsCompleted.Should().BeFalse("held, not sent and not dropped");
+        line.Keys.Should().Be(0);
+        Action key = rig.Guard(new CountingPtt()).Key;
+        key.Should().Throw<TransmitterHeldException>().WithMessage("*for a receive window*");
+
+        ReceiveWindowApi.Handle(rig, channel.TransmitLease, "POST", """{"release": true}""").Status.Should().Be(200);
+
+        await kiss.WaitAsync(TimeSpan.FromSeconds(30));
+        line.Keys.Should().Be(1);
+        _fake.DialHz.Should().Be(14_074_000);
+        await stop.CancelAsync();
+        Func<Task> ended = () => transmitter;
+        await ended.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
     public async Task A_Rig_That_Is_Switched_Off_Is_A_Warning_And_Is_Picked_Up_When_It_Comes_On()
     {
         // rigctld answers, the rig behind it does not: every read is RPRT -5.

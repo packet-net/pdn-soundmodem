@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using AwesomeAssertions;
@@ -76,7 +78,11 @@ public sealed class ReceiveWindowRouteTests : IAsyncDisposable
     public async Task Refuses_A_Request_That_Declares_An_Origin()
     {
         await StartWithRigAsync();
-        var request = new HttpRequestMessage(HttpMethod.Get, Url);
+        var request = new HttpRequestMessage(HttpMethod.Post, Url)
+        {
+            Content = new StringContent(
+                """{"dialHz": 7052000, "seconds": 60}""", Encoding.UTF8, "application/json"),
+        };
         request.Headers.Add("Origin", "http://example.com");
 
         HttpResponseMessage answer = await _client.SendAsync(request, _cancellation.Token);
@@ -87,6 +93,36 @@ public sealed class ReceiveWindowRouteTests : IAsyncDisposable
             + "request a browser can never produce");
         (await answer.Content.ReadAsStringAsync(_cancellation.Token)).Should().Contain("program on this machine only");
         _fake.Sets.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Refuses_A_Request_From_An_Address_That_Is_Not_Loopback()
+    {
+        // This machine's own address on a real interface: a request to it comes from it, which is
+        // not loopback, the same as a request from anywhere else on that network would be.
+        IPAddress? own = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(n => n.OperationalStatus == OperationalStatus.Up
+                && n.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+            .SelectMany(n => n.GetIPProperties().UnicastAddresses)
+            .Select(a => a.Address)
+            .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(a));
+        Assert.SkipWhen(own is null, "this machine has no IPv4 address other than loopback");
+        (await _rig.StartAsync(_cancellation.Token)).Should().BeTrue();
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(_channel, port, bind: own!.ToString());
+        server.ReceiveWindowRig = _rig;
+        server.Start();
+
+        HttpResponseMessage answer = await _client.PostAsync(
+            $"http://{own}:{port}{ReceiveWindowApi.Path}",
+            new StringContent(
+                """{"dialHz": 7052000, "seconds": 60}""", Encoding.UTF8, "application/json"),
+            _cancellation.Token);
+
+        answer.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await answer.Content.ReadAsStringAsync(_cancellation.Token)).Should().Contain("program on this machine only");
+        _fake.Sets.Should().BeEmpty();
+        _rig.HoldsTransmitter.Should().BeFalse();
     }
 
     [Fact]

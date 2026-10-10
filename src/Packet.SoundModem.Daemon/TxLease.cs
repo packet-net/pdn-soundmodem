@@ -147,21 +147,28 @@ internal static class TxLeaseApi
                 $"\"maxCarrierWaitSeconds\" must be 1 to {MaxCarrierWaitCeiling:0}, or left out for ordinary carrier sense"));
         }
 
-        // A receive window (issue #585) and a transmit lease can never both be held: the window
-        // takes the station off the air for another program's purposes, and a lease granted
-        // underneath it would be a promise this station could not keep.
-        if (rig?.Snapshot().Window is { Owner: Waterfall.WaterfallWebServer.ReceiveWindowOwner } open)
-        {
-            return (409, Conflict(channel,
-                $"a receive window holds the rig on {open.Tuning} until {Utc(open.Expires)}, so "
-                + "the transmit lease is refused until it ends"));
-        }
-
         double max = TransmitLease.MaxDuration.TotalSeconds;
         bool capped = seconds > max;
-        TransmitLeaseGrant grant = lease.Take(
-            sub, TimeSpan.FromSeconds(Math.Min(seconds, max)),
-            maxCarrierWait is double limit ? TimeSpan.FromSeconds(limit) : null);
+        TransmitLeaseGrant grant;
+        // A receive window (issue #585) and a transmit lease can never both be held: the window
+        // takes the station off the air for another program's purposes, and a lease granted
+        // underneath it would be a promise this station could not keep. The check and the Take
+        // are one step under the lease's object, which the receive window holds across its own
+        // check of the lease and its tune, so neither can slip in while the other is deciding.
+        lock (lease)
+        {
+            if (rig?.Snapshot().Window is { Owner: Waterfall.WaterfallWebServer.ReceiveWindowOwner } open)
+            {
+                return (409, Conflict(channel,
+                    $"a receive window holds the rig on {open.Tuning} until {Utc(open.Expires)}, so "
+                    + "the transmit lease is refused until it ends"));
+            }
+
+            grant = lease.Take(
+                sub, TimeSpan.FromSeconds(Math.Min(seconds, max)),
+                maxCarrierWait is double limit ? TimeSpan.FromSeconds(limit) : null);
+        }
+
         if (!grant.Granted)
         {
             string why = !lease.IsClosing
