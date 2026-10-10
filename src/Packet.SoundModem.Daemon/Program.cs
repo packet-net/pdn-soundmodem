@@ -2906,6 +2906,11 @@ using var station = new Station(
 
         // The sound card is the one device with xrun counters, and they are the difference between
         // "the band is quiet" and "this machine will not schedule us".
+        // A Flex DAX stream counts the packets it concealed; said beside the real-time verdict.
+        InputLossCounter = flex?.Input is M0LTE.Flex.FlexAudioInput daxInput
+            ? () => daxInput.PacketsLost
+            : null,
+
         XrunCounters = alsaIn is null && alsaOut is null
             ? null
             : () => (alsaIn?.Xruns ?? 0, alsaOut?.Xruns ?? 0),
@@ -2956,6 +2961,12 @@ using var station = new Station(
         ],
     },
     cancellation.Token);
+
+// Keeping up with real time, on the metrics endpoint beside the stations heard (issue #649).
+if (metrics is not null)
+{
+    metrics.ReceiveRate = station.ReceiveRate;
+}
 
 // This process runs one station, so a station fault IS the daemon's fault: journal the
 // sentence the station wrote, and take the proven restart contract every one of these

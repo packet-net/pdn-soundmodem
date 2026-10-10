@@ -45,6 +45,7 @@ internal sealed class Station : IDisposable
     private readonly StarvationWatch? _starvationWatch;
     private readonly ITimer? _starvationTimer;
     private readonly XrunWatch _xrunWatch = new();
+    private readonly RealTimeWatch _realTime;
     private readonly string _silenceMessage;
     private readonly string _starvationMessage;
 
@@ -102,6 +103,7 @@ internal sealed class Station : IDisposable
         // nothing to decimate - a Decimator with factor 1 is invalid, so feed samples straight
         // through.
         _inputRate = _input.SampleRate;
+        _realTime = new RealTimeWatch(_time, _inputRate, options.InputLossCounter);
         _decimator = _inputRate == options.DspRate
             ? null
             : new Decimator(_inputRate, _inputRate / options.DspRate);
@@ -152,6 +154,10 @@ internal sealed class Station : IDisposable
     /// <summary>The audio input this station reads.</summary>
     public IAudioInput Input => _input;
 
+    /// <summary>How much of real time this station's receive loop is keeping up with, for the
+    /// metrics endpoint (issue #649).</summary>
+    public Telemetry.ReceiveRateSnapshot ReceiveRate() => _realTime.Snapshot();
+
     /// <summary>
     /// Turns the receive loop until the host's token is cancelled, the station faults, or the
     /// input dies. Synchronous and blocking, because every input's <c>Read</c> is: a host
@@ -180,6 +186,7 @@ internal sealed class Station : IDisposable
             try
             {
                 Volatile.Write(ref _insideRead, 1);
+                _realTime.ReadStarting();
                 got = _input.Read(_inputBuffer);
             }
             catch (InvalidOperationException deviceDeath)
@@ -205,6 +212,10 @@ internal sealed class Station : IDisposable
                 // Never a busy spin: every input that can return 0 has already waited inside Read
                 // (100 ms ubersdr, 200 ms flex; ALSA and wav-loop never return 0) - see the
                 // dead-feed notes on StationOptions.DeviceKind.
+                // The sticky flag is read, not taken: the next block that delivers takes it. An
+                // empty read straight after an unkey is our own transmission, not lost audio.
+                _realTime.ReadEnded(0, leaveOut: Volatile.Read(ref _keyedSinceRead) == 1
+                    || Volatile.Read(ref _keyedNow) == 1 || NotMeasured());
                 continue;
             }
 
@@ -216,6 +227,9 @@ internal sealed class Station : IDisposable
             // re-arms the watch exactly once.
             bool keyedThisBlock = Interlocked.Exchange(ref _keyedSinceRead, 0) == 1
                 || Volatile.Read(ref _keyedNow) == 1;
+
+            // Before anything below can skip the rest of the block: every read is measured.
+            _realTime.ReadEnded(got, leaveOut: keyedThisBlock || NotMeasured());
 
             if (_deadFeedWatch is not null
                 && _deadFeedWatch.Observe(_inputBuffer.AsSpan(0, got), keyedThisBlock))
@@ -246,6 +260,18 @@ internal sealed class Station : IDisposable
             if (_time.GetElapsedTime(lastHealthPoll) >= HealthPollPeriod)
             {
                 lastHealthPoll = _time.GetTimestamp();
+                if (_realTime.Poll() is string realTime)
+                {
+                    if (_realTime.Behind)
+                    {
+                        _journal.WriteError(realTime);
+                    }
+                    else
+                    {
+                        _journal.Write(realTime);
+                    }
+                }
+
                 if (_options.XrunCounters?.Invoke() is (int captureXruns, int playbackXruns)
                     && _xrunWatch.Poll(captureXruns, playbackXruns) is string lostAudio)
                 {
@@ -281,6 +307,15 @@ internal sealed class Station : IDisposable
             }
         }
     }
+
+    /// <summary>
+    /// Whether this span says nothing about keeping up: the host says the quiet is deliberate
+    /// right now (an on-demand receiver with no session), or the input is a bench one. A wav-loop
+    /// paces itself, and <c>flex:mock</c> delivers nothing between injected frames, which would read
+    /// as a station losing all its audio - the same reason the starvation watch exempts them.
+    /// </summary>
+    private bool NotMeasured() =>
+        _options.DeviceKind == DeadFeedDevice.WavLoop || _options.SessionLive?.Invoke() == false;
 
     /// <inheritdoc />
     public void Dispose()
@@ -543,6 +578,13 @@ internal sealed record StationOptions
     /// unwritten survey captures.
     /// </summary>
     public IReadOnlyList<Func<string?>> HealthChecks { get; init; } = [];
+
+    /// <summary>
+    /// The input's own count of audio it lost and concealed, where it keeps one: a Flex DAX
+    /// stream's <c>PacketsLost</c>. Reported beside the real-time watch's verdict. Null for every
+    /// device that has none.
+    /// </summary>
+    public Func<long>? InputLossCounter { get; init; }
 
     /// <summary>How much audio one <c>Read</c> asks for. 100 ms for the packet modes; 20 ms when
     /// ARDOP runs, whose ARQ timing budgets want RX latency low.</summary>
