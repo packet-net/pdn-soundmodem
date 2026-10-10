@@ -94,7 +94,9 @@ row in the matrix. A fix isn't finished until the ledger records it.
   prepares, starts, pauses and retries (`PcmTransfer`). The ordering rule stays anyway, because
   nothing in the mixer pass needs the PCM (`--mixer-show` reads a card on a running station) and
   a shorter gap is still worth having: keep the whole block above the
-  `AlsaAudioOutput`/`AlsaAudioInput` construction in `Program.cs`. `StartUpOrderTests` pins it;
+  `AlsaAudioOutput`/`AlsaAudioInput` construction in `AlsaStationDevice.Open`
+  (`src/Packet.SoundModem.Daemon/Devices/AlsaStationDevice.cs`), and keep mixer work out of
+  `Program.cs` once the device is open. `StartUpOrderTests` pins both;
   the measurements are above and in
   [docs/dev/archive/plan-amendment-log.md](docs/dev/archive/plan-amendment-log.md), and #632 is
   the start-up on a card other than the bench CM108 that has not been run yet.
