@@ -214,8 +214,11 @@ internal sealed class ChannelAudioStream
         bool added = false;
         try
         {
-            // The hello goes before the connection joins the fan-out, so it is always the first
-            // message: nothing else can be sending on this socket yet.
+            // The connection joins the fan-out first, so no audio is lost while the hello goes
+            // out: blocks wait in its queue. Its send loop starts only once the hello is sent, so
+            // the hello is still always the first message.
+            AddClient(client);
+            added = true;
             byte[] hello = JsonSerializer.SerializeToUtf8Bytes(new
             {
                 type = "hello",
@@ -224,8 +227,6 @@ internal sealed class ChannelAudioStream
             });
             await socket.SendAsync(hello, WebSocketMessageType.Text, true, stop.Token).ConfigureAwait(false);
 
-            AddClient(client);
-            added = true;
             Journal($"channel-audio: {remoteDescription} connected - {ClientCount} client{Plural(ClientCount)}");
             send = SendLoopAsync(client, stop.Token);
 
