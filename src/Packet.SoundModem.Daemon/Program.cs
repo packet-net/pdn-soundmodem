@@ -527,6 +527,13 @@ if (modems.Count == 0)
 // running several gives each one its slug, so fifty of them in one journal are readable.
 var stationJournal = StationJournal.Console();
 
+// Said once, before anything else about mailcast, so a station whose mailcast section stops it
+// starting hears this too: the built-in receiver is going, and what replaces it (issue #587).
+foreach (string line in MailcastDeprecation.JournalLines(mailcastConfig))
+{
+    stationJournal.Write(line);
+}
+
 // Mode names are checked, and the rate the shared channel runs at is settled, before the band
 // planner and the transmit-filter plan: both ask the catalogue what a mode occupies, and the
 // catalogue answers an unknown mode with its defaults.
