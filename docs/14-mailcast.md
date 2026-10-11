@@ -10,14 +10,14 @@ pdn-soundmodem's own receiver, the [`mailcast`](reference/config.md#mailcast) se
 mailcast: WARNING - this built-in mailcast receiver is deprecated and will be removed in a later release
 mailcast: its replacement is pdn-mailcast-receiver 0.9.0 or later, which reads this station's audio ("audio": "soundmodem")
 mailcast: to move across, copy bbs, sources and "retune": true from this "mailcast" section to the receiver's config (the same names), then remove the section here
-mailcast: the guide: https://github.com/packet-net/pdn-mailcast/blob/main/docs/receiver.md#using-it-with-pdn-soundmodem
+mailcast: the guide: https://github.com/packet-net/pdn-mailcast/blob/main/docs/moving-from-built-in.md
 ```
 
 The third line lists only the keys your own section sets.
 
 ## Moving across
 
-The receiver guide's [Using it with pdn-soundmodem](https://github.com/packet-net/pdn-mailcast/blob/main/docs/receiver.md#using-it-with-pdn-soundmodem) has the steps. In short:
+[Moving from pdn-soundmodem's built-in receiver](https://github.com/packet-net/pdn-mailcast/blob/main/docs/moving-from-built-in.md) has the steps. In short:
 
 1. Install pdn-mailcast-receiver from the packet-net apt repo, on the same machine.
 2. In its config, set `"audio": "soundmodem"`, and copy your settings across with the table below. Most keep their names.

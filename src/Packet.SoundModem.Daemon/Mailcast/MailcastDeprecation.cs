@@ -12,7 +12,7 @@ internal static class MailcastDeprecation
 {
     /// <summary>The receiver guide's section on running it beside pdn-soundmodem.</summary>
     internal const string GuideUrl =
-        "https://github.com/packet-net/pdn-mailcast/blob/main/docs/receiver.md#using-it-with-pdn-soundmodem";
+        "https://github.com/packet-net/pdn-mailcast/blob/main/docs/moving-from-built-in.md";
 
     /// <summary>What replaces the built-in receiver, as the journal and the panel name it.</summary>
     internal const string Replacement = "pdn-mailcast-receiver 0.9.0 or later";

@@ -17,7 +17,7 @@ namespace Packet.SoundModem.Tests.Mailcast;
 public sealed class MailcastDeprecationTests : IAsyncDisposable
 {
     private const string Guide =
-        "https://github.com/packet-net/pdn-mailcast/blob/main/docs/receiver.md#using-it-with-pdn-soundmodem";
+        "https://github.com/packet-net/pdn-mailcast/blob/main/docs/moving-from-built-in.md";
 
     private readonly ScratchDirectory _dir = new("pdnsm-mailcast-deprecation");
     private readonly List<MailcastReceiver> _receivers = [];
