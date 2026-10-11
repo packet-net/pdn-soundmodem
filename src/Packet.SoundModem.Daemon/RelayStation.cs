@@ -311,9 +311,10 @@ internal sealed class RelayStation : IMonitorStation
                     TimeProvider = _time,
                     HealthChecks = [FrameLogDropCheck(), JitterDropCheck()],
 
-                    // Audio the jitter buffer had no room for is a real hole; a Read that comes
-                    // back empty is not, because the socket delivers late audio whole.
-                    InputLossCount = () => input.Dropped,
+                    // Audio the jitter buffer had no room for, a reconnect, and a stream resumed
+                    // after nobody was watching are real holes; a Read that comes back empty is
+                    // not, because the socket delivers late audio whole.
+                    InputLossCount = () => input.Discontinuities,
                 },
                 loopStopping.Token);
 
@@ -543,6 +544,7 @@ internal sealed class RelayStation : IMonitorStation
         // Anything still queued is from before the gap, and painting it now would put a burst on
         // the display long after it happened.
         _input.Flush();
+        _input.MarkBreak();
         _input.Connected = true;
         Server.SetRadioStatus(Chip(_stationStatus ?? "connected"));
     }
@@ -699,6 +701,7 @@ internal sealed class RelayStation : IMonitorStation
     private void OnViewersChanged(int viewers)
     {
         bool announce = false;
+        bool resumed = false;
         bool armLinger = false;
         ITimer? cancelled = null;
         lock (_gate)
@@ -709,6 +712,7 @@ internal sealed class RelayStation : IMonitorStation
                 _linger = null;
                 if (_demand != viewers)
                 {
+                    resumed = _demand == 0;
                     _demand = viewers;
                     announce = true;
                 }
@@ -748,6 +752,14 @@ internal sealed class RelayStation : IMonitorStation
             {
                 timer.Dispose();
             }
+        }
+
+        // The station has sent nothing since demand went to 0, so what it sends now follows a
+        // stretch nobody heard. Marked before the demand goes out, so before any of that audio.
+        if (resumed)
+        {
+            // Null only for the moment between building the page and making the input.
+            _input?.MarkBreak();
         }
 
         if (announce)

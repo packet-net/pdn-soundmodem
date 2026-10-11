@@ -73,6 +73,7 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
     private long _dropped;
     private long _droppedReported;
     private long _resumed;
+    private long _lossAtRead;
     private int _sessionsHeard; // pump thread only
     private long _published;
     private bool _ended;
@@ -138,9 +139,10 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
     /// first that delivers audio, because the time between sessions was not heard. Read once
     /// per block by the daemon, which marks the block after a move as following lost audio. A
     /// <see cref="Read"/> that returns nothing is not a hole: the ring holds what has arrived.
-    /// See <see cref="UberSdrAudioInput.Discontinuities"/>, which this mirrors.
+    /// As of the last Read that delivered audio. See
+    /// <see cref="UberSdrAudioInput.Discontinuities"/>, which this mirrors.
     /// </summary>
-    public long Discontinuities => Interlocked.Read(ref _dropped) + Interlocked.Read(ref _resumed);
+    public long Discontinuities => Interlocked.Read(ref _lossAtRead);
 
     /// <summary>
     /// True while a session is open and has delivered audio, so a stop is a hung stream; false
@@ -256,6 +258,9 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
                 }
             }
 
+            // The count as of the samples about to be handed out: every hole it includes lies
+            // before them, so a reader that compares it after this Read marks the right block.
+            Interlocked.Exchange(ref _lossAtRead, _dropped + _resumed);
             int take = Math.Min(destination.Length, _count);
             for (int i = 0; i < take; i++)
             {

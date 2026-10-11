@@ -491,6 +491,24 @@ public class OnDemandUberSdrInputTests
         h.Input.Discontinuities.Should().Be(5);
     }
 
+    [Fact]
+    public async Task A_Session_That_Gave_Up_Keeps_Its_Losses_And_Its_Replacement_Follows_A_Hole()
+    {
+        using var h = new Harness();
+        FakeSession first = await h.GoLiveAsync();
+        first.Discontinuities = 2;
+
+        first.GiveUp("rx.example.org has been unreachable for 5 minutes");
+        await h.Announced(OnDemandPhase.Retrying);
+        h.Input.Discontinuities.Should().Be(2, "a session that gave up does not take its losses with it");
+
+        h.Time.Advance(TimeSpan.FromSeconds(1));
+        (await h.NextAttemptAsync()).SetResult(new FakeSession { SessionLive = true });
+        await h.Announced(OnDemandPhase.Live);
+
+        h.Input.Discontinuities.Should().Be(3, "five minutes unreachable is a stretch nobody heard");
+    }
+
     private static TimeoutException Hung(string what) =>
         new($"nothing happened for {HangGuard.TotalSeconds:F0} s while waiting for {what}: a hang, not a slow run");
 

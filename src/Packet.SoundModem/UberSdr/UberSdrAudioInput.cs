@@ -92,6 +92,7 @@ public sealed class UberSdrAudioInput : IUberSdrSession
     private long _dropped;
     private long _droppedReported;
     private long _resumed;
+    private long _lossAtRead;
     private int _sessionsHeard; // pump thread only
     private long _published;
     private bool _ended;
@@ -153,9 +154,11 @@ public sealed class UberSdrAudioInput : IUberSdrSession
     /// that returns nothing is not a hole: the ring holds what has arrived, and audio that is
     /// late is still delivered whole.
     /// </summary>
-    /// <remarks>Moved under the ring's lock, before the audio after the hole goes in, so a
-    /// reader that has taken that audio already sees the count it follows.</remarks>
-    public long Discontinuities => Interlocked.Read(ref _dropped) + Interlocked.Read(ref _resumed);
+    /// <remarks>The count as of the last <see cref="Read"/> that delivered audio, taken under
+    /// the ring's lock with the samples it handed out. Read straight off the live counters, a
+    /// session's first audio published between a Read returning and the reader asking would
+    /// have put the mark one block early, on audio from before the hole.</remarks>
+    public long Discontinuities => Interlocked.Read(ref _lossAtRead);
 
     /// <summary>
     /// True while an IQ session is open and expected to be delivering audio; false between
@@ -295,6 +298,9 @@ public sealed class UberSdrAudioInput : IUberSdrSession
                 }
             }
 
+            // The count as of the samples about to be handed out: every hole it includes lies
+            // before them, so a reader that compares it after this Read marks the right block.
+            Interlocked.Exchange(ref _lossAtRead, _dropped + _resumed);
             int take = Math.Min(destination.Length, _count);
             for (int i = 0; i < take; i++)
             {

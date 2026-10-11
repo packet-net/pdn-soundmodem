@@ -80,7 +80,10 @@ public sealed class UberSdrDiscontinuityTests
         }
         while (input.DroppedSamples != settled);
 
-        input.Discontinuities.Should().Be(input.DroppedSamples, "every dropped sample is lost audio");
+        input.Discontinuities.Should().Be(0, "the count is as of the last Read, and nothing has been read");
+        input.Read(new float[1200]).Should().Be(1200);
+        input.Discontinuities.Should().Be(input.DroppedSamples,
+            "every dropped sample is lost audio, and all of it came before the samples just read");
     }
 
     [Fact]
@@ -94,7 +97,12 @@ public sealed class UberSdrDiscontinuityTests
         var channel = new SoundModemChannel(12000);
         int losses = 0;
         long delivered = 0;
-        channel.ReceiveAudioLost += () => Interlocked.Increment(ref losses);
+        long lostAt = -1;
+        channel.ReceiveAudioLost += () =>
+        {
+            Interlocked.Increment(ref losses);
+            Interlocked.Exchange(ref lostAt, Interlocked.Read(ref delivered));
+        };
         channel.AddReceiveTap(samples => Interlocked.Add(ref delivered, samples.Length));
         using var stopping = new CancellationTokenSource();
 
@@ -130,6 +138,9 @@ public sealed class UberSdrDiscontinuityTests
         await UntilAsync(() => Interlocked.Read(ref delivered) >= before + (20 * AudioPerFrame), "the second session is heard");
 
         Volatile.Read(ref losses).Should().Be(1, "one hole, between the two sessions");
+        Interlocked.Read(ref lostAt).Should().Be(before,
+            "the mark goes on the first block after the hole: every sample of the first session "
+            + "came before it and none of the second");
 
         await stopping.CancelAsync();
         await running.WaitAsync(TimeSpan.FromSeconds(5));
