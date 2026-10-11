@@ -59,7 +59,7 @@ internal static class MailcastDeprecation
             keys.Add("dialKHz");
         }
 
-        if (config.Hooks is not null)
+        if (config.Hooks is { Before: not null } or { After: not null })
         {
             keys.Add("hooks");
         }

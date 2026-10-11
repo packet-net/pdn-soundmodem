@@ -118,9 +118,11 @@ public sealed class MailcastDeprecationTests : IAsyncDisposable
 
         withCode.Should().Be(2, withErr);
         withoutCode.Should().Be(2, withoutErr);
-        string[] said = withOut.Split('\n').Where(line => line.Contains("deprecated", StringComparison.Ordinal)).ToArray();
+        // The WARNING line goes to stderr, so journald grades it as a warning; the rest to stdout.
+        string[] said = withErr.Split('\n').Where(line => line.Contains("deprecated", StringComparison.Ordinal)).ToArray();
         said.Should().ContainSingle().Which.Should().Be(
             "mailcast: WARNING - this built-in mailcast receiver is deprecated and will be removed in a later release");
+        withOut.Should().NotContain("deprecated");
         withOut.Should().Contain(
             "mailcast: to move across, copy bbs and \"retune\": true from this \"mailcast\" section");
         withOut.Should().Contain($"mailcast: the guide: {Guide}");
