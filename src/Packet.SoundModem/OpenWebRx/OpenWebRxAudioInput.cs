@@ -72,6 +72,8 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
     private int _count;
     private long _dropped;
     private long _droppedReported;
+    private long _resumed;
+    private int _sessionsHeard; // pump thread only
     private long _published;
     private bool _ended;
     private bool _sessionLive;
@@ -129,6 +131,16 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
 
     /// <summary>Samples dropped because nothing drained the buffer in time.</summary>
     public long DroppedSamples => Interlocked.Read(ref _dropped);
+
+    /// <summary>
+    /// A running count that moves whenever the audio this input hands out has a hole in it:
+    /// every sample dropped because the buffer filled, plus one for each session after the
+    /// first that delivers audio, because the time between sessions was not heard. Read once
+    /// per block by the daemon, which marks the block after a move as following lost audio. A
+    /// <see cref="Read"/> that returns nothing is not a hole: the ring holds what has arrived.
+    /// See <see cref="UberSdrAudioInput.Discontinuities"/>, which this mirrors.
+    /// </summary>
+    public long Discontinuities => Interlocked.Read(ref _dropped) + Interlocked.Read(ref _resumed);
 
     /// <summary>
     /// True while a session is open and has delivered audio, so a stop is a hung stream; false
@@ -483,6 +495,7 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
         bool adpcm = false;
         bool audioFlowing = false;
         bool awaitingAudio = false;
+        bool heard = false;
         int carry = -1;
 
         // The session's own clock: first for the receiver to say where it is, then for the
@@ -678,9 +691,18 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
                     audio[s] = pcm[skip + s] / 32768f;
                 }
 
+                // The first audio of any session but the first follows the time between them,
+                // which nobody heard.
+                bool afterHole = false;
+                if (!heard)
+                {
+                    heard = true;
+                    afterHole = _sessionsHeard++ > 0;
+                }
+
                 if (upsampler is null)
                 {
-                    Publish(audio.AsSpan(0, count));
+                    Publish(audio.AsSpan(0, count), afterHole);
                 }
                 else
                 {
@@ -691,7 +713,7 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
                     }
 
                     upsampler.Process(audio.AsSpan(0, count), upsampled.AsSpan(0, needed));
-                    Publish(upsampled.AsSpan(0, needed));
+                    Publish(upsampled.AsSpan(0, needed), afterHole);
                 }
             }
         }
@@ -810,12 +832,20 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
         }
     }
 
-    private void Publish(ReadOnlySpan<float> samples)
+    private void Publish(ReadOnlySpan<float> samples, bool afterHole)
     {
         Interlocked.Add(ref _published, samples.Length);
         long dropped = 0;
+        long total = 0;
         lock (_gate)
         {
+            // Counted before the audio after the hole goes in, so a reader that takes that audio
+            // already sees the count it follows.
+            if (afterHole)
+            {
+                Interlocked.Increment(ref _resumed);
+            }
+
             foreach (float sample in samples)
             {
                 if (_count == _ring.Length)
@@ -838,6 +868,11 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
                 _count++;
             }
 
+            if (dropped > 0)
+            {
+                total = Interlocked.Add(ref _dropped, dropped);
+            }
+
             Monitor.PulseAll(_gate);
         }
 
@@ -846,7 +881,6 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
             return;
         }
 
-        long total = Interlocked.Add(ref _dropped, dropped);
         if (total - Interlocked.Read(ref _droppedReported) >= _outputRate)
         {
             Interlocked.Exchange(ref _droppedReported, total);

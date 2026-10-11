@@ -293,11 +293,12 @@ internal sealed class RelayStation : IMonitorStation
         // Built outside the lock: a Station arms its starvation watch on this same clock, and a
         // TimeProvider holds its own lock while running a callback that takes this one.
         var loopStopping = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token);
+        UplinkAudioInput input = _input;
         Station station = new Station(
                 new StationOptions
                 {
                     Channel = _channel,
-                    Input = _input,
+                    Input = input,
                     DspRate = Hello.AudioRate,
                     Journal = Journal,
                     DeviceKind = DeadFeedDevice.Uplink,
@@ -309,6 +310,10 @@ internal sealed class RelayStation : IMonitorStation
                     SessionLive = () => _input.Connected && Server.Viewers > 0,
                     TimeProvider = _time,
                     HealthChecks = [FrameLogDropCheck(), JitterDropCheck()],
+
+                    // Audio the jitter buffer had no room for is a real hole; a Read that comes
+                    // back empty is not, because the socket delivers late audio whole.
+                    InputLossCount = () => input.Dropped,
                 },
                 loopStopping.Token);
 
