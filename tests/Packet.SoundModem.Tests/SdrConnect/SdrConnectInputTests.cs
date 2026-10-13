@@ -32,7 +32,7 @@ public sealed class SdrConnectInputTests
         using var host = new FakeSdrConnectHost();
         Task<SdrConnectIqInput> opening = SdrConnectIqInput.OpenAsync(
             FakeSdrConnectHost.Endpoint,
-            new SdrConnectOptions { CentreFrequencyHz = DialHz, WatchRate = false, Journal = _journal.Enqueue },
+            new SdrConnectOptions { CentreFrequencyHz = DialHz, WatchRate = false, NoDataTimeout = TimeSpan.FromSeconds(60), Journal = _journal.Enqueue },
             IqChannelSpec.ForFmMode(mode, 0),
             new IqReceiverOptions { DspRate = sim.Rate, Journal = _journal.Enqueue },
             DialHz,
@@ -83,7 +83,7 @@ public sealed class SdrConnectInputTests
         using var host = new FakeSdrConnectHost();
         Task<SdrConnectAudioInput> opening = SdrConnectAudioInput.OpenAsync(
             FakeSdrConnectHost.Endpoint,
-            new SdrConnectOptions { CentreFrequencyHz = DialHz, WatchRate = false, Journal = _journal.Enqueue },
+            new SdrConnectOptions { CentreFrequencyHz = DialHz, WatchRate = false, NoDataTimeout = TimeSpan.FromSeconds(60), Journal = _journal.Enqueue },
             new SdrConnectAudioChannel { Demodulator = demodulator, OutputRate = sim.Rate },
             DialHz,
             host.ConnectAsync,
@@ -132,7 +132,7 @@ public sealed class SdrConnectInputTests
         using var host = new FakeSdrConnectHost();
         Task<SdrConnectAudioInput> opening = SdrConnectAudioInput.OpenAsync(
             FakeSdrConnectHost.Endpoint,
-            new SdrConnectOptions { CentreFrequencyHz = DialHz, WatchRate = false, Journal = _journal.Enqueue },
+            new SdrConnectOptions { CentreFrequencyHz = DialHz, WatchRate = false, NoDataTimeout = TimeSpan.FromSeconds(60), Journal = _journal.Enqueue },
             new SdrConnectAudioChannel { Demodulator = "NFM", OutputRate = 12_000 },
             DialHz,
             host.ConnectAsync,
@@ -158,7 +158,7 @@ public sealed class SdrConnectInputTests
         using var host = new FakeSdrConnectHost();
         Task<SdrConnectAudioInput> opening = SdrConnectAudioInput.OpenAsync(
             FakeSdrConnectHost.Endpoint,
-            new SdrConnectOptions { CentreFrequencyHz = DialHz, WatchRate = false, RetuneSettle = TimeSpan.Zero, Journal = _journal.Enqueue },
+            new SdrConnectOptions { CentreFrequencyHz = DialHz, WatchRate = false, NoDataTimeout = TimeSpan.FromSeconds(60), RetuneSettle = TimeSpan.Zero, Journal = _journal.Enqueue },
             new SdrConnectAudioChannel { Demodulator = "NFM", OutputRate = SdrConnectProtocol.AudioRate },
             DialHz,
             host.ConnectAsync,
@@ -184,7 +184,7 @@ public sealed class SdrConnectInputTests
         using var host = new FakeSdrConnectHost();
         Task<SdrConnectAudioInput> opening = SdrConnectAudioInput.OpenAsync(
             FakeSdrConnectHost.Endpoint,
-            new SdrConnectOptions { CentreFrequencyHz = 7_048_800, WatchRate = false, RetuneSettle = TimeSpan.Zero, Journal = _journal.Enqueue },
+            new SdrConnectOptions { CentreFrequencyHz = 7_048_800, WatchRate = false, NoDataTimeout = TimeSpan.FromSeconds(60), RetuneSettle = TimeSpan.Zero, Journal = _journal.Enqueue },
             new SdrConnectAudioChannel { Demodulator = "USB", OutputRate = 12_000 },
             7_048_800,
             host.ConnectAsync,

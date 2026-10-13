@@ -23,6 +23,12 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         RetuneSettle = TimeSpan.Zero,
         AnswerTimeout = TimeSpan.FromSeconds(2),
         WatchRate = false,
+
+        // Far above any stall of a loaded test machine: at 5 s, a CI run whose test thread stalled
+        // between the stream being turned on and the first IQ being sent had the connection dropped
+        // as silent, the IQ written into a dead socket, and the reader waiting out the give-up.
+        // The tests of the silence watch set their own.
+        NoDataTimeout = TimeSpan.FromSeconds(60),
         Journal = _journal.Enqueue,
     };
 
