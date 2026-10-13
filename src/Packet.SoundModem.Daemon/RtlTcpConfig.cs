@@ -41,20 +41,31 @@ public sealed class RtlTcpConfig
     public bool? RtlAgc { get; set; }
 
     /// <summary>
-    /// Added to the centre frequency before it is sent to the dongle, Hz: for a dongle behind a
-    /// converter whose own local oscillator puts the signal somewhere else than where this
-    /// station hears it - an IF tap off another radio's own IF, say, rather than the antenna
-    /// directly. Default 0, which tunes the dongle to the dial itself. Controlled only; nothing
-    /// else here changes, since the station still places the band plan's dial in the IQ exactly
-    /// as it always did.
+    /// The local oscillator of a converter ahead of the dongle, Hz: an IF tap off another
+    /// radio, say, rather than the antenna directly. The dongle is tuned to the centre plus it,
+    /// or with <see cref="SwapIq"/> to it less the centre. Default 0, no converter. Controlled
+    /// only; the station still places the band plan's dial in the IQ exactly as it always did.
     /// </summary>
-    public double? LfoOffsetHz { get; set; }
+    public double? ConverterLoHz { get; set; }
 
     /// <summary>
-    /// Swap the I and Q samples the server sends: for a converter (or an inverted IF) whose
-    /// spectrum comes out mirrored. Default false. Controlled only.
+    /// Swap the I and Q samples the server sends, for a converter whose mixing inverts the
+    /// spectrum. Needs <see cref="ConverterLoHz"/>. Default false. Controlled only. The same
+    /// name as the other IQ devices' swap.
     /// </summary>
+    public bool? SwapIq { get; set; }
+
+    /// <summary>The old name for <see cref="ConverterLoHz"/> (0.90.0), still read.</summary>
+    public double? LfoOffsetHz { get; set; }
+
+    /// <summary>The old name for <see cref="SwapIq"/> (0.90.0), still read.</summary>
     public bool? IqSwap { get; set; }
+
+    /// <summary><see cref="ConverterLoHz"/>, or its old name if only that is set.</summary>
+    internal double? ConverterLo => ConverterLoHz ?? LfoOffsetHz;
+
+    /// <summary><see cref="SwapIq"/>, or its old name if only that is set.</summary>
+    internal bool? Swap => SwapIq ?? IqSwap;
 
     /// <summary>Seconds a connected server may send nothing before it is dropped and reconnected.
     /// Default 5.</summary>

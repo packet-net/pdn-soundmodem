@@ -57,10 +57,21 @@ public sealed class RtlTcpIqSourceTests
     }
 
     [Fact]
-    public async Task A_Lfo_Offset_Is_Added_To_The_Centre_Before_It_Is_Sent()
+    public void The_0_90_Option_Names_Still_Set_The_Converter_And_The_Swap()
+    {
+#pragma warning disable CS0618 // the old names are what is under test
+        RtlTcpSourceOptions options = Controlled() with { LfoOffsetHz = 80_090_100, IqSwap = true };
+#pragma warning restore CS0618
+
+        options.ConverterLoHz.Should().Be(80_090_100);
+        options.SwapIq.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task A_Converter_Lo_Is_Added_To_The_Centre_Before_It_Is_Sent()
     {
         using var server = new FakeRtlTcpServer();
-        using var source = new RtlTcpIqSource(server.Endpoint, Controlled(73_061_628 - 66_021_528) with { LfoOffsetHz = 66_021_528 });
+        using var source = new RtlTcpIqSource(server.Endpoint, Controlled(73_061_628 - 66_021_528) with { ConverterLoHz = 66_021_528 });
 
         await source.OpenAsync(CancellationToken.None);
         server.WaitForCommands(2);
@@ -70,10 +81,10 @@ public sealed class RtlTcpIqSourceTests
     }
 
     [Fact]
-    public async Task A_Lfo_Offset_Is_Added_Again_On_A_Retune()
+    public async Task A_Converter_Lo_Is_Added_Again_On_A_Retune()
     {
         using var server = new FakeRtlTcpServer();
-        using var source = new RtlTcpIqSource(server.Endpoint, Controlled() with { LfoOffsetHz = 66_021_528 });
+        using var source = new RtlTcpIqSource(server.Endpoint, Controlled() with { ConverterLoHz = 66_021_528 });
         await source.OpenAsync(CancellationToken.None);
         server.WaitForCommands(6);
 
@@ -84,18 +95,18 @@ public sealed class RtlTcpIqSourceTests
     }
 
     [Fact]
-    public void A_Centre_That_Overflows_Once_The_Lfo_Offset_Is_Added_Is_Refused()
+    public void A_Centre_That_Overflows_Once_The_Converter_Lo_Is_Added_Is_Refused()
     {
-        Action open = () => new RtlTcpIqSource(new RtlTcpEndpoint("127.0.0.1", 1), Controlled(4_000_000_000) with { LfoOffsetHz = 400_000_000 });
+        Action open = () => new RtlTcpIqSource(new RtlTcpEndpoint("127.0.0.1", 1), Controlled(4_000_000_000) with { ConverterLoHz = 400_000_000 });
 
-        open.Should().Throw<ArgumentOutOfRangeException>().WithMessage("*LFO offset*");
+        open.Should().Throw<ArgumentOutOfRangeException>().WithMessage("*converter's oscillator*");
     }
 
     [Fact]
-    public async Task With_Iq_Swap_The_Dongle_Is_Tuned_To_The_Lfo_Offset_Less_The_Centre()
+    public async Task With_Iq_Swap_The_Dongle_Is_Tuned_To_The_Converter_Lo_Less_The_Centre()
     {
         using var server = new FakeRtlTcpServer();
-        using var source = new RtlTcpIqSource(server.Endpoint, Controlled(1_000_000) with { LfoOffsetHz = 50_000_000, IqSwap = true });
+        using var source = new RtlTcpIqSource(server.Endpoint, Controlled(1_000_000) with { ConverterLoHz = 50_000_000, SwapIq = true });
 
         await source.OpenAsync(CancellationToken.None);
         server.WaitForCommands(2);
@@ -104,7 +115,7 @@ public sealed class RtlTcpIqSourceTests
     }
 
     /// <summary>
-    /// Tom's review of #703: with <c>iqSwap</c> on, a tone really sitting where the station's
+    /// Tom's review of #703: with <c>swapIq</c> on, a tone really sitting where the station's
     /// own DC-clearance places the dial (<see cref="IqTuning.DcClearOffsetHz"/> below the dongle's
     /// own tuned frequency, before the swap) has to come out, after the swap, where everything
     /// above this source expects the dial: the same distance above <see cref="RtlTcpIqSource.CentreFrequencyHz"/>,
@@ -116,19 +127,19 @@ public sealed class RtlTcpIqSourceTests
     [Fact]
     public async Task With_Iq_Swap_A_Tone_Below_The_Tuned_Frequency_Lands_Above_The_Centre()
     {
-        const double LfoOffsetHz = 50_000_000;
+        const double ConverterLoHz = 50_000_000;
         const double CentreHz = 1_000_000;
         const double DcClearHz = 25_000;
-        double tunerHz = LfoOffsetHz - CentreHz; // what Tune sends with iqSwap on
+        double tunerHz = ConverterLoHz - CentreHz; // what Tune sends with swapIq on
 
         using var server = new FakeRtlTcpServer();
-        using var source = new RtlTcpIqSource(server.Endpoint, Controlled(CentreHz) with { LfoOffsetHz = LfoOffsetHz, IqSwap = true });
+        using var source = new RtlTcpIqSource(server.Endpoint, Controlled(CentreHz) with { ConverterLoHz = ConverterLoHz, SwapIq = true });
         await source.OpenAsync(CancellationToken.None);
         server.WaitForCommands(2);
         server.Commands.Should().Contain(c => c.Command == RtlTcpCommand.SetFrequency && c.Parameter == (uint)tunerHz);
 
         // The dongle really is at tunerHz; a tone DcClearHz below it is what a converter at
-        // LfoOffsetHz puts there when the real signal sits at CentreHz + DcClearHz - exactly
+        // ConverterLoHz puts there when the real signal sits at CentreHz + DcClearHz - exactly
         // where this station's own DC-clearance places the dial before any swap.
         server.Send(ComplexToneBytes(Rate, offsetHz: -DcClearHz, seconds: 0.05));
         float[] iq = ReadAtLeast(source, (int)(Rate * 0.03) * 2);
@@ -141,7 +152,7 @@ public sealed class RtlTcpIqSourceTests
     public async Task Iq_Swap_Exchanges_I_And_Q_After_Conversion()
     {
         using var server = new FakeRtlTcpServer(header: null) { Header = null };
-        using var source = new RtlTcpIqSource(server.Endpoint, ReadOnly() with { IqSwap = true });
+        using var source = new RtlTcpIqSource(server.Endpoint, ReadOnly() with { SwapIq = true });
         Task open = source.OpenAsync(CancellationToken.None);
         server.WaitForConnections(1);
         server.Send(new byte[12]);
