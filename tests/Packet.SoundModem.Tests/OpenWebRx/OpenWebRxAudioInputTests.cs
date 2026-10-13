@@ -216,6 +216,10 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
         input.DroppedSamples.Should().Be(0);
     }
 
+    // QUARANTINED (packet-net/pdn-soundmodem#707): fails intermittently on a loaded runner and
+    // passes alone. Excluded from the blocking Test steps in ci.yml and release.yml; still runs,
+    // non-blocking, in ci.yml's Quarantine step. Remove the trait when #707 is fixed.
+    [Trait("Category", "Quarantine")]
     [Fact]
     public async Task A_Retune_Off_The_Band_And_Back_Is_One_Mark()
     {
@@ -343,6 +347,10 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
             "did not say where it is listening within 30 s");
     }
 
+    // QUARANTINED (packet-net/pdn-soundmodem#707): fails intermittently on a loaded runner and
+    // passes alone. Excluded from the blocking Test steps in ci.yml and release.yml; still runs,
+    // non-blocking, in ci.yml's Quarantine step. Remove the trait when #707 is fixed.
+    [Trait("Category", "Quarantine")]
     [Fact]
     public async Task A_Session_That_Ends_Is_Picked_Up_Again()
     {
