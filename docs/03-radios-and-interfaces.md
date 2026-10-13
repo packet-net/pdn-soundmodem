@@ -260,13 +260,14 @@ If an SDRplay radio is plugged into a PC that runs SDRplay's SDRconnect, the sta
 On the PC with the radio:
 
 - SDRconnect has to be running, with the radio selected and started. SDRconnect supports every RSP except the original RSP1 (the RSP1A and later are fine).
-- The station connects to port 5454 on that PC, so the PC's firewall has to let the station's machine in on that port. On Windows, allow SDRconnect through Windows Defender Firewall for private networks when it asks, or add an inbound rule for TCP port 5454.
-- Whether SDRconnect accepts connections from other machines out of the box, and where in SDRconnect its WebSocket API is turned on if it is not, has not yet been checked against a real SDRconnect. If the station cannot connect, that is the first place to look.
+- Turn on the WebSocket server in SDRconnect's settings. It is off out of the box, and nothing can connect until it is on. Leave its port at 5454.
+- Run one copy of SDRconnect. A second copy started by accident holds its own ports and only confuses things.
+- The station connects to port 5454 on that PC, so the PC's firewall has to let it in. SDRconnect's own Windows firewall rule allows it on a network Windows calls Private and blocks it on one it calls Public. Set your home network to Private in Windows' network settings, or add an inbound rule allowing TCP port 5454.
 
 Pick the stream with `"sdrconnect"."mode"`:
 
-- `"iq"` (the default) takes SDRconnect's raw IQ, and the station's own filter and demodulator do the rest, as on every other SDR. The station asks for 2 MS/s unless told otherwise and takes the IQ to be at the sample rate SDRconnect reports; at 2 MS/s that is about 64 Mbit/s on the network: use wired Ethernet between the two machines.
-- `"audio"` takes SDRconnect's own demodulated audio, about 1.5 Mbit/s, which a Wi-Fi link carries easily. The filter and the demodulator are then SDRconnect's. The station sets them (USB, LSB or NFM from the band plan, on the dial) and turns off SDRconnect's AGC, noise reduction, squelch and audio filters, so what arrives is the demodulator's output and nothing else.
+- `"iq"` (the default, and the one to use) takes SDRconnect's raw IQ, and the station's own filter and demodulator do the rest, as on every other SDR. The station asks for 250000 samples a second, about 8 Mbit/s on the network, which is far more than a packet channel needs. Wired Ethernet is best; good Wi-Fi usually copes. A higher `sampleRate` costs more: 2000000 is about 64 Mbit/s. SDRconnect offers 62500, 125000, 250000, 500000, 1000000, 2000000 and up; it ignores a rate it does not offer, and the station then uses the one it has.
+- `"audio"` takes SDRconnect's own demodulated audio, about 1.5 Mbit/s. The filter and the demodulator are then SDRconnect's. The station sets them (USB, LSB or NFM from the band plan, on the dial) and turns off SDRconnect's AGC, noise reduction, squelch and audio filters, so what arrives is the demodulator's output and nothing else. On SSB that can go wrong: with its AGC off and the radio's gain high, SDRconnect's audio overflows and arrives as loud noise. The journal says so when it happens; turn the gain down (a higher `lnaState`) or use `"iq"`.
 
 What to expect:
 
@@ -301,7 +302,7 @@ You want one `audio:` line naming your device, and one `ptt:` line if you config
 
 `cannot listen through "rtltcp:..."` means the rtl_tcp server is not running, is listening only on its own machine (start it with `-a 0.0.0.0`), or another client has it. The service keeps retrying.
 
-`cannot listen through "sdrconnect:..."` means SDRconnect is not running on that PC, the radio is not started in it, or the PC's firewall is keeping the station out of port 5454. The service keeps retrying.
+`cannot listen through "sdrconnect:..."` means SDRconnect is not running on that PC, its WebSocket server is not turned on, the radio is not started in it, or the PC's firewall is keeping the station out of port 5454 (on Windows, check the network is Private). The service keeps retrying.
 
 `rig: WARNING - cannot reach rigctld at ...` means rigctld is not running, or is on another port. Start it, and the station picks it up within half a minute.
 
