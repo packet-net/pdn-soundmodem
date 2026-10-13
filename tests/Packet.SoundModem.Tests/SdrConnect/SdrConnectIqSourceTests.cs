@@ -107,6 +107,28 @@ public sealed class SdrConnectIqSourceTests : IDisposable
     }
 
     [Fact]
+    public async Task An_LO_Moved_Between_The_Open_And_The_First_Iq_Moves_The_Generation_So_A_Front_End_Built_At_The_Open_Follows()
+    {
+        // The open says the LO it found; a front end is built from that. If the LO then moves
+        // before the first IQ (the SDRconnect window, or a report of the set landing late), the
+        // first samples are at another LO, and the front end has to be told.
+        using var host = new FakeSdrConnectHost();
+        (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(host, Options());
+        double centreAtOpen = source.CentreFrequencyHz;
+        long generationAtOpen = source.TuningGeneration;
+        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await fake.ChangeAsync("device_center_frequency", "7080000");
+        await Task.Delay(200, TestContext.Current.CancellationToken);
+
+        await fake.SendIqAsync(Ramp(500));
+        ReadPairs(source, 500).Should().HaveCount(1000);
+
+        centreAtOpen.Should().Be(Centre);
+        source.CentreFrequencyHz.Should().Be(7_080_000);
+        source.TuningGeneration.Should().NotBe(generationAtOpen, "the samples are not at the LO the open said");
+    }
+
+    [Fact]
     public async Task The_Rate_And_LO_Are_What_SDRconnect_Reports_Not_What_Was_Asked()
     {
         using var host = new FakeSdrConnectHost(f =>

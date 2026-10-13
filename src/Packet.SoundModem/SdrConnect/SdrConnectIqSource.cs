@@ -341,8 +341,10 @@ public sealed class SdrConnectIqSource : IIqSource, ISdrConnectSink, IDisposable
     }
 
     /// <summary>What a run says before its first sample is handed out: its tuning, and what was
-    /// lost before it. Nothing is said for the first run of all, which the properties already
-    /// describe. Under <see cref="_gate"/>.</summary>
+    /// lost before it. Nothing is said for the first run of all when the properties already
+    /// describe it; when they do not (SDRconnect answered the open with the LO it was leaving, and
+    /// reported the new one after), the generation moves even then, since a front end was built
+    /// from the properties. Under <see cref="_gate"/>.</summary>
     private void Apply(ref Segment segment)
     {
         segment.Applied = true;
@@ -350,10 +352,7 @@ public sealed class SdrConnectIqSource : IIqSource, ISdrConnectSink, IDisposable
         {
             CentreFrequencyHz = segment.CentreHz;
             SampleRate = segment.Rate;
-            if (_everDelivered)
-            {
-                Interlocked.Increment(ref _generation);
-            }
+            Interlocked.Increment(ref _generation);
         }
         else if (segment.NewTuning && _everDelivered)
         {
