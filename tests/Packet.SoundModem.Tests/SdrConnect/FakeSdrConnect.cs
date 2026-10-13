@@ -116,6 +116,11 @@ internal sealed class FakeSdrConnect
     /// <summary>What a set value becomes, by property: SDRconnect choosing a rate of its own.</summary>
     public Dictionary<string, Func<string, string>> Coerce { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>How long a set takes to land, by property: until then a <c>get_property</c> answers
+    /// the old value, as the real one does for a rate (#701: about half a second), and the change is
+    /// reported when it lands.</summary>
+    public Dictionary<string, TimeSpan> Lag { get; } = new(StringComparer.Ordinal);
+
     /// <summary>Whether a set that changes a value is reported back to the client that made it, as
     /// a real SDRconnect does (#701); false stands for one that reports only other clients' changes.</summary>
     public bool EchoSets { get; set; } = true;
@@ -297,20 +302,17 @@ internal sealed class FakeSdrConnect
                 break;
             case "set_property":
                 string set = Coerce.TryGetValue(message.Property, out Func<string, string>? coerce) ? coerce(message.Value) : message.Value;
-                bool changed;
-                lock (_gate)
+                if (Lag.TryGetValue(message.Property, out TimeSpan lag))
                 {
-                    changed = Properties.GetValueOrDefault(message.Property) != set;
-                    Properties[message.Property] = set;
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(lag);
+                        await LandAsync(message.Property, set);
+                    });
+                    break;
                 }
 
-                // As the real one does (#701): a set that changes nothing, a rate it refuses
-                // included, is not reported.
-                if (EchoSets && changed)
-                {
-                    await SendJsonAsync("property_changed", message.Property, set);
-                }
-
+                await LandAsync(message.Property, set);
                 break;
             case "iq_stream_enable":
                 IqOn = message.Value == "true";
@@ -328,6 +330,23 @@ internal sealed class FakeSdrConnect
                 }
 
                 break;
+        }
+    }
+
+    private async Task LandAsync(string property, string set)
+    {
+        bool changed;
+        lock (_gate)
+        {
+            changed = Properties.GetValueOrDefault(property) != set;
+            Properties[property] = set;
+        }
+
+        // As the real one does (#701): a set that changes nothing, a rate it refuses included, is
+        // not reported.
+        if (EchoSets && changed)
+        {
+            await SendJsonAsync("property_changed", property, set);
         }
     }
 

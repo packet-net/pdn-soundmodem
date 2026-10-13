@@ -95,6 +95,7 @@ internal sealed class SdrConnectClient : IDisposable
     // Under _stateGate: what SDRconnect last said, what is waited on, what this client wants.
     private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TaskCompletionSource<string>> _waiting = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TaskCompletionSource<string>> _pushWaiting = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> _awaiting = new(StringComparer.Ordinal);
     private double _wantedCentreHz;
     private double? _wantedVfoHz;
@@ -264,7 +265,9 @@ internal sealed class SdrConnectClient : IDisposable
         _watchdog = _time.CreateTimer(_ => Watch(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
         _supervisor = Task.Run(() => SuperviseAsync(first), CancellationToken.None);
 
-        TimeSpan limit = (_options.AnswerTimeout * 3) + TimeSpan.FromSeconds(5);
+        // The questions, the rate landing, the LO landing and the questions again, each at most
+        // an answer timeout.
+        TimeSpan limit = (_options.AnswerTimeout * 4) + TimeSpan.FromSeconds(5);
         Task timeout = Task.Delay(limit, _time, cancellation);
         if (await Task.WhenAny(_firstVerdict.Task, timeout).ConfigureAwait(false) != _firstVerdict.Task)
         {
@@ -508,12 +511,13 @@ internal sealed class SdrConnectClient : IDisposable
         lock (_stateGate)
         {
             _socket = null;
-            foreach (TaskCompletionSource<string> waiter in _waiting.Values)
+            foreach (TaskCompletionSource<string> waiter in _waiting.Values.Concat(_pushWaiting.Values))
             {
                 waiter.TrySetCanceled();
             }
 
             _waiting.Clear();
+            _pushWaiting.Clear();
         }
 
         return reason;
@@ -605,7 +609,23 @@ internal sealed class SdrConnectClient : IDisposable
             }
         }
 
+        // The LO the same way: until a change is reported, a get answers the LO being left, and
+        // the stream would be taken to be there.
+        Task<string>? landed;
+        lock (_stateGate)
+        {
+            landed = _values.TryGetValue(SdrConnectProtocol.Properties.CentreFrequency, out string? centre)
+                && Same(SdrConnectProtocol.Properties.CentreFrequency, centre, SdrConnectProtocol.Number(_wantedCentreHz))
+                ? null
+                : Expect(SdrConnectProtocol.Properties.CentreFrequency);
+        }
+
         await SendWantedAsync(SdrConnectProtocol.Properties.CentreFrequency).ConfigureAwait(false);
+        if (landed is not null)
+        {
+            await Task.WhenAny(landed, Task.Delay(_options.AnswerTimeout, _time, _closing.Token)).ConfigureAwait(false);
+            Unexpect(SdrConnectProtocol.Properties.CentreFrequency, landed);
+        }
         if (_options.Stream == SdrConnectStream.Audio)
         {
             await SetUpAudioAsync(report).ConfigureAwait(false);
@@ -705,13 +725,15 @@ internal sealed class SdrConnectClient : IDisposable
         }
     }
 
-    /// <summary>The next report of <paramref name="property"/>, pushed or answered.</summary>
+    /// <summary>The next change of <paramref name="property"/> SDRconnect pushes
+    /// (<c>property_changed</c>). Not an answer to a get: while a set is under way, that can be
+    /// the value being left.</summary>
     private Task<string> Expect(string property)
     {
         var waiter = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (_stateGate)
         {
-            _waiting[property] = waiter;
+            _pushWaiting[property] = waiter;
         }
 
         return waiter.Task;
@@ -722,9 +744,9 @@ internal sealed class SdrConnectClient : IDisposable
     {
         lock (_stateGate)
         {
-            if (_waiting.TryGetValue(property, out TaskCompletionSource<string>? waiter) && waiter.Task == expected)
+            if (_pushWaiting.TryGetValue(property, out TaskCompletionSource<string>? waiter) && waiter.Task == expected)
             {
-                _waiting.Remove(property);
+                _pushWaiting.Remove(property);
             }
         }
     }
@@ -881,6 +903,12 @@ internal sealed class SdrConnectClient : IDisposable
             if (_waiting.Remove(message.Property, out TaskCompletionSource<string>? waiter))
             {
                 waiter.TrySetResult(message.Value);
+            }
+
+            if (message.EventType == SdrConnectProtocol.Events.PropertyChanged
+                && _pushWaiting.Remove(message.Property, out TaskCompletionSource<string>? pushed))
+            {
+                pushed.TrySetResult(message.Value);
             }
         }
 

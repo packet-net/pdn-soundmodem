@@ -107,6 +107,21 @@ public sealed class SdrConnectIqSourceTests : IDisposable
     }
 
     [Fact]
+    public async Task An_LO_SDRconnect_Is_Slow_To_Take_Is_Waited_For_Before_The_Open_Says_Where_It_Is()
+    {
+        // While a set is under way SDRconnect answers a get with the value it is leaving (#701
+        // measured half a second for a rate). Taken at the open, an old LO 75 kHz away puts the
+        // channel where the IQ input refuses it, or a long way from the dial.
+        using var host = new FakeSdrConnectHost(f => f.Lag["device_center_frequency"] = TimeSpan.FromMilliseconds(300));
+
+        (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(host, Options());
+
+        source.CentreFrequencyHz.Should().Be(Centre, "the open waits for the LO it asked for to be reported");
+        fake.Value("device_center_frequency").Should().Be("7075000");
+        _journal.Should().NotContain(l => l.Contains("did not take", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task An_LO_Moved_Between_The_Open_And_The_First_Iq_Moves_The_Generation_So_A_Front_End_Built_At_The_Open_Follows()
     {
         // The open says the LO it found; a front end is built from that. If the LO then moves
