@@ -69,7 +69,7 @@ public class PagingTcpServerTests : IAsyncLifetime
 
     private static async Task<string> ReadLineAsync(StreamReader reader)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         return await reader.ReadLineAsync(timeout.Token) ?? throw new IOException("connection closed");
     }
 

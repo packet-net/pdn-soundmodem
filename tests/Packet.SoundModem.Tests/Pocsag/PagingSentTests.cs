@@ -30,17 +30,20 @@ public class PagingSentTests
         return (client, new StreamReader(client.GetStream()));
     }
 
+    // The timeouts here and in WaitForAsync only bound a hang: the server answers OK as soon as
+    // the channel has the page, so they are long enough that a loaded box cannot reach them
+    // (#705, where 10 s ran out with the MS110D fade tests running alongside).
     private static async Task<string> SendAsync(TcpClient client, StreamReader reader, string line)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(line + "\n");
         await client.GetStream().WriteAsync(bytes);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         return await reader.ReadLineAsync(timeout.Token) ?? throw new IOException("connection closed");
     }
 
     private static async Task WaitForAsync(Func<bool> done)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         while (!done())
         {
             timeout.Token.ThrowIfCancellationRequested();
@@ -60,7 +63,7 @@ public class PagingSentTests
         server.Start();
 
         var output = new FakeAudioOutput(SampleRate);
-        using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         Task transmitter = channel.RunTransmitterAsync(output, new RecordingPtt(), stopping.Token);
 
         var (client, reader) = await ConnectAsync(server);

@@ -26,7 +26,7 @@ public class PagingDropTests
     {
         byte[] bytes = System.Text.Encoding.UTF8.GetBytes(line + "\n");
         await client.GetStream().WriteAsync(bytes);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         return await reader.ReadLineAsync(timeout.Token) ?? throw new IOException("connection closed");
     }
 
@@ -80,7 +80,7 @@ public class PagingDropTests
             // 1 ms timeout long expired and faults the page.
             clock.Advance(TimeSpan.FromMilliseconds(100));
 
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             while (drops.Count == 0)
             {
                 timeout.Token.ThrowIfCancellationRequested();
