@@ -23,6 +23,17 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
     private readonly ConcurrentQueue<string> _journal = new();
     private readonly List<IDisposable> _owned = [];
 
+    /// <summary>
+    /// The longest any step here waits for something that happens at once over loopback: the
+    /// input's next connection, a message from it, its audio. Only a hang runs it out.
+    /// </summary>
+    /// <remarks>It was 10 s, and the release runner's MS110D fade tests starved this process
+    /// for longer than that more than once (#707): a retune's message and a reconnect both
+    /// missed it, and on a box with the class pinned to a core it shared with a CPU hog, reads
+    /// gave up with 0 of 12000 samples and with 112096 of 120000. Nothing waits this long when
+    /// the input is working.</remarks>
+    private static readonly TimeSpan HangGuard = TimeSpan.FromSeconds(60);
+
     private static OpenWebRxTuning Tuning(int outputRate = 12000) =>
         OpenWebRxTuning.For(7_048_800, "usb", 150, 3450, 5000) with
         {
@@ -52,13 +63,18 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
         return WebSocket.CreateFromStream(client.GetStream(), new WebSocketCreationOptions { IsServer = false });
     }
 
+    /// <summary>Opens the input on <paramref name="time"/>, or on a clock nobody advances.</summary>
+    /// <remarks>Never the machine's clock: the input's own timeouts (30 s for a receiver to say
+    /// where it is, 30 s for the first audio) would then race a loaded test run, and a test that
+    /// needs one of them, or the pause before a reconnect, advances the clock itself.</remarks>
     private Task<OpenWebRxAudioInput> OpenAsync(OpenWebRxTuning tuning, TimeProvider? time = null) =>
         OpenWebRxAudioInput.OpenAsync(
-            Endpoint, tuning, ConnectAsync, line => _journal.Enqueue(line), TestContext.Current.CancellationToken, time);
+            Endpoint, tuning, ConnectAsync, line => _journal.Enqueue(line), TestContext.Current.CancellationToken,
+            time ?? new FakeTimeProvider());
 
     private async Task<FakeReceiver> NextReceiverAsync()
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var timeout = new CancellationTokenSource(HangGuard);
         return await _accepted.Reader.ReadAsync(timeout.Token);
     }
 
@@ -77,7 +93,7 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
     {
         var got = new List<float>();
         var buffer = new float[4096];
-        DateTime giveUp = DateTime.UtcNow.AddSeconds(10);
+        DateTime giveUp = DateTime.UtcNow + HangGuard;
         while (got.Count < count && DateTime.UtcNow < giveUp)
         {
             int n = input.Read(buffer);
@@ -216,10 +232,6 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
         input.DroppedSamples.Should().Be(0);
     }
 
-    // QUARANTINED (packet-net/pdn-soundmodem#707): fails intermittently on a loaded runner and
-    // passes alone. Excluded from the blocking Test steps in ci.yml and release.yml; still runs,
-    // non-blocking, in ci.yml's Quarantine step. Remove the trait when #707 is fixed.
-    [Trait("Category", "Quarantine")]
     [Fact]
     public async Task A_Retune_Off_The_Band_And_Back_Is_One_Mark()
     {
@@ -347,14 +359,11 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
             "did not say where it is listening within 30 s");
     }
 
-    // QUARANTINED (packet-net/pdn-soundmodem#707): fails intermittently on a loaded runner and
-    // passes alone. Excluded from the blocking Test steps in ci.yml and release.yml; still runs,
-    // non-blocking, in ci.yml's Quarantine step. Remove the trait when #707 is fixed.
-    [Trait("Category", "Quarantine")]
     [Fact]
     public async Task A_Session_That_Ends_Is_Picked_Up_Again()
     {
-        Task<OpenWebRxAudioInput> opening = OpenAsync(Tuning());
+        var time = new FakeTimeProvider();
+        Task<OpenWebRxAudioInput> opening = OpenAsync(Tuning(), time);
         FakeReceiver first = await NextReceiverAsync();
         await first.GreetAsync(compression: "none");
         using OpenWebRxAudioInput input = await opening;
@@ -376,6 +385,14 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
         input.DroppedSamples.Should().Be(0);
         await first.CloseAsync();
 
+        // The breath before the reconnect is on the input's clock. Advanced in steps until the
+        // input dials again, since the pause may not have started when the first step is taken;
+        // the journal below says which pause it was.
+        await WaitForAsync(() =>
+        {
+            time.Advance(TimeSpan.FromMilliseconds(250));
+            return _accepted.Reader.Count > 0;
+        });
         FakeReceiver second = await NextReceiverAsync();
         await second.GreetAsync(compression: "none");
         await second.SendAudioAsync(pcm.AsMemory(0, 2400));
@@ -405,7 +422,7 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
 
     private static async Task WaitForAsync(Func<bool> condition)
     {
-        DateTime giveUp = DateTime.UtcNow.AddSeconds(15);
+        DateTime giveUp = DateTime.UtcNow + HangGuard;
         while (!condition())
         {
             DateTime.UtcNow.Should().BeBefore(giveUp, "the condition should have come true by now");
@@ -484,7 +501,7 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
 
         public async Task<string> ReceiveTextAsync()
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var timeout = new CancellationTokenSource(HangGuard);
             var buffer = new byte[64 * 1024];
             var text = new StringBuilder();
             WebSocketReceiveResult result;
