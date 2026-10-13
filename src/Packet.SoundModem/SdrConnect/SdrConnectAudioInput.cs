@@ -164,8 +164,10 @@ public sealed class SdrConnectAudioInput : IAudioInput, IReceiverTuner, ISdrConn
     /// <param name="channel">The demodulator, its passband and the output rate.</param>
     /// <param name="dialHz">The dial, Hz.</param>
     /// <param name="cancellation">Cancels the connect.</param>
-    /// <exception cref="IOException">SDRconnect could not be reached.</exception>
-    /// <exception cref="InvalidOperationException">SDRconnect answered but will not do.</exception>
+    /// <exception cref="SdrConnectUnreachableException">SDRconnect could not be reached (an
+    /// <see cref="IOException"/>); its <c>Reason</c> says why.</exception>
+    /// <exception cref="SdrConnectRefusedException">SDRconnect answered but will not do (an
+    /// <see cref="InvalidOperationException"/>); its <c>Reason</c> says why.</exception>
     public static Task<SdrConnectAudioInput> OpenAsync(
         SdrConnectEndpoint endpoint, SdrConnectOptions options, SdrConnectAudioChannel channel,
         double dialHz, CancellationToken cancellation) =>

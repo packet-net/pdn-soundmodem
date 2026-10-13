@@ -146,6 +146,44 @@ public class SdrConnectProtocolTests
         parse.Should().Throw<InvalidDataException>().WithMessage(message);
     }
 
+    [Theory]
+    [InlineData("shack-pc", "shack-pc", 5454)]
+    [InlineData(" 192.168.1.20:5455 ", "192.168.1.20", 5455)]
+    [InlineData("[fd00::5]", "fd00::5", 5454)]
+    public void An_Address_Alone_Names_A_Host_And_A_Port(string address, string host, int port)
+    {
+        SdrConnectEndpoint.TryParse(address, out SdrConnectEndpoint endpoint, out string? problem).Should().BeTrue();
+        endpoint.Should().Be(new SdrConnectEndpoint(host, port));
+        problem.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(null, "*no host*")]
+    [InlineData("", "*no host*")]
+    [InlineData("host:70000", "*not a host and a TCP port*")]
+    [InlineData("fd00::5", "*IPv6*in brackets*")]
+    [InlineData("sdrconnect:shack-pc", "*not a host and a TCP port*")]
+    public void A_Malformed_Address_Is_Refused_Without_Naming_A_Setting(string? address, string message)
+    {
+        SdrConnectEndpoint.TryParse(address, out _, out string? problem).Should().BeFalse();
+        problem.Should().Match(message).And.NotContain("device").And.NotContain("\"").And.MatchRegex("^[\\x20-\\x7E]*$");
+    }
+
+    [Theory]
+    [InlineData(System.Net.Sockets.SocketError.ConnectionRefused, SdrConnectFailure.Refused)]
+    [InlineData(System.Net.Sockets.SocketError.TimedOut, SdrConnectFailure.NoAnswer)]
+    [InlineData(System.Net.Sockets.SocketError.HostNotFound, SdrConnectFailure.NameNotFound)]
+    [InlineData(System.Net.Sockets.SocketError.AccessDenied, SdrConnectFailure.Unreachable)]
+    public void A_Failed_Connect_Is_Given_A_Reason_From_The_Socket_Error_Under_It(System.Net.Sockets.SocketError error, SdrConnectFailure reason)
+    {
+        var failure = new System.Net.WebSockets.WebSocketException("Unable to connect to the remote server",
+            new HttpRequestException("connect failed", new System.Net.Sockets.SocketException((int)error)));
+
+        SdrConnectUnreachableException.Classify(failure).Should().Be(reason);
+        SdrConnectUnreachableException.Classify(new System.Net.WebSockets.WebSocketException("no answer", new TimeoutException()))
+            .Should().Be(SdrConnectFailure.NoAnswer);
+    }
+
     [Fact]
     public void The_WebSocket_Is_At_The_Root_Of_The_Port()
     {

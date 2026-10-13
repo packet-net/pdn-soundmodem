@@ -78,8 +78,10 @@ public sealed class SdrConnectIqInput : IAudioInput, IReceiverTuner, IDisposable
     /// <param name="frontEnd">The front end's settings.</param>
     /// <param name="dialHz">The dial, Hz.</param>
     /// <param name="cancellation">Cancels the connect.</param>
-    /// <exception cref="IOException">SDRconnect could not be reached.</exception>
-    /// <exception cref="InvalidOperationException">SDRconnect answered but will not do.</exception>
+    /// <exception cref="SdrConnectUnreachableException">SDRconnect could not be reached (an
+    /// <see cref="IOException"/>); its <c>Reason</c> says why.</exception>
+    /// <exception cref="SdrConnectRefusedException">SDRconnect answered but will not do (an
+    /// <see cref="InvalidOperationException"/>); its <c>Reason</c> says why.</exception>
     /// <exception cref="ArgumentException">The channel cannot run at the rate and LO SDRconnect
     /// reported.</exception>
     public static Task<SdrConnectIqInput> OpenAsync(

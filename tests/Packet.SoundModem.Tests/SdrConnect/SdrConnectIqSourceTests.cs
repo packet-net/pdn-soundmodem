@@ -159,7 +159,8 @@ public sealed class SdrConnectIqSourceTests : IDisposable
 
         Func<Task> open = () => source.OpenAsync(TestContext.Current.CancellationToken);
 
-        (await open.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*can_control is false*");
+        (await open.Should().ThrowAsync<SdrConnectRefusedException>()).WithMessage("*can_control is false*")
+            .Which.Reason.Should().Be(SdrConnectFailure.CannotControl);
     }
 
     [Fact]
@@ -171,7 +172,8 @@ public sealed class SdrConnectIqSourceTests : IDisposable
 
         Func<Task> open = () => source.OpenAsync(TestContext.Current.CancellationToken);
 
-        (await open.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*did not say its sample rate*");
+        (await open.Should().ThrowAsync<SdrConnectRefusedException>()).WithMessage("*did not say its sample rate*")
+            .Which.Reason.Should().Be(SdrConnectFailure.NoSampleRate);
     }
 
     [Fact]
@@ -183,7 +185,8 @@ public sealed class SdrConnectIqSourceTests : IDisposable
 
         Func<Task> open = () => source.OpenAsync(TestContext.Current.CancellationToken);
 
-        (await open.Should().ThrowAsync<IOException>()).WithMessage("*cannot reach SDRconnect at ws://shack-pc.example:5454/*");
+        (await open.Should().ThrowAsync<SdrConnectUnreachableException>()).WithMessage("*cannot reach SDRconnect at ws://shack-pc.example:5454/*")
+            .Which.Should().BeAssignableTo<IOException>();
     }
 
     [Fact]

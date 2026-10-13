@@ -115,8 +115,10 @@ public sealed class SdrConnectIqSource : IIqSource, ISdrConnectSink, IDisposable
     /// Connects, sets the radio up and starts the stream; from then <see cref="SampleRate"/> and
     /// <see cref="CentreFrequencyHz"/> are what SDRconnect reported.
     /// </summary>
-    /// <exception cref="IOException">SDRconnect could not be reached.</exception>
-    /// <exception cref="InvalidOperationException">SDRconnect answered but will not do.</exception>
+    /// <exception cref="SdrConnectUnreachableException">SDRconnect could not be reached (an
+    /// <see cref="IOException"/>); its <c>Reason</c> says why.</exception>
+    /// <exception cref="SdrConnectRefusedException">SDRconnect answered but will not do (an
+    /// <see cref="InvalidOperationException"/>); its <c>Reason</c> says why.</exception>
     public async Task OpenAsync(CancellationToken cancellation)
     {
         await _client.OpenAsync(cancellation).ConfigureAwait(false);

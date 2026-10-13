@@ -90,6 +90,7 @@ internal sealed class SdrConnectClient : IDisposable
     private readonly SemaphoreSlim _sendGate = new(1, 1);
     private readonly object _stateGate = new();
     private readonly TaskCompletionSource<string?> _firstVerdict = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private volatile SdrConnectFailure _refusalReason = SdrConnectFailure.Dropped; // why, when _firstVerdict is a refusal
 
     // Under _stateGate: what SDRconnect last said, what is waited on, what this client wants.
     private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
@@ -234,9 +235,11 @@ internal sealed class SdrConnectClient : IDisposable
     /// SDRconnect cannot be reached or refuses, so start-up can say so; once open, a later drop is
     /// reconnected.
     /// </summary>
-    /// <exception cref="IOException">SDRconnect could not be reached.</exception>
-    /// <exception cref="InvalidOperationException">SDRconnect answered but will not do; the message
-    /// is written for an operator.</exception>
+    /// <exception cref="SdrConnectUnreachableException">SDRconnect could not be reached (an
+    /// <see cref="IOException"/>); its <c>Reason</c> says why.</exception>
+    /// <exception cref="SdrConnectRefusedException">SDRconnect answered but will not do (an
+    /// <see cref="InvalidOperationException"/>); its <c>Reason</c> says why, and the message is
+    /// written for an operator.</exception>
     public async Task OpenAsync(CancellationToken cancellation)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -245,9 +248,14 @@ internal sealed class SdrConnectClient : IDisposable
         {
             first = await _connect(cancellation).ConfigureAwait(false);
         }
-        catch (Exception e) when (e is WebSocketException or HttpRequestException or System.Net.Sockets.SocketException)
+        catch (SdrConnectUnreachableException)
         {
-            throw new IOException($"cannot reach SDRconnect at {_endpoint.WebSocketUri}: {e.Message}", e);
+            throw;
+        }
+        catch (Exception e) when (e is WebSocketException or HttpRequestException or System.Net.Sockets.SocketException or IOException)
+        {
+            throw new SdrConnectUnreachableException(
+                SdrConnectUnreachableException.Classify(e), $"cannot reach SDRconnect at {_endpoint.WebSocketUri}: {e.Message}", e);
         }
 
         _lossFrom = _time.GetUtcNow();
@@ -260,14 +268,15 @@ internal sealed class SdrConnectClient : IDisposable
         if (await Task.WhenAny(_firstVerdict.Task, timeout).ConfigureAwait(false) != _firstVerdict.Task)
         {
             cancellation.ThrowIfCancellationRequested();
-            throw new InvalidOperationException(
+            throw new SdrConnectRefusedException(
+                SdrConnectFailure.NoSetUp,
                 $"SDRconnect at {_endpoint} accepted the connection but did not finish setting up within "
                 + $"{limit.TotalSeconds:F0} s. Is that SDRconnect's WebSocket port?");
         }
 
         if (await _firstVerdict.Task.ConfigureAwait(false) is string refusal)
         {
-            throw new InvalidOperationException(refusal);
+            throw new SdrConnectRefusedException(_refusalReason, refusal);
         }
     }
 
@@ -346,7 +355,7 @@ internal sealed class SdrConnectClient : IDisposable
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
         {
             socket.Dispose();
-            throw new WebSocketException($"no answer from {endpoint.WebSocketUri} within {timeout.TotalSeconds:F0} s");
+            throw new WebSocketException($"no answer from {endpoint.WebSocketUri} within {timeout.TotalSeconds:F0} s", new TimeoutException());
         }
         catch
         {
@@ -474,6 +483,7 @@ internal sealed class SdrConnectClient : IDisposable
         }
         catch (Exception e) when (e is WebSocketException or IOException or ObjectDisposedException or OperationCanceledException)
         {
+            _refusalReason = SdrConnectFailure.Dropped;
             refusal = $"SDRconnect at {_endpoint} could not be set up: {e.Message}";
         }
 
@@ -537,6 +547,7 @@ internal sealed class SdrConnectClient : IDisposable
         if (report.TryGetValue(SdrConnectProtocol.Properties.CanControl, out string? control)
             && SdrConnectProtocol.ParseBool(control) == false)
         {
+            _refusalReason = SdrConnectFailure.CannotControl;
             return $"SDRconnect at {_endpoint} says this client cannot control its radio (can_control is false). "
                 + "This station has to set the radio's frequency itself. Check that SDRconnect has the radio "
                 + "selected and is not itself a client of another SDRconnect that holds control.";
@@ -606,6 +617,7 @@ internal sealed class SdrConnectClient : IDisposable
                 : [SdrConnectProtocol.Properties.SampleRate, SdrConnectProtocol.Properties.CentreFrequency]).ConfigureAwait(false);
         if (Number(SdrConnectProtocol.Properties.SampleRate) is not double reported || reported < 1)
         {
+            _refusalReason = SdrConnectFailure.NoSampleRate;
             return $"SDRconnect at {_endpoint} did not say its sample rate (device_sample_rate), so its stream "
                 + "cannot be used. Is the radio selected and running in SDRconnect?";
         }
