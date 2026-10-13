@@ -295,8 +295,9 @@ internal sealed class SdrConnectStationDevice(
           {(configPath is null ? "Set by `--device` on the command line." : $"Set by \"device\" in {configPath}")}
           This names SDRconnect, SDRplay's receiver program, which the station listens to
           instead of a sound card. Check that SDRconnect is running on that machine with the
-          radio started, that its WebSocket server is turned on in its settings (it is off
-          out of the box) on that port (5454 unless changed), and that the machine's firewall
+          radio started, that its WebSocket server is switched on (Other Actions ->
+          Preferences -> WebSocket Server; it is off out of the box) on that port (5454
+          unless changed), and that the machine's firewall
           lets this one connect to it: on Windows, SDRconnect is let in on a Private network
           and not on a Public one. The rest of its settings live in the "sdrconnect" section.
           The service will keep retrying: this clears by itself if SDRconnect is merely late.

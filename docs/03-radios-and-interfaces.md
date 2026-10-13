@@ -260,7 +260,7 @@ If an SDRplay radio is plugged into a PC that runs SDRplay's SDRconnect, the sta
 On the PC with the radio:
 
 - SDRconnect has to be running, with the radio selected and started. SDRconnect supports every RSP except the original RSP1 (the RSP1A and later are fine).
-- Turn on the WebSocket server in SDRconnect's settings. It is off out of the box, and nothing can connect until it is on. Leave its port at 5454.
+- Turn on SDRconnect's WebSocket server: **Other Actions -> Preferences -> WebSocket Server**, switch on. It is off out of the box, and nothing can connect until it is on. Leave its port at 5454.
 - Run one copy of SDRconnect. A second copy started by accident holds its own ports and only confuses things.
 - The station connects to port 5454 on that PC, so the PC's firewall has to let it in. SDRconnect's own Windows firewall rule allows it on a network Windows calls Private and blocks it on one it calls Public. Set your home network to Private in Windows' network settings, or add an inbound rule allowing TCP port 5454.
 
@@ -302,7 +302,7 @@ You want one `audio:` line naming your device, and one `ptt:` line if you config
 
 `cannot listen through "rtltcp:..."` means the rtl_tcp server is not running, is listening only on its own machine (start it with `-a 0.0.0.0`), or another client has it. The service keeps retrying.
 
-`cannot listen through "sdrconnect:..."` means SDRconnect is not running on that PC, its WebSocket server is not turned on, the radio is not started in it, or the PC's firewall is keeping the station out of port 5454 (on Windows, check the network is Private). The service keeps retrying.
+`cannot listen through "sdrconnect:..."` means SDRconnect is not running on that PC, its WebSocket server is not switched on (Other Actions -> Preferences -> WebSocket Server), the radio is not started in it, or the PC's firewall is keeping the station out of port 5454 (on Windows, check the network is Private). The service keeps retrying.
 
 `rig: WARNING - cannot reach rigctld at ...` means rigctld is not running, or is on another port. Start it, and the station picks it up within half a minute.
 
