@@ -56,6 +56,10 @@ public sealed class FlexIqTransmitterMockTests
         return (mock, client, tx);
     }
 
+    // QUARANTINED (packet-net/pdn-soundmodem#707): fails intermittently on a loaded runner and
+    // passes alone. Excluded from the blocking Test steps in ci.yml and release.yml; still runs,
+    // non-blocking, in ci.yml's Quarantine step. Remove the trait when #707 is fixed.
+    [Trait("Category", "Quarantine")]
     [Fact]
     public async Task A_tone_reaches_the_radio_intact_with_no_starved_samples()
     {
