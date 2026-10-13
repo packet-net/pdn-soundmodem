@@ -175,6 +175,19 @@ public sealed record FlexTransmitterOptions
     public TimeSpan SetupTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
+    /// How long past the burst's own length the waveform-IQ route waits for the radio to have
+    /// pulled every sample before it unkeys anyway.
+    /// </summary>
+    /// <remarks>5 s is ample against a real radio, which starts pulling as soon as it reports
+    /// TRANSMITTING. Like <see cref="SetupTimeout"/> it is counted on the machine's own clock
+    /// (<c>Environment.TickCount64</c>, inside M0LTE.Flex), and against the in-process mock both
+    /// the TRANSMITTING status and every transmit-buffer request reach the sink through the
+    /// thread pool: a loaded test run has gone past the whole allowance before the sink had
+    /// answered a single request, so the burst unkeyed with nothing sent. Offline tests
+    /// therefore set this to a hang guard instead.</remarks>
+    public TimeSpan DrainSlack { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
     /// Clock for every interval this class enforces - the identification period, the inter-burst
     /// settle, the post-transmit observation.
     /// </summary>
@@ -777,7 +790,7 @@ public sealed class FlexIqTransmitter : IOtaTransmitter
             starved = _iq.SamplesStarved - starvedBefore;
 
             drained = interlock.AbortReason is null
-                && _iq.Drain(TimeSpan.FromSeconds(seconds + 5));
+                && _iq.Drain(TimeSpan.FromSeconds(seconds) + _options.DrainSlack);
             reflected = _iq.PacketsReflected - reflectedBefore;
         }
         finally

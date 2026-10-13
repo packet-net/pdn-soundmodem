@@ -39,6 +39,12 @@ public sealed class FlexIqTransmitterMockTests
         // A hang guard, not a deadline: the mock always answers, and the library's 5 s default,
         // counted on the machine's clock, timed out under load before this process had read it.
         SetupTimeout = TimeSpan.FromMinutes(1),
+        // The same for the drain, and the same reason: the mock's transmit-buffer requests and
+        // the TRANSMITTING status reach the sink through the thread pool, and the release run
+        // of v0.91.0 (#707) spent the whole 5 s allowance past the burst before the sink had answered
+        // one, so the burst unkeyed with nothing sent. The drain returns as soon as the ring is
+        // empty; this only bounds a mock that has stopped asking.
+        DrainSlack = TimeSpan.FromMinutes(1),
     };
 
     private static async Task<(MockFlexRadio Mock, FlexClient Client, FlexIqTransmitter Tx)> OpenAsync()
@@ -56,10 +62,6 @@ public sealed class FlexIqTransmitterMockTests
         return (mock, client, tx);
     }
 
-    // QUARANTINED (packet-net/pdn-soundmodem#707): fails intermittently on a loaded runner and
-    // passes alone. Excluded from the blocking Test steps in ci.yml and release.yml; still runs,
-    // non-blocking, in ci.yml's Quarantine step. Remove the trait when #707 is fixed.
-    [Trait("Category", "Quarantine")]
     [Fact]
     public async Task A_tone_reaches_the_radio_intact_with_no_starved_samples()
     {
@@ -73,6 +75,7 @@ public sealed class FlexIqTransmitterMockTests
             TransmitReport report = await tx.TransmitAsync(tone);
 
             report.Aborted.Should().BeFalse();
+            report.Drained.Should().BeTrue("the radio pulled the whole burst before the unkey");
             report.SamplesStarved.Should().Be(0, "a starve is a phase discontinuity on the air");
             report.PacketsReflected.Should().BeGreaterThan(0);
 
@@ -159,13 +162,13 @@ public sealed class FlexIqTransmitterMockTests
         }
     }
 
-    /// <summary>Polls until <paramref name="condition"/> is true or 10 s elapses - for waiting on
+    /// <summary>Polls until <paramref name="condition"/> is true or 60 s elapses - for waiting on
     /// the mock's reflection thread, which paces itself off the real clock rather than an
     /// injectable one (mirrors the WaitUntilAsync helper in KissTcpServerTests/
     /// KissServerRobustnessTests/TransmitterPttFailureTests).</summary>
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         while (!condition())
         {
             cancellation.Token.ThrowIfCancellationRequested();
