@@ -46,6 +46,22 @@ public sealed class SdrConnectUnreachableException : IOException
     /// <see cref="SdrConnectFailure.NameNotFound"/> or <see cref="SdrConnectFailure.Unreachable"/>.</summary>
     public SdrConnectFailure Reason { get; }
 
+    /// <summary>What a failed connect says, with the socket's own words when they are buried: the
+    /// real <c>ClientWebSocket</c> says only "Unable to connect to the remote server", which does not
+    /// tell a refused port from a name that does not resolve or a host with no route.</summary>
+    internal static string Describe(Exception error)
+    {
+        for (Exception? e = error.InnerException; e is not null; e = e.InnerException)
+        {
+            if (e is SocketException socket && !error.Message.Contains(socket.Message, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{error.Message} ({socket.Message})";
+            }
+        }
+
+        return error.Message;
+    }
+
     /// <summary>The reason a failed connect gives, from the exception it threw.</summary>
     internal static SdrConnectFailure Classify(Exception error)
     {

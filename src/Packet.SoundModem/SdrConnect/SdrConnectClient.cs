@@ -255,7 +255,8 @@ internal sealed class SdrConnectClient : IDisposable
         catch (Exception e) when (e is WebSocketException or HttpRequestException or System.Net.Sockets.SocketException or IOException)
         {
             throw new SdrConnectUnreachableException(
-                SdrConnectUnreachableException.Classify(e), $"cannot reach SDRconnect at {_endpoint.WebSocketUri}: {e.Message}", e);
+                SdrConnectUnreachableException.Classify(e),
+                $"cannot reach SDRconnect at {_endpoint.WebSocketUri}: {SdrConnectUnreachableException.Describe(e)}", e);
         }
 
         _lossFrom = _time.GetUtcNow();
@@ -404,12 +405,12 @@ internal sealed class SdrConnectClient : IDisposable
                 catch (Exception e) when (e is WebSocketException or HttpRequestException or IOException
                                             or System.Net.Sockets.SocketException or OperationCanceledException)
                 {
-                    lastFailure = e.Message;
+                    lastFailure = SdrConnectUnreachableException.Describe(e);
                     now = _time.GetUtcNow();
                     if (now >= nextFailureLine)
                     {
                         string more = quietFailures > 0 ? $" ({quietFailures} more failed attempt(s) since the last line)" : "";
-                        Say($"sdrconnect: cannot reach {_endpoint} ({e.Message}); still trying{more}");
+                        Say($"sdrconnect: cannot reach {_endpoint} ({lastFailure}); still trying{more}");
                         nextFailureLine = now + FailureLineInterval;
                         quietFailures = 0;
                     }

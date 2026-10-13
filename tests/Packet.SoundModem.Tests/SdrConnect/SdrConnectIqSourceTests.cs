@@ -196,6 +196,29 @@ public sealed class SdrConnectIqSourceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_Real_Refused_Connect_Says_Why_In_Its_Message_As_Well_As_Its_Reason()
+    {
+        // The real ClientWebSocket wraps the socket's error in "Unable to connect to the remote
+        // server", which on its own does not tell a refused port from a name that does not resolve.
+        int port;
+        using (var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0))
+        {
+            listener.Start();
+            port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        }
+
+        var source = new SdrConnectIqSource(new SdrConnectEndpoint("127.0.0.1", port), Options());
+        _owned.Add(source);
+
+        Func<Task> open = () => source.OpenAsync(TestContext.Current.CancellationToken);
+
+        SdrConnectUnreachableException failure = (await open.Should().ThrowAsync<SdrConnectUnreachableException>()).Which;
+        failure.Reason.Should().Be(SdrConnectFailure.Refused);
+        failure.Message.Should().Contain($"cannot reach SDRconnect at ws://127.0.0.1:{port}/")
+            .And.ContainEquivalentOf("refused").And.MatchRegex("^[\\x20-\\x7E]*$");
+    }
+
+    [Fact]
     public async Task Iq_Arrives_As_Sent_Across_Odd_Message_Splits_And_Audio_Is_Ignored()
     {
         using var host = new FakeSdrConnectHost();
