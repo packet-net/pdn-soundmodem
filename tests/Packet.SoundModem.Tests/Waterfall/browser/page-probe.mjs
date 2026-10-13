@@ -895,11 +895,22 @@ if (process.env.MIXPLAY) {
 let txTestDisabledWhileClosed = null;
 let txTestTitleWhileClosed = null;
 if (process.env.TXTEST_CLOSE) {
-  const goEl = () => sandbox.document.getElementById("txTestGo");
-  run("ws.close()");
-  await untilTrue(() => goEl().disabled === true, 5000);
-  txTestDisabledWhileClosed = goEl().disabled;
-  txTestTitleWhileClosed = goEl().title;
+  // Read inside the page's own onclose, straight after its handler has run, rather than polled
+  // from out here (#704): onclose waits on the close handshake with the server, and it schedules
+  // the reconnect whose onopen enables the button again 2 s later, so a poll on a loaded box
+  // could miss the whole window, or give up before the handshake finished.
+  run(`{
+    const pageOnClose = ws.onclose;
+    ws.onclose = e => {
+      pageOnClose(e);
+      const go = document.getElementById("txTestGo");
+      globalThis.__txTestClosed = { disabled: go.disabled, title: go.title };
+    };
+    ws.close();
+  }`);
+  await until("!!globalThis.__txTestClosed", 20000);
+  txTestDisabledWhileClosed = run("globalThis.__txTestClosed ? globalThis.__txTestClosed.disabled : null");
+  txTestTitleWhileClosed = run("globalThis.__txTestClosed ? globalThis.__txTestClosed.title : null");
 }
 
 // HOLDKEEPALIVES asks the probe to stay open until the server has sent it that
