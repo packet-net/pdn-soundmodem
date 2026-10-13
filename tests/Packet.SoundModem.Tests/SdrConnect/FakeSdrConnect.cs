@@ -97,7 +97,7 @@ internal sealed class FakeSdrConnect
         ["valid_devices"] = "RSP1A",
         ["can_control"] = "true",
         ["started"] = "true",
-        ["device_sample_rate"] = "2000000",
+        ["device_sample_rate"] = "1000000",
         ["device_center_frequency"] = "7000000",
         ["device_vfo_frequency"] = "7000000",
         ["valid_antennas"] = "Antenna A,Antenna B",
@@ -116,8 +116,8 @@ internal sealed class FakeSdrConnect
     /// <summary>What a set value becomes, by property: SDRconnect choosing a rate of its own.</summary>
     public Dictionary<string, Func<string, string>> Coerce { get; } = new(StringComparer.Ordinal);
 
-    /// <summary>Whether a set is reported back to the client that made it, which the document does
-    /// not say; false stands for an SDRconnect that reports only other clients' changes.</summary>
+    /// <summary>Whether a set that changes a value is reported back to the client that made it, as
+    /// a real SDRconnect does (#701); false stands for one that reports only other clients' changes.</summary>
     public bool EchoSets { get; set; } = true;
 
     /// <summary>Every message the client sent, in order.</summary>
@@ -297,12 +297,16 @@ internal sealed class FakeSdrConnect
                 break;
             case "set_property":
                 string set = Coerce.TryGetValue(message.Property, out Func<string, string>? coerce) ? coerce(message.Value) : message.Value;
+                bool changed;
                 lock (_gate)
                 {
+                    changed = Properties.GetValueOrDefault(message.Property) != set;
                     Properties[message.Property] = set;
                 }
 
-                if (EchoSets)
+                // As the real one does (#701): a set that changes nothing, a rate it refuses
+                // included, is not reported.
+                if (EchoSets && changed)
                 {
                     await SendJsonAsync("property_changed", message.Property, set);
                 }

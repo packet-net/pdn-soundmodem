@@ -20,7 +20,7 @@ public sealed class SdrConnectConfig
     public string? Mode { get; set; }
 
     /// <summary>The radio's sample rate to ask SDRconnect for, samples a second. IQ: default
-    /// 2000000. Audio: SDRconnect's own unless set. Whatever SDRconnect reports is used.</summary>
+    /// 250000. Audio: SDRconnect's own unless set. Whatever SDRconnect reports is used.</summary>
     public int? SampleRate { get; set; }
 
     /// <summary>The RF gain state (SDRconnect's LNA state) to ask for; SDRconnect's own unless set.</summary>

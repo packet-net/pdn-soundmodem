@@ -14,7 +14,7 @@ namespace Packet.SoundModem.Tests.SdrConnect;
 /// </summary>
 public sealed class SdrConnectInputTests
 {
-    private const int Rate = 250_000;
+    private const int Rate = SdrConnectIqInput.DefaultSampleRate;
     private const double DialHz = 144_800_000;
 
     private readonly ConcurrentQueue<string> _journal = new();
@@ -32,7 +32,7 @@ public sealed class SdrConnectInputTests
         using var host = new FakeSdrConnectHost();
         Task<SdrConnectIqInput> opening = SdrConnectIqInput.OpenAsync(
             FakeSdrConnectHost.Endpoint,
-            new SdrConnectOptions { CentreFrequencyHz = DialHz, SampleRate = Rate, WatchRate = false, Journal = _journal.Enqueue },
+            new SdrConnectOptions { CentreFrequencyHz = DialHz, WatchRate = false, Journal = _journal.Enqueue },
             IqChannelSpec.ForFmMode(mode, 0),
             new IqReceiverOptions { DspRate = sim.Rate, Journal = _journal.Enqueue },
             DialHz,
@@ -42,6 +42,8 @@ public sealed class SdrConnectInputTests
         using SdrConnectIqInput input = await opening;
         await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
+        fake.Value("device_sample_rate").Should().Be("250000", "the default rate is asked for when none is given");
+        input.Source.SampleRate.Should().Be(250_000);
         fake.Value("device_center_frequency").Should().Be("144775000", "the LO sits below the dial, clear of its DC spike");
         input.DialHz.Should().Be(DialHz);
 
@@ -141,7 +143,7 @@ public sealed class SdrConnectInputTests
 
         (await input.TuneAsync(DialHz + 100_000, TestContext.Current.CancellationToken)).Should().BeTrue();
         await fake.WaitForAsync(f => f.Value("device_vfo_frequency") == "144900000", "the VFO moved");
-        fake.Sets("device_center_frequency").Count().Should().Be(loSets, "100 kHz along is inside the 2 MS/s SDRconnect has");
+        fake.Sets("device_center_frequency").Count().Should().Be(loSets, "100 kHz along is inside the 1 MS/s SDRconnect has");
 
         (await input.TuneAsync(146_500_000, TestContext.Current.CancellationToken)).Should().BeTrue();
         await fake.WaitForAsync(f => f.Value("device_vfo_frequency") == "146500000", "the VFO moved again");
@@ -174,6 +176,59 @@ public sealed class SdrConnectInputTests
 
         input.Discontinuities.Should().Be(0, "the demodulator did not change");
         input.Client.ForeignChanges.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Ssb_Audio_Is_Said_To_Be_Prone_To_Overflow_And_Audio_That_Wraps_Round_Is_Said_While_Loud_Audio_Is_Not()
+    {
+        using var host = new FakeSdrConnectHost();
+        Task<SdrConnectAudioInput> opening = SdrConnectAudioInput.OpenAsync(
+            FakeSdrConnectHost.Endpoint,
+            new SdrConnectOptions { CentreFrequencyHz = 7_048_800, WatchRate = false, RetuneSettle = TimeSpan.Zero, Journal = _journal.Enqueue },
+            new SdrConnectAudioChannel { Demodulator = "USB", OutputRate = 12_000 },
+            7_048_800,
+            host.ConnectAsync,
+            TestContext.Current.CancellationToken);
+        FakeSdrConnect fake = await host.NextAsync();
+        using SdrConnectAudioInput input = await opening;
+        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        _journal.Should().Contain(l => l.Contains("SSB audio with its AGC off", StringComparison.Ordinal)
+            && l.Contains("\"mode\": \"iq\" is recommended", StringComparison.Ordinal));
+
+        // A 2 kHz tone just short of full scale, for two seconds: loud, not wrapped.
+        int seconds = 2 * SdrConnectProtocol.AudioRate;
+        var tone = new short[2 * seconds];
+        for (int k = 0; k < seconds; k++)
+        {
+            tone[2 * k] = tone[(2 * k) + 1] = (short)(32000 * Math.Sin(2 * Math.PI * 2000 * k / SdrConnectProtocol.AudioRate));
+        }
+
+        await SendInPiecesAsync(fake, tone);
+        Read(input, 12_000, 2);
+        input.OverloadedSeconds.Should().Be(0, "a loud tone is not an overflow");
+        _journal.Should().NotContain(l => l.Contains("overflowing", StringComparison.Ordinal));
+
+        // What the real one sent (#701): integers wrapped round, even across the whole 16 bits.
+        var random = new Random(3);
+        var wrapped = new short[2 * seconds];
+        for (int k = 0; k < seconds; k++)
+        {
+            wrapped[2 * k] = wrapped[(2 * k) + 1] = (short)random.Next(short.MinValue, short.MaxValue + 1);
+        }
+
+        await SendInPiecesAsync(fake, wrapped);
+        Read(input, 12_000, 2);
+        input.OverloadedSeconds.Should().BeGreaterThanOrEqualTo(1);
+        _journal.Where(l => l.Contains("overflowing", StringComparison.Ordinal)).Should().ContainSingle("it is said at most once a minute of audio")
+            .Which.Should().MatchRegex("^[\\x20-\\x7E]*$");
+    }
+
+    private static async Task SendInPiecesAsync(FakeSdrConnect fake, short[] stereo)
+    {
+        for (int k = 0; k < stereo.Length; k += 4800)
+        {
+            await fake.SendAudioAsync(stereo.AsSpan(k, Math.Min(4800, stereo.Length - k)));
+        }
     }
 
     /// <summary>The burst as SDRconnect's IQ: FM at <paramref name="offsetHz"/> from the LO, a

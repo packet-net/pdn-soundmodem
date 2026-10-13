@@ -28,7 +28,8 @@ public readonly record struct SdrConnectMessage(string EventType, string Propert
 /// <para><b>Binary.</b> A 2-byte little-endian type, then the payload. Type 1 is the primary
 /// device's demodulated audio, signed 16-bit stereo at 48 kHz (L, R, L, R); type 2 its IQ,
 /// signed 16-bit interleaved (I, Q, I, Q). Both come in 4-byte frames: one stereo sample or one
-/// complex sample. Neither carries a counter or a timestamp.</para>
+/// complex sample. Neither carries a counter or a timestamp. A real SDRconnect sends either
+/// about 20 times a second, whatever the rate (#701).</para>
 /// <para>Original, from the document; no SDRplay code was read for it or copied.</para>
 /// </remarks>
 public static class SdrConnectProtocol
@@ -52,9 +53,9 @@ public static class SdrConnectProtocol
     public const ushort PrimaryIq = 2;
 
     /// <summary>
-    /// What a signed 16-bit sample is divided by to put full scale at 1. Whether SDRconnect uses
-    /// the whole 16 bits for its IQ, or a smaller range, the document does not say; the first run
-    /// against a real instance settles it, and only the level, not the decoding, depends on it.
+    /// What a signed 16-bit sample is divided by to put full scale at 1. SDRconnect's IQ uses the
+    /// whole 16 bits: a real one (1.0.3, RSP1A, #701) sent 40 m noise at -44 dBFS with no DC to
+    /// speak of, and its messages carry nothing but whole I,Q pairs after the type word.
     /// </summary>
     public const float S16FullScale = 32768f;
 

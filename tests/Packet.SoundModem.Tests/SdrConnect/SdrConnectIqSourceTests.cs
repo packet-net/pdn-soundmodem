@@ -116,6 +116,30 @@ public sealed class SdrConnectIqSourceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_Rate_SDRconnect_Refuses_Leaves_It_Where_It_Was_And_Is_Said()
+    {
+        // As the real one did with 3000000 (#701): no report, the rate unchanged.
+        using var host = new FakeSdrConnectHost(f => f.Coerce["device_sample_rate"] = _ => "1000000");
+
+        (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(host, Options(3_000_000) with { AnswerTimeout = TimeSpan.FromMilliseconds(300) });
+
+        fake.Sets("device_sample_rate").Should().ContainSingle().Which.Value.Should().Be("3000000");
+        source.SampleRate.Should().Be(1_000_000);
+        _journal.Should().Contain(l => l.StartsWith("sdrconnect: SDRconnect did not take a sample rate of 3000000 and stays at 1000000", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_Rate_SDRconnect_Already_Has_Is_Not_Said_As_Refused()
+    {
+        using var host = new FakeSdrConnectHost();
+
+        (SdrConnectIqSource source, _) = await OpenAsync(host, Options(1_000_000));
+
+        source.SampleRate.Should().Be(1_000_000);
+        _journal.Should().NotContain(l => l.Contains("did not take", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task A_Radio_That_Is_Not_Running_Is_Started()
     {
         using var host = new FakeSdrConnectHost(f => f.Properties["started"] = "false");

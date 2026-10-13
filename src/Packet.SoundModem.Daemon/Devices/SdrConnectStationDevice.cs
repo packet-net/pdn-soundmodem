@@ -97,7 +97,7 @@ internal sealed class SdrConnectStationDevice(
         if (config.SampleRate is int rate && rate is < 48_000 or > 20_000_000)
         {
             return $"\"sdrconnect\".\"sampleRate\" ({rate}) is not a rate an RSP runs at; leave it out for "
-                + "2000000, the lowest an RSP runs at without SDRconnect decimating";
+                + "250000, which is plenty for a packet channel and light on the network";
         }
 
         if (config.LnaState is < 0)
@@ -295,9 +295,10 @@ internal sealed class SdrConnectStationDevice(
           {(configPath is null ? "Set by `--device` on the command line." : $"Set by \"device\" in {configPath}")}
           This names SDRconnect, SDRplay's receiver program, which the station listens to
           instead of a sound card. Check that SDRconnect is running on that machine with the
-          radio started, that its WebSocket API is on that port (5454 unless changed), and
-          that the machine's firewall lets this one connect to it. The rest of its settings
-          live in the "sdrconnect" section.
+          radio started, that its WebSocket server is turned on in its settings (it is off
+          out of the box) on that port (5454 unless changed), and that the machine's firewall
+          lets this one connect to it: on Windows, SDRconnect is let in on a Private network
+          and not on a Public one. The rest of its settings live in the "sdrconnect" section.
           The service will keep retrying: this clears by itself if SDRconnect is merely late.
         """;
 }

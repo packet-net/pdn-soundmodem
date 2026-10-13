@@ -14,10 +14,10 @@ public enum SdrConnectStream
 
 /// <summary>Settings for a connection to SDRconnect (<see cref="SdrConnectClient"/>).</summary>
 /// <remarks>
-/// Several of these stand in for things the API document does not say and that only a real
-/// SDRconnect can answer (the IQ scale, how long a retune takes to reach the stream, how the
-/// filter bandwidth relates to the low cut). They are here, with the document's or a cautious
-/// value as the default, so what the first run finds can be applied as a setting.
+/// Several of these stand in for things the API document does not say. The first real SDRconnect
+/// (#701) settled the IQ scale (the whole 16 bits); how long a retune takes to reach the stream
+/// and how the filter bandwidth relates to the low cut are still a cautious guess, kept here so a
+/// later finding can be applied as a setting.
 /// </remarks>
 public sealed record SdrConnectOptions
 {
@@ -28,7 +28,8 @@ public sealed record SdrConnectOptions
     public required double CentreFrequencyHz { get; init; }
 
     /// <summary>The device sample rate to ask for, Hz, or null to leave SDRconnect's. Whatever
-    /// SDRconnect then reports is the rate used.</summary>
+    /// SDRconnect then reports is the rate used: it refuses a rate it does not offer without a
+    /// word and stays where it was (#701).</summary>
     public int? SampleRate { get; init; }
 
     /// <summary>Audio stream: the VFO to ask for, Hz (the dial: the suppressed carrier for SSB,
@@ -57,8 +58,8 @@ public sealed record SdrConnectOptions
     public string? DeviceName { get; init; }
 
     /// <summary>
-    /// What a signed 16-bit IQ sample is divided by to put full scale at 1. The document does not
-    /// say what range SDRconnect's IQ uses; 32768 assumes all of it.
+    /// What a signed 16-bit IQ sample is divided by to put full scale at 1. SDRconnect's IQ uses
+    /// the whole 16 bits (#701), so 32768.
     /// </summary>
     public float IqFullScale { get; init; } = SdrConnectProtocol.S16FullScale;
 

@@ -12,7 +12,9 @@ namespace Packet.SoundModem.SdrConnect;
 /// <para><b>What SDRconnect says is what is used.</b> The rate and the LO the stream is taken to
 /// be at are the ones SDRconnect reports (<c>get_property_response</c> and
 /// <c>property_changed</c>), never the ones asked for, so a rate SDRconnect does not offer is
-/// met by the one it chose.</para>
+/// met by the one it chose. A real SDRconnect (#701) takes about half a second over a new rate,
+/// reports a set back to the client that made it when the value changes, says nothing for a set
+/// that changes nothing, and refuses a rate it does not offer without a word.</para>
 /// <para><b>Someone else at the knobs.</b> SDRconnect is a desktop program, and its window, or
 /// another client, can retune the radio this station is listening through. A change to the LO,
 /// the VFO or the demodulator that this client did not ask for is said in the journal and put
@@ -24,7 +26,9 @@ namespace Packet.SoundModem.SdrConnect;
 /// by <see cref="SdrConnectOptions.RetuneSettle"/> thrown away and counted as lost, since the
 /// stream does not say where the change landed. A reconnect counts the time it was gone. And the
 /// stream is measured against the wall clock (<see cref="IqRateWatch"/>): while it arrives short
-/// of its rate, which is SDRconnect or the link dropping frames, the shortfall is counted.</para>
+/// of its rate, which is SDRconnect or the link dropping frames, the shortfall is counted. A
+/// reader that falls behind finds the socket still open: SDRconnect keeps about 2.5 s for it and
+/// drops the rest (#701).</para>
 /// <para><b>Threads.</b> One receive loop per connection does the stream and the property reports;
 /// a timer watches for a silent stream; sends go through one gate. Steady state is a receive and a
 /// conversion per message, into buffers sized at the connect.</para>
@@ -575,8 +579,18 @@ internal sealed class SdrConnectClient : IDisposable
         await SendAsync(SdrConnectProtocol.Enable(SdrConnectProtocol.Events.SpectrumEnable, false)).ConfigureAwait(false);
         if (_options.SampleRate is int rate)
         {
-            // Not held to: whatever rate SDRconnect then reports is the one taken.
+            // Not held to: whatever rate SDRconnect then reports is the one taken. A new rate takes
+            // it about half a second and is reported when it has it, so that is waited for before
+            // the rate is asked back; a refused one is never reported, and costs the answer timeout.
+            Task<string>? taken = Whole(report, SdrConnectProtocol.Properties.SampleRate) == rate
+                ? null
+                : Expect(SdrConnectProtocol.Properties.SampleRate);
             await SendAsync(SdrConnectProtocol.Set(SdrConnectProtocol.Properties.SampleRate, SdrConnectProtocol.Number(rate))).ConfigureAwait(false);
+            if (taken is not null)
+            {
+                await Task.WhenAny(taken, Task.Delay(_options.AnswerTimeout, _time, _closing.Token)).ConfigureAwait(false);
+                Unexpect(SdrConnectProtocol.Properties.SampleRate, taken);
+            }
         }
 
         await SendWantedAsync(SdrConnectProtocol.Properties.CentreFrequency).ConfigureAwait(false);
@@ -603,6 +617,21 @@ internal sealed class SdrConnectClient : IDisposable
                 : "";
             Say($"sdrconnect: set up: LO {Ascii(settled.GetValueOrDefault(SdrConnectProtocol.Properties.CentreFrequency, "(not said)"))} Hz, "
                 + $"rate {reported:F0} S/s{at}; taking the {(_options.Stream == SdrConnectStream.Iq ? "IQ" : "audio")} stream");
+            if (_options.SampleRate is int asked && (int)Math.Round(reported) != asked)
+            {
+                Say($"sdrconnect: SDRconnect did not take a sample rate of {asked} and stays at {reported:F0}, which this "
+                    + "station uses. An RSP1A through SDRconnect offered 62500, 125000, 250000, 500000, 1000000, "
+                    + "2000000, 6000000, 8000000 and 10000000");
+            }
+
+            if (_options.Stream == SdrConnectStream.Audio && !_options.Demodulator.Equals("NFM", StringComparison.OrdinalIgnoreCase))
+            {
+                // Seen on a real one (#701): USB with the AGC off at the RSP1A's highest gain came
+                // as integers wrapped round, noise across the whole 16 bits.
+                Say("sdrconnect: SDRconnect's SSB audio with its AGC off (as this station sets it) can overflow when the "
+                    + "radio's gain is high, and then arrives as loud noise that decodes nothing. \"mode\": \"iq\" is "
+                    + "recommended; otherwise keep the gain down (a higher \"lnaState\")");
+            }
         }
 
         Interlocked.Exchange(ref _watchFromTicks, _time.GetUtcNow().UtcTicks);
@@ -660,6 +689,30 @@ internal sealed class SdrConnectClient : IDisposable
             // Flat, as the station's own FM discriminator is: the modems expect what a radio's
             // data port gives, not its speaker.
             await SendAsync(SdrConnectProtocol.Set(SdrConnectProtocol.Properties.NfmDeemphasisEnable, "false")).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>The next report of <paramref name="property"/>, pushed or answered.</summary>
+    private Task<string> Expect(string property)
+    {
+        var waiter = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_stateGate)
+        {
+            _waiting[property] = waiter;
+        }
+
+        return waiter.Task;
+    }
+
+    /// <summary>Stops waiting for a report <see cref="Expect"/> asked for, if it is still the one waited on.</summary>
+    private void Unexpect(string property, Task<string> expected)
+    {
+        lock (_stateGate)
+        {
+            if (_waiting.TryGetValue(property, out TaskCompletionSource<string>? waiter) && waiter.Task == expected)
+            {
+                _waiting.Remove(property);
+            }
         }
     }
 
@@ -1193,9 +1246,8 @@ internal sealed class SdrConnectClient : IDisposable
                     + $"not the {rate} it should. Frames are being lost on the way: the network link, or this "
                     + "machine, cannot keep up. "
                     + (_options.Stream == SdrConnectStream.Iq
-                        ? "The IQ stream needs a wired link; \"sdrconnect\".\"mode\": \"audio\" needs far less. "
-                            + "If the link is wired and idle, SDRconnect's IQ may not be at the rate it reports, "
-                            + "which has not yet been checked against a real SDRconnect: please report it."
+                        ? "A lower \"sdrconnect\".\"sampleRate\" (250000 is the default) or \"mode\": \"audio\" "
+                            + "needs less of the link; a wired one is best."
                         : "Check the link between this machine and SDRconnect.")
                     + " The missing time is marked as gaps.");
                 break;

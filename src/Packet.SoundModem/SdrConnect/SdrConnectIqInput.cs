@@ -12,7 +12,7 @@ namespace Packet.SoundModem.SdrConnect;
 /// </summary>
 /// <remarks>
 /// <para><b>Where the radio is pointed.</b> A little below the dial
-/// (<see cref="IqTuning.DcClearOffsetHz"/>, 25 kHz at SDRconnect's rates), so the LO's DC spike
+/// (<see cref="IqTuning.DcClearOffsetHz"/>, 25 kHz at 200 kS/s and above), so the LO's DC spike
 /// stays out of the channel. The channel is then placed against the LO SDRconnect reports, not
 /// the one asked for.</para>
 /// <para><b>Retuning.</b> <see cref="TuneAsync"/> moves the channel within the band the front end
@@ -20,9 +20,14 @@ namespace Packet.SoundModem.SdrConnect;
 /// </remarks>
 public sealed class SdrConnectIqInput : IAudioInput, IReceiverTuner, IDisposable
 {
-    /// <summary>The rate asked for unless told otherwise: the lowest an RSP runs at without
-    /// SDRconnect decimating, and 64 Mbit/s on the wire.</summary>
-    public const int DefaultSampleRate = 2_000_000;
+    /// <summary>
+    /// The rate asked for unless told otherwise: 8 Mbit/s on the wire, which a Pi on Ethernet or
+    /// decent Wi-Fi carries, where 2 MS/s is 64 Mbit/s. It is the lowest rate a real SDRconnect
+    /// (1.0.3, RSP1A) delivered in full (#701: 99.7% over 5 s, as close as at 1 and 2 MS/s;
+    /// 62500 and 125000 came 3% short, at the edge of the rate watch), and it leaves the front end
+    /// 200 kHz around the dial, far more than a packet channel needs.
+    /// </summary>
+    public const int DefaultSampleRate = 250_000;
 
     private readonly SdrConnectIqSource _source;
     private readonly IqReceiver _receiver;

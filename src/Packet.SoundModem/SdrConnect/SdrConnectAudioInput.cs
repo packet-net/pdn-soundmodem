@@ -52,6 +52,12 @@ public sealed record SdrConnectAudioChannel
 /// inside the band SDRconnect has, and the LO too when it does not.</para>
 /// <para><b>Gaps</b> are counted as on the OpenWebRX device (<see cref="Discontinuities"/>): a
 /// reconnect, a retune, samples lost on the way, or the buffer filling.</para>
+/// <para><b>Overload.</b> SDRconnect's SSB audio with its AGC off, at a high RF gain, was seen to
+/// overflow (#701): the integers wrap round and arrive as noise spread evenly over the whole 16
+/// bits. Its mark is a jump of more than half the range from one sample to the next, which a
+/// quarter of wrapped samples make and audio below 8 kHz cannot, however loud. A second of audio
+/// with more than 1% such jumps is said in the journal, at most once a minute of audio, so the
+/// operator knows to turn the gain down or take the IQ.</para>
 /// <para>Original, from SDRplay's published SDRconnect WebSocket API document, version 1.0.3.</para>
 /// </remarks>
 public sealed class SdrConnectAudioInput : IAudioInput, IReceiverTuner, ISdrConnectSink, IDisposable
@@ -72,12 +78,26 @@ public sealed class SdrConnectAudioInput : IAudioInput, IReceiverTuner, ISdrConn
     private long _holes;
     private long _lossAtRead;
     private int _disposed;
+    private readonly Action<string>? _journal;
+    private float _lastLeft;
+    private int _jumps;
+    private int _windowFrames;
+    private int _quietWindows;
+    private long _overloadedSeconds;
+
+    /// <summary>Of each second of audio, the share of jumps of more than half the range that is
+    /// taken as wrapping: a quarter of wrapped noise, none of real audio.</summary>
+    private const double OverloadShare = 0.01;
+
+    /// <summary>Seconds of audio between two overload lines.</summary>
+    private const int OverloadLineSeconds = 60;
 
     private SdrConnectAudioInput(
         SdrConnectEndpoint endpoint, SdrConnectOptions options, SdrConnectAudioChannel channel,
         Func<CancellationToken, Task<WebSocket>>? connect)
     {
         _channel = channel;
+        _journal = options.Journal;
         _client = new SdrConnectClient(endpoint, options, this, connect);
         _client.Lost += reason => Lost?.Invoke(reason);
 
@@ -118,6 +138,9 @@ public sealed class SdrConnectAudioInput : IAudioInput, IReceiverTuner, ISdrConn
 
     /// <summary>Whether the station should expect audio; see <see cref="SdrConnectClient.SessionLive"/>.</summary>
     public bool SessionLive => _client.SessionLive;
+
+    /// <summary>Seconds of audio taken as SDRconnect's integers wrapping round (see remarks).</summary>
+    public long OverloadedSeconds => Interlocked.Read(ref _overloadedSeconds);
 
     /// <summary>Samples dropped because nothing drained the buffer in time.</summary>
     public long DroppedSamples => Interlocked.Read(ref _dropped);
@@ -241,6 +264,7 @@ public sealed class SdrConnectAudioInput : IAudioInput, IReceiverTuner, ISdrConn
     {
         int count = frames.Length / SdrConnectProtocol.FrameBytes;
         SdrConnectProtocol.ConvertLeft(frames, _left);
+        WatchLevel(_left.AsSpan(0, count));
         int produced = _resampler?.Process(_left.AsSpan(0, count), _resampled) ?? count;
         float gain = _channel.Gain;
         if (gain != 1f)
@@ -273,6 +297,52 @@ public sealed class SdrConnectAudioInput : IAudioInput, IReceiverTuner, ISdrConn
             _everDelivered |= keep > 0;
             Monitor.PulseAll(_gate);
         }
+    }
+
+    /// <summary>Counts jumps of more than half the range a second at a time, and says a second
+    /// that wrapped.</summary>
+    private void WatchLevel(ReadOnlySpan<float> left)
+    {
+        int jumps = 0;
+        float last = _lastLeft;
+        foreach (float sample in left)
+        {
+            float step = sample - last;
+            if (step > 1f || step < -1f)
+            {
+                jumps++;
+            }
+
+            last = sample;
+        }
+
+        _lastLeft = last;
+        _jumps += jumps;
+        _windowFrames += left.Length;
+        if (_windowFrames < SdrConnectProtocol.AudioRate)
+        {
+            return;
+        }
+
+        if (_jumps > _windowFrames * OverloadShare)
+        {
+            Interlocked.Increment(ref _overloadedSeconds);
+            if (_quietWindows <= 0)
+            {
+                _journal?.Invoke("sdrconnect: SDRconnect's audio is overflowing (its samples wrap round, which "
+                    + "sounds like loud noise) and will not decode. Turn the radio's gain down (a higher "
+                    + "\"lnaState\"), or use \"mode\": \"iq\", which SDRconnect's audio settings do not touch");
+                _quietWindows = OverloadLineSeconds;
+            }
+        }
+
+        if (_quietWindows > 0)
+        {
+            _quietWindows--;
+        }
+
+        _jumps = 0;
+        _windowFrames = 0;
     }
 
     /// <inheritdoc />
