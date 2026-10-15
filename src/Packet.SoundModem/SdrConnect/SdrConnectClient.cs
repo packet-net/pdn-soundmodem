@@ -571,7 +571,7 @@ internal sealed class SdrConnectClient : IDisposable
             int? max = Whole(report, SdrConnectProtocol.Properties.LnaStateMax);
             if ((min is int low && lna < low) || (max is int high && lna > high))
             {
-                Say($"sdrconnect: \"lnaState\" {lna} is outside the {min}-{max} this radio offers; leaving SDRconnect's gain as it is");
+                Say($"sdrconnect: an LNA state of {lna} is outside the {min}-{max} this radio offers; leaving SDRconnect's gain as it is");
             }
             else
             {
@@ -1268,6 +1268,15 @@ internal sealed class SdrConnectClient : IDisposable
     }
 
     /// <summary>
+    /// What the journal is told when the stream falls short of its rate: the embedder's advice
+    /// (<see cref="SdrConnectOptions.ShortfallAdvice"/>) or, without it, only what holds for any
+    /// embedder. No setting of anyone's is named here.
+    /// </summary>
+    internal static string ShortfallLine(SdrConnectEndpoint endpoint, double measured, int rate, string? advice) =>
+        string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"sdrconnect: {endpoint} is delivering about {measured:F0} samples a second, not the {rate} it should. Frames are being lost on the way: the network link, or this machine, cannot keep up. {advice ?? "A wired link is best."} The missing time is marked as gaps.");
+
+    /// <summary>
     /// The stream against the wall clock. While the rate watch has it short of its rate, the
     /// shortfall is counted as lost, a tenth of a second at a time, netted against the bursts a
     /// network delivers late frames in, so jitter alone counts nothing.
@@ -1283,14 +1292,7 @@ internal sealed class SdrConnectClient : IDisposable
         switch (_rateWatch.Observe(count, now, readerBehind: false))
         {
             case IqRateVerdict.WentOff:
-                Say($"sdrconnect: {_endpoint} is delivering about {_rateWatch.LastMeasuredRate:F0} samples a second, "
-                    + $"not the {rate} it should. Frames are being lost on the way: the network link, or this "
-                    + "machine, cannot keep up. "
-                    + (_options.Stream == SdrConnectStream.Iq
-                        ? "A lower \"sdrconnect\".\"sampleRate\" (250000 is the default) or \"mode\": \"audio\" "
-                            + "needs less of the link; a wired one is best."
-                        : "Check the link between this machine and SDRconnect.")
-                    + " The missing time is marked as gaps.");
+                Say(ShortfallLine(_endpoint, _rateWatch.LastMeasuredRate, rate, _options.ShortfallAdvice));
                 break;
             case IqRateVerdict.CameBack:
                 Say($"sdrconnect: {_endpoint} is delivering at {rate} samples a second again");

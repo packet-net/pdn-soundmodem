@@ -184,6 +184,9 @@ internal sealed class SdrConnectStationDevice(
             DeviceSerial = config?.DeviceSerial,
             DeviceName = config?.DeviceName,
             NoDataTimeout = TimeSpan.FromSeconds(config?.NoDataSeconds ?? 5),
+            ShortfallAdvice = IsAudio(config)
+                ? "Check the link between this machine and SDRconnect; a wired one is best."
+                : "A lower \"sdrconnect\".\"sampleRate\" (250000 is the default) needs less of the link; a wired one is best.",
             Journal = journal.ErrorSink,
         };
 

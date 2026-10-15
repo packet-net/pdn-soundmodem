@@ -64,8 +64,6 @@ public sealed class IqReceiverChannel : IAudioInput, IReceiverTuner
     private double _phaseIncrement;
     private float[] _mixed = [];
     private float[] _channel = [];
-    private double[] _i = [];
-    private double[] _q = [];
     private float[] _fmAudio = [];
     private float[] _audio = [];
     private float[] _flush = [];
@@ -434,13 +432,7 @@ public sealed class IqReceiverChannel : IAudioInput, IReceiverTuner
         }
         else
         {
-            for (int k = 0; k < channelFrames; k++)
-            {
-                _i[k] = channel[2 * k];
-                _q[k] = channel[(2 * k) + 1];
-            }
-
-            produced = _ssb!.Process(_i.AsSpan(0, channelFrames), _q.AsSpan(0, channelFrames), _audio);
+            produced = _ssb!.Process(channel, _audio);
         }
 
         float gain = _spec.Gain;
@@ -538,8 +530,6 @@ public sealed class IqReceiverChannel : IAudioInput, IReceiverTuner
         else
         {
             _ssb = NewSsb();
-            _i = new double[channelFrames];
-            _q = new double[channelFrames];
             _audio = new float[_ssb.MaxOutputFor(channelFrames) + 1];
             _flush = new float[_ssb.MaxFlushOutput];
         }
