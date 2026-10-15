@@ -10,8 +10,10 @@ public enum SdrConnectFailure
     /// running, its WebSocket server is switched off, or a firewall rejected the connection.</summary>
     Refused,
 
-    /// <summary>Nothing answered in time: the machine is off or unreachable, or a firewall dropped
-    /// the connection (Windows does for SDRconnect on a Public network).</summary>
+    /// <summary>Nothing answered in time: SDRconnect is not running on a Windows machine with its
+    /// firewall on (Windows drops a connection to a port nothing holds rather than refusing it),
+    /// the machine is off or unreachable, or a firewall dropped the connection (Windows does for
+    /// SDRconnect on a Public network).</summary>
     NoAnswer,
 
     /// <summary>The host name does not resolve.</summary>

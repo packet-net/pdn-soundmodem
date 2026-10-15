@@ -480,6 +480,21 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         source.Read(new float[2]).Should().Be(0, "a source that has given up stays closed");
     }
 
+    [Fact]
+    public void A_Short_Stream_Is_Said_Without_Naming_Anyones_Settings_Unless_The_Embedder_Gives_Its_Own()
+    {
+        var endpoint = new SdrConnectEndpoint("192.168.40.61", 5454);
+
+        string plain = SdrConnectClient.ShortfallLine(endpoint, 223_520, 250_000, advice: null);
+        string own = SdrConnectClient.ShortfallLine(endpoint, 223_520, 250_000, "Use a cable.");
+
+        plain.Should().Be("sdrconnect: 192.168.40.61:5454 is delivering about 223520 samples a second, not the 250000 it should. "
+            + "Frames are being lost on the way: the network link, or this machine, cannot keep up. "
+            + "A wired link is best. The missing time is marked as gaps.");
+        plain.Should().NotContain("\"", "a library cannot know what settings its embedder has, so it names none");
+        own.Should().Contain("cannot keep up. Use a cable. The missing time");
+    }
+
     public void Dispose()
     {
         foreach (IDisposable owned in _owned)

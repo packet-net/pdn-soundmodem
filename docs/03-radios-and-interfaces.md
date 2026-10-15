@@ -262,7 +262,7 @@ On the PC with the radio:
 - SDRconnect has to be running, with the radio selected and started. SDRconnect supports every RSP except the original RSP1 (the RSP1A and later are fine).
 - Turn on SDRconnect's WebSocket server: **Other Actions -> Preferences -> WebSocket Server**, switch on. It is off out of the box, and nothing can connect until it is on. Leave its port at 5454.
 - Run one copy of SDRconnect. A second copy started by accident holds its own ports and only confuses things.
-- The station connects to port 5454 on that PC, so the PC's firewall has to let it in. SDRconnect's own Windows firewall rule allows it on a network Windows calls Private and blocks it on one it calls Public. Set your home network to Private in Windows' network settings, or add an inbound rule allowing TCP port 5454.
+- The station connects to port 5454 on that PC, so the PC's firewall has to let it in. SDRconnect's own Windows firewall rule allows it on a network Windows calls Private and blocks it on one it calls Public. Set your home network to Private in Windows' network settings. An inbound rule allowing TCP port 5454 does not help on a Public network, because in Windows a block rule wins over any allow rule; if the network has to stay Public, change SDRconnect's own rule for the Public profile from Block to Allow under Inbound Rules in Windows Defender Firewall's advanced settings. With the firewall on, Windows gives no answer at all when SDRconnect is not running, so a station that cannot reach a PC it reached before is usually looking at SDRconnect closed.
 
 Pick the stream with `"sdrconnect"."mode"`:
 

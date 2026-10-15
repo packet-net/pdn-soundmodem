@@ -99,6 +99,14 @@ public sealed record SdrConnectOptions
     /// to see samples SDRconnect or the link did not deliver: its frames carry no counter.</summary>
     public bool WatchRate { get; init; } = true;
 
+    /// <summary>
+    /// What the journal line says to do when the rate watch finds the stream short of its rate,
+    /// in the embedder's own words (the settings it has that need less of the link, say), or null
+    /// for the library's: a wired link. The library cannot know what its embedder lets a user
+    /// change, so it names none of those itself.
+    /// </summary>
+    public string? ShortfallAdvice { get; init; }
+
     /// <summary>The rate watch's window.</summary>
     public TimeSpan RateWindow { get; init; } = TimeSpan.FromSeconds(5);
 
