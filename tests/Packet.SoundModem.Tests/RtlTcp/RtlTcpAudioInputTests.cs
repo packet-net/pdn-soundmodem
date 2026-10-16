@@ -32,7 +32,15 @@ public sealed class RtlTcpAudioInputTests
         using var server = new FakeRtlTcpServer();
         using RtlTcpAudioInput input = await RtlTcpAudioInput.OpenAsync(
             server.Endpoint,
-            new RtlTcpSourceOptions { CentreFrequencyHz = 0, SampleRate = Rate, Journal = _journal.Enqueue, WatchProfile = false },
+            new RtlTcpSourceOptions
+            {
+                CentreFrequencyHz = 0,
+                SampleRate = Rate,
+                Journal = _journal.Enqueue,
+                WatchProfile = false,
+                ConnectTimeout = FakeRtlTcpServer.HangGuard,
+                NoDataTimeout = FakeRtlTcpServer.HangGuard,
+            },
             IqChannelSpec.ForFmMode(mode, 0),
             new IqReceiverOptions { DspRate = sim.Rate, Journal = _journal.Enqueue },
             DialHz,
@@ -112,6 +120,8 @@ public sealed class RtlTcpAudioInputTests
                 SampleRate = Rate,
                 Journal = _journal.Enqueue,
                 WatchProfile = false,
+                ConnectTimeout = FakeRtlTcpServer.HangGuard,
+                NoDataTimeout = FakeRtlTcpServer.HangGuard,
             },
             IqChannelSpec.ForFmMode("afsk1200", 0),
             new IqReceiverOptions { DspRate = 12_000, Journal = _journal.Enqueue, CoverageHz = coverageHz },

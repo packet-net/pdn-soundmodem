@@ -13,8 +13,17 @@ public sealed class RtlTcpIqSourceTests
 {
     private const int Rate = 250_000;
 
+    private static readonly TimeSpan HangGuard = FakeRtlTcpServer.HangGuard;
+
     private readonly ConcurrentQueue<string> _journal = new();
 
+    // The source's connect and no-data timeouts are on the machine's own clock (the kernel's,
+    // for the no-data one), and a test run whose thread pool is taken by other tests' work can
+    // go past the defaults (10 s and 5 s) with the fake server only waiting to be scheduled
+    // (#712): a connect then fails with "accepted the connection and then sent nothing", or a
+    // reader waiting for the test's next send drops and reconnects, and on a fake clock nobody
+    // advances it then waits for its reconnect delay for ever. So both are hang guards here, and
+    // the tests that are about one of them set it themselves.
     private RtlTcpSourceOptions Controlled(double centreHz = 144_775_000) => new()
     {
         CentreFrequencyHz = centreHz,
@@ -24,6 +33,8 @@ public sealed class RtlTcpIqSourceTests
         RetuneSettle = TimeSpan.FromMilliseconds(1),
         RetuneDiscardFloorBytes = 0,
         WatchProfile = false,
+        ConnectTimeout = HangGuard,
+        NoDataTimeout = HangGuard,
         Journal = _journal.Enqueue,
     };
 
@@ -33,6 +44,8 @@ public sealed class RtlTcpIqSourceTests
         CentreFrequencyHz = 144_775_000,
         SampleRate = Rate,
         WatchProfile = false,
+        ConnectTimeout = HangGuard,
+        NoDataTimeout = HangGuard,
         Journal = _journal.Enqueue,
     };
 
@@ -266,6 +279,10 @@ public sealed class RtlTcpIqSourceTests
         server.Send(Ramp(100));
         ReadAtLeast(source, 100);
 
+        // The silence is the source's to notice, on the kernel's clock, and the
+        // reconnect after it takes a few thread pool hops on both sides: a loaded runner once took
+        // longer than the 10 s this used to allow (#712), so the wait is woken by the accept and
+        // bounded only by the hang guard. A stall only makes the silence longer, never shorter.
         Task<float[]> after = Task.Run(() => ReadAtLeast(source, 100));
         server.WaitForConnections(2);
         server.Send(Ramp(100));
@@ -285,7 +302,6 @@ public sealed class RtlTcpIqSourceTests
             ReconnectDelay = TimeSpan.FromMilliseconds(20),
             ReconnectDelayCap = TimeSpan.FromMilliseconds(50),
             GiveUpAfter = TimeSpan.FromMilliseconds(500),
-            ConnectTimeout = TimeSpan.FromMilliseconds(200),
         });
         var lost = new ConcurrentQueue<string>();
         source.Lost += lost.Enqueue;
@@ -295,7 +311,7 @@ public sealed class RtlTcpIqSourceTests
         ReadAtLeast(source, 10);
 
         server.Stop();
-        int got = await Task.Run(() => source.Read(new float[64])).WaitAsync(TimeSpan.FromSeconds(20));
+        int got = await Task.Run(() => source.Read(new float[64])).WaitAsync(HangGuard);
 
         got.Should().Be(0, "a source that has given up is closing");
         lost.Should().ContainSingle().Which.Should().Contain("delivered nothing").And.Contain("Connection refused");
@@ -323,7 +339,7 @@ public sealed class RtlTcpIqSourceTests
         // From now on every connection is taken, given a header, and closed at once.
         server.CloseOnAccept = true;
         server.DropClient();
-        int got = await Task.Run(() => source.Read(new float[64])).WaitAsync(TimeSpan.FromSeconds(20));
+        int got = await Task.Run(() => source.Read(new float[64])).WaitAsync(HangGuard);
 
         got.Should().Be(0);
         lost.Should().ContainSingle().Which.Should().Contain("delivered nothing");
@@ -350,10 +366,10 @@ public sealed class RtlTcpIqSourceTests
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
         source.Dispose();
-        int got = await reading.WaitAsync(TimeSpan.FromSeconds(10));
+        int got = await reading.WaitAsync(HangGuard);
 
         got.Should().Be(0);
-        clock.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5));
+        clock.Elapsed.Should().BeLessThan(HangGuard, "the dispose ends the wait, not the five minute connect timeout");
     }
 
     [Fact]
@@ -365,7 +381,7 @@ public sealed class RtlTcpIqSourceTests
         Func<Task> open = () => source.OpenAsync(cancel.Token);
 
         // Cancelled, or refused by a network that says so at once: never the five minutes.
-        await open.Should().ThrowAsync<Exception>().WaitAsync(TimeSpan.FromSeconds(10));
+        await open.Should().ThrowAsync<Exception>().WaitAsync(HangGuard);
     }
 
     [Fact]
@@ -480,7 +496,7 @@ public sealed class RtlTcpIqSourceTests
                 int bytes = 2 * actualRate / 10;
                 server.Send(Ramp(bytes));
                 sent += bytes;
-                SpinWait.SpinUntil(() => source.BytesReceived >= sent, 5000).Should().BeTrue();
+                SpinWait.SpinUntil(() => source.BytesReceived >= sent, HangGuard).Should().BeTrue();
                 clock.Advance(TimeSpan.FromMilliseconds(100));
             }
         }
@@ -497,13 +513,13 @@ public sealed class RtlTcpIqSourceTests
         Stream(5, 100_000);
         source.SessionLive.Should().BeTrue();
         _journal.Should().Contain(l => l.Contains("again", StringComparison.Ordinal));
-        SpinWait.SpinUntil(() => Volatile.Read(ref lastGeneration) == 1, 5000).Should().BeTrue(
+        SpinWait.SpinUntil(() => Volatile.Read(ref lastGeneration) == 1, HangGuard).Should().BeTrue(
             "the first block back is a fresh start");
         Volatile.Read(ref lastLost).Should().BeGreaterThan(0, "what was dropped is reported as lost");
 
         reading.Cancel();
         source.Dispose();
-        await reader.WaitAsync(TimeSpan.FromSeconds(10));
+        await reader.WaitAsync(HangGuard);
     }
 
     [Fact]
@@ -578,7 +594,7 @@ public sealed class RtlTcpIqSourceTests
         streaming.Cancel();
         source.Dispose();
         server.DropClient();
-        await feeder.WaitAsync(TimeSpan.FromSeconds(10));
+        await feeder.WaitAsync(HangGuard);
 
         // Zero, give or take one read, among the reads no collection paused. The runtime retires
         // the unused rest of a thread's allocation context (under 8 KiB) when it suspends the
