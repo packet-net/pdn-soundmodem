@@ -11,6 +11,17 @@ namespace Packet.SoundModem.Tests.RtlTcp;
 /// </summary>
 internal sealed class FakeRtlTcpServer : IDisposable
 {
+    /// <summary>
+    /// The longest a test here waits for something that happens at once over loopback: a
+    /// connection, a command, a byte. Only a hang runs it out, and it is also what the tests give
+    /// the source's own connect and no-data timeouts when those are not what is under test.
+    /// </summary>
+    /// <remarks>The waits were 10 s, polled, and a loaded CI runner went past that (#712): the
+    /// quiet-server test waited 10 s for a reconnect that takes a second and a handful of thread
+    /// pool hops, while the MS110D fade tests had the machine. Nothing waits this long when the
+    /// source is working.</remarks>
+    public static readonly TimeSpan HangGuard = TimeSpan.FromSeconds(60);
+
     private readonly TcpListener _listener;
     private readonly object _gate = new();
     private readonly List<(int Connection, RtlTcpCommand Command, uint Parameter)> _commands = [];
@@ -84,19 +95,32 @@ internal sealed class FakeRtlTcpServer : IDisposable
         DropClient();
     }
 
-    public void WaitForConnections(int count, int timeoutMs = 10_000)
-    {
-        if (!SpinWait.SpinUntil(() => Connections >= count && HasClient(), timeoutMs))
-        {
-            throw new TimeoutException($"waited for connection {count}; have {Connections}");
-        }
-    }
+    /// <summary>Waits until connection <paramref name="count"/> has been taken and is still the
+    /// current client; woken by the accept, not polled, and bounded only by <see cref="HangGuard"/>.</summary>
+    public void WaitForConnections(int count) =>
+        WaitFor(() => _connections >= count && _client is not null, () => $"waited for connection {count}; have {Connections}");
 
-    public void WaitForCommands(int count, int timeoutMs = 10_000)
+    /// <summary>Waits until <paramref name="count"/> commands have arrived, in the same way.</summary>
+    public void WaitForCommands(int count) =>
+        WaitFor(() => _commands.Count >= count, () => $"waited for {count} commands; have {Commands.Count}");
+
+    /// <summary>Waits under the lock for <paramref name="condition"/>, which every change it reads
+    /// pulses.</summary>
+    private void WaitFor(Func<bool> condition, Func<string> failure)
     {
-        if (!SpinWait.SpinUntil(() => Commands.Count >= count, timeoutMs))
+        long giveUp = Environment.TickCount64 + (long)HangGuard.TotalMilliseconds;
+        lock (_gate)
         {
-            throw new TimeoutException($"waited for {count} commands; have {Commands.Count}");
+            while (!condition())
+            {
+                long left = giveUp - Environment.TickCount64;
+                if (left <= 0)
+                {
+                    throw new TimeoutException(failure());
+                }
+
+                System.Threading.Monitor.Wait(_gate, (int)left);
+            }
         }
     }
 
@@ -109,14 +133,6 @@ internal sealed class FakeRtlTcpServer : IDisposable
         }
         catch (AggregateException)
         {
-        }
-    }
-
-    private bool HasClient()
-    {
-        lock (_gate)
-        {
-            return _client is not null;
         }
     }
 
@@ -139,12 +155,27 @@ internal sealed class FakeRtlTcpServer : IDisposable
             {
                 var bytes = new byte[RtlTcpProtocol.HeaderLength];
                 RtlTcpProtocol.WriteHeader(bytes, header);
-                await client.GetStream().WriteAsync(bytes);
+                try
+                {
+                    await client.GetStream().WriteAsync(bytes);
+                }
+                catch (Exception e) when (e is IOException or SocketException or ObjectDisposedException)
+                {
+                    // A client that gave up waiting for this accept and closed its end: rtl_tcp
+                    // would take the next one, and so does this, rather than ending the loop.
+                    client.Dispose();
+                    continue;
+                }
             }
 
             if (CloseOnAccept)
             {
-                Interlocked.Increment(ref _connections);
+                lock (_gate)
+                {
+                    _connections++;
+                    System.Threading.Monitor.PulseAll(_gate);
+                }
+
                 client.Dispose();
                 continue;
             }
@@ -155,6 +186,7 @@ internal sealed class FakeRtlTcpServer : IDisposable
                 _client?.Dispose();
                 _client = client;
                 connection = ++_connections;
+                System.Threading.Monitor.PulseAll(_gate);
             }
 
             _ = Task.Run(() => ReadCommands(client, connection));
@@ -175,6 +207,7 @@ internal sealed class FakeRtlTcpServer : IDisposable
                 lock (_gate)
                 {
                     _commands.Add((connection, command, parameter));
+                    System.Threading.Monitor.PulseAll(_gate);
                 }
             }
         }
