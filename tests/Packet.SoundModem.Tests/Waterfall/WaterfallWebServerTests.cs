@@ -85,6 +85,25 @@ public class WaterfallWebServerTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// A browser pointed at http://localhost:PORT/, or at an SSH tunnel opened with
+    /// <c>-L PORT:localhost:PORT</c>, sends <c>Host: localhost</c>. HttpListener matches its
+    /// prefixes against that header, so a listener registered only as 127.0.0.1 answered it with
+    /// its own 404 page before any route was looked at.
+    /// </summary>
+    [Fact]
+    public async Task The_Page_Answers_A_Request_Addressed_To_Localhost()
+    {
+        LocalhostHost.SkipUnlessItSharesTheLoopbackSocket();
+        using var http = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{_port}/");
+        request.Headers.Host = $"localhost:{_port}";
+
+        using HttpResponseMessage response = await http.SendAsync(request, _cancellation.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    /// <summary>
     /// The page is served with its own version written in, and the config message announces
     /// the same version: that is how a tab left open across an upgrade finds out it is stale.
     /// </summary>
