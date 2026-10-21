@@ -2767,8 +2767,10 @@ function connect() {
 // and nothing waits. rtl_tcp fills a USB buffer for about half a second and then sends the
 // whole of it: sixteen lines in one lump. Drawn on arrival, that half-second of air is one
 // jump and the picture then sits still, so the height of a trace is not how long the signal
-// lasted. Each line is given a due time one display period after the previous, and a late
-// timer paints only the lines whose time has come.
+// lasted. Each line is given a due time one display period after the previous, and a timer
+// paints only the lines whose time has come. The timer looks four times a period: ticking once
+// a period, at its own phase, a line falling due just after a tick waited most of a period and
+// then went out together with the next.
 const spectrumQueue = [];
 const heldFrames = [];
 const heldCaptures = [];
@@ -2791,7 +2793,7 @@ function enqueueSpectrum(data) {
   }
   releaseDueSpectrum();
   if (spectrumClock === null && spectrumQueue.length) {
-    spectrumClock = setInterval(releaseDueSpectrum, period);
+    spectrumClock = setInterval(releaseDueSpectrum, period / 4);
   }
 }
 
