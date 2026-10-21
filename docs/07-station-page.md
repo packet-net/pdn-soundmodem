@@ -20,7 +20,7 @@ The journal says where it is when the modem starts.
 waterfall: http://127.0.0.1:8107/
 ```
 
-Open that in a browser on the same machine. Every key is in [`waterfall`](reference/config.md#waterfall); `--waterfall PORT` does the same job from the command line, and `--dial HZ` presets the dial ([station flags](reference/command-line.md#station-flags)).
+Open that in a browser on the same machine. `http://localhost:8107/` works too, and so does an SSH tunnel opened with `-L 8107:localhost:8107`, wherever `localhost` resolves to `127.0.0.1` first. On Linux, a machine that resolves it to `::1` first answers `localhost` with a bare `Not Found` page, so use the address the journal prints. Every key is in [`waterfall`](reference/config.md#waterfall); `--waterfall PORT` does the same job from the command line, and `--dial HZ` presets the dial ([station flags](reference/command-line.md#station-flags)).
 
 ## The header, left to right
 
