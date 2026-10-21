@@ -447,13 +447,32 @@ run(`logFrame({sub:0, mode:"afsk300-multi11", from:"KK4HEJ", to:"IDENT", lenByte
 // Our own transmission, through the dispatch the socket handler uses - the point is what the
 // page does with the event, not what the two drawing functions do when called by hand. Driven
 // against a received frame through the same entry point, so "listed but not tagged" is measured
-// rather than assumed.
+// rather than assumed. A heard frame is tagged once its line has been drawn, so line 0 goes
+// through the socket handler first, as the server sends it.
+run(`globalThis.__line = i => {
+  const b = new Uint8Array(5 + cfg.lineLength); b[0] = 0x01;
+  new DataView(b.buffer).setUint32(1, i, true);
+  ws.onmessage({ data: b.buffer });
+}`);
+run(`__line(0)`);
 const beforeHeard = sandbox.__text().length;
 run(`onFrameEvent({sub:0, mode:"afsk1200", from:"GB7RDG", to:"M0LTE", line:0, burstLines:9, lenBytes:31, snrDb:9.5})`);
 const heardTag = sandbox.__text().slice(beforeHeard);
 const beforeTx = sandbox.__text().length;
 run(`onFrameEvent({sub:0, mode:"afsk1200", from:"M0LTE-9", to:"GB7RDG", line:0, lenBytes:24, tx:true})`);
 const txTag = sandbox.__text().slice(beforeTx);
+
+// A feed that arrives in lumps (rtl_tcp sends about half a second of lines at once) is drawn at
+// the display rate, not all on arrival. A frame whose line is still in the queue is not tagged
+// until that line is drawn, or its callsign would sit at the top of the lump.
+const beforeLump = sandbox.__text().length;
+run(`for (let i = 1; i <= 16; i++) __line(i)`);
+run(`onFrameEvent({sub:0, mode:"afsk1200", from:"G4LMP", to:"M0LTE", line:16, burstLines:9, lenBytes:31, snrDb:11.0})`);
+const lumpDrawnOnArrival = run(`lastLine`);
+const lumpTagOnArrival = sandbox.__text().slice(beforeLump);
+await untilTrue(() => run(`lastLine`) === 16, 5000);
+const lumpDrawnLater = run(`lastLine`);
+const lumpTagLater = sandbox.__text().slice(beforeLump);
 
 // A frame read as plain IL2P on a link that runs IL2P+CRC: nothing but Reed-Solomon behind it,
 // and by default not passed to the host. Driven twice - withheld and, on a modem told to accept
@@ -951,6 +970,10 @@ process.stdout.write(JSON.stringify({
   identTag,
   heardTag,
   txTag,
+  lumpDrawnOnArrival,
+  lumpTagOnArrival,
+  lumpDrawnLater,
+  lumpTagLater,
   frameRows: rows,
   frameRowClasses: rowClasses,
   captureTag,

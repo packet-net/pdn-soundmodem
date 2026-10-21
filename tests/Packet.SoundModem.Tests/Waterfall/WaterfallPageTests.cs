@@ -375,6 +375,44 @@ public class WaterfallPageTests
     }
 
     /// <summary>
+    /// Spectrum lines that arrive in a lump are drawn at the display rate, and a frame's tag waits
+    /// for its own line to be drawn.
+    /// </summary>
+    /// <remarks>
+    /// rtl_tcp fills a USB buffer for about half a second and sends it whole, so the page gets
+    /// sixteen lines at once. Drawn on arrival, the picture jumps half a second and sits still.
+    /// Driven through the socket handler with sixteen lines in one go: only the first is due at
+    /// once, and the rest follow over the next half second. The frame heard on the last of them
+    /// is tagged only when that line has been drawn.
+    /// </remarks>
+    [Fact]
+    public async Task A_Lump_Of_Lines_Is_Drawn_At_The_Display_Rate_And_Its_Tag_Waits_For_Its_Line()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw while pacing lines");
+        probe.Connected.Should().BeTrue("the page needs the config before it can draw a line");
+
+        // 0 or 1: line 1 is due a display period after line 0, which may not have passed yet.
+        probe.LumpDrawnOnArrival.Should().BeLessThanOrEqualTo(1, "at most the first line of a lump is due on arrival");
+        // Each line drawn also redraws the spectrum's own labels, so only the tag's text is counted.
+        probe.LumpTagOnArrival.Where(text => text.Contains("G4LMP"))
+            .Should().BeEmpty("the frame's line has not been drawn yet");
+        probe.LumpDrawnLater.Should().Be(16, "the rest of the lump is drawn as each falls due");
+        probe.LumpTagLater.Where(text => text.Contains("G4LMP"))
+            .Should().HaveCount(2, "the tag is written twice, either side of the scroll ring's wrap seam");
+    }
+
+    /// <summary>
     /// The panel opens on the station's logged frames: listed, dimmed apart from live traffic,
     /// never tagged onto the waterfall, and stamped with when they were heard.
     /// </summary>
@@ -2444,6 +2482,10 @@ public class WaterfallPageTests
         string[] IdentTag,
         string[] HeardTag,
         string[] TxTag,
+        int LumpDrawnOnArrival,
+        string[] LumpTagOnArrival,
+        int LumpDrawnLater,
+        string[] LumpTagLater,
         string[] FrameRows,
         string[] FrameRowClasses,
         string[] CaptureTag,

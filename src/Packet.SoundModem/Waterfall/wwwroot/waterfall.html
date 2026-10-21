@@ -727,6 +727,7 @@ function checkPageVersion(served) {
 
 let cfg = null;              // {sampleRate, binWidthHz, lineLength, linesPerSecond, dialHz, sideband, modems[]}
 let lastLine = -1;           // index of the newest drawn line
+let receivedLine = -1;       // index of the newest line the server has sent, drawn or not
 let lastBins = null;         // newest raw line (Uint8Array)
 let smooth = null;           // smoothed spectrum (Float32Array, dB)
 let peaks = null;            // decaying peak-hold (Float32Array, dB)
@@ -1961,11 +1962,12 @@ function esc(text) {
   return String(text).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 }
 
-// Ours is listed but not tagged: the burst it belongs to is painted from a queue in real time
-// while the event arrives as soon as the audio device took the audio, so a tag would land
-// somewhere up the burst rather than on it. Everything heard gets both.
+// Ours is listed but not tagged. The picture of a transmission is released in real time while
+// the event arrives as soon as the audio device took it, so a tag would land somewhere up the
+// burst rather than on it. A heard frame is tagged, but only once its line has been drawn:
+// a feed that arrives in lumps would otherwise stamp the callsign on the top of the lump.
 function onFrameEvent(ev) {
-  if (!ev.tx) tagFrame(ev);
+  if (!ev.tx) holdFrameTag(ev);
   logFrame(ev);
 }
 
@@ -1985,8 +1987,10 @@ function onHistory(msg) {
 // with a link to the audio. Placed by age rather than line index: the survey runs its own
 // spectrum feed so it works with nobody watching, and its line clock is not this one's.
 function onCapture(ev) {
-  const rowsAgo = Math.max(0, Math.round(ev.secondsAgo * (cfg ? cfg.linesPerSecond : 30)));
-  tagCapture(ev, rowsAgo);
+  // The survey's clock is not the waterfall's. Remember which received line was the newest
+  // when this arrived, and place the tag against that once it has been drawn.
+  ev.atLine = receivedLine;
+  holdCapture(ev);
   logCapture(ev);
 }
 
@@ -2669,6 +2673,9 @@ function connect() {
   ws.binaryType = "arraybuffer";
   ws.onopen = () => {
     $("conn").textContent = "live"; $("conn").className = "live";
+    // A restarted daemon counts its lines from 0 again, so what the last socket left queued or
+    // skipped would hold back or drop every tag on this one.
+    resetSpectrumPacing();
     // A reconnect starts with audio off server-side; ask again if the operator had it on.
     if (audioOn()) { requestAudio(true); }
     // A detached links window has no waterfall to paint, so it asks not to be sent one - and
@@ -2751,26 +2758,120 @@ function connect() {
     if (bytes[0] === 0x02) { playAudio(e.data); return; }
     // 0x01 heard, 0x03 our own transmission.
     if ((bytes[0] !== 0x01 && bytes[0] !== 0x03) || !cfg) return;
-    lineIsTx = bytes[0] === 0x03;
-    if (lineIsTx) lastTxAt = performance.now();
-    lastLine = new DataView(e.data).getUint32(1, true);
-    const bins = bytes.subarray(5);
-    lastBins = bins;
-    lastLineAt = performance.now();
-    fpsCount++;
-    const n = cfg.lineLength;
-    if (!smooth || smooth.length !== n) {
-      smooth = new Float32Array(n); peaks = new Float32Array(n);
-      for (let b = 0; b < n; b++) smooth[b] = peaks[b] = byteToDb(bins[b]);
-    }
-    for (let b = 0; b < n; b++) {
-      const db = byteToDb(bins[b]);
-      smooth[b] += (db - smooth[b]) * 0.35;
-      peaks[b] = db > peaks[b] ? db : peaks[b] - 0.15;
-    }
-    drawWaterfallLine(bins);
-    drawSpectrum();
+    enqueueSpectrum(e.data);
   };
+}
+
+// Spectrum lines are drawn at the display rate, not at the rate the socket delivers them.
+// A sound card already sends one line per thirtieth of a second, so each is due immediately
+// and nothing waits. rtl_tcp fills a USB buffer for about half a second and then sends the
+// whole of it: sixteen lines in one lump. Drawn on arrival, that half-second of air is one
+// jump and the picture then sits still, so the height of a trace is not how long the signal
+// lasted. Each line is given a due time one display period after the previous, and a timer
+// paints only the lines whose time has come. The timer looks four times a period: ticking once
+// a period, at its own phase, a line falling due just after a tick waited most of a period and
+// then went out together with the next.
+const spectrumQueue = [];
+const heldFrames = [];
+const heldCaptures = [];
+let spectrumClock = null;
+let nextSpectrumDue = 0;
+let skippedThrough = -1;
+
+function enqueueSpectrum(data) {
+  const index = new DataView(data).getUint32(1, true);
+  if (index > receivedLine) receivedLine = index;
+  const period = 1000 / (cfg.linesPerSecond || 30);
+  const now = performance.now();
+  if (nextSpectrumDue < now) nextSpectrumDue = now;
+  spectrumQueue.push({ data, due: nextSpectrumDue, index });
+  nextSpectrumDue += period;
+  const cap = (cfg.linesPerSecond || 30) * 2;
+  while (spectrumQueue.length > cap) {
+    const dropped = spectrumQueue.shift();
+    if (dropped.index > skippedThrough) skippedThrough = dropped.index;
+  }
+  releaseDueSpectrum();
+  if (spectrumClock === null && spectrumQueue.length) {
+    spectrumClock = setInterval(releaseDueSpectrum, period / 4);
+  }
+}
+
+function releaseDueSpectrum() {
+  const now = performance.now();
+  while (spectrumQueue.length && spectrumQueue[0].due <= now) {
+    paintSpectrum(spectrumQueue.shift());
+  }
+  releaseHeldMarks();
+  if (!spectrumQueue.length && spectrumClock !== null) {
+    clearInterval(spectrumClock);
+    spectrumClock = null;
+  }
+}
+
+function paintSpectrum(item) {
+  const bytes = new Uint8Array(item.data);
+  lineIsTx = bytes[0] === 0x03;
+  if (lineIsTx) lastTxAt = performance.now();
+  lastLine = item.index;
+  const bins = bytes.subarray(5);
+  lastBins = bins;
+  lastLineAt = performance.now();
+  fpsCount++;
+  const n = cfg.lineLength;
+  if (!smooth || smooth.length !== n) {
+    smooth = new Float32Array(n); peaks = new Float32Array(n);
+    for (let b = 0; b < n; b++) smooth[b] = peaks[b] = byteToDb(bins[b]);
+  }
+  for (let b = 0; b < n; b++) {
+    const db = byteToDb(bins[b]);
+    smooth[b] += (db - smooth[b]) * 0.35;
+    peaks[b] = db > peaks[b] ? db : peaks[b] - 0.15;
+  }
+  drawWaterfallLine(bins);
+  drawSpectrum();
+}
+
+function resetSpectrumPacing() {
+  if (spectrumClock !== null) { clearInterval(spectrumClock); spectrumClock = null; }
+  spectrumQueue.length = 0;
+  heldFrames.length = 0;
+  heldCaptures.length = 0;
+  nextSpectrumDue = 0;
+  skippedThrough = -1;
+  receivedLine = -1;
+  lastLine = -1;
+}
+
+function holdFrameTag(ev) {
+  if (ev.line <= skippedThrough) return;
+  if (lastLine >= ev.line) tagFrame(ev);
+  else heldFrames.push(ev);
+}
+
+function holdCapture(ev) {
+  const lps = cfg ? cfg.linesPerSecond : 30;
+  const rows = Math.round((ev.secondsAgo || 0) * lps) - (ev.atLine - lastLine);
+  if (ev.atLine < 0 || rows >= 0) tagCapture(ev, Math.max(0, rows));
+  else heldCaptures.push(ev);
+}
+
+function releaseHeldMarks() {
+  for (let i = heldFrames.length - 1; i >= 0; i--) {
+    const ev = heldFrames[i];
+    if (ev.line <= skippedThrough) { heldFrames.splice(i, 1); continue; }
+    if (lastLine < ev.line) continue;
+    heldFrames.splice(i, 1);
+    tagFrame(ev);
+  }
+  const lps = cfg ? cfg.linesPerSecond : 30;
+  for (let i = heldCaptures.length - 1; i >= 0; i--) {
+    const ev = heldCaptures[i];
+    const rows = Math.round((ev.secondsAgo || 0) * lps) - (ev.atLine - lastLine);
+    if (rows < 0) continue;
+    heldCaptures.splice(i, 1);
+    tagCapture(ev, rows);
+  }
 }
 connect();
 
