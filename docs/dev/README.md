@@ -24,7 +24,7 @@ Every file here opens, under its H1, with a status line: whether it is current, 
 | [archive/documentation-plan.md](archive/documentation-plan.md) | The plan for the 2026-09 documentation rewrite, finished and archived. |
 | [bench/](bench/) | Bench rigs and benchmarks: the NinoTNC cable loop, the QtSoundModem virtual-cable loop, sm-tnctest against the WA8LMF TNC Test CD, and the ARDOP on-air acceptance procedure. |
 | [hardware/](hardware/) | Hardware notes: the TM8100 to CM108 and FT-450D to CM108 interface reasoning, the CM108 widget netlist, and the TM8100 internal USB board. The wiring guides themselves are user documents at [docs/hardware/tait-tm8100-cm108.md](../hardware/tait-tm8100-cm108.md) and [docs/hardware/yaesu-ft450d-cm108.md](../hardware/yaesu-ft450d-cm108.md). |
-| [ms110d/](ms110d/) | MIL-STD-188-110D Appendix D: the transcribed interop tables and their README, the waveform design, and the standard itself under spec/. |
+| [ms110d/](ms110d/) | MIL-STD-188-110D Appendix D: [each waveform's parameters](ms110d/waveforms.md) with page references, the transcribed interop tables and their README, the waveform design, and the standard itself under spec/. |
 | [ofdm-fm/](ofdm-fm/) | OFDM-FM design notes: the shipped preset set, how the 8 kHz preset was measured on air, the receive-path findings including what was reverted, and the geometry-signalling work. Carrier sense moved out to [carrier-sense.md](carrier-sense.md), because it turned out not to be about this mode family at all. |
 | [refs/](refs/) | Verbatim transcriptions of other people's specifications. Never edited. |
 | [plans/](plans/) | Plans for work not started: 2G ALE. |
