@@ -11,6 +11,7 @@ Spec references give the standard's own page number, then the page of the [PDF i
 | Symbol rate | 2400 symbols/s | [Table D-I](spec/MIL-STD-188-110D.pdf#page=148), p.143 (PDF 148) |
 | Centre (sub-carrier) | 1800 Hz audio | [Table D-I](spec/MIL-STD-188-110D.pdf#page=148), p.143 (PDF 148) |
 | Pulse shape | Root raised cosine, roll-off 0.35 (the standard recommends it rather than requiring it), so 3240 Hz edge to edge (180 to 3420 Hz audio) | [D.5.1.5](spec/MIL-STD-188-110D.pdf#page=167), p.162 (PDF 167) |
+| Occupied bandwidth | 2.80 kHz holds 99% of the power (400 to 3200 Hz audio), the same for every waveform. Worked out from pdn-soundmodem's transmit filter; the standard's ideal filter gives the same. Width 26 dB down: 3.20 kHz | Definition in [section 3](spec/MIL-STD-188-110D.pdf#page=10), p.5 (PDF 10); Appendix D sets no limit of its own |
 | Frame | A block of data symbols, then a mini-probe of known symbols (none on WN0) | [D.5.2 and Figure D-7](spec/MIL-STD-188-110D.pdf#page=168), p.163 (PDF 168) |
 | Data scrambler | x^9 + x^4 + 1, restarted every data block | [D.5.1.3](spec/MIL-STD-188-110D.pdf#page=165), p.160 (PDF 165) |
 | Preamble | Optional TLC section, then M super-frames of 18 Walsh symbols, 32 chips each (240 ms per super-frame) | [D.5.2.1 and Figure D-8](spec/MIL-STD-188-110D.pdf#page=170), pp.165 to 170 (PDF 170 to 175); [Table D-XIII](spec/MIL-STD-188-110D.pdf#page=170), p.165 (PDF 170) |
