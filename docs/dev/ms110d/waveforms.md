@@ -10,10 +10,10 @@ Spec references give the standard's own page number, then the page of the [PDF i
 |---|---|---|
 | Symbol rate | 2400 symbols/s | [Table D-I](spec/MIL-STD-188-110D.pdf#page=148), p.143 (PDF 148) |
 | Centre (sub-carrier) | 1800 Hz audio | [Table D-I](spec/MIL-STD-188-110D.pdf#page=148), p.143 (PDF 148) |
-| Pulse shape | Root raised cosine, roll-off 0.35, so 3240 Hz edge to edge (180 to 3420 Hz audio) | [D.5.1.5](spec/MIL-STD-188-110D.pdf#page=167), p.162 (PDF 167) |
-| Frame | A block of data symbols, then a mini-probe of known symbols (none on WN0) | [Figure D-7](spec/MIL-STD-188-110D.pdf#page=167), p.162 (PDF 167); [D.5.2](spec/MIL-STD-188-110D.pdf#page=168), p.163 (PDF 168) |
+| Pulse shape | Root raised cosine, roll-off 0.35 (the standard recommends it rather than requiring it), so 3240 Hz edge to edge (180 to 3420 Hz audio) | [D.5.1.5](spec/MIL-STD-188-110D.pdf#page=167), p.162 (PDF 167) |
+| Frame | A block of data symbols, then a mini-probe of known symbols (none on WN0) | [D.5.2 and Figure D-7](spec/MIL-STD-188-110D.pdf#page=168), p.163 (PDF 168) |
 | Data scrambler | x^9 + x^4 + 1, restarted every data block | [D.5.1.3](spec/MIL-STD-188-110D.pdf#page=165), p.160 (PDF 165) |
-| Preamble | Optional TLC section, then M super-frames of 18 Walsh symbols, 32 chips each (240 ms per super-frame) | [Figure D-8](spec/MIL-STD-188-110D.pdf#page=169), p.164 (PDF 169), and D.5.2.1 around it to p.170; [Table D-XIII](spec/MIL-STD-188-110D.pdf#page=170), p.165 (PDF 170) |
+| Preamble | Optional TLC section, then M super-frames of 18 Walsh symbols, 32 chips each (240 ms per super-frame) | [D.5.2.1 and Figure D-8](spec/MIL-STD-188-110D.pdf#page=170), pp.165 to 170 (PDF 170 to 175); [Table D-XIII](spec/MIL-STD-188-110D.pdf#page=170), p.165 (PDF 170) |
 | Waveform ID in the preamble | Waveform number, interleaver and constraint length, so a receiver sets itself up from the preamble (autobaud) | [Tables D-XV, D-XVI](spec/MIL-STD-188-110D.pdf#page=173), p.168 (PDF 173); [D-XVII](spec/MIL-STD-188-110D.pdf#page=174), p.169 (PDF 174) |
 | Convolutional code | Rate 1/2 mother code, K=7 or K=9, punctured or repeated to the waveform's rate | [D.5.3.2](spec/MIL-STD-188-110D.pdf#page=222), p.217 (PDF 222); [Figures D-9, D-10](spec/MIL-STD-188-110D.pdf#page=224), pp.219 to 220 (PDF 224 to 225); [Table D-L](spec/MIL-STD-188-110D.pdf#page=227), p.222 (PDF 227) |
 | Interleaver | Ultra Short, Short, Medium or Long | [Table D-XXXVII](spec/MIL-STD-188-110D.pdf#page=210), p.205 (PDF 210); [Table D-LI](spec/MIL-STD-188-110D.pdf#page=228), p.223 (PDF 228) |
@@ -48,7 +48,7 @@ How the derived columns are worked out:
 
 ## Mini-probes
 
-Each probe is a short base sequence repeated to fill the probe length. The last probe of each interleaver block is sent cyclically shifted, so a receiver can find the block boundary.
+Each probe is a short base sequence repeated to fill the probe length. The probe after the second-to-last data block of each long-interleaver frame is sent cyclically shifted, whichever interleaver is in use, so a receiver can find that boundary.
 
 | Probe length | Waveforms | Base sequence | Shift at interleaver boundary | Spec |
 |---|---|---|---|---|
