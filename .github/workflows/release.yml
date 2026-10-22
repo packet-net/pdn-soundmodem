@@ -254,6 +254,12 @@ jobs:
             echo "::endgroup::"
           done
 
+      # Self-contained, so the runtime in each .deb is the runner's SDK's (and the npm package's
+      # is its wasm-tools workload's), and a stale runner ships old security fixes. Fail the
+      # release instead. The NuGet packages are libraries and carry no runtime.
+      - name: Check the bundled .NET runtime is the latest patch
+        run: python3 scripts/check-bundled-runtime.py ./artifacts/*.deb ./artifacts/*.tgz
+
       - name: Checksums
         working-directory: ./artifacts
         run: |
