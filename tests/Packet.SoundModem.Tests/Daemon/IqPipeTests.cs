@@ -145,7 +145,20 @@ public sealed class IqPipeTests : IDisposable
     [Fact]
     public void Restarting_The_Child_Leaks_No_Descriptors()
     {
-        static int Open() => Directory.GetFiles("/proc/self/fd").Length;
+        // Pipes only: the child's stdout and stderr are pipes, and counting every descriptor
+        // let other tests' files, opened and closed alongside this one, fail it on a busy runner.
+        static int Open() => Directory.GetFiles("/proc/self/fd").Count(IsPipe);
+        static bool IsPipe(string fd)
+        {
+            try
+            {
+                return new FileInfo(fd).LinkTarget?.StartsWith("pipe:", StringComparison.Ordinal) == true;
+            }
+            catch (IOException)
+            {
+                return false; // closed between the listing and the look
+            }
+        }
         using var source = Source(Command("head -c 200 /dev/zero"), IqSampleFormat.Cu8, rate: 48_000, maxYoungRuns: 30);
         source.StartNow();
         var buffer = new float[4096];
@@ -155,7 +168,7 @@ public sealed class IqPipeTests : IDisposable
         ReadToEnd(source);
 
         // Two pipes a run, 29 more runs: a leak would be dozens. Other tests' threads open and
-        // close their own, so a few either way is noise.
+        // close pipes of their own, so a few either way is noise.
         (Open() - before).Should().BeLessThan(10);
     }
 
