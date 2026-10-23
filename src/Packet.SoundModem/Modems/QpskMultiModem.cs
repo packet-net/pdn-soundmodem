@@ -32,7 +32,7 @@ namespace Packet.SoundModem.Modems;
 /// default (a one-branch bank is a plain modem).
 /// </para>
 /// </remarks>
-public sealed class QpskMultiModem : IModem, IConstellationSource, IFrameSpanSource
+public sealed class QpskMultiModem : IModem, IConstellationSource, IFrameSpanSource, CarrierSense.IBusyReadingSource
 {
     private readonly QpskModem[] _branches;
     private readonly QpskModem _transmit;
@@ -228,6 +228,22 @@ public sealed class QpskMultiModem : IModem, IConstellationSource, IFrameSpanSou
             }
 
             return false;
+        }
+    }
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading
+    {
+        get
+        {
+            // The branch nearest to firing, which is the one that would decide.
+            CarrierSense.BusyReading? nearest = null;
+            foreach (var branch in _branches)
+            {
+                nearest = CarrierSense.BusyReading.Nearer(nearest, branch.BusyReading);
+            }
+
+            return nearest;
         }
     }
 

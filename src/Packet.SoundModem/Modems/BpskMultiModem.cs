@@ -30,7 +30,7 @@ namespace Packet.SoundModem.Modems;
 /// linear CPU cost (each branch is a full band-pass + Costas chain).
 /// </para>
 /// </remarks>
-public sealed class BpskMultiModem : IModem, IConstellationSource, IFrameSpanSource
+public sealed class BpskMultiModem : IModem, IConstellationSource, IFrameSpanSource, CarrierSense.IBusyReadingSource
 {
     private readonly BpskModem[] _branches;
     private readonly BpskModem _transmit;
@@ -213,6 +213,22 @@ public sealed class BpskMultiModem : IModem, IConstellationSource, IFrameSpanSou
             }
 
             return false;
+        }
+    }
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading
+    {
+        get
+        {
+            // The branch nearest to firing, which is the one that would decide.
+            CarrierSense.BusyReading? nearest = null;
+            foreach (var branch in _branches)
+            {
+                nearest = CarrierSense.BusyReading.Nearer(nearest, branch.BusyReading);
+            }
+
+            return nearest;
         }
     }
 

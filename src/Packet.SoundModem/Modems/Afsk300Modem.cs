@@ -32,7 +32,7 @@ public enum Afsk300Framing
 /// polarities (ours since the 9600 IL2P work; the NinoTNC's since firmware 2.42's "IL2P
 /// receive inversion detection"). Bench-confirmed against a NinoTNC either way.
 /// </remarks>
-public sealed class Afsk300Modem : IModem, IFrameSpanSource
+public sealed class Afsk300Modem : IModem, IFrameSpanSource, CarrierSense.IBusyReadingSource
 {
     private const int Baud = 300;
 
@@ -255,6 +255,9 @@ public sealed class Afsk300Modem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulator.ChannelBusy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => _demodulator.BusyReading;
 
     /// <inheritdoc />
     public int FrameSpanMarginSamples => _spanMargin;

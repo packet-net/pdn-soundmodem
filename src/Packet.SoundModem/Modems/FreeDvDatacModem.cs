@@ -69,7 +69,7 @@ namespace Packet.SoundModem.Modems;
 /// <see cref="ChannelBusy"/> is the OR of both.
 /// </para>
 /// </remarks>
-public sealed class FreeDvDatacModem : IModem
+public sealed class FreeDvDatacModem : IModem, CarrierSense.IBusyReadingSource
 {
     /// <summary>The engine's native sample rate - 8 kHz for every datac mode.</summary>
     private const int NativeRate = 8000;
@@ -206,6 +206,9 @@ public sealed class FreeDvDatacModem : IModem
 
     /// <inheritdoc />
     public bool ChannelBusy => CarrierDetect || _energyBusy.Busy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => _energyBusy.Reading;
 
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples)

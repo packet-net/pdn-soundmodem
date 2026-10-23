@@ -18,7 +18,7 @@ namespace Packet.SoundModem.CarrierSense;
 /// transmits exactly as it did before this feature existed. A carrier sense that can silence a
 /// station by losing a USB cable would be the worse failure by a distance.</para>
 /// </remarks>
-public sealed class TaitCarrierSense : IChannelBusySource, IDisposable
+public sealed class TaitCarrierSense : IChannelBusySource, IBusyReadingSource, IDisposable
 {
     private static readonly Lock Gate = new();
     private static readonly Dictionary<string, TaitCarrierSense> Shared = [];
@@ -95,6 +95,9 @@ public sealed class TaitCarrierSense : IChannelBusySource, IDisposable
 
     /// <inheritdoc/>
     public bool? Busy => _source?.Busy;
+
+    /// <inheritdoc/>
+    public BusyReading? BusyReading => _source?.BusyReading;
 
     /// <summary>The last RSSI reading in dBm, for diagnostics.</summary>
     public double? LastRssiDbm => _source?.LastRssiDbm;

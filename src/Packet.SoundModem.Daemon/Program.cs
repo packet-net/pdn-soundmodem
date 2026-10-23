@@ -8,6 +8,7 @@ using Packet.SoundModem.CarrierSense;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
+using Packet.SoundModem.Daemon.KeepAudio;
 using Packet.SoundModem.Rig;
 using M0LTE.Dsp;
 using Packet.SoundModem.Dsp;
@@ -2720,6 +2721,28 @@ if (mailcastMeasure is not null)
 {
     runtimeApi?.ServeMailcastMeasure(mailcastMeasure);
 }
+// Keep a stretch of receive audio on request (POST /api/keepaudio, issue #723): an in-memory ring
+// and a look at the carrier sense ten times a second, so a client told "busy" can later see what
+// the channel sounded like and which detector said so. Only with a keyed API, the only way to ask.
+KeepAudioRecorder? keepAudio = null;
+if (runtimeApi is not null && apiKey.Length > 0 && waterfallServer is not null)
+{
+    keepAudio = new KeepAudioRecorder(
+        DspRate, StateDirectory.PathFor("kept-audio"),
+        at => DetectorSample.Take(at, channel),
+        TimeProvider.System, stationJournal.Write, stationJournal.WriteError);
+    channel.AddReceiveTap(keepAudio.Process);
+    // The blocks skipped while this station transmits, kept as exactly that much silence, so the
+    // audio after a keyup stays in step with the carrier-sense log however short the keyup.
+    channel.KeyedReceiveBlock += keepAudio.ProcessKeyed;
+    runtimeApi.ServeKeepAudio(keepAudio);
+    keepAudio.Start();
+    Console.WriteLine(
+        $"api: keep receive audio over {waterfallServer.Url}api/keepaudio (key required), "
+        + $"kept under {keepAudio.Directory} for {KeepAudioRecorder.Retention.TotalDays:0} days");
+}
+
+using var keepAudioLifetime = new Disposer(() => keepAudio?.Dispose());
 if (rig is not null && runtimeApi is not null && waterfallServer is not null)
 {
     runtimeApi.ServeRig(rig);

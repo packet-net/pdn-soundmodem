@@ -41,7 +41,7 @@ namespace Packet.SoundModem.Modems;
 /// and decides the same symbol. See the 2026-08-21 (later5) entry in docs/dev/mode-validation.md.
 /// </para>
 /// </remarks>
-public sealed class C4fskModem : IModem, IFrameSpanSource
+public sealed class C4fskModem : IModem, IFrameSpanSource, CarrierSense.IBusyReadingSource
 {
     private readonly int _sampleRate;
     private readonly int _symbolRate;
@@ -436,6 +436,9 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _packetDcd.Asserted || _energyBusy.Busy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => _energyBusy.Reading;
 
     /// <inheritdoc />
     public int FrameSpanMarginSamples => _spanMargin;

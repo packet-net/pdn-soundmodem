@@ -30,7 +30,7 @@ namespace Packet.SoundModem.Modems;
 /// App D implementation or off-air recording exists to test against (design §1.2; Q2 -
 /// pdn↔pdn only).</para>
 /// </remarks>
-public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingModem
+public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingModem, CarrierSense.IBusyReadingSource
 {
     /// <summary>Native DSP rate (4 samples/symbol at 2400 Bd).</summary>
     private const int NativeRate = Ms110dModulator.NativeRate;
@@ -262,6 +262,9 @@ public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingMo
 
     /// <inheritdoc />
     public bool ChannelBusy => CarrierDetect || _energyBusy.Busy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => _energyBusy.Reading;
 
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples)

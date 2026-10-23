@@ -32,7 +32,7 @@ namespace Packet.SoundModem.Modems;
 /// on here.
 /// </para>
 /// </remarks>
-public sealed class Afsk300MultiModem : IModem, IFrameSpanSource
+public sealed class Afsk300MultiModem : IModem, IFrameSpanSource, CarrierSense.IBusyReadingSource
 {
     /// <summary>Per-branch receive filter width. Tighter than the single modem's 300
     /// default: a branch only has to serve half an <c>offsetHz</c> step of residual
@@ -170,6 +170,22 @@ public sealed class Afsk300MultiModem : IModem, IFrameSpanSource
             }
 
             return false;
+        }
+    }
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading
+    {
+        get
+        {
+            // The branch nearest to firing, which is the one that would decide.
+            CarrierSense.BusyReading? nearest = null;
+            foreach (var branch in _branches)
+            {
+                nearest = CarrierSense.BusyReading.Nearer(nearest, branch.BusyReading);
+            }
+
+            return nearest;
         }
     }
 

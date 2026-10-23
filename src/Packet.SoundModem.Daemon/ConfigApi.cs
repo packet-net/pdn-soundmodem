@@ -53,6 +53,7 @@ internal sealed class ConfigApi
     private MixerRuntime? _mixer;
     private RigControl? _rig;
     private MailcastFilterMeasurer? _mailcastMeasure;
+    private KeepAudio.KeepAudioRecorder? _keepAudio;
     private string _mixerWhyNot = "this station has no sound-card mixer";
 
     /// <summary>One mixer change at a time; see the wait in <see cref="MixerAsync"/>.</summary>
@@ -140,6 +141,31 @@ internal sealed class ConfigApi
     /// has no mailcast receiver to measure a filter for.
     /// </summary>
     public void ServeMailcastMeasure(MailcastFilterMeasurer measurer) => _mailcastMeasure = measurer;
+
+    // ---------------------------------------------------------------- keep audio
+    /// <summary>
+    /// Serves <c>/api/keepaudio</c>, keeping a stretch of receive audio with the carrier sense's
+    /// reasons. See <see cref="KeepAudio.KeepAudioApi"/>. Without it the path 404s.
+    /// </summary>
+    public void ServeKeepAudio(KeepAudio.KeepAudioRecorder recorder) => _keepAudio = recorder;
+
+    private async Task KeepAudioAsync(HttpListenerContext context)
+    {
+        if (_keepAudio is null)
+        {
+            await RespondAsync(context, 404, "this station keeps no receive audio").ConfigureAwait(false);
+            return;
+        }
+
+        string body;
+        using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
+        {
+            body = await reader.ReadToEndAsync().ConfigureAwait(false);
+        }
+
+        (int status, JsonObject answer) = KeepAudio.KeepAudioApi.Handle(_keepAudio, context.Request.HttpMethod, body);
+        await RespondJsonAsync(context, status, answer.ToJsonString(Pretty)).ConfigureAwait(false);
+    }
 
     private async Task RigAsync(HttpListenerContext context, string path)
     {
@@ -638,7 +664,7 @@ internal sealed class ConfigApi
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
         if (path is not ("/api/config" or "/api/proposals" or "/api/txtest" or "/api/txlease" or "/api/mixer"
-            or "/api/rig" or "/api/rig/tune" or "/api/mailcast/measure"))
+            or "/api/rig" or "/api/rig/tune" or "/api/mailcast/measure" or "/api/keepaudio"))
         {
             return false;
         }
@@ -683,6 +709,12 @@ internal sealed class ConfigApi
         if (path is "/api/txlease")
         {
             await GuardedAsync(context, () => TxLeaseAsync(context)).ConfigureAwait(false);
+            return true;
+        }
+
+        if (path is "/api/keepaudio")
+        {
+            await GuardedAsync(context, () => KeepAudioAsync(context)).ConfigureAwait(false);
             return true;
         }
 
