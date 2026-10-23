@@ -1,6 +1,7 @@
 using System.Globalization;
 using Packet.SoundModem.Audio;
-using Packet.SoundModem.Ms110d;
+using M0LTE.Ms110d;
+using Packet.SoundModem.Modems;
 
 namespace Packet.SoundModem.Tests.Ms110d;
 

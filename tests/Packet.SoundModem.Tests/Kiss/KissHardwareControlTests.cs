@@ -3,7 +3,7 @@ using M0LTE.Radio.Audio;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.Modems;
-using Packet.SoundModem.Ms110d;
+using M0LTE.Ms110d;
 using Packet.SoundModem.Tests.Channel;
 
 namespace Packet.SoundModem.Tests.Kiss;

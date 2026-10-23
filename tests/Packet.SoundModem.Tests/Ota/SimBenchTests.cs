@@ -1,3 +1,4 @@
+using M0LTE.HfChannel;
 using Packet.SoundModem.Ota;
 using Packet.SoundModem.Tests.Channel;
 

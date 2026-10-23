@@ -16,21 +16,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The Watterson rig lives here but is compiled by the OTA tool, which injects the same
-         channel at the transmitter for §E2. One definition, reached from both sides; the file
-         stays here because this is where it belongs and where it is maintained. The FM link model
-         used to be arranged the same way and is now the M0LTE.FmChannel package instead - it had
-         been copied into a second repository, and a channel model with two copies is two sets of
-         numbers waiting to disagree. -->
-    <Compile Remove="Channel/WattersonChannel.cs" />
-    <Compile Remove="Channel/ImpulseNoise.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
     <!-- The frame log's store, for reading a written log back in FrameLogTests. -->
     <!-- The FM link model the OFDM-FM ladder measures through. Same package the OTA tool
          uses, so there is one definition of the channel and not two. -->
     <PackageReference Include="M0LTE.FmChannel" />
+    <!-- Its HF counterpart: the Watterson channel and impulse noise, also used by the OTA tool. -->
+    <PackageReference Include="M0LTE.HfChannel" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
   </ItemGroup>
 

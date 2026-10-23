@@ -1,5 +1,6 @@
+using M0LTE.HfChannel;
 using AwesomeAssertions;
-using Packet.SoundModem.Ms110d;
+using M0LTE.Ms110d;
 using Packet.SoundModem.Ota;
 using Packet.SoundModem.Tests.Channel;
 using Packet.SoundModem.UberSdr;
@@ -199,9 +200,10 @@ public class LadderPassTests
         IReadOnlyList<RenderedPoint> awgn = new LadderPass(Options()).Render(
             LadderPass.Plan(6, [10], 1, LadderChannel.Awgn, firstSeed: 7));
 
-        typeof(LadderPass).Assembly.Should().BeSameAs(typeof(WattersonChannel).Assembly,
-            "the rig is compiled into the OTA tool from the test project's copy - one definition, "
-            + "or the comparison measures the gap between two rigs");
+        typeof(LadderPass).Assembly.GetReferencedAssemblies().Select(a => a.Name)
+            .Should().Contain(typeof(WattersonChannel).Assembly.GetName().Name,
+                "the OTA tool and the mask suite both take the rig from M0LTE.HfChannel - one "
+                + "definition, or the comparison measures the gap between two rigs");
         Power(poor[0].Iq).Should().BeGreaterThan(0);
         poor[0].Iq.Should().NotEqual(awgn[0].Iq, "a fading channel is not the ideal path");
     }

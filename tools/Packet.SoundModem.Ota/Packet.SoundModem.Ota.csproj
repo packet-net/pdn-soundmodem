@@ -20,21 +20,16 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The Watterson rig, compiled from where it lives in the test project rather than copied.
-         §E2 injects at the transmitter the SAME channel the mask suite simulates, and the entire
-         value of that comparison rests on it being the same rig: a second implementation would
-         measure the difference between two rigs and report it as the cost of real hardware. The
-         file does not move on disk, so it stays the mask suite's to edit and every change flows
-         through here; the test project stops compiling it (see its csproj) so there is exactly
-         one definition; its namespace is unchanged so no test source needs touching. -->
-    <Compile Include="../../tests/Packet.SoundModem.Tests/Channel/WattersonChannel.cs"
-             Link="Channel/WattersonChannel.cs" />
-    <Compile Include="../../tests/Packet.SoundModem.Tests/Channel/ImpulseNoise.cs"
-             Link="Channel/ImpulseNoise.cs" />
+    <!-- The Watterson rig. §E2 injects at the transmitter the SAME channel the mask suite
+         simulates, and the entire value of that comparison rests on it being the same rig: a
+         second implementation would measure the difference between two rigs and report it as the
+         cost of real hardware. The rig is the M0LTE.HfChannel package, which the MS110D mask suite
+         in M0LTE.Ms110d measures through too, so there is exactly one definition. -->
+    <PackageReference Include="M0LTE.HfChannel" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- WattersonChannelTests exercises the rig's internal FadingGains. -->
+    <!-- The test project exercises the ladder passes, the scorers and the sim modem directly. -->
     <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
   </ItemGroup>
 

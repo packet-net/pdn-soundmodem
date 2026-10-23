@@ -114,9 +114,13 @@ row in the matrix. A fix isn't finished until the ledger records it.
 - PRs merge on locally-run green tests (`dotnet test`); fix forward.
 - **Cross-repo iteration**: the co-developed packages swap to local checkouts with
   `-p:FecSourcePath=... -p:Il2pSourcePath=... -p:FlexSourcePath=...
-  -p:RadioAudioSourcePath=... -p:DspSourcePath=...` (see `Packet.SoundModem.csproj`) - no pack/publish round trip per change. Unset, CI and
+  -p:RadioAudioSourcePath=... -p:DspSourcePath=... -p:Ms110dSourcePath=...` (see `Packet.SoundModem.csproj`) - no pack/publish round trip per change. Unset, CI and
   everyone else consume the published packages; version pins in
   `Directory.Packages.props` only move when a package actually ships.
+- **Modem packages**: a waveform can move into its own `M0LTE.<Name>` package with its
+  `IModem` wrapper staying in `Modems/`; [docs/dev/modem-packages.md](docs/dev/modem-packages.md)
+  is the recipe. MS110D (`M0LTE.Ms110d`) and the Watterson HF channel (`M0LTE.HfChannel`) are
+  packages since 2026-10-23, so the MS110D mask suite and `scripts/run-masks.sh` live there.
 - **Watterson masks** (`WattersonMaskTests`, rx-roadmap workstream 0): each audio mode's
   measured performance floor is pinned - the smoke tier blocks CI, `SM_MASK_GATE=1` runs the
   full ladder. A PR touching a modem's receive path runs the affected mode's full ladder A/B

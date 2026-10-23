@@ -1,3 +1,4 @@
+using M0LTE.HfChannel;
 using M0LTE.Ofdm;
 
 namespace Packet.SoundModem.Ota;

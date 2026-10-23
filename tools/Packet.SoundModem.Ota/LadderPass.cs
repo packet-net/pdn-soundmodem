@@ -1,5 +1,5 @@
-using Packet.SoundModem.Ms110d;
-using Packet.SoundModem.Tests.Channel;
+using M0LTE.HfChannel;
+using M0LTE.Ms110d;
 
 namespace Packet.SoundModem.Ota;
 

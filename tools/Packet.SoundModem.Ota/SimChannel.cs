@@ -1,5 +1,5 @@
+using M0LTE.HfChannel;
 using Packet.SoundModem.Modems;
-using Packet.SoundModem.Tests.Channel;
 using M0LTE.Fm;
 
 namespace Packet.SoundModem.Ota;

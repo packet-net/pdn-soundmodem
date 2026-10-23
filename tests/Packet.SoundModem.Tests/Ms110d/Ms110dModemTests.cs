@@ -1,5 +1,5 @@
 using Packet.SoundModem.Modems;
-using Packet.SoundModem.Ms110d;
+using M0LTE.Ms110d;
 
 namespace Packet.SoundModem.Tests.Ms110d;
 

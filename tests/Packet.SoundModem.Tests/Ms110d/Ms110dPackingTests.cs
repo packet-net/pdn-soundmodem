@@ -1,5 +1,6 @@
+using M0LTE.HfChannel;
 using Packet.SoundModem.Modems;
-using Packet.SoundModem.Ms110d;
+using M0LTE.Ms110d;
 using Packet.SoundModem.Tests.Channel;
 
 namespace Packet.SoundModem.Tests.Ms110d;

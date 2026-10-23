@@ -22,7 +22,7 @@ using Packet.SoundModem.Survey;
 using Packet.SoundModem.Telemetry;
 using Packet.SoundModem.Updates;
 using Packet.SoundModem.Waterfall;
-using Packet.SoundModem.Ms110d;
+using M0LTE.Ms110d;
 
 // pdn-soundmodem: headless soundcard packet modem daemon.
 //

@@ -1,8 +1,8 @@
 using M0LTE.Dsp;
 using M0LTE.Il2p;
-using Packet.SoundModem.Modems;
+using M0LTE.Ms110d;
 
-namespace Packet.SoundModem.Ms110d;
+namespace Packet.SoundModem.Modems;
 
 /// <summary>
 /// MIL-STD-188-110D Appendix D 3 kHz serial-tone waveform as an <see cref="IModem"/> -

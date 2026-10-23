@@ -1,6 +1,6 @@
 # MIL-STD-188-110D Appendix D - transcribed interop tables
 
-Status: reference as of 2026-09-17. Describes the transcription of MIL-STD-188-110D Appendix D's interop tables, how the standard was identified, and how the transcription was verified; the closing paragraphs record where the programme that consumed it ended. The tables are in `tables/` beside this file and the standard in `spec/`; the modem built from them is in this repository at `src/Packet.SoundModem/Ms110d/` and ships as the `ms110d-wn*` modes. The programme's plans, closeouts and evidence are in [../archive/ms110d](../archive/ms110d).
+Status: reference as of 2026-09-17. Describes the transcription of MIL-STD-188-110D Appendix D's interop tables, how the standard was identified, and how the transcription was verified; the closing paragraphs record where the programme that consumed it ended. The tables are in `tables/` beside this file and the standard in `spec/`; the waveform built from them moved on 2026-10-23 to its own package, [M0LTE.Ms110d](https://github.com/M0LTE/M0LTE.Ms110d), whose source comments cite these tables by their paths here; the wrapper that makes it a pdn-soundmodem modem is `src/Packet.SoundModem/Modems/Ms110dModem.cs`, and it ships as the `ms110d-wn*` modes. The programme's plans, closeouts and evidence are in [../archive/ms110d](../archive/ms110d).
 
 The interop-critical tables of MIL-STD-188-110D Appendix D (WBHF - the public counterpart of
 the RESTRICTED STANAG 5069), transcribed from the standard because they are embedded as
@@ -108,7 +108,7 @@ with soft wrap-extension Viterbi, Table D-L puncturing, the 3 kHz interleavers, 
 scramblers, the autobaud preamble, mini-probes, the probe-trained T/2 NLMS DFE, the WN 0
 Walsh modem, the `IModem`/daemon surface (`ms110d-wn0…wn13` modes, IL2P+CRC payload
 convention), and the Watterson/App-E channel simulator + statistical mask harness in
-`tests/Packet.SoundModem.Tests/` (`Ms110dMaskTests`, env-gated). Every constant in code cites
+`tests/Packet.SoundModem.Tests/` (`Ms110dMaskTests`, env-gated; since 2026-10-23 in the M0LTE.Ms110d repository). Every constant in code cites
 its file in this directory; nothing was re-transcribed.
 
 Interpretation choices this implementation records (loopback-consistent both ends,

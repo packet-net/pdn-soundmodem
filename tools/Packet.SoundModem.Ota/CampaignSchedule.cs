@@ -2,7 +2,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Packet.SoundModem.Ms110d;
+using M0LTE.Ms110d;
 
 namespace Packet.SoundModem.Ota;
 
