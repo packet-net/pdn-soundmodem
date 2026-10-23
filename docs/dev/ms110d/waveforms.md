@@ -2,6 +2,8 @@
 
 The `ms110d-wn*` modes are the 3 kHz serial-tone waveforms of MIL-STD-188-110D Appendix D. This page lists each one's parameters as the standard defines them, with a link to the table they come from. Every figure is the standard's 3 kHz column; pdn-soundmodem does not do the wider bandwidths.
 
+**Names.** "WN" is our abbreviation, not the standard's. The number in `ms110d-wn3` is the standard's waveform number: its tables call it "Waveform Number" ([Table D-XV](spec/MIL-STD-188-110D.pdf#page=173), p.168 (PDF 173)) and its text says "Waveform ID 3" or "WID 3" ([D.5.1.4](spec/MIL-STD-188-110D.pdf#page=166), p.161 (PDF 166); [D.6.2](spec/MIL-STD-188-110D.pdf#page=247), p.242 (PDF 247)). Search the standard or other MS110D material for WID 3, not WN3.
+
 Spec references give the standard's own page number, then the page of the [PDF in this repository](spec/MIL-STD-188-110D.pdf) (always 5 more). The links open the PDF at that page where the viewer allows it. The tables were typed in twice independently and checked against each other; the copies are in [tables/](tables/) and the story is in [README.md](README.md).
 
 ## Common to every waveform
