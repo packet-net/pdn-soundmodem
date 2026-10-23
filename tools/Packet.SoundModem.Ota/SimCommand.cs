@@ -12,7 +12,7 @@ namespace Packet.SoundModem.Ota;
 /// </summary>
 /// <remarks>
 /// This is the sim half of the campaign methodology the MS110D <c>ladder</c> drives over the air:
-/// the same <see cref="Packet.SoundModem.Tests.Channel.WattersonChannel"/> rig, the same 3&#160;kHz
+/// the same <see cref="WattersonChannel"/> rig, the same 3&#160;kHz
 /// SNR convention, generalized off the MS110D-specific path so it covers the FreeDV datac OFDM
 /// family (and, through the <c>IModem</c> seam, any other catalogue mode). It produces the
 /// AWGN / Poor / Good waterfalls a Phase-B on-air readiness call rests on.
