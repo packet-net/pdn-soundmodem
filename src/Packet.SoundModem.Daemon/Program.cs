@@ -2732,6 +2732,9 @@ if (runtimeApi is not null && apiKey.Length > 0 && waterfallServer is not null)
         at => DetectorSample.Take(at, channel),
         TimeProvider.System, stationJournal.Write, stationJournal.WriteError);
     channel.AddReceiveTap(keepAudio.Process);
+    // The blocks skipped while this station transmits, kept as exactly that much silence, so the
+    // audio after a keyup stays in step with the carrier-sense log however short the keyup.
+    channel.KeyedReceiveBlock += keepAudio.ProcessKeyed;
     runtimeApi.ServeKeepAudio(keepAudio);
     keepAudio.Start();
     Console.WriteLine(

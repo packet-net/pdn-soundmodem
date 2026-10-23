@@ -32,7 +32,9 @@ internal sealed record DetectorSample(
     /// <summary>Takes the sample from a channel, in the lease holder's view when there is one.</summary>
     public static DetectorSample Take(DateTimeOffset at, SoundModemChannel channel)
     {
-        int? holder = channel.TransmitLease.Holder;
+        // HolderNow, not Holder: Holder ends a lease that is due, and a diagnostic timer must
+        // never be what runs a lease's teardown and its closing transmission.
+        int? holder = channel.TransmitLease.HolderNow();
         return From(at, holder, channel.ExplainCarrierSense(holder));
     }
 

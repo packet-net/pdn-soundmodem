@@ -68,14 +68,17 @@ internal sealed class KeepAudioRecorder : IDisposable
     private readonly RationalResampler? _resampler;
     private readonly Queue<DetectorSample> _samples = new();
     private readonly List<KeptWindow> _pending = [];
+    private readonly HashSet<string> _beingWritten = [];
     private readonly List<Task> _writing = [];
     private readonly Func<DateTimeOffset, DetectorSample> _sample;
     private readonly TimeProvider _time;
     private readonly Action<string> _say;
     private readonly Action<string> _complain;
     private float[] _decimated = new float[4096];
+    private float[] _silence = new float[4096];
     private ITimer? _timer;
     private DateTimeOffset _lastPrune = DateTimeOffset.MinValue;
+    private int _ticking;
     private bool _tickFailed;
 
     /// <param name="inputRate">The rate of the receive tap, the channel's DSP rate.</param>
@@ -147,6 +150,27 @@ internal sealed class KeepAudioRecorder : IDisposable
     }
 
     /// <summary>
+    /// A block the channel skipped because the station was transmitting
+    /// (<see cref="Channel.SoundModemChannel.KeyedReceiveBlock"/>): kept as exactly that much
+    /// silence, through the same decimator, so the audio after a keyup of any length stays on time.
+    /// </summary>
+    /// <param name="samples">The skipped block's length at the channel's DSP rate.</param>
+    public void ProcessKeyed(int samples)
+    {
+        if (samples <= 0)
+        {
+            return;
+        }
+
+        if (_silence.Length < samples)
+        {
+            _silence = new float[samples];
+        }
+
+        Process(_silence.AsSpan(0, samples));
+    }
+
+    /// <summary>
     /// Asks for a window to be kept. Returns it, or the HTTP status and the reason it was refused.
     /// </summary>
     public (KeptWindow? Window, int Status, string? Refusal) Keep(string? label, DateTimeOffset from, DateTimeOffset to)
@@ -167,61 +191,76 @@ internal sealed class KeepAudioRecorder : IDisposable
             return (null, 400, "\"label\" needs at least one letter or digit");
         }
 
-        // Whole seconds outwards, so the per-second log lines up with the window exactly.
-        from = new DateTimeOffset(from.UtcTicks - from.UtcTicks % TimeSpan.TicksPerSecond, TimeSpan.Zero);
-        long toRemainder = to.UtcTicks % TimeSpan.TicksPerSecond;
-        to = new DateTimeOffset(to.UtcTicks - toRemainder + (toRemainder > 0 ? TimeSpan.TicksPerSecond : 0), TimeSpan.Zero);
-
-        if (to <= from)
-        {
-            return (null, 400, "\"to\" must be later than \"from\"");
-        }
-
-        if (to - from > MaxWindow)
-        {
-            return (null, 400,
-                $"a window is at most {MaxWindow.TotalMinutes:0} minutes long; this one is {Minutes(to - from)}");
-        }
-
         DateTimeOffset now = _time.GetUtcNow();
-        if (from < now - MaxPast)
+
+        // Checked before rounding as well as after: a "to" near the end of the calendar must be a
+        // 400 here, not an overflow in the rounding below.
+        if (Unreasonable(from, to, now) is string early)
         {
-            return (null, 400,
-                $"\"from\" is {Minutes(now - from)} ago, and this station only keeps the last "
-                + $"{MaxPast.TotalMinutes:0} minutes of receive audio to start a window from");
+            return (null, 400, early);
         }
 
-        if (to > now + MaxFuture)
+        // Whole seconds outwards, so the per-second log lines up with the window exactly.
+        from = FloorSecond(from);
+        to = CeilingSecond(to);
+        if (Unreasonable(from, to, now) is string refusal)
         {
-            return (null, 400,
-                $"\"to\" is {Minutes(to - now)} away; a window must end within {MaxFuture.TotalMinutes:0} minutes");
+            return (null, 400, refusal);
         }
 
+        // Read what is held and what is taken under the lock; look at the disk outside it, because
+        // the audio thread takes the same lock for every block it hands over.
+        DateTimeOffset heldFrom;
+        HashSet<string> taken;
         lock (_gate)
         {
-            if (_pending.Count >= MaxPending)
+            heldFrom = _ring.HeldFrom ?? now;
+            taken = TakenLocked();
+        }
+
+        // Only ever true just after start-up: the ring holds more than MaxPast otherwise.
+        string? note = null;
+        if (from < heldFrom)
+        {
+            if (to <= CeilingSecond(heldFrom))
             {
-                return (null, 409, $"{MaxPending} windows are already waiting to be written; try again after one ends");
+                return (null, 400,
+                    $"this station has only been listening since {TxLeaseApi.Utc(heldFrom)}, after this window ends");
             }
 
-            // Only ever true just after start-up: the ring holds more than MaxPast otherwise.
-            DateTimeOffset heldFrom = _ring.HeldFrom ?? now;
-            string? note = null;
-            if (from < heldFrom)
+            from = CeilingSecond(heldFrom);
+            note = $"this station has only been listening since {TxLeaseApi.Utc(heldFrom)}, so the window starts then";
+        }
+
+        for (int attempt = 0; ; attempt++)
+        {
+            string id = UniqueId(from, safe, taken);
+            var window = new KeptWindow(id, label.Trim(), from, to, now, note);
+            lock (_gate)
             {
-                if (to <= heldFrom)
+                if (_pending.Count >= MaxPending)
                 {
-                    return (null, 400,
-                        $"this station has only been listening since {TxLeaseApi.Utc(heldFrom)}, after this window ends");
+                    return (null, 409, $"{MaxPending} windows are already waiting to be written; try again after one ends");
                 }
 
-                long ticks = heldFrom.UtcTicks % TimeSpan.TicksPerSecond;
-                from = new DateTimeOffset(heldFrom.UtcTicks - ticks + (ticks > 0 ? TimeSpan.TicksPerSecond : 0), TimeSpan.Zero);
-                note = $"this station has only been listening since {TxLeaseApi.Utc(heldFrom)}, so the window starts then";
+                HashSet<string> nowTaken = TakenLocked();
+                if (!nowTaken.Contains(id))
+                {
+                    _pending.Add(window);
+                }
+                else
+                {
+                    // Somebody else reserved it between the two looks; go round with what they took.
+                    taken = nowTaken;
+                    if (attempt < 8)
+                    {
+                        continue;
+                    }
+
+                    return (null, 409, "too many windows are being asked for at once; try again");
+                }
             }
 
-            var window = new KeptWindow(UniqueId(from, safe), label.Trim(), from, to, now, note);
-            _pending.Add(window);
             _say($"keep audio: keeping {TxLeaseApi.Utc(from)} to {TxLeaseApi.Utc(to)} as {window.Id}");
             return (window, 200, null);
         }
@@ -248,7 +287,7 @@ internal sealed class KeepAudioRecorder : IDisposable
     {
         DateTimeOffset now = _time.GetUtcNow();
         DetectorSample sample = _sample(now);
-        List<(KeptWindow Window, float[] Audio, int Held, DetectorSample[] Samples)> due = [];
+        List<(KeptWindow Window, short[] Audio, int Held, DetectorSample[] Samples)> due = [];
         lock (_gate)
         {
             _samples.Enqueue(sample);
@@ -265,14 +304,16 @@ internal sealed class KeepAudioRecorder : IDisposable
                     continue;
                 }
 
+                // Only the copy happens here; the conversion and everything else is the writer's.
                 _pending.RemoveAt(i);
-                (float[] audio, int held) = _ring.Extract(window.From, window.To);
+                _beingWritten.Add(window.Id);
+                (short[] audio, int held) = _ring.ExtractRaw(window.From, window.To);
                 DetectorSample[] samples = [.. _samples.Where(s => s.At >= window.From && s.At < window.To)];
                 due.Add((window, audio, held, samples));
             }
         }
 
-        foreach ((KeptWindow window, float[] audio, int held, DetectorSample[] samples) in due)
+        foreach ((KeptWindow window, short[] audio, int held, DetectorSample[] samples) in due)
         {
             Task writing = Task.Run(() => WriteOne(window, audio, held, samples));
             lock (_writing)
@@ -365,8 +406,50 @@ internal sealed class KeepAudioRecorder : IDisposable
         _timer = null;
     }
 
+    private static string? Unreasonable(DateTimeOffset from, DateTimeOffset to, DateTimeOffset now)
+    {
+        if (to <= from)
+        {
+            return "\"to\" must be later than \"from\"";
+        }
+
+        if (to - from > MaxWindow)
+        {
+            return $"a window is at most {MaxWindow.TotalMinutes:0} minutes long; this one is {Minutes(to - from)}";
+        }
+
+        if (from < now - MaxPast)
+        {
+            return $"\"from\" is {Minutes(now - from)} ago, and this station only keeps the last "
+                + $"{MaxPast.TotalMinutes:0} minutes of receive audio to start a window from";
+        }
+
+        if (to > now + MaxFuture)
+        {
+            return $"\"to\" is {Minutes(to - now)} away; a window must end within {MaxFuture.TotalMinutes:0} minutes";
+        }
+
+        return null;
+    }
+
+    private static DateTimeOffset FloorSecond(DateTimeOffset at) =>
+        new(at.UtcTicks - at.UtcTicks % TimeSpan.TicksPerSecond, TimeSpan.Zero);
+
+    private static DateTimeOffset CeilingSecond(DateTimeOffset at)
+    {
+        long remainder = at.UtcTicks % TimeSpan.TicksPerSecond;
+        return new(at.UtcTicks - remainder + (remainder > 0 ? TimeSpan.TicksPerSecond : 0), TimeSpan.Zero);
+    }
+
     private void SafeTick()
     {
+        // A tick that is still running (a slow disk under the prune, a busy box) is not joined by
+        // the next one; that look is simply skipped.
+        if (Interlocked.Exchange(ref _ticking, 1) == 1)
+        {
+            return;
+        }
+
         try
         {
             Tick();
@@ -381,29 +464,70 @@ internal sealed class KeepAudioRecorder : IDisposable
                 _complain($"keep audio: sampling failed, carrying on: {e.Message}");
             }
         }
+        finally
+        {
+            Volatile.Write(ref _ticking, 0);
+        }
     }
 
-    private void WriteOne(KeptWindow window, float[] audio, int held, DetectorSample[] samples)
+    private void WriteOne(KeptWindow window, short[] raw, int held, DetectorSample[] samples)
     {
         try
         {
+            Array.Sort(samples, (a, b) => a.At.CompareTo(b.At));
+            float[] audio = KeepAudioRing.ToFloat(raw);
             System.IO.Directory.CreateDirectory(Directory);
             string written = KeptWindowWriter.Write(Directory, window, audio, SampleRate, held, samples);
             int busy = samples.Count(s => s.Busy && !s.Transmitting);
             _say($"keep audio: wrote {written} ({(window.To - window.From).TotalSeconds:0} s, "
                 + $"busy in {busy} of {samples.Length} looks)");
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e)
         {
+            // Everything, not just the disk's own failures: this runs on a task nobody awaits, so
+            // anything not caught here would vanish without a word.
             _complain($"keep audio: could not write {window.Id} under {Directory}: {e.Message}");
+            try
+            {
+                string partial = KeptWindowWriter.PartialPath(Directory, window.Id);
+                if (System.IO.Directory.Exists(partial))
+                {
+                    System.IO.Directory.Delete(partial, recursive: true);
+                }
+            }
+            catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
+            {
+                // Left for the 30-day prune, which takes .partial directories too.
+            }
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _beingWritten.Remove(window.Id);
+            }
         }
     }
 
-    private string UniqueId(DateTimeOffset from, string label)
+    /// <summary>Every id that is waiting or being written. Under <see cref="_gate"/>.</summary>
+    private HashSet<string> TakenLocked()
+    {
+        var taken = new HashSet<string>(_beingWritten, StringComparer.Ordinal);
+        foreach (KeptWindow w in _pending)
+        {
+            taken.Add(w.Id);
+        }
+
+        return taken;
+    }
+
+    /// <summary>The first free name for a window, against what is reserved and what is on disk,
+    /// finished or still being written. Outside the lock: it looks at the disk.</summary>
+    private string UniqueId(DateTimeOffset from, string label, HashSet<string> taken)
     {
         string stem = $"{from.UtcDateTime.ToString(TimeFormat, CultureInfo.InvariantCulture)}-{label}";
         string id = stem;
-        for (int n = 2; Taken(id); n++)
+        for (int n = 2; Taken(id, taken); n++)
         {
             id = $"{stem}-{n}";
         }
@@ -411,8 +535,10 @@ internal sealed class KeepAudioRecorder : IDisposable
         return id;
     }
 
-    private bool Taken(string id) =>
-        _pending.Exists(w => w.Id == id) || System.IO.Directory.Exists(Path.Combine(Directory, id));
+    private bool Taken(string id, HashSet<string> taken) =>
+        taken.Contains(id)
+        || System.IO.Directory.Exists(Path.Combine(Directory, id))
+        || System.IO.Directory.Exists(KeptWindowWriter.PartialPath(Directory, id));
 
     private string[] KeptNames()
     {

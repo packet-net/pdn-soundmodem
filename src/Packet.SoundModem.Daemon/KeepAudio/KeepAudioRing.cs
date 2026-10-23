@@ -7,14 +7,16 @@ namespace Packet.SoundModem.Daemon.KeepAudio;
 /// asked for by UTC time.
 /// </summary>
 /// <remarks>
-/// <para><b>Laid on the wall clock, not counted.</b> The receive tap stops while the station
-/// transmits, and a stalled device stops it too, so counting samples from start-up would drift
-/// away from real time by every keyup. Each block is placed by the time it arrived instead: a
-/// block that turns up more than <see cref="BehindTolerance"/> later than the samples so far
-/// account for is preceded by silence, which is what the gap was, and audio that runs ahead of
-/// the clock by more than <see cref="AheadTolerance"/> (a sound card a little fast, or a
-/// backlog delivered in one go) moves the ring's origin back to match. So any instant is within
-/// about a quarter of a second of where it belongs, which is plenty for a per-second log.</para>
+/// <para><b>Counted, with the wall clock as a backstop.</b> Samples are laid end to end, and the
+/// recorder appends exact silence for every block the channel skips while the station transmits
+/// (<see cref="Channel.SoundModemChannel.KeyedReceiveBlock"/>), so a keyup of any length keeps the
+/// audio after it sample-exact. The wall clock only catches what counting cannot see, a device
+/// that stalls and loses audio: a block that turns up more than <see cref="BehindTolerance"/>
+/// later than the samples so far account for is preceded by silence. When audio then runs ahead
+/// of the clock by more than <see cref="AheadTolerance"/> (the backlog of a stall delivered in one
+/// go, or a sound card a little fast), the write position steps back to where the clock says it
+/// should be and the new audio overwrites the most recent samples, which after a stall are the
+/// silence just inserted. Either way the error stays local: nothing already held is re-timed.</para>
 /// <para>16-bit, because that is what the kept WAV is and it halves the memory. Not thread-safe:
 /// the recorder holds its own lock around every call.</para>
 /// </remarks>
@@ -69,7 +71,9 @@ internal sealed class KeepAudioRing
         }
         else if (-behind > AheadTolerance.TotalSeconds * _rate)
         {
-            _origin = origin - Seconds(-behind);
+            // Step the write position back rather than moving the origin, which would re-time
+            // everything held.
+            _written = Math.Max(0, expectedEnd - n);
         }
 
         for (int i = 0; i < n; i++)
@@ -86,8 +90,18 @@ internal sealed class KeepAudioRing
     /// </summary>
     public (float[] Samples, int Held) Extract(DateTimeOffset from, DateTimeOffset to)
     {
+        (short[] raw, int held) = ExtractRaw(from, to);
+        return (ToFloat(raw), held);
+    }
+
+    /// <summary>
+    /// <see cref="Extract"/> as the 16-bit samples held, which is the cheapest copy to take under
+    /// a lock the audio thread also wants.
+    /// </summary>
+    public (short[] Samples, int Held) ExtractRaw(DateTimeOffset from, DateTimeOffset to)
+    {
         int count = Math.Max(0, (int)Math.Round((to - from).TotalSeconds * _rate));
-        var samples = new float[count];
+        var samples = new short[count];
         if (_origin is not { } origin)
         {
             return (samples, 0);
@@ -101,12 +115,24 @@ internal sealed class KeepAudioRing
             long index = first + i;
             if (index >= oldest && index < _written)
             {
-                samples[i] = _buffer[(int)(index % _buffer.Length)] / 32768f;
+                samples[i] = _buffer[(int)(index % _buffer.Length)];
                 held++;
             }
         }
 
         return (samples, held);
+    }
+
+    /// <summary>16-bit samples as floats in -1 to 1.</summary>
+    public static float[] ToFloat(short[] raw)
+    {
+        var samples = new float[raw.Length];
+        for (int i = 0; i < raw.Length; i++)
+        {
+            samples[i] = raw[i] / 32768f;
+        }
+
+        return samples;
     }
 
     private void Silence(long count)

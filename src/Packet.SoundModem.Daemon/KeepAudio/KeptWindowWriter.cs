@@ -27,7 +27,7 @@ internal static class KeptWindowWriter
         IReadOnlyList<DetectorSample> samples)
     {
         string final = Path.Combine(root, window.Id);
-        string partial = Path.Combine(root, $".{window.Id}.partial");
+        string partial = PartialPath(root, window.Id);
         if (Directory.Exists(partial))
         {
             Directory.Delete(partial, recursive: true);
@@ -61,11 +61,15 @@ internal static class KeptWindowWriter
         return final;
     }
 
+    /// <summary>Where a window is built before it is renamed into place.</summary>
+    internal static string PartialPath(string root, string id) => Path.Combine(root, $".{id}.partial");
+
     /// <summary>
     /// One row per second of the window: busy if any look inside that second said so, with the
     /// fraction of looks that did, and the reasons from the look that best explains the second
     /// (the busiest one in a busy second, the one nearest to firing in a clear one). A second
-    /// nothing was sampled in has its time and nothing else.
+    /// nothing was sampled in has its time and nothing else. Busy includes our own transmission;
+    /// <paramref name="busySeconds"/> counts only the seconds somebody else made busy.
     /// </summary>
     internal static string Csv(
         DateTimeOffset from, DateTimeOffset to, IReadOnlyList<DetectorSample> samples, out int busySeconds)
@@ -84,6 +88,7 @@ internal static class KeptWindowWriter
 
             int count = 0;
             int busy = 0;
+            int busyOther = 0;
             bool transmitting = false;
             DetectorSample? best = null;
             for (int i = next; i < samples.Count && samples[i].At < end; i++)
@@ -94,6 +99,10 @@ internal static class KeptWindowWriter
                 if (s.Busy)
                 {
                     busy++;
+                    if (!s.Transmitting)
+                    {
+                        busyOther++;
+                    }
                 }
 
                 if (best is null || Better(s, best))
@@ -109,7 +118,10 @@ internal static class KeptWindowWriter
                 continue;
             }
 
-            if (busy > 0)
+            // The CSV's busy column is the raw answer, which our own transmission makes true (the
+            // transmitting column says when). The count is of the channel being busy with somebody
+            // else, the figure the journal line gives.
+            if (busyOther > 0)
             {
                 busySeconds++;
             }

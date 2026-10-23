@@ -65,15 +65,33 @@ public class KeepAudioRingTests
     }
 
     [Fact]
-    public void Audio_Running_Ahead_Of_The_Clock_Moves_The_Origin_Back()
+    public void A_Stall_Then_A_Burst_Re_Times_Nothing_Already_Held()
     {
         var ring = new KeepAudioRing(8000, TimeSpan.FromSeconds(60));
-        ring.Append(Ramp(8000), Start + TimeSpan.FromSeconds(1));
-        // A backlog: two seconds of audio delivered after only one more second of clock.
-        ring.Append(Ramp(16000), Start + TimeSpan.FromSeconds(2));
+        for (int i = 1; i <= 10; i++)
+        {
+            ring.Append(Block(i), Start + TimeSpan.FromSeconds(i));
+        }
 
-        ring.HeldTo.Should().Be(Start + TimeSpan.FromSeconds(2), "the newest sample is now");
-        ring.HeldFrom.Should().Be(Start - TimeSpan.FromSeconds(1));
+        // The device stalls for three seconds, then hands over its backlog of four blocks at once.
+        for (int i = 11; i <= 14; i++)
+        {
+            ring.Append(Block(i), Start + TimeSpan.FromSeconds(14));
+        }
+
+        ring.HeldFrom.Should().Be(Start, "the audio from before the stall keeps its times");
+        ring.HeldTo.Should().Be(Start + TimeSpan.FromSeconds(14));
+        ring.Extract(Start + TimeSpan.FromSeconds(4), Start + TimeSpan.FromSeconds(5)).Samples
+            .Should().OnlyContain(v => Math.Abs(v - 5f / 1000) < 1e-4, "block 5 is still where it was");
+        ring.Extract(Start + TimeSpan.FromSeconds(13), Start + TimeSpan.FromSeconds(14)).Samples
+            .Should().OnlyContain(v => Math.Abs(v - 14f / 1000) < 1e-4, "the newest block ends now");
+    }
+
+    private static float[] Block(int value)
+    {
+        var block = new float[8000];
+        Array.Fill(block, value / 1000f);
+        return block;
     }
 
     [Fact]
@@ -176,6 +194,46 @@ public sealed class KeepAudioRecorderTests : IDisposable
         description["note"].Should().BeNull();
         recorder.Status().Kept.Should().Equal(window.Id);
         recorder.Status().Pending.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_Sub_Second_Keyup_Is_Kept_As_Exactly_That_Much_Silence()
+    {
+        using KeepAudioRecorder recorder = NewRecorder();
+        Run(recorder, TimeSpan.FromSeconds(2));
+
+        // Three 100 ms blocks skipped while keyed: too short for the wall-clock backstop to see.
+        for (int i = 0; i < 3; i++)
+        {
+            _time.Advance(TimeSpan.FromMilliseconds(100));
+            recorder.ProcessKeyed(InputRate / 10);
+        }
+
+        Run(recorder, TimeSpan.FromSeconds(2));
+
+        var status = recorder.Status();
+        (status.HeldTo!.Value - status.HeldFrom!.Value).Should().Be(TimeSpan.FromSeconds(4.3),
+            "every keyed block is held as silence, so nothing after it moves early");
+        status.HeldTo.Should().Be(Now);
+    }
+
+    [Fact]
+    public void A_Window_Ending_Near_The_End_Of_The_Calendar_Is_A_400_Not_A_Crash()
+    {
+        using KeepAudioRecorder recorder = NewRecorder();
+        Run(recorder, TimeSpan.FromSeconds(5));
+        DateTimeOffset last = DateTimeOffset.MaxValue - TimeSpan.FromTicks(1);
+        recorder.Keep("x", last - TimeSpan.FromSeconds(30), last).Status.Should().Be(400);
+    }
+
+    [Fact]
+    public void A_Name_Still_Being_Written_Is_Not_Handed_Out_Again()
+    {
+        using KeepAudioRecorder recorder = NewRecorder();
+        Run(recorder, TimeSpan.FromSeconds(30));
+        Directory.CreateDirectory(Path.Combine(Root, ".20261022T155510Z-a.partial"));
+
+        recorder.Keep("a", Now - TimeSpan.FromSeconds(20), Now).Window!.Id.Should().Be("20261022T155510Z-a-2");
     }
 
     [Fact]
@@ -433,6 +491,28 @@ public class KeptWindowCsvTests
             "2026-10-22T16:00:00Z,0,0.00,0,,,3.0,6.0,-95.5,\"sub0 afsk1200=x\"",
             "2026-10-22T16:00:01Z,1,0.50,0,,energy sub0,7.5,6.0,-95.5,\"sub0 afsk1200=x\"",
             "2026-10-22T16:00:02Z,,,,,,,,,");
+    }
+}
+
+/// <summary>Our own transmission shows as busy in the CSV but is not counted as busy seconds.</summary>
+public class KeptWindowBusyCountTests
+{
+    [Fact]
+    public void Busy_Seconds_Leave_Out_Our_Own_Transmission()
+    {
+        DateTimeOffset from = DateTimeOffset.Parse("2026-10-22T16:00:00Z");
+        DetectorSample[] looks =
+        [
+            new(from + TimeSpan.FromSeconds(0.5), true, true, null, "own transmission", null, null, ""),
+            new(from + TimeSpan.FromSeconds(1.5), true, false, null, "fm-shape", null, null, ""),
+        ];
+
+        string[] rows = KeptWindowWriter.Csv(from, from + TimeSpan.FromSeconds(2), looks, out int busySeconds)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        busySeconds.Should().Be(1);
+        rows[1].Should().StartWith("2026-10-22T16:00:00Z,1,1.00,1,,own transmission,");
+        rows[2].Should().StartWith("2026-10-22T16:00:01Z,1,1.00,0,,fm-shape,");
     }
 }
 

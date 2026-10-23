@@ -398,9 +398,11 @@ public sealed class TransmitLease
     /// <summary>
     /// The holder as of this instant, an expired lease reading as free (unless it is closing),
     /// without reporting the expiry. For the channel's check under its own queue lock, where
-    /// raising <see cref="Changed"/> would run a host's handler inside that lock.
+    /// raising <see cref="Changed"/> would run a host's handler inside that lock, and for a
+    /// diagnostic that must only look: <see cref="Holder"/> ends a lease that is due, which runs
+    /// its teardown and closing ident on whichever thread asked.
     /// </summary>
-    internal int? HolderNow()
+    public int? HolderNow()
     {
         lock (_gate)
         {
