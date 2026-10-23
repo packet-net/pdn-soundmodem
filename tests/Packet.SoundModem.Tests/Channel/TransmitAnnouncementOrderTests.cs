@@ -2,7 +2,7 @@ using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.CarrierSense;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems;
-using Packet.SoundModem.Ms110d;
+using M0LTE.Ms110d;
 
 namespace Packet.SoundModem.Tests.Channel;
 

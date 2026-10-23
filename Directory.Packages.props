@@ -20,8 +20,14 @@
     <!-- The FM link model, lifted out of this repository's test project so that the modems
          measured through it - here and in the out-of-tree ones - share one definition. -->
     <PackageVersion Include="M0LTE.FmChannel" Version="0.7.0" />
+    <!-- The HF link model (Watterson fading and impulse noise), lifted out of the test project for
+         the same reason: M0LTE.Ms110d's mask suite measures through it as well. -->
+    <PackageVersion Include="M0LTE.HfChannel" Version="0.1.0" />
     <PackageVersion Include="M0LTE.FecLdpc" Version="0.1.0" />
     <PackageVersion Include="M0LTE.Ofdm" Version="0.1.0" />
+    <!-- The MIL-STD-188-110D Appendix D waveform, lifted out like the OFDM modem above; the
+         IModem wrapper (Modems/Ms110dModem.cs) stays here. See docs/dev/modem-packages.md. -->
+    <PackageVersion Include="M0LTE.Ms110d" Version="0.1.0" />
     <!-- The Tait CCDI driver, for OFDM-FM carrier sense taken from the radio's own squelch and
          signal-strength meter rather than inferred from the audio a receiver produces. AGPL-3.0,
          the same licence as this repo; see CLAUDE.md, Licence rules.

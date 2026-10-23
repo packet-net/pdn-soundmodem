@@ -1,7 +1,7 @@
 using System.Globalization;
 using M0LTE.Dsp;
 using M0LTE.Flex;
-using Packet.SoundModem.Ms110d;
+using M0LTE.Ms110d;
 using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Iq;
 

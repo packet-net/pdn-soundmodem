@@ -1,4 +1,4 @@
-using Packet.SoundModem.Ms110d;
+using M0LTE.Ms110d;
 using Packet.SoundModem.Ota;
 using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Iq;

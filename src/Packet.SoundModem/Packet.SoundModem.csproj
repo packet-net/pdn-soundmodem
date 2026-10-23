@@ -51,6 +51,9 @@
     <PackageReference Include="M0LTE.Dsp" Condition="'$(DspSourcePath)' == ''" />
     <PackageReference Include="M0LTE.FecLdpc" />
     <PackageReference Include="M0LTE.Ofdm" />
+    <!-- The MS110D waveform. Same local-checkout override as DspSourcePath:
+         `-p:Ms110dSourcePath=/path/to/M0LTE.Ms110d/src/M0LTE.Ms110d/M0LTE.Ms110d.csproj`. -->
+    <PackageReference Include="M0LTE.Ms110d" Condition="'$(Ms110dSourcePath)' == ''" />
     <PackageReference Include="Packet.Radio.Tait" />
     <!-- The `ubersdr:` receive device: UberSDR streams its IQ as zstd-compressed PCM frames. -->
     <PackageReference Include="ZstdSharp.Port" />
@@ -84,6 +87,10 @@
     <ProjectReference Include="$(DspSourcePath)" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(Ms110dSourcePath)' != ''">
+    <ProjectReference Include="$(Ms110dSourcePath)" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- The browser waterfall page, served whole by WaterfallWebServer - a single
          self-contained file, no external assets. -->
@@ -96,10 +103,9 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
-    <!-- The OTA scorer re-encodes the transmitted bit stream to measure UNCODED error rate,
-         which needs the same framing/puncture/interleave internals the mask suite uses. It has
-         to be the production encoder rather than a copy: a scorer with its own idea of the wire
-         order would grade the demodulator against a fiction and never say so. -->
+    <!-- The OTA tool's timing-oracle probe reads the BPSK modem's own demodulator. (It used to
+         reach the MS110D framing, puncture and interleave internals here too; those are public
+         in M0LTE.Ms110d now.) -->
     <InternalsVisibleTo Include="sm-ota" />
     <!-- The C4FSK bench probe (tools/Packet.SoundModem.C4fskProbe) reads the modem's own
          decision/dibit observer seams over a WAV file, which is the only way to see what the

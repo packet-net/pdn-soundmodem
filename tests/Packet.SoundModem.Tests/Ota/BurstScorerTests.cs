@@ -1,5 +1,6 @@
+using M0LTE.HfChannel;
 using AwesomeAssertions;
-using Packet.SoundModem.Ms110d;
+using M0LTE.Ms110d;
 using Packet.SoundModem.Ota;
 using Packet.SoundModem.Tests.Channel;
 

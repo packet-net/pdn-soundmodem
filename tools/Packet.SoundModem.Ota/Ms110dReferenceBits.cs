@@ -1,6 +1,6 @@
 using M0LTE.Fec;
-using Packet.SoundModem.Ms110d;
-using Packet.SoundModem.Ms110d.Fec;
+using M0LTE.Ms110d;
+using M0LTE.Ms110d.Fec;
 
 namespace Packet.SoundModem.Ota;
 
@@ -17,8 +17,9 @@ namespace Packet.SoundModem.Ota;
 /// against the Watterson rig's own uncoded telemetry, and it separates "the channel was bad"
 /// from "the equaliser lost the plot".</para>
 /// <para>The encode path here is the production one - <see cref="Ms110dFraming"/>,
-/// <see cref="Ms110dPuncture"/>, <see cref="Ms110dInterleaver"/> - reached through
-/// <c>InternalsVisibleTo</c>, and assembled the same way <c>Ms110dMaskTests</c> assembles it.
+/// <see cref="Ms110dPuncture"/>, <see cref="Ms110dInterleaver"/> - public in the M0LTE.Ms110d
+/// package for this reason, and assembled the same way that package's <c>Ms110dMaskTests</c>
+/// assembles it.
 /// Reimplementing the wire order for the scorer would produce a scorer that grades the
 /// demodulator against its own reimplementation, which is the de-rigging failure this project
 /// has already paid for once.</para>

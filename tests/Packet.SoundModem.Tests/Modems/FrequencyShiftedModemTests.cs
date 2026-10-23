@@ -1,3 +1,4 @@
+using M0LTE.HfChannel;
 using AwesomeAssertions;
 using Packet.SoundModem.Modems;
 
@@ -259,7 +260,7 @@ public class FrequencyShiftedModemTests(ITestOutputHelper output)
             byte[] frame = TestFrame(60, seed + i);
             IModem tx = Create(mode, centre, _ => { });
             float[] burst = tx.Modulate(frame, txDelayMilliseconds: 50);
-            var channel = new Channel.WattersonChannel(Rate, (seed * 1000) + i, Channel.WattersonChannel.Poor)
+            var channel = new WattersonChannel(Rate, (seed * 1000) + i, WattersonChannel.Poor)
             {
                 CentreHz = centre ?? 1800, // the rig fades about the signal's own centre
             };

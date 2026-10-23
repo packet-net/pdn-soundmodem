@@ -1,3 +1,4 @@
+using M0LTE.HfChannel;
 using Packet.SoundModem.Modems;
 
 namespace Packet.SoundModem.Ota;
@@ -117,7 +118,7 @@ internal sealed record FmLadderPassOptions
 /// <remarks>
 /// <para>The audio is generated and the channel injected exactly as the software waterfall does -
 /// the mode's own <see cref="IModem"/> through <see cref="SimModem"/>, the mask suite's
-/// <see cref="Packet.SoundModem.Tests.Channel.WattersonChannel"/> through <see cref="SimChannel"/> -
+/// <see cref="WattersonChannel"/> through <see cref="SimChannel"/> -
 /// then the whole thing (noise lead-in and all) is frequency-modulated by <see cref="FmModulator"/>.
 /// Injecting the noise as audio <em>before</em> the FM modulator is faithful to the on-air ladder,
 /// which transmits its noise lead-in through the radio's FM modulator too, and it is what makes the

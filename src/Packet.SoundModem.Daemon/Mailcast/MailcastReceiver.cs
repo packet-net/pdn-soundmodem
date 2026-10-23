@@ -67,7 +67,7 @@ internal sealed class MailcastReceiver : IAsyncDisposable
         double nativeCentreHz = ModemCatalog.DefaultCentreFrequencyFor(MailcastOnAir.Mode) ?? centre;
         _modem = ModemCatalog.Create(MailcastOnAir.Mode, dspRate, frame => Intake.Offer(frame));
         _receiveShift = new MailcastReceiveShift(dspRate, centre, nativeCentreHz, MailcastPlacement.HalfWidthHz());
-        if (Packet.SoundModem.Ms110d.Ms110dModem.Unwrap(_modem) is { } ms110d)
+        if (Packet.SoundModem.Modems.Ms110dModem.Unwrap(_modem) is { } ms110d)
         {
             // The receiver's own release (issue #553); the lock limit below stays as a backstop.
             ms110d.LockReleased += line =>

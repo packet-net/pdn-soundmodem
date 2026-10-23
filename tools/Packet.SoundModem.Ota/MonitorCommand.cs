@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 using System.Globalization;
-using Packet.SoundModem.Ms110d;
+using M0LTE.Ms110d;
 using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Iq;
 using M0LTE.Dsp;

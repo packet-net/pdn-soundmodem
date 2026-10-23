@@ -1,3 +1,4 @@
+using M0LTE.HfChannel;
 using M0LTE.Ofdm;
 
 namespace Packet.SoundModem.Ota;
@@ -78,7 +79,7 @@ internal sealed record OfdmLadderPassOptions
 /// </summary>
 /// <remarks>
 /// <para>The channel injected here is literally the sim baseline's <see cref="SimChannel"/> (which is
-/// the mask suite's <see cref="Packet.SoundModem.Tests.Channel.WattersonChannel"/>), so an OFDM
+/// the mask suite's <see cref="WattersonChannel"/>), so an OFDM
 /// on-air ladder and its software waterfall are measured against one rig, not two. Rendering drives
 /// the datac engine at its native 8&#160;kHz through <see cref="DatacEngine"/> - the same primitives
 /// <see cref="DatacPacketProbe"/> grades on - then places the audio on a single sideband with

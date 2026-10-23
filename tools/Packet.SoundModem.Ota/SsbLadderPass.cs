@@ -1,3 +1,4 @@
+using M0LTE.HfChannel;
 using Packet.SoundModem.Modems;
 
 namespace Packet.SoundModem.Ota;
@@ -92,7 +93,7 @@ internal sealed record SsbLadderPassOptions
 /// <see cref="ModemCatalog.Create"/> hands back - reusing <see cref="SimModem"/>, the same
 /// mode-generic adapter the software <c>sim</c> waterfall uses - so nothing here is coupled to any one
 /// modem. The channel injected is literally the sim baseline's <see cref="SimChannel"/> (the mask
-/// suite's <see cref="Packet.SoundModem.Tests.Channel.WattersonChannel"/>), so an on-air ladder and
+/// suite's <see cref="WattersonChannel"/>), so an on-air ladder and
 /// its software waterfall are measured against one rig, not two. The audio is then placed on a single
 /// sideband with <see cref="Ms110dIqUpconverter"/> (a generic real-audio→SSB-IQ converter, despite its
 /// MS110D name) so a rehearsal's simulated capture lands exactly where a real DAX capture would.</para>

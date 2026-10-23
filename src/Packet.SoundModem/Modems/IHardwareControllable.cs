@@ -4,7 +4,7 @@ namespace Packet.SoundModem.Modems;
 /// A modem with runtime-settable hardware parameters, addressed by the KISS SETHW command
 /// (type 6) on its port. The payload's meaning is the modem's own - SETHW is defined as
 /// hardware-specific - and each implementation documents its layout. The one shipped
-/// implementation is <see cref="Ms110d.Ms110dModem"/>: <c>payload[0]</c> = transmit waveform
+/// implementation is <see cref="Ms110dModem"/>: <c>payload[0]</c> = transmit waveform
 /// number, optional <c>payload[1]</c> = interleaver (0 short, 1 long).
 /// </summary>
 /// <remarks>

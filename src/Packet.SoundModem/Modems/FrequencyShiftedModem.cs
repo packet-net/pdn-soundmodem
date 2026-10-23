@@ -56,7 +56,7 @@ public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFram
     /// <summary>How close to DC or Nyquist a shifted band edge may sit. Two things hide inside
     /// it: the probe reports 99 % occupied-bandwidth edges, which sit a couple of hundred Hz
     /// inside the real skirts (MS110D's OBW low is ~400 Hz where its -30 dB extent reaches
-    /// 170 Hz, both pinned by Ms110dObwTests), and the Hilbert response rolls off close to DC
+    /// 170 Hz, both pinned by Ms110dObwTests in M0LTE.Ms110d), and the Hilbert response rolls off close to DC
     /// and Nyquist even at 639 taps, taking image rejection with it.</summary>
     private const double EdgeGuardHz = 350;
 

@@ -218,7 +218,7 @@ internal static class StationFactory
                 + (channel.Modems[subChannel] is RateBridgedModem bridged
                     ? $" (runs at {dspRate / bridged.Factor} Hz inside the {dspRate} Hz channel)"
                     : ""));
-            if (Packet.SoundModem.Ms110d.Ms110dModem.Unwrap(channel.Modems[subChannel]) is { } ms110d)
+            if (Packet.SoundModem.Modems.Ms110dModem.Unwrap(channel.Modems[subChannel]) is { } ms110d)
             {
                 // Once per lock the receiver lets go of with no signal left under it (issue #553).
                 int journalled = subChannel;
@@ -254,7 +254,7 @@ internal static class StationFactory
 
             if (mode.StartsWith("ms110d-wn", StringComparison.Ordinal)
                 && int.TryParse(mode.AsSpan("ms110d-wn".Length), out int wn)
-                && Packet.SoundModem.Ms110d.Ms110dModem.PoorStatusNote(wn) is { } poorNote)
+                && Packet.SoundModem.Modems.Ms110dModem.PoorStatusNote(wn) is { } poorNote)
             {
                 journal.Write($"modem {subChannel}: {poorNote}");
             }
