@@ -24,7 +24,7 @@ namespace Packet.SoundModem.CarrierSense;
 /// because the driver maintains it from the radio's unsolicited reports; RSSI is polled, and earns
 /// its keep on a data station whose squelch is held open, where DCD never asserts at all.</para>
 /// </remarks>
-public sealed class RadioBusySource : IChannelBusySource
+public sealed class RadioBusySource : IChannelBusySource, IBusyReadingSource
 {
     /// <summary>Consecutive failed reads before RSSI stops claiming to know anything.</summary>
     /// <remarks>Holding the last answer instead would risk a busy that never clears, which is the
@@ -76,6 +76,11 @@ public sealed class RadioBusySource : IChannelBusySource
     public bool? Busy => Combine(
         _dcdUsable ? _radio.ChannelBusy : null,
         _rssiKnown ? _rssiBusy : null);
+
+    /// <summary>The last RSSI reading against the configured threshold, both in dBm, or null
+    /// without a threshold or a reading.</summary>
+    public BusyReading? BusyReading =>
+        LastRssiDbm is double dbm && _busyAboveDbm is double above ? new BusyReading(dbm, above) : null;
 
     /// <summary>The last RSSI reading in dBm, for diagnostics. Null if not polling or not known.</summary>
     public double? LastRssiDbm { get; private set; }

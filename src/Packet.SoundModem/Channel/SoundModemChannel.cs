@@ -474,31 +474,9 @@ public sealed class SoundModemChannel
     /// </param>
     private bool AnyAudioBusyFor(object? source, ref int asserted)
     {
-        if (source is not IModem asking
-            || !_passbands.TryGetValue(asking, out ModemPassband? measured)
-            || measured is not ModemPassband mine)
-        {
-            foreach ((int sub, IModem modem) in _modems)
-            {
-                if (modem.ChannelBusy)
-                {
-                    asserted |= 1 << sub;
-                }
-            }
-
-            return asserted != 0;
-        }
-
         foreach ((int sub, IModem other) in _modems)
         {
-            if (!other.ChannelBusy)
-            {
-                continue;
-            }
-
-            if (!_passbands.TryGetValue(other, out ModemPassband? band)
-                || band is not ModemPassband theirs
-                || mine.Overlaps(theirs))
+            if (other.ChannelBusy && SharesPassband(source, other))
             {
                 asserted |= 1 << sub;
             }
@@ -506,6 +484,113 @@ public sealed class SoundModemChannel
 
         return asserted != 0;
     }
+
+    /// <summary>
+    /// Whether <paramref name="other"/>'s audio answer counts for a transmission from
+    /// <paramref name="source"/>: always for a source that is not a modem, and otherwise when the
+    /// two measured passbands overlap or either is unmeasured.
+    /// </summary>
+    private bool SharesPassband(object? source, IModem other)
+    {
+        if (source is not IModem asking
+            || !_passbands.TryGetValue(asking, out ModemPassband? measured)
+            || measured is not ModemPassband mine)
+        {
+            return true;
+        }
+
+        return !_passbands.TryGetValue(other, out ModemPassband? band)
+            || band is not ModemPassband theirs
+            || mine.Overlaps(theirs);
+    }
+
+    /// <summary>
+    /// The carrier-sense answer for one sub-channel, or for the whole station, together with who
+    /// gave it and what every detector measured at the time.
+    /// </summary>
+    /// <remarks>
+    /// <para>For diagnostics (packet-net/pdn-soundmodem#723), not for deciding: the answer is the
+    /// one <see cref="ChannelBusyFor(int)"/> gives, computed by the same code, and the rest is
+    /// read alongside it. Safe to call from any thread, at the cost of the detectors being read a
+    /// moment apart.</para>
+    /// </remarks>
+    /// <param name="subChannel">Whose view, as a transmission from that sub-channel would see it;
+    /// null, or a sub-channel with no modem, for the whole station.</param>
+    public CarrierSenseExplanation ExplainCarrierSense(int? subChannel = null)
+    {
+        IModem? asking = subChannel is int sub && _modems.TryGetValue(sub, out IModem? found) ? found : null;
+        bool transmitting = _transmitting;
+        bool busy = ChannelBusyFor(asking, out int asserted);
+        bool? sourceBusy = _busySource?.Busy;
+        string? sourceName = _busySource is null ? null : SourceName(_busySource);
+        BusyReading? sourceReading = (_busySource as IBusyReadingSource)?.BusyReading;
+
+        var detectors = new List<CarrierSenseDetector>(_modems.Count + 1);
+        if (sourceName is not null)
+        {
+            detectors.Add(new CarrierSenseDetector(sourceName, sourceBusy, null, sourceBusy is not null, sourceReading));
+        }
+
+        // Which answers count follows CarrierSenseRule: a source with an opinion decides, ored with
+        // packet DCD; without one, every modem sharing the asker's passband decides on its audio.
+        BusyReading? decidingReading = null;
+        BusyReading? nearestCounted = sourceBusy is not null ? sourceReading : null;
+        var decidedBy = new List<string>();
+        if (transmitting)
+        {
+            decidedBy.Add("own transmission");
+        }
+        else if ((asserted & RadioBusyBit) != 0)
+        {
+            decidedBy.Add(sourceName ?? "radio");
+            decidingReading = sourceReading;
+        }
+
+        foreach ((int number, IModem modem) in _modems)
+        {
+            bool counts = sourceBusy is null && SharesPassband(asking, modem);
+            BusyReading? reading = (modem as IBusyReadingSource)?.BusyReading;
+            detectors.Add(new CarrierSenseDetector(
+                $"sub{number} {modem.Mode}", modem.ChannelBusy, modem.CarrierDetect,
+                counts || (sourceBusy is not null && modem.CarrierDetect), reading));
+            if (counts)
+            {
+                nearestCounted = BusyReading.Nearer(nearestCounted, reading);
+            }
+
+            if (!transmitting && (asserted & (1 << number)) != 0)
+            {
+                bool dcd = modem.CarrierDetect;
+                decidedBy.Add(dcd ? $"dcd sub{number}" : $"energy sub{number}");
+                if (!dcd)
+                {
+                    decidingReading = BusyReading.Nearer(decidingReading, reading);
+                }
+            }
+        }
+
+        return new CarrierSenseExplanation(
+            busy,
+            transmitting,
+            asking is null ? null : subChannel,
+            decidedBy.Count == 0 ? null : string.Join("+", decidedBy),
+            busy ? decidingReading : nearestCounted,
+            _busySource switch
+            {
+                RadioBusySource radio => radio.LastRssiDbm,
+                TaitCarrierSense tait => tait.LastRssiDbm,
+                _ => null,
+            },
+            detectors);
+    }
+
+    /// <summary>A short name for a carrier-sense source, for a log line.</summary>
+    private static string SourceName(IChannelBusySource source) => source switch
+    {
+        RadioBusySource or TaitCarrierSense => "radio",
+        FmShapeBusyDetector => "fm-shape",
+        _ => source.GetType().Name,
+    };
 
     /// <summary>
     /// Where this channel's carrier sense comes from, or null if it has nothing but the audio.

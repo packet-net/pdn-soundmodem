@@ -202,7 +202,7 @@ The `waterfall` section (or `--waterfall PORT`) serves these routes on `waterfal
 | any other path with a WebSocket upgrade | the live stream; the page itself opens `ws` |
 | `/survey/<file>` | one survey capture from `survey.path`, `audio/wav` or `application/json`; only with a `survey` section |
 | `/metrics`, `/metrics/frames` | see [Metrics](#metrics); only with a `metrics` section |
-| `/api/config`, `/api/proposals`, `/api/txtest`, `/api/txlease`, `/api/mixer`, `/api/rig`, `/api/rig/tune`, `/api/mailcast/measure` | see [The API](#the-api-under-api); 404 without an `api.key`, except the mixer exception |
+| `/api/config`, `/api/proposals`, `/api/txtest`, `/api/txlease`, `/api/keepaudio`, `/api/mixer`, `/api/rig`, `/api/rig/tune`, `/api/mailcast/measure` | see [The API](#the-api-under-api); 404 without an `api.key`, except the mixer exception |
 
 A capture name is served only when it is 1 to 128 characters of lower-case letters, digits, hyphens and dots, contains no `..`, ends in `.wav` or `.json`, and names a file inside the survey directory. Anything else is a 404.
 
@@ -293,6 +293,8 @@ The key is presented as `Authorization: Bearer KEY` or `X-API-Key: KEY`; `X-API-
 | `/api/txtest` | `POST` | required | `{"twoTone": true, "seconds": 5}`, `{"twoTone": false, "toneHz": 999, "seconds": 5}` or `{"stop": true}`, each optionally with `"subChannel": N` (needed while a lease is held; 400 if no modem is on it) and a tone optionally with `"probe": {"kind": "zc255", "gapSeconds": 1.5, "audioHz": 1800}` (see [the channel probe](config.md#the-channel-probe); 400 for an unknown or missing `kind`, a negative `gapSeconds`, an `audioHz` outside the channel, any other field in `probe`, or a `probe` that is not an object); a `"stop": true` wins whatever else the body carries | `{"transmitted": bool, "sent": ..., "refused": ..., "failed": ..., "probe": ..., "probeComplete": ...}` with the unused keys null, `probe` the id of the probe when all of it went out and `probeComplete` false when a stop cut it, answered once the test is over: 200 when it went out, 409 when the station would not run it, 500 when it broke; `{"stopped": true, "note": "..."}` for a stop; 404 with no transmitter or `txTest.enabled` false |
 | `/api/txlease` | `POST` | required | `{"subChannel": N, "seconds": 60}` to take or renew, optionally with `"maxCarrierWaitSeconds": 30`; `{"release": true, "subChannel": N}` to give it back; `"dropQueued": true` with a release, or alone while holding, to drop the holder's unsent frames | 200 with the lease's state (below) plus `"renewed"`, `"seconds"` and `"capped"` for a take, `"released"` for a release and `"dropped"` (a count) for a drop; 409 with `refused` when another sub-channel holds it, when a lease is closing, when a release or drop names a sub-channel that does not hold it, or for a drop with no lease; 400 for a missing `subChannel`, one with no modem, `seconds` of 0 or less, or `maxCarrierWaitSeconds` outside 1 to 300 |
 | `/api/txlease` | `GET` | required | none | the lease's state: `{"held": bool, "subChannel": N or null, "expires": ... or null, "closing": bool, "maxCarrierWaitSeconds": S or null, "channelBusy": bool, "carrierDetect": bool}`. `channelBusy` is the holder's carrier sense, or the whole station's when nobody holds a lease, and is true while this station transmits; `carrierDetect` is true while any modem hears a packet signal |
+| `/api/keepaudio` | `POST` | required | `{"from": "2026-10-22T15:58:00Z", "to": "2026-10-22T16:01:30Z", "label": "slot 1600"}`, UTC times (one with no offset is taken as UTC) | 200 `{"id", "label", "from", "to", "clamped", "note", "readyAfter", "directory"}`, the times rounded outwards to whole seconds, `clamped` true with a `note` when the station has not been listening since `from` and the window starts later; 400 with `refused` for a missing or unreadable field, an unknown field, a label with no letter or digit or over 64 characters, `to` not after `from`, a window over 10 minutes, `from` more than 5 minutes ago or `to` more than 15 minutes ahead; 409 while 16 windows are already waiting. See [keeping receive audio](#keeping-receive-audio) |
+| `/api/keepaudio` | `GET` | required | none | `{"heldFrom", "heldTo", "sampleRate", "directory", "retentionDays", "pending": [{"id", "from", "to", "readyAfter"}], "kept": [directory names]}` |
 | `/api/mixer` | `GET` | required, or none with `enableAudioControls` | none | `available` true, `card`, `controls` (every control name), `playbackCard` and `playbackControls` (the transmit card and its controls, the same as `card` and `controls` unless [`playbackDevice`](config.md#two-cards-capturedevice-and-playbackdevice) puts transmit on another card), `capture` and `playback` (each null when the card has no such control, else `control`, `decibels`, `dbRange` as `min`, `max` and `mutesBelowMin` or null on a card with no dB scale, `percent`, and `source` as `config`, `state` or `none`), `agc` and `micBoost` (each null or `control`, `on` and `forcedOff`, always true), `summary` and `journal` (the start-up lines); `{"available": false, "why": "..."}` on a station with no sound card |
 | `/api/mixer` | `POST` | required, or none with `enableAudioControls` | `{"captureGainDb": 6, "playbackDb": -8}`, either or both | 200 with the read-back plus `applied`, `persisted`, `warn`, `stateFile` and `note`; 400 for a level outside the card's range or a removed key; 409 on a station with no mixer |
 | `/api/mixer?persist=false` | `POST` | as above | as above | the card is set for this run and nothing is written |
@@ -342,6 +344,26 @@ tx lease: sub-channel 3 (ms110d-wn4) still holds the transmitter after 5m00s (10
 tx lease: sub-channel 3 (ms110d-wn4) released the transmitter after 15m02s; 7 transmissions from others refused; normal service resumes
 tx lease: sub-channel 3 (ms110d-wn4) stopped renewing and its lease ran out at 2026-10-04T12:16:00Z, after 15m30s; its unsent frames were dropped; 7 transmissions from others refused; normal service resumes
 tx lease: sub-channel 3 (ms110d-wn4) transmitted after 30s without a clear channel (maxCarrierWaitSeconds)
+```
+
+### Keeping receive audio
+
+`POST /api/keepaudio` asks the station to keep what it heard between two times, so you can look afterwards at what the channel really sounded like. pdn-mailcast's head end uses it to keep the run-up to each slot, but it is not tied to mailcast: any client with the key can ask, for any reason, and the label is just a name for the directory.
+
+The station always keeps the last 12 minutes of receive audio in memory, at 8 kHz, and looks at its carrier sense ten times a second. That is how a window can start in the past. It costs nothing on disk until somebody asks, and it does not need `rawCapture`.
+
+Once the window's end has passed (2 s later, to let the last audio arrive), it is written to its own directory under the state directory, `kept-audio/<start>-<label>/`, for example `kept-audio/20261022T155800Z-slot-1600/`:
+
+- `audio.wav`: the receive audio, 16-bit mono at 8 kHz. Silence where the station was transmitting, since it does not hear itself.
+- `detector.csv`: one row a second, `utc,busy,busy_fraction,transmitting,lease_subchannel,decided_by,level_db,threshold_db,radio_dbm,detectors`. `busy` is 1 if any look in that second said busy, and `busy_fraction` how many did. The answer is the one the transmit lease gives, in the lease holder's view while a lease is held. `decided_by` says what made it busy: `own transmission`, `radio`, `fm-shape`, `dcd subN` (a modem hearing a packet signal) or `energy subN` (a modem's energy detector), joined with `+`. `level_db` and `threshold_db` are that detector's reading and the level it fires at, or on a clear second the reading nearest to firing; each detector has its own scale. `radio_dbm` is the radio's own signal reading where it gives one (a Tait with `busyAboveDbm`), and empty otherwise. `detectors` lists every detector and what it said.
+- `waterfall.png`: a waterfall of the window, 0 to 4 kHz bottom to top and four columns a second, with a strip along the top: red where the station said busy, blue where it was transmitting, dark green where it said clear. Ticks along the bottom mark every 10 s, taller every minute.
+- `window.json`: the label, times and a count of busy seconds. It is written last, and the directory only appears under its real name once everything is there.
+
+Kept windows are deleted after 30 days. Several windows can overlap; each gets its own directory. The journal says when a window is asked for and when it is written:
+
+```
+keep audio: keeping 2026-10-22T15:58:00Z to 2026-10-22T16:01:30Z as 20261022T155800Z-slot-1600
+keep audio: wrote /var/lib/pdn-soundmodem/kept-audio/20261022T155800Z-slot-1600 (210 s, busy in 312 of 2100 looks)
 ```
 
 ### Rig tuning windows

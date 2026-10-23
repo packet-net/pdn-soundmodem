@@ -30,6 +30,7 @@ public sealed class EnergyBusyDetector
     private readonly float _assertRatio;
     private readonly float _releaseRatio;
     private readonly int _holdBlocks;
+    private readonly double _assertDb;
 
     private double _accumulator;
     private int _accumulated;
@@ -37,6 +38,7 @@ public sealed class EnergyBusyDetector
     private int _seedBlocksRemaining = 8;
     private int _hold;
     private bool _busy;
+    private double _lastRatioDb = double.NaN;
 
     /// <summary>Creates a detector fed with band-pass-filtered samples.</summary>
     /// <param name="sampleRate">Sample rate of the fed signal.</param>
@@ -99,6 +101,7 @@ public sealed class EnergyBusyDetector
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(blockMilliseconds, 0);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(assertDb, releaseDb);
         _blockSize = sampleRate * blockMilliseconds / 1000;
+        _assertDb = assertDb;
         _assertRatio = (float)Math.Pow(10, assertDb / 10);
         _releaseRatio = (float)Math.Pow(10, releaseDb / 10);
         // Round the hold UP to a whole block: holdMilliseconds is a minimum, and truncating
@@ -108,6 +111,14 @@ public sealed class EnergyBusyDetector
 
     /// <summary>True while in-band energy is significantly above the noise floor.</summary>
     public bool Busy => _busy;
+
+    /// <summary>
+    /// The last block's power over the noise floor against the assert threshold, both in dB, or
+    /// null during the warm-up. For diagnostics (packet-net/pdn-soundmodem#723); read from another
+    /// thread, it is the latest whole block.
+    /// </summary>
+    public CarrierSense.BusyReading? Reading =>
+        double.IsNaN(_lastRatioDb) ? null : new CarrierSense.BusyReading(_lastRatioDb, _assertDb);
 
     /// <summary>Feeds one band-pass-filtered sample.</summary>
     public void Process(float bandLimitedSample)
@@ -144,6 +155,7 @@ public sealed class EnergyBusyDetector
         _noiseFloor = Math.Max(_noiseFloor, 1e-12);
 
         double ratio = blockPower / _noiseFloor;
+        _lastRatioDb = 10 * Math.Log10(ratio);
         if (ratio >= _assertRatio)
         {
             _busy = true;
@@ -164,5 +176,6 @@ public sealed class EnergyBusyDetector
         _busy = false;
         _noiseFloor = 0;
         _seedBlocksRemaining = 8;
+        _lastRatioDb = double.NaN;
     }
 }

@@ -39,7 +39,7 @@ public enum FskFraming
 /// behind a symbol-clocked content dedupe. The filter, the slicer's envelope tracker, the clock
 /// and DCD are shared, so the cost is the decision stage and six extra deframers.
 /// </remarks>
-public sealed class FskModem : IModem, IFrameSpanSource
+public sealed class FskModem : IModem, IFrameSpanSource, CarrierSense.IBusyReadingSource
 {
     private readonly int _baud;
     private readonly int _sampleRate;
@@ -337,6 +337,9 @@ public sealed class FskModem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _packetDcd.Asserted || _energyBusy.Busy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => _energyBusy.Reading;
 
     /// <inheritdoc />
     public int FrameSpanMarginSamples => _spanMargin;

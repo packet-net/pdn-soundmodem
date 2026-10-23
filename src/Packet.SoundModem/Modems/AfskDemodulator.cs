@@ -19,7 +19,7 @@ namespace Packet.SoundModem.Modems;
 /// 1200/2200 Hz - NinoTNC modes 6/7) and Nino's HF tones (300 baud, 1600/1800 Hz - modes
 /// 12/13/14).
 /// </remarks>
-public sealed class AfskDemodulator
+public sealed class AfskDemodulator : CarrierSense.IBusyReadingSource
 {
     /// <summary>Samples between oscillator renormalisations. The rotation recurrence's
     /// magnitude drifts by ~1 ULP per step; at this interval the drift stays parts-per-
@@ -248,6 +248,9 @@ public sealed class AfskDemodulator
     /// <summary>Channel-busy for carrier sense: packet DCD or any significant in-band
     /// energy (a carrier, voice, another mode).</summary>
     public bool ChannelBusy => _packetDcd.Asserted || _energyBusy.Busy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => _energyBusy.Reading;
 
     /// <summary>Clears carrier state, e.g. while the channel's own transmitter is keyed.</summary>
     public void ResetCarrierState()

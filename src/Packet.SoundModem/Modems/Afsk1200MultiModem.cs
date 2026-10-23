@@ -17,7 +17,7 @@ namespace Packet.SoundModem.Modems;
 /// transmitters decode on whichever branch fits best. Transmit uses the centre
 /// frequency only.
 /// </summary>
-public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
+public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource, CarrierSense.IBusyReadingSource
 {
     /// <summary>Bell 202 deviation of each tone from the centre (mark = centre − 500,
     /// space = centre + 500); the demodulators' default shift.</summary>
@@ -199,6 +199,22 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulators.Any(d => d.ChannelBusy);
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading
+    {
+        get
+        {
+            // The branch nearest to firing, which is the one that would decide.
+            CarrierSense.BusyReading? nearest = null;
+            foreach (AfskDemodulator branch in _demodulators)
+            {
+                nearest = CarrierSense.BusyReading.Nearer(nearest, branch.BusyReading);
+            }
+
+            return nearest;
+        }
+    }
 
     /// <inheritdoc />
     public int FrameSpanMarginSamples => _spanMargin;

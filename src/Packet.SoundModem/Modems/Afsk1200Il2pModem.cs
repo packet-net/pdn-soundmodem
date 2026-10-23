@@ -11,7 +11,7 @@ namespace Packet.SoundModem.Modems;
 /// NRZI decoding (hdlc_rec_bit), and the proven 9600 IL2P framing choice here.
 /// Transparency comes from IL2P's packet-synchronous scrambler, not bit stuffing.
 /// </summary>
-public sealed class Afsk1200Il2pModem : IModem, IFrameSpanSource
+public sealed class Afsk1200Il2pModem : IModem, IFrameSpanSource, CarrierSense.IBusyReadingSource
 {
     private const int Baud = 1200;
 
@@ -135,6 +135,9 @@ public sealed class Afsk1200Il2pModem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulator.ChannelBusy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => _demodulator.BusyReading;
 
     /// <inheritdoc />
     public int FrameSpanMarginSamples => _spanMargin;

@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Modems;
 /// 1500 Hz) and 3600 (1800 baud, 1650 Hz) mode family - as an <see cref="IModem"/>.
 /// Symbol rates and carriers are Nino's, per the v3/4.43 mode-switch mapping in
 /// flashtnc's release-notes.txt.</summary>
-public sealed class QpskModem : IModem, IConstellationSource, IFrameSpanSource
+public sealed class QpskModem : IModem, IConstellationSource, IFrameSpanSource, CarrierSense.IBusyReadingSource
 {
     private readonly QpskDemodulator _demodulator;
     private readonly QpskModulator _modulator;
@@ -232,6 +232,9 @@ public sealed class QpskModem : IModem, IConstellationSource, IFrameSpanSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulator.ChannelBusy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => _demodulator.BusyReading;
 
     /// <summary>How far the current signal sits from this modem's carrier centre, in Hz
     /// (positive = above it), or null when nothing coherent enough to measure is present -

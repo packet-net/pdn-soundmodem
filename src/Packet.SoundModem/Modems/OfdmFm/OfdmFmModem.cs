@@ -21,7 +21,7 @@ namespace Packet.SoundModem.Modems.OfdmFm;
 /// straight into the codec's <see cref="OfdmFmBurstCodec.DecodeAt(ReadOnlySpan{float}, int)"/> - the same decode the
 /// whole-buffer path uses, so the two cannot drift into disagreeing.</para>
 /// </remarks>
-public sealed class OfdmFmModem : IModem
+public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
 {
     /// <summary>
     /// The longest payload this modem carries, either way: everything the burst header can name.
@@ -253,6 +253,9 @@ public sealed class OfdmFmModem : IModem
     /// <see cref="CarrierSenseRule"/>.</para>
     /// </remarks>
     public bool ChannelBusy => CarrierDetect || _energy.Busy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => _energy.Reading;
 
     /// <summary>The profile this modem runs.</summary>
     public OfdmFmParameters Parameters => _parameters;

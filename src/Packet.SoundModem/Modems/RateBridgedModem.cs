@@ -30,7 +30,7 @@ namespace Packet.SoundModem.Modems;
 /// upsampler per burst, padded with zeros so the filter's tail flushes, as
 /// <see cref="FrequencyShiftedModem"/> does with its shifter.</para>
 /// </remarks>
-public sealed class RateBridgedModem : IModem, IFrameSpanSource, IConstellationSource
+public sealed class RateBridgedModem : IModem, IFrameSpanSource, IConstellationSource, CarrierSense.IBusyReadingSource
 {
     /// <summary>
     /// The highest a bridged modem's measured band may reach, as a fraction of the inner rate:
@@ -139,6 +139,9 @@ public sealed class RateBridgedModem : IModem, IFrameSpanSource, IConstellationS
 
     /// <inheritdoc/>
     public bool ChannelBusy => _inner.ChannelBusy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => (_inner as CarrierSense.IBusyReadingSource)?.BusyReading;
 
     /// <inheritdoc/>
     /// <remarks>

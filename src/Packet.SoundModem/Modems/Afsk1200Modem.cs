@@ -20,7 +20,7 @@ public enum Fx25Mode
 
 /// <summary>Classic 1200 baud AFSK AX.25 (Bell 202 + NRZI + HDLC) as an
 /// <see cref="IModem"/>, with optional FX.25 forward error correction.</summary>
-public sealed class Afsk1200Modem : IModem, IFrameSpanSource
+public sealed class Afsk1200Modem : IModem, IFrameSpanSource, CarrierSense.IBusyReadingSource
 {
     /// <summary>Bell 202 deviation of each tone from the centre (mark = centre − 500,
     /// space = centre + 500); the demodulator's default shift.</summary>
@@ -238,6 +238,9 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulator.ChannelBusy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => _demodulator.BusyReading;
 
     /// <inheritdoc />
     public int FrameSpanMarginSamples => _spanMargin;

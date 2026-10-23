@@ -26,7 +26,7 @@ namespace Packet.SoundModem.Modems;
 /// (16 symbols) late, which the deframer never notices.</item>
 /// </list>
 /// </summary>
-public sealed class BpskDemodulator
+public sealed class BpskDemodulator : CarrierSense.IBusyReadingSource
 {
     /// <summary>Memory of the carrier-offset window, per contributing sample - ~1000 samples,
     /// so the reading describes roughly the last tenth of a second of signal rather than the
@@ -442,6 +442,9 @@ public sealed class BpskDemodulator
     /// <summary>Channel-busy for carrier sense: packet DCD or any significant in-band
     /// energy (a carrier, voice, another mode).</summary>
     public bool ChannelBusy => _packetDcd.Asserted || _energyBusy.Busy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => _energyBusy.Reading;
 
     /// <summary>Clears carrier state, e.g. while the channel's own transmitter is keyed.</summary>
     public void ResetCarrierState()

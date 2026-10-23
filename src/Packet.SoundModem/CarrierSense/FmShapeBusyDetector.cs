@@ -46,7 +46,7 @@ namespace Packet.SoundModem.CarrierSense;
 /// every split from 1 to 4 kHz is 0.6 dB against 19.3 dB at 48 kHz. The caller gates on the
 /// channel's rate; see <see cref="MinimumSampleRate"/>.</para>
 /// </remarks>
-public sealed class FmShapeBusyDetector : IChannelBusySource
+public sealed class FmShapeBusyDetector : IChannelBusySource, IBusyReadingSource
 {
     /// <summary>
     /// Below this the statistic is measured not to separate, because the split lands inside a
@@ -251,6 +251,20 @@ public sealed class FmShapeBusyDetector : IChannelBusySource
 
     /// <summary>The station's own idle level, which the competence gate is relative to.</summary>
     public double LevelReferenceDb => _levelReferenceDb;
+
+    /// <summary>
+    /// The last block's shape ratio against where it would assert, or null before the warm-up has
+    /// set a reference. Reported even while <see cref="Busy"/> is null, because "it measured this
+    /// and declined to judge" is the diagnosis a station's log wants.
+    /// </summary>
+    public BusyReading? BusyReading
+    {
+        get
+        {
+            double reference = _shapeReferenceDb;
+            return double.IsNaN(reference) ? null : new BusyReading(ShapeDb, reference + AssertAboveReferenceDb);
+        }
+    }
 
     /// <summary>Whether the detector considers this a path it can judge at all.</summary>
     public bool Engaged => _known;

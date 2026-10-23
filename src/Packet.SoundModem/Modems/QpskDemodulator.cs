@@ -25,7 +25,7 @@ namespace Packet.SoundModem.Modems;
 /// <see cref="QuadrantToDibit"/> map turns a phase-change quadrant into a dibit, so the wire
 /// format is identical.
 /// </summary>
-public sealed class QpskDemodulator
+public sealed class QpskDemodulator : CarrierSense.IBusyReadingSource
 {
     /// <summary>Memory of the carrier-offset window, per contributing sample - ~1000
     /// samples, so the reading describes roughly the last tenth of a second of signal
@@ -517,6 +517,9 @@ public sealed class QpskDemodulator
 
     /// <summary>Channel-busy for carrier sense (packet or energy).</summary>
     public bool ChannelBusy => CarrierDetect || _energyBusy.Busy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => _energyBusy.Reading;
 
     /// <summary>Clears carrier state.</summary>
     public void ResetCarrierState()

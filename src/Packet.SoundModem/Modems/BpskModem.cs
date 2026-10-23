@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Modems;
 /// 1200 baud) mode family, both phase-modulating a 1500 Hz tone - as an
 /// <see cref="IModem"/>. Symbol rates and carrier are Nino's, per the v3/4.43
 /// mode-switch mapping in flashtnc's release-notes.txt.</summary>
-public sealed class BpskModem : IModem, IConstellationSource, IFrameSpanSource
+public sealed class BpskModem : IModem, IConstellationSource, IFrameSpanSource, CarrierSense.IBusyReadingSource
 {
     private readonly BpskDemodulator _demodulator;
     private readonly BpskModulator _modulator;
@@ -188,6 +188,9 @@ public sealed class BpskModem : IModem, IConstellationSource, IFrameSpanSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulator.ChannelBusy;
+
+    /// <inheritdoc/>
+    public CarrierSense.BusyReading? BusyReading => _demodulator.BusyReading;
 
     /// <summary>How far the current signal sits from this modem's carrier centre, in Hz
     /// (positive = above it), or null when nothing coherent enough to measure is present -
