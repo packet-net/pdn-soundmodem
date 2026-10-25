@@ -202,9 +202,12 @@ internal static class BandPlanner
         if (!plan.Window.IsNominal)
         {
             output.WriteLine(
-                $"  passband: {plan.Window.LowHz:F0}-{plan.Window.HighHz:F0} Hz - wider than an "
+                $"  passband: {RfPlan.AudioRange(plan.Window.LowHz, plan.Window.HighHz)} - wider than an "
                 + $"ordinary {Passband.Nominal.LowHz:F0}-{Passband.Nominal.HighHz:F0} Hz SSB "
-                + "window, because these modems do not fit one; the radio's filters are set to suit");
+                + "window, because these modems do not fit one; "
+                + (radioIsSelfTuning
+                    ? "the radio is asked for a passband this wide"
+                    : "set your radio's filters to pass it"));
         }
     }
 }
