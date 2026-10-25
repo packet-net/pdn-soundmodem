@@ -314,8 +314,15 @@ public class RfPlanTests
     // ---- The passband a plan is fitted into, which is worked out rather than configured ----
 
     /// <summary>A 3 kHz waveform: wider than an ordinary SSB passband all by itself.</summary>
+    // MS110D's centre has been movable since FrequencyShiftedModem, so the planner chooses it, as
+    // BandPlanner does for the real modem. 2789 Hz is what the modem measured as when this was written.
     private static RfSlot Ms110dSlot(double rf = 7_050_000) =>
-        new(0, "ms110d-wn4", rf, 2789, FixedCentreHz: 1800);
+        new(0, "ms110d-wn4", rf, 2789);
+
+    // The planner's machinery for a mode pinned to its spec centre, which no shipped mode is any
+    // longer (see DialFixedBy): an MS110D-sized waveform pinned at 1800 Hz stands in for one.
+    private static RfSlot SpecFixedSlot(double rf = 7_050_000) =>
+        Ms110dSlot(rf) with { FixedCentreHz = 1800 };
 
     [Fact]
     public void An_Ordinary_Plan_Is_Placed_Identically_Whatever_The_Radio_Could_Do()
@@ -333,11 +340,13 @@ public class RfPlanTests
     }
 
     [Fact]
-    public void A_Three_Kilohertz_Waveform_Does_Not_Fit_An_Ordinary_Passband()
+    public void A_Spec_Fixed_Three_Kilohertz_Waveform_Does_Not_Fit_An_Ordinary_Passband()
     {
         // Why the window has to be able to grow at all: no dial places a 2789 Hz-wide modem
         // inside 2400 Hz of room, so MS110D could not be planned in RF terms before this.
-        Action solve = () => RfPlan.Solve([Ms110dSlot()], "usb");
+        // Only a waveform pinned to its spec centre is refused now; a movable one is stretched
+        // (see A_Movable_Three_Kilohertz_Waveform_Is_Centred_With_A_Warning_On_An_Ordinary_Rig).
+        Action solve = () => RfPlan.Solve([SpecFixedSlot()], "usb");
 
         solve.Should().Throw<InvalidDataException>()
             .WithMessage("*more than the 2400 Hz a single SSB passband can carry*");
@@ -349,7 +358,7 @@ public class RfPlanTests
         // John G8BPQ's QO-100 head end: one ms110d-wn4 at 7.0538 MHz on a sound-card rig. The
         // 2400 Hz passband is nominal and most rigs pass 100-2900 Hz, so it is placed rather
         // than refused, and the operator is told what the filters have to pass.
-        RfPlan.Result plan = RfPlan.Solve([Ms110dSlot(7_053_800) with { FixedCentreHz = null }], "usb");
+        RfPlan.Result plan = RfPlan.Solve([Ms110dSlot(7_053_800)], "usb");
 
         plan.DialHz.Should().Be(7_052_300);
         plan.Modems.Single().AudioCentreHz.Should().Be(1500);
@@ -363,7 +372,7 @@ public class RfPlanTests
     [Fact]
     public void A_Stretched_Plan_Is_Mirrored_On_Lower_Sideband()
     {
-        RfPlan.Result plan = RfPlan.Solve([Ms110dSlot(7_053_800) with { FixedCentreHz = null }], "lsb");
+        RfPlan.Result plan = RfPlan.Solve([Ms110dSlot(7_053_800)], "lsb");
 
         plan.DialHz.Should().Be(7_055_300);
         plan.Modems.Single().AudioCentreHz.Should().Be(1500);
@@ -421,7 +430,7 @@ public class RfPlanTests
     [Fact]
     public void The_Warning_And_Its_Modem_Line_Quote_The_Same_Edges()
     {
-        RfPlan.Result plan = RfPlan.Solve([Ms110dSlot(7_053_800) with { FixedCentreHz = null }], "usb");
+        RfPlan.Result plan = RfPlan.Solve([Ms110dSlot(7_053_800)], "usb");
 
         plan.Warnings.Single().Should().Contain("occupy 105-2895 Hz audio")
             .And.Contain("occupying 105-2895 Hz");
@@ -432,7 +441,7 @@ public class RfPlanTests
     {
         // dialFrequency 7052300, the workaround John was given: the rig should be asked for the
         // same 2789 Hz an unpinned plan asks for, not the nominal 2400.
-        List<RfSlot> slots = [Ms110dSlot(7_053_800) with { FixedCentreHz = null }];
+        List<RfSlot> slots = [Ms110dSlot(7_053_800)];
 
         RfPlan.Result pinned = RfPlan.Solve(slots, "usb", pinnedDialHz: 7_052_300);
         RfPlan.Result chosen = RfPlan.Solve(slots, "usb");
@@ -477,7 +486,7 @@ public class RfPlanTests
     {
         // The wide-slice shape: a 3 kHz waveform low in the plan, ordinary modems stacked above
         // it, one dial and one passband covering both.
-        List<RfSlot> slots = [Ms110dSlot(7_051_600), Slot(1, "bpsk300", 7_054_000, 300)];
+        List<RfSlot> slots = [SpecFixedSlot(7_051_600), Slot(1, "bpsk300", 7_054_000, 300)];
 
         RfPlan.Result plan = RfPlan.Solve(
             slots, "usb", window: Passband.Fit(slots, Passband.WideCeilingHz));
@@ -492,7 +501,7 @@ public class RfPlanTests
     {
         // The easy mistake: putting the spec-fixed modem above the others, which forces a dial
         // that leaves them below it. A negative audio frequency means nothing to an operator.
-        List<RfSlot> slots = [Ms110dSlot(7_056_000), Slot(1, "bpsk300", 7_051_600, 300)];
+        List<RfSlot> slots = [SpecFixedSlot(7_056_000), Slot(1, "bpsk300", 7_051_600, 300)];
 
         Action solve = () => RfPlan.Solve(
             slots, "usb", window: Passband.Fit(slots, Passband.WideCeilingHz));
@@ -508,7 +517,7 @@ public class RfPlanTests
         // No radio has two dials. Both centres are pinned, so neither can move to meet the other.
         List<RfSlot> slots =
         [
-            Ms110dSlot(7_051_600),
+            SpecFixedSlot(7_051_600),
             new(1, "freedv-datac1", 7_055_000, 500, FixedCentreHz: 1500),
         ];
 
@@ -525,7 +534,7 @@ public class RfPlanTests
         // 300 Hz apart on the band, and their centres are 300 Hz apart, so one dial serves both.
         List<RfSlot> slots =
         [
-            Ms110dSlot(7_051_600),
+            SpecFixedSlot(7_051_600),
             new(1, "freedv-datac1", 7_051_300, 500, FixedCentreHz: 1500),
         ];
 
