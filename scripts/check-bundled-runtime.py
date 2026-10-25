@@ -70,9 +70,13 @@ def main(packages):
         for name, data, pattern in programs:
             found = sorted({m.decode() for m in pattern.findall(data)})
             print(f"{package.name}: {name} bundles {', '.join(found) or 'nothing recognisable'}")
-            if len(found) != 1 or version_key(found[0]) < version_key(want):
+            if len(found) != 1:
                 print(f"::error::{package.name} bundles .NET runtime {', '.join(found) or 'unknown'}, "
-                      f"older than {want}. Update the .NET 10 SDK (and wasm-tools workload) on the runner that built it.")
+                      f"not one recognisable version. Check how {name} was built.")
+                bad = True
+            elif version_key(found[0]) < version_key(want):
+                print(f"::error::{package.name} bundles .NET runtime {found[0]}, older than {want}. "
+                      "Update the .NET 10 SDK (and wasm-tools workload) on the runner that built it.")
                 bad = True
     return 1 if bad else 0
 
