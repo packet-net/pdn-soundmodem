@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Fails unless every package bundles the latest .NET 10 runtime patch.
+"""Fails if any package bundles a .NET 10 runtime older than the latest patch.
 
 The daemon in each .deb is self-contained and the npm package carries a WebAssembly build of the
 runtime, so each carries the runtime of whichever SDK (or SDK workload) built it, and an operating
 system update never patches it. A self-hosted runner with a stale SDK once shipped another
 packet-net project's armhf packages on runtime 10.0.7 while the rest had 10.0.13, months of
 security fixes behind, and nothing noticed. This reads the runtime version out of each package and
-compares it with the latest 10.0 runtime Microsoft lists. The NuGet packages are libraries with no
-runtime in them, so they are not checked.
+compares it with the latest 10.0 runtime Microsoft lists. A newer one passes: the WebAssembly workload
+can reach nuget.org a few days before the release index lists that patch (10.0.14 on 2026-10-25),
+and the point is to catch a stale runner, not one ahead of the index. The NuGet packages are
+libraries with no runtime in them, so they are not checked.
 
 Usage: scripts/check-bundled-runtime.py <package.deb|package.tgz>...
 """
@@ -38,6 +40,10 @@ def latest_runtime():
     sys.exit(f"no .NET {CHANNEL} channel in {INDEX}")
 
 
+def version_key(version):
+    return tuple(int(part) for part in version.split("."))
+
+
 def program_bytes(package):
     """(name, bytes, pattern) for each file in the package that names the bundled runtime."""
     if package.suffix == ".tgz":
@@ -64,9 +70,9 @@ def main(packages):
         for name, data, pattern in programs:
             found = sorted({m.decode() for m in pattern.findall(data)})
             print(f"{package.name}: {name} bundles {', '.join(found) or 'nothing recognisable'}")
-            if found != [want]:
+            if len(found) != 1 or version_key(found[0]) < version_key(want):
                 print(f"::error::{package.name} bundles .NET runtime {', '.join(found) or 'unknown'}, "
-                      f"not {want}. Update the .NET 10 SDK (and wasm-tools workload) on the runner that built it.")
+                      f"older than {want}. Update the .NET 10 SDK (and wasm-tools workload) on the runner that built it.")
                 bad = True
     return 1 if bad else 0
 
