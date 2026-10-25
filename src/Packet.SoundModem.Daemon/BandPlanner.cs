@@ -204,7 +204,10 @@ internal static class BandPlanner
             output.WriteLine(
                 $"  passband: {plan.Window.LowHz:F0}-{plan.Window.HighHz:F0} Hz - wider than an "
                 + $"ordinary {Passband.Nominal.LowHz:F0}-{Passband.Nominal.HighHz:F0} Hz SSB "
-                + "window, because these modems do not fit one; the radio's filters are set to suit");
+                + "window, because these modems do not fit one; "
+                + (radioIsSelfTuning
+                    ? "the radio's filters are set to suit"
+                    : "set your radio's filters to pass it"));
         }
     }
 }

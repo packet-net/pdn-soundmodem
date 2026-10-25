@@ -209,6 +209,17 @@ internal static class RfPlan
             ? slots.FirstOrDefault(s => s.FixedCentreHz is not null)
             : null;
 
+        // One exception to that: an ensemble wider than an ordinary passband, on a rig whose
+        // filters are not ours to open. The 2400 Hz figure is nominal, and most SSB rigs pass
+        // something nearer 100-2900 Hz, so a 3 kHz waveform such as MS110D's is placed centred
+        // and the operator is told what their filters have to pass, rather than refused for a
+        // limit their rig may well not have.
+        if (offenders.Count > 0 && pinnedDialHz is null && dialFixer is null && passband.IsNominal
+            && Stretched(slots, upper, passband) is { } stretched)
+        {
+            return stretched;
+        }
+
         if (offenders.Count > 0 && pinnedDialHz is null)
         {
             throw new InvalidDataException(
@@ -313,6 +324,50 @@ internal static class RfPlan
         return dial;
     }
 
+    /// <summary>
+    /// The plan for modems spread wider than the nominal passband, centred on it and stretched
+    /// past both of its edges as far as the audio band allows, or null when even that is not
+    /// enough: centred on 1500 Hz, an ensemble wider than 3000 Hz would need audio below 0 Hz.
+    /// </summary>
+    /// <remarks>
+    /// The window the result carries is the stretched one, so whatever sets a rig's filter from
+    /// the plan asks for the width the modems actually need.
+    /// </remarks>
+    private static Result? Stretched(IReadOnlyList<RfSlot> slots, bool upper, Passband passband)
+    {
+        double lowEdge = slots.Min(s => s.LowEdgeHz);
+        double highEdge = slots.Max(s => s.HighEdgeHz);
+        double ensembleCentre = (lowEdge + highEdge) / 2;
+        double passbandCentre = (passband.LowHz + passband.HighHz) / 2;
+        double exact = upper ? ensembleCentre - passbandCentre : ensembleCentre + passbandCentre;
+        double rounded = Math.Round(exact / DialStepHz) * DialStepHz;
+
+        List<PlannedModem> At(double dial) => [.. slots
+            .Select(s => new PlannedModem(s, AudioFor(s.RfCentreHz, dial, upper)))
+            .OrderBy(p => p.AudioCentreHz)];
+        static double Bottom(List<PlannedModem> planned) =>
+            planned.Min(p => p.AudioCentreHz - (p.Slot.BandwidthHz / 2));
+
+        double dial = Bottom(At(rounded)) >= 0 ? rounded : exact;
+        List<PlannedModem> modems = At(dial);
+        if (Bottom(modems) < -0.5)
+        {
+            return null;
+        }
+
+        double low = Math.Max(0, Bottom(modems));
+        double high = modems.Max(p => p.AudioCentreHz + (p.Slot.BandwidthHz / 2));
+        string warning =
+            $"these modems span {highEdge - lowEdge:F0} Hz of RF, more than the "
+            + $"{passband.WidthHz:F0} Hz of a nominal {passband.LowHz:F0}-{passband.HighHz:F0} Hz "
+            + $"SSB passband, so the dial is centred on them and they occupy {Math.Floor(low):F0}-{Math.Ceiling(high):F0} Hz "
+            + "audio. Your radio's transmit and receive filters have to pass that; most SSB "
+            + "rigs do, but one that does not will cut the edges of the signal:"
+            + Environment.NewLine
+            + string.Join(Environment.NewLine, modems.Select(p => $"  {Describe(p, dial, upper)}"));
+        return new Result(dial, upper ? "usb" : "lsb", modems, new Passband(low, high), [warning]);
+    }
+
     private static bool Outside(PlannedModem p, Passband passband)
     {
         double low = p.AudioCentreHz - (p.Slot.BandwidthHz / 2);
@@ -367,7 +422,13 @@ internal static class RfPlan
             // No dial can help: the modems are simply spread wider than one passband. On a radio
             // whose filters the daemon opens, the window has already been widened as far as the
             // radio goes before this is reached, so the figure quoted is the real ceiling.
-            string ceiling = passband.IsNominal
+            // On an ordinary rig the stretched plan above has already been tried, so past the
+            // nominal width the real ceiling is the whole audio band either side of its centre.
+            double stretchedRoom = passband.LowHz + passband.HighHz;
+            string ceiling = passband.IsNominal && span > stretchedRoom
+                ? $"the {stretchedRoom:F0} Hz a single SSB radio can carry, even with its filters "
+                  + $"passing more than the nominal {passband.LowHz:F0}-{passband.HighHz:F0} Hz"
+                : passband.IsNominal
                 ? $"the {room:F0} Hz a single SSB passband can carry"
                 : $"the {room:F0} Hz this radio can be opened to pass in one go "
                   + $"({passband.LowHz:F0}-{passband.HighHz:F0} Hz, already widened for these modems)";
@@ -403,6 +464,11 @@ internal static class RfPlan
                 + $"sit {(upper ? "above" : "below")} that. {below} "
                 + $"{(below.Contains(',') ? "are" : "is")} on the wrong side of it. Put the "
                 + $"spec-fixed modem {(upper ? "lowest" : "highest")} in the plan.");
+        }
+
+        if (!slots.Any(s => DaemonConfig.IsArdop(s.Mode)))
+        {
+            return text.ToString().TrimEnd();
         }
 
         text.Append(

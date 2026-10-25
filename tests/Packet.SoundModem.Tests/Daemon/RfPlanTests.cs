@@ -120,8 +120,9 @@ public class RfPlanTests
         Action solve = () => RfPlan.Solve(impossible, "usb");
 
         solve.Should().Throw<InvalidDataException>()
-            .WithMessage("*more than the 2400 Hz a single SSB passband can carry*")
-            .WithMessage("*No dial frequency can place them all*");
+            .WithMessage("*more than the 3000 Hz a single SSB radio can carry*")
+            .WithMessage("*No dial frequency can place them all*")
+            .Which.Message.Should().NotContain("ARDOP", "there is no ARDOP modem in this plan");
     }
 
     [Fact]
@@ -340,6 +341,63 @@ public class RfPlanTests
 
         solve.Should().Throw<InvalidDataException>()
             .WithMessage("*more than the 2400 Hz a single SSB passband can carry*");
+    }
+
+    [Fact]
+    public void A_Movable_Three_Kilohertz_Waveform_Is_Centred_With_A_Warning_On_An_Ordinary_Rig()
+    {
+        // John G8BPQ's QO-100 head end: one ms110d-wn4 at 7.0538 MHz on a sound-card rig. The
+        // 2400 Hz passband is nominal and most rigs pass 100-2900 Hz, so it is placed rather
+        // than refused, and the operator is told what the filters have to pass.
+        RfPlan.Result plan = RfPlan.Solve([Ms110dSlot(7_053_800) with { FixedCentreHz = null }], "usb");
+
+        plan.DialHz.Should().Be(7_052_300);
+        plan.Modems.Single().AudioCentreHz.Should().Be(1500);
+        plan.Window.LowHz.Should().BeApproximately(105.5, 0.01);
+        plan.Window.HighHz.Should().BeApproximately(2894.5, 0.01);
+        plan.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("occupy 105-2895 Hz audio").And.Contain("have to pass that")
+            .And.NotContain("ARDOP");
+    }
+
+    [Fact]
+    public void A_Stretched_Plan_Is_Mirrored_On_Lower_Sideband()
+    {
+        RfPlan.Result plan = RfPlan.Solve([Ms110dSlot(7_053_800) with { FixedCentreHz = null }], "lsb");
+
+        plan.DialHz.Should().Be(7_055_300);
+        plan.Modems.Single().AudioCentreHz.Should().Be(1500);
+        plan.Warnings.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void Modems_Wider_Than_The_Whole_Audio_Band_Are_Still_Refused()
+    {
+        // 3100 Hz centred on 1500 Hz would need audio below 0 Hz: no SSB rig carries that.
+        List<RfSlot> tooWide =
+        [
+            Slot(0, "bpsk300", 7_050_000, 300),
+            Slot(1, "bpsk300", 7_052_800, 300),
+        ];
+
+        Action solve = () => RfPlan.Solve(tooWide, "usb");
+
+        solve.Should().Throw<InvalidDataException>()
+            .WithMessage("*span 3100 Hz of RF*more than the 3000 Hz a single SSB radio can carry*");
+    }
+
+    [Fact]
+    public void The_Ardop_Note_Is_Given_Only_When_There_Is_An_Ardop_Modem()
+    {
+        List<RfSlot> withArdop =
+        [
+            Slot(0, "ardop", 7_050_000, 2000),
+            Slot(1, "bpsk300", 7_055_000, 300),
+        ];
+
+        Action solve = () => RfPlan.Solve(withArdop, "usb");
+
+        solve.Should().Throw<InvalidDataException>().WithMessage("*ARQBW*");
     }
 
     [Fact]
