@@ -386,6 +386,62 @@ public class RfPlanTests
             .WithMessage("*span 3100 Hz of RF*more than the 3000 Hz a single SSB radio can carry*");
     }
 
+    [Theory]
+    [InlineData("usb", 3001)]
+    [InlineData("usb", 3002)]
+    [InlineData("lsb", 3001)]
+    [InlineData("lsb", 3002)]
+    public void A_Span_Just_Over_The_Audio_Band_Is_Refused_Whatever_The_Dial_Rounds_To(
+        string sideband, double width)
+    {
+        // At 7053810 the round dial moves the modem up 10 Hz, which once let a too-wide span
+        // pass a check on its bottom edge alone.
+        Action solve = () => RfPlan.Solve([Slot(0, "ms110d-wn4", 7_053_810, width)], sideband);
+
+        solve.Should().Throw<InvalidDataException>()
+            .WithMessage("*more than the 3000 Hz a single SSB radio can carry*");
+    }
+
+    [Theory]
+    [InlineData("usb", 7_052_320)]
+    [InlineData("lsb", 7_055_320)]
+    public void A_Span_That_Only_Just_Fits_Keeps_Both_Edges_Inside_The_Audio_Band(
+        string sideband, double dial)
+    {
+        // The round dial would put a 2990 Hz span at 25-3015 Hz on USB (-15 Hz on LSB), so the
+        // exact one is used instead, the same on both sidebands.
+        RfPlan.Result plan = RfPlan.Solve([Slot(0, "ms110d-wn4", 7_053_820, 2990)], sideband);
+
+        plan.DialHz.Should().Be(dial);
+        plan.Modems.Single().AudioCentreHz.Should().Be(1500);
+        plan.Window.LowHz.Should().Be(5);
+        plan.Window.HighHz.Should().Be(2995);
+    }
+
+    [Fact]
+    public void The_Warning_And_Its_Modem_Line_Quote_The_Same_Edges()
+    {
+        RfPlan.Result plan = RfPlan.Solve([Ms110dSlot(7_053_800) with { FixedCentreHz = null }], "usb");
+
+        plan.Warnings.Single().Should().Contain("occupy 105-2895 Hz audio")
+            .And.Contain("occupying 105-2895 Hz");
+    }
+
+    [Fact]
+    public void A_Pinned_Dial_Under_A_Wide_Modem_Asks_For_The_Width_It_Needs()
+    {
+        // dialFrequency 7052300, the workaround John was given: the rig should be asked for the
+        // same 2789 Hz an unpinned plan asks for, not the nominal 2400.
+        List<RfSlot> slots = [Ms110dSlot(7_053_800) with { FixedCentreHz = null }];
+
+        RfPlan.Result pinned = RfPlan.Solve(slots, "usb", pinnedDialHz: 7_052_300);
+        RfPlan.Result chosen = RfPlan.Solve(slots, "usb");
+
+        pinned.Window.WidthHz.Should().Be(chosen.Window.WidthHz);
+        pinned.Window.LowHz.Should().Be(chosen.Window.LowHz);
+        pinned.Warnings.Should().ContainSingle();
+    }
+
     [Fact]
     public void The_Ardop_Note_Is_Given_Only_When_There_Is_An_Ardop_Modem()
     {
