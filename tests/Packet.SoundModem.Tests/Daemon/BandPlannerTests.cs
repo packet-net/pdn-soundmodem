@@ -116,7 +116,7 @@ public class BandPlannerTests
 
         var report = new StringWriter();
         BandPlanner.Report(plan, report);
-        report.ToString().Trim().Should().Be("band plan: dial 7.052300 MHz USB, ms110d-wn4 at 1500 Hz audio");
+        report.ToString().Trim().Should().Be("band plan: dial 7.052300 MHz USB, set your radio to this; ms110d-wn4 at 1500 Hz audio");
         plan.Warnings.Should().BeEmpty("a wide MS110D on an ordinary rig is normal");
     }
 
@@ -128,6 +128,7 @@ public class BandPlannerTests
         // The wide modem lowest, highest and in the middle of the RF order, so that on both
         // sidebands it is sometimes the one nearest DC.
         int[][] orders = [[0, 1, 2], [2, 1, 0], [1, 0, 2]];
+        int built = 0;
         foreach (int[] order in orders)
         {
             double[] rf = [7_050_300, 7_051_600, 7_053_800];
@@ -152,7 +153,10 @@ public class BandPlannerTests
             }
 
             EveryModemBuilds(modems);
+            built++;
         }
+
+        built.Should().BeGreaterThan(0, "refusing every arrangement would make this test vacuous");
     }
 
     [Theory]

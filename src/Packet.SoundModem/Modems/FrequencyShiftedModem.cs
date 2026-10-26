@@ -105,8 +105,11 @@ public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFram
             double nyquist = sampleRate / 2.0;
             _transmitLowCutHz = ClipCutHz - shiftHz;
             _transmitHighCutHz = nyquist - ClipCutHz - shiftHz;
-            _clipLow = _transmitLowCutHz > nativeLowHz - 1;
-            _clipHigh = _transmitHighCutHz < nativeHighHz + 1;
+            // On whenever the shifted band comes inside the old guard, so the skirts below the
+            // measured 99 % edge are cut too; a centre the guard accepted is left untouched and
+            // its output stays byte-identical to what it always was.
+            _clipLow = onAirLowHz < EdgeGuardHz;
+            _clipHigh = onAirHighHz > nyquist - EdgeGuardHz;
         }
     }
 

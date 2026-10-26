@@ -242,7 +242,7 @@ public class RfPlanTests
         BandPlanner.Report(RfPlan.Solve(TwoMetreChannel(), "fm"), report, radioIsSelfTuning: false);
 
         string said = report.ToString();
-        said.Should().Contain("band plan: channel 145.300000 MHz FM");
+        said.Should().Contain("band plan: channel 145.300000 MHz FM, set your radio to this");
         said.Should().NotContain("dial", "there is no dial on an FM radio to report");
         said.Should().NotContain("= ", "and no audio arithmetic to show beside a modem");
     }
@@ -304,7 +304,9 @@ public class RfPlanTests
 
         manual.ToString().Should().StartWith("band plan: dial 7.049450 MHz USB, ");
         manual.ToString().Trim().Split('\n').Should().HaveCount(1, "one short line");
-        selfTuning.ToString().Should().Be(manual.ToString());
+        manual.ToString().Should().Contain("set your radio to this");
+        selfTuning.ToString().Should().NotContain("set your radio",
+            "the daemon is setting it; telling the operator to do it as well is just confusing");
     }
 
     // ---- The passband a plan is fitted into, which is worked out rather than configured ----

@@ -67,6 +67,9 @@ internal static class BandPlanner
                 + "\"frequency\" instead, or give this modem a channel of its own.");
         }
 
+        // Each modem's allowed range is measured once, off the modem, here.
+        Dictionary<int, (double MinHz, double MaxHz)?> ranges =
+            modems.ToDictionary(m => m.SubChannel, m => CentreRangeOf(m, dspRate));
         var slots = modems
             .Select(m => new RfSlot(
                 m.SubChannel, m.Mode, m.RfFrequency!.Value, WidthOf(m, dspRate),
@@ -76,8 +79,8 @@ internal static class BandPlanner
                     : ModemCatalog.DefaultCentreFrequencyFor(m.Mode),
                 // The modem's own limit, asked of the catalogue (which asks the wrapper that
                 // enforces it) rather than copied here.
-                MinCentreHz: CentreRangeOf(m, dspRate)?.MinHz,
-                MaxCentreHz: CentreRangeOf(m, dspRate)?.MaxHz))
+                MinCentreHz: ranges[m.SubChannel]?.MinHz,
+                MaxCentreHz: ranges[m.SubChannel]?.MaxHz))
             .ToList();
 
         RfPlan.Result plan = RfPlan.Solve(
@@ -188,12 +191,15 @@ internal static class BandPlanner
     {
         if (plan.IsFm)
         {
-            output.WriteLine($"band plan: channel {RfPlan.Mhz(plan.DialHz)} FM");
+            output.WriteLine(
+                $"band plan: channel {RfPlan.Mhz(plan.DialHz)} FM"
+                + (radioIsSelfTuning ? "" : ", set your radio to this"));
             return;
         }
 
         output.WriteLine(
-            $"band plan: dial {RfPlan.Mhz(plan.DialHz)} {plan.Sideband.ToUpperInvariant()}, "
+            $"band plan: dial {RfPlan.Mhz(plan.DialHz)} {plan.Sideband.ToUpperInvariant()}"
+            + (radioIsSelfTuning ? ", " : ", set your radio to this; ")
             + string.Join(", ", plan.Modems.Select(m => $"{m.Slot.Mode} at {m.AudioCentreHz:F0} Hz audio")));
     }
 }

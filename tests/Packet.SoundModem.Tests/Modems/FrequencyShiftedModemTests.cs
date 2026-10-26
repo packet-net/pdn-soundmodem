@@ -360,21 +360,39 @@ public class FrequencyShiftedModemTests(ITestOutputHelper output)
     }
 
     [Theory]
-    [InlineData(1000)]
-    [InlineData(1278)]
-    public void Ms110d_Placed_Low_Sends_Nothing_Below_The_Floor_And_No_Mirror_Image(double centre)
+    [InlineData("ms110d-wn4", 1000)]
+    [InlineData("ms110d-wn4", 1278)]
+    [InlineData("ms110d-wn4", 1580)]
+    [InlineData("ms110d-wn4", 1600)]
+    [InlineData("ms110d-wn4", 1650)]
+    [InlineData("ms110d-wn4", 1700)]
+    [InlineData("ms110d-wn1", 1000)]
+    [InlineData("ms110d-wn1", 1600)]
+    [InlineData("ms110d-wn1", 1650)]
+    [InlineData("ms110d-wn1", 1700)]
+    public void Ms110d_Placed_Low_Sends_Nothing_Below_The_Floor_And_No_Mirror_Image(string mode, double centre)
     {
-        // At these centres part of the nominal band is below 0 Hz. It must simply not be
-        // transmitted: no energy at the bottom of the audio band, and nothing folded back.
-        IModem modem = Create("ms110d-wn4", centre, _ => { });
+        // Wherever part of the nominal band (including its skirts, below the measured 99 % edge)
+        // is below 0 Hz, it must simply not be transmitted: no energy at the bottom of the audio
+        // band, and nothing folded back as a mirror image into 50-150 Hz.
+        IModem modem = Create(mode, centre, _ => { });
         float[] burst = modem.Modulate(TestFrame(200, 3), txDelayMilliseconds: 50);
 
-        double inBand = ToneDensity(burst, [900, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700]);
-        double low = ToneDensity(burst, [5, 10, 15, 20, 25, 30]);
+        double[] inBandBins = [.. Enumerable.Range(0, 9).Select(i => centre - 400 + (i * 100.0))];
+        double inBand = ToneDensity(burst, inBandBins);
+        double floor = ToneDensity(burst, [5, 10, 15, 20, 25, 30, 35, 40, 45]);
+        double image = ToneDensity(burst, [60, 80, 100, 120, 140]);
         double top = ToneDensity(burst, [Rate / 2.0 - 30, Rate / 2.0 - 20, Rate / 2.0 - 10]);
 
-        output.WriteLine($"centre {centre}: in-band {inBand:E2}, low {low:E2}, top {top:E2}");
-        (10 * Math.Log10(low / inBand)).Should().BeLessThan(-40);
+        output.WriteLine($"{mode} {centre}: floor {10 * Math.Log10(floor / inBand):F1} dB, image {10 * Math.Log10(image / inBand):F1} dB");
+        (10 * Math.Log10(floor / inBand)).Should().BeLessThan(-40);
+        if (centre >= 1500)
+        {
+            // Close to native the legitimate band reaches down here; unfiltered the fold put
+            // this at about -11 dB, filtered it is -22 or lower.
+            (10 * Math.Log10(image / inBand)).Should().BeLessThan(-18);
+        }
+
         (10 * Math.Log10(top / inBand)).Should().BeLessThan(-40);
     }
 
