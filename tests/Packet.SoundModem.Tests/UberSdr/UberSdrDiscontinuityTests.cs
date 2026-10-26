@@ -62,6 +62,32 @@ public sealed class UberSdrDiscontinuityTests
     }
 
     [Fact]
+    public async Task Each_Reconnect_Is_A_New_Session_So_An_Instance_That_Refuses_An_Ended_One_Still_Serves_It()
+    {
+        // The instance times max_session_time from the first sight of a user_session_id and then
+        // refuses that id for good; the start-up id used to be reused on every reconnect, which
+        // locked a continuous station out three hours after each start (#736).
+        using var receiver = new FakeReceiver(
+            [new Session(Frames: 25, Hold: false), new Session(Frames: 25, Hold: true)],
+            refuseEndedSessions: true);
+        var clock = new FakeTimeProvider();
+        using UberSdrAudioInput input = await UberSdrAudioInput.OpenAsync(
+            receiver.Endpoint, Tuning, log: null, CancellationToken.None, clock);
+
+        await DrainAsync(input, 20 * AudioPerFrame);
+        await UntilAsync(() =>
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            return receiver.Sessions >= 2;
+        }, "the input reconnects");
+        await DrainAsync(input, 20 * AudioPerFrame);
+
+        receiver.Refused.Should().Be(0, "no session id was offered twice");
+        receiver.SocketIds.Should().HaveCount(2).And.OnlyHaveUniqueItems();
+        receiver.PreflightIds.Should().Contain(receiver.SocketIds, "every session is asked about before it opens");
+    }
+
+    [Fact]
     public async Task Samples_Dropped_Because_The_Buffer_Filled_Count()
     {
         // Ten seconds of IQ into an eight-second ring that nobody reads.
@@ -186,13 +212,21 @@ public sealed class UberSdrDiscontinuityTests
         private readonly HttpListener _listener = new();
         private readonly CancellationTokenSource _stop = new();
         private readonly Session[] _script;
+        private readonly bool _refuseEndedSessions;
         private readonly Task _serving;
+        private readonly List<string> _preflightIds = [];
+        private readonly List<string> _socketIds = [];
         private int _sessions;
         private int _framesSent;
+        private int _refused;
 
-        public FakeReceiver(Session[] script)
+        /// <param name="script">One session per connection; the last one repeats.</param>
+        /// <param name="refuseEndedSessions">Close a socket at once when its user_session_id has
+        /// been served before, as an instance does to an id past max_session_time.</param>
+        public FakeReceiver(Session[] script, bool refuseEndedSessions = false)
         {
             _script = script;
+            _refuseEndedSessions = refuseEndedSessions;
             int port = FreePorts.Next();
             Endpoint = new UberSdrEndpoint("127.0.0.1", port, Ssl: false);
             _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
@@ -207,6 +241,33 @@ public sealed class UberSdrDiscontinuityTests
 
         /// <summary>IQ packets sent so far, over every session.</summary>
         public int FramesSent => Volatile.Read(ref _framesSent);
+
+        /// <summary>Sockets closed at once because their session id had been served before.</summary>
+        public int Refused => Volatile.Read(ref _refused);
+
+        /// <summary>The user_session_id of every pre-flight, in order.</summary>
+        public IReadOnlyList<string> PreflightIds
+        {
+            get
+            {
+                lock (_preflightIds)
+                {
+                    return [.. _preflightIds];
+                }
+            }
+        }
+
+        /// <summary>The user_session_id of every socket served, in order.</summary>
+        public IReadOnlyList<string> SocketIds
+        {
+            get
+            {
+                lock (_socketIds)
+                {
+                    return [.. _socketIds];
+                }
+            }
+        }
 
         public void Dispose()
         {
@@ -250,6 +311,16 @@ public sealed class UberSdrDiscontinuityTests
             string path = context.Request.Url!.AbsolutePath;
             if (path == "/connection")
             {
+                using (var reader = new StreamReader(context.Request.InputStream))
+                {
+                    string request = await reader.ReadToEndAsync();
+                    string? id = System.Text.Json.Nodes.JsonNode.Parse(request)?["user_session_id"]?.GetValue<string>();
+                    lock (_preflightIds)
+                    {
+                        _preflightIds.Add(id ?? "");
+                    }
+                }
+
                 byte[] body = Encoding.UTF8.GetBytes(
                     """{"allowed": true, "max_session_time": 3600, "allowed_iq_modes": ["iq48"]}""");
                 context.Response.ContentType = "application/json";
@@ -262,6 +333,27 @@ public sealed class UberSdrDiscontinuityTests
             {
                 context.Response.StatusCode = 404;
                 context.Response.Close();
+                return;
+            }
+
+            string sessionId = context.Request.QueryString["user_session_id"] ?? "";
+            bool seen;
+            lock (_socketIds)
+            {
+                seen = _socketIds.Contains(sessionId);
+                if (!seen)
+                {
+                    _socketIds.Add(sessionId);
+                }
+            }
+
+            if (seen && _refuseEndedSessions)
+            {
+                // What the instance does to a kicked id: accept the upgrade, then drop it.
+                Interlocked.Increment(ref _refused);
+                HttpListenerWebSocketContext refused = await context.AcceptWebSocketAsync(null);
+                refused.WebSocket.Abort();
+                refused.WebSocket.Dispose();
                 return;
             }
 
