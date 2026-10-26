@@ -798,8 +798,9 @@ public sealed class UberSdrAudioInput : IUberSdrSession
 
     /// <summary>
     /// Opens a new session after one ended: a new <c>user_session_id</c>, asked about in a
-    /// pre-flight of its own, then its IQ WebSocket. A pre-flight that says no is a refusal for
-    /// the receive loop to wait out; one that cannot reach the instance is a transient failure.
+    /// pre-flight of its own, then its IQ WebSocket. A pre-flight that says "not now" is a refusal
+    /// for the receive loop to wait out; any other no, or one that cannot reach the instance, is a
+    /// failure that ends in <see cref="Lost"/> if it lasts.
     /// </summary>
     private async Task<ClientWebSocket> ReconnectAsync(CancellationToken cancellation)
     {
@@ -815,9 +816,12 @@ public sealed class UberSdrAudioInput : IUberSdrSession
             throw new OperationCanceledException(cancellation);
         }
 
-        if (!connection.Allowed)
+        // A refusal time will not lift (a password gone, a ban, the mode withdrawn) throws here as
+        // it does at start-up, takes the unreachable path to Lost and fails loudly on restart.
+        RequireAcceptable(_endpoint, _tuning, connection);
+        if (connection.RefusedForNow)
         {
-            throw new UberSdrRefusedException(connection.Reason ?? "the instance refused a new session");
+            throw new UberSdrRefusedException(connection.Reason ?? "daily listening allowance exhausted");
         }
 
         return await ConnectAsync(sessionId, cancellation).ConfigureAwait(false);
