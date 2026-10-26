@@ -413,6 +413,63 @@ public class WaterfallPageTests
     }
 
     /// <summary>
+    /// A stall or a fast source clock does not leave the waterfall permanently behind, and a long
+    /// stall never freezes it (the review of #715).
+    /// </summary>
+    /// <remarks>
+    /// Driven in virtual time through the page's own scheduling. After a 1.5 s stall the delay is
+    /// paid back to near zero; after a 2.5 s stall, which overflows the queue, lines are still
+    /// being drawn; and a source clock 0.1% fast, for three minutes, adds no delay.
+    /// </remarks>
+    [Fact]
+    public async Task A_Stall_Is_Caught_Up_And_Never_Freezes_The_Waterfall()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty();
+        probe.DelayAfterStall.Should().BeLessThan(2, "a 1.5 s stall is paid back, in periods of delay");
+        probe.DrawnMidRecovery.Should().BeGreaterThan(90, "drawing resumes at once after a 2.5 s stall");
+        probe.DrawnAfterLongStall.Should().BeGreaterThan(probe.DrawnMidRecovery, "and carries on");
+        probe.DelayAfterLongStall.Should().BeLessThan(2 * 30, "the delay is bounded by the queue cap");
+        probe.DelayAfterDrift.Should().BeLessThan(2, "a fast source clock does not accumulate delay");
+    }
+
+    /// <summary>
+    /// The detached links window is sent no spectrum, so a frame or capture tag held for a line
+    /// that never comes must not be kept.
+    /// </summary>
+    [Fact]
+    public async Task The_Links_Window_Does_Not_Accumulate_Held_Tags()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe links = await RunProbeAsync(node, port, pathname: "/links");
+        Probe page = await RunProbeAsync(node, port);
+
+        links.Detached.Should().BeTrue();
+        links.HeldFrameCount.Should().Be(0, "a window with no waterfall has nothing to tag");
+        links.HeldCaptureCount.Should().Be(0);
+        page.HeldFrameCount.Should().BeLessThanOrEqualTo(200, "the list is bounded anyway");
+        page.HeldCaptureCount.Should().BeLessThanOrEqualTo(200);
+    }
+
+    /// <summary>
     /// The panel opens on the station's logged frames: listed, dimmed apart from live traffic,
     /// never tagged onto the waterfall, and stamped with when they were heard.
     /// </summary>
@@ -2486,6 +2543,13 @@ public class WaterfallPageTests
         string[] LumpTagOnArrival,
         int LumpDrawnLater,
         string[] LumpTagLater,
+        double DelayAfterStall,
+        int DrawnMidRecovery,
+        int DrawnAfterLongStall,
+        double DelayAfterLongStall,
+        double DelayAfterDrift,
+        int HeldFrameCount,
+        int HeldCaptureCount,
         string[] FrameRows,
         string[] FrameRowClasses,
         string[] CaptureTag,

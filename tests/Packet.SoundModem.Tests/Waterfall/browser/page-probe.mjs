@@ -942,6 +942,43 @@ if (holdKeepAlives > 0) {
   await untilTrue(() => keepAlives >= holdKeepAlives, 120000);
 }
 
+// Skipped while holding for keep-alives: the test winding the server's clock expects pings answered promptly,
+// and this is a long synchronous run.
+let delayAfterStall, drawnMidRecovery, drawnAfterLongStall, delayAfterLongStall, delayAfterDrift, heldFrameCount, heldCaptureCount;
+if (!holdKeepAlives) {
+// Pacing under stress, in virtual time (a base far ahead of the real clock, so the page's own
+// timer never releases anything early). Three feeds: a steady feed after a 1.5 s stall, a 2.5 s
+// stall that overflows the queue, and a source clock 0.1% fast for three minutes (6 periods of delay without the catch-up). The delay is
+// how far ahead of "now" the next line would be due; "drawn" is read from lastLine.
+run(`resetSpectrumPacing()`);
+run(`globalThis.__n = 0; globalThis.__t = 1e9;
+globalThis.__feed = (count, gap) => { for (let k = 0; k < count; k++) {
+  const b = new Uint8Array(5 + cfg.lineLength); b[0] = 0x01;
+  new DataView(b.buffer).setUint32(1, __n++, true);
+  enqueueSpectrum(b.buffer, __t); releaseDueSpectrum(__t); if (gap) __t += gap; } };
+globalThis.__delay = () => Math.max(0, nextSpectrumDue - __t);`);
+const period = 1000 / run(`cfg.linesPerSecond`);
+run(`__feed(90, ${period})`);
+run(`__t += 1500; __feed(45, 0); __feed(900, ${period})`);
+delayAfterStall = run(`__delay()`) / period;
+run(`resetSpectrumPacing()`);
+run(`__n = 0; __feed(90, ${period}); __t += 2500; __feed(75, 0)`);
+run(`__t += 500; releaseDueSpectrum(__t)`);
+drawnMidRecovery = run(`lastLine`);
+run(`__feed(60, ${period})`);
+drawnAfterLongStall = run(`lastLine`);
+delayAfterLongStall = run(`__delay()`) / period;
+run(`resetSpectrumPacing()`);
+run(`__n = 0; __feed(6000, ${period * 0.999})`);
+delayAfterDrift = run(`__delay()`) / period;
+// Held tags in a window that is never sent a spectrum line (lastLine stays -1).
+run(`resetSpectrumPacing()`);
+run(`for (let i = 0; i < 1000; i++) { holdFrameTag({line: 5 + i}); holdCapture({atLine: 5, secondsAgo: 0}); }`);
+heldFrameCount = run(`heldFrames.length`);
+heldCaptureCount = run(`heldCaptures.length`);
+run(`resetSpectrumPacing()`);
+}
+
 process.stdout.write(JSON.stringify({
   mixerOnArrival,
   mixerAfterGain,
@@ -974,6 +1011,8 @@ process.stdout.write(JSON.stringify({
   lumpTagOnArrival,
   lumpDrawnLater,
   lumpTagLater,
+  delayAfterStall, drawnMidRecovery, drawnAfterLongStall, delayAfterLongStall, delayAfterDrift,
+  heldFrameCount, heldCaptureCount,
   frameRows: rows,
   frameRowClasses: rowClasses,
   captureTag,

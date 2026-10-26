@@ -2778,27 +2778,40 @@ let spectrumClock = null;
 let nextSpectrumDue = 0;
 let skippedThrough = -1;
 
-function enqueueSpectrum(data) {
+// A backlog is paid back by spacing queued lines a little closer than one period, so a stall
+// (or a source clock a touch fast) is caught up within seconds rather than kept for the whole
+// session. The queue is also bounded: past the cap the oldest lines are dropped and the rest are
+// re-timed from now, so the due times can never all sit in the future and freeze the picture.
+const CATCH_UP_SPACING = 0.8;
+const HELD_MARKS_MAX = 200;
+
+function enqueueSpectrum(data, at) {
   const index = new DataView(data).getUint32(1, true);
   if (index > receivedLine) receivedLine = index;
   const period = 1000 / (cfg.linesPerSecond || 30);
-  const now = performance.now();
+  const now = at === undefined ? performance.now() : at;
   if (nextSpectrumDue < now) nextSpectrumDue = now;
+  const backlog = nextSpectrumDue > now;
   spectrumQueue.push({ data, due: nextSpectrumDue, index });
-  nextSpectrumDue += period;
+  nextSpectrumDue += backlog ? period * CATCH_UP_SPACING : period;
   const cap = (cfg.linesPerSecond || 30) * 2;
-  while (spectrumQueue.length > cap) {
-    const dropped = spectrumQueue.shift();
-    if (dropped.index > skippedThrough) skippedThrough = dropped.index;
+  if (spectrumQueue.length > cap) {
+    while (spectrumQueue.length > cap) {
+      const dropped = spectrumQueue.shift();
+      if (dropped.index > skippedThrough) skippedThrough = dropped.index;
+    }
+    let due = now;
+    for (const item of spectrumQueue) { item.due = due; due += period * CATCH_UP_SPACING; }
+    nextSpectrumDue = due;
   }
-  releaseDueSpectrum();
+  releaseDueSpectrum(now);
   if (spectrumClock === null && spectrumQueue.length) {
     spectrumClock = setInterval(releaseDueSpectrum, period / 4);
   }
 }
 
-function releaseDueSpectrum() {
-  const now = performance.now();
+function releaseDueSpectrum(at) {
+  const now = typeof at === "number" ? at : performance.now();
   while (spectrumQueue.length && spectrumQueue[0].due <= now) {
     paintSpectrum(spectrumQueue.shift());
   }
@@ -2846,14 +2859,21 @@ function resetSpectrumPacing() {
 function holdFrameTag(ev) {
   if (ev.line <= skippedThrough) return;
   if (lastLine >= ev.line) tagFrame(ev);
-  else heldFrames.push(ev);
+  else if (!detached) {
+    // The detached /links window receives no spectrum, so nothing would ever release the tag.
+    heldFrames.push(ev);
+    if (heldFrames.length > HELD_MARKS_MAX) heldFrames.shift();
+  }
 }
 
 function holdCapture(ev) {
   const lps = cfg ? cfg.linesPerSecond : 30;
   const rows = Math.round((ev.secondsAgo || 0) * lps) - (ev.atLine - lastLine);
   if (ev.atLine < 0 || rows >= 0) tagCapture(ev, Math.max(0, rows));
-  else heldCaptures.push(ev);
+  else if (!detached) {
+    heldCaptures.push(ev);
+    if (heldCaptures.length > HELD_MARKS_MAX) heldCaptures.shift();
+  }
 }
 
 function releaseHeldMarks() {
