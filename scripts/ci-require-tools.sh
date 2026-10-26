@@ -3,7 +3,7 @@
 #
 #   scripts/ci-require-tools.sh dpkg-deb:dpkg readelf:binutils docker
 #
-# Each argument is <command> or <command>:<package>. Workflows call this on self-hosted runners
+# Each argument is <command> or <command>:<package>, or lib:<soname>:<package> for a shared library. Workflows call this on self-hosted runners
 # for the tools no setup action provides. It never installs anything: that needs root, and a
 # runner is not assumed to give us passwordless sudo. A job that finds something missing says
 # what to install and stops, rather than failing 20 minutes in with a bare "command not found".
@@ -12,7 +12,14 @@ missing=0
 for spec in "$@"; do
   cmd="${spec%%:*}"
   pkg="${spec#*:}"
-  if ! command -v "$cmd" > /dev/null 2>&1; then
+  if [ "$cmd" = lib ]; then
+    soname="${pkg%%:*}"
+    pkg="${pkg#*:}"
+    if ! ldconfig -p 2> /dev/null | grep -qF "$soname"; then
+      echo "::error::this runner has no $soname: install the '$pkg' package (apt-get install $pkg)"
+      missing=1
+    fi
+  elif ! command -v "$cmd" > /dev/null 2>&1; then
     echo "::error::this runner has no '$cmd': install the '$pkg' package (apt-get install $pkg)"
     missing=1
   fi

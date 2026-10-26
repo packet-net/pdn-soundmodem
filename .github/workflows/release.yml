@@ -70,6 +70,10 @@ jobs:
           cache-dependency-path: Directory.Packages.props
       - name: Check the tools this job needs
         run: scripts/ci-require-tools.sh dpkg-deb:dpkg readelf:binutils iconv:libc-bin gzip tar python3 gh sha256sum:coreutils
+      # The suite's ALSA tests run wherever /dev/snd has a capture device, and need libasound there.
+      - name: Check libasound if this runner has sound hardware
+        run: |
+          if compgen -G '/dev/snd/pcmC*c' > /dev/null; then scripts/ci-require-tools.sh lib:libasound.so.2:libasound2t64; fi
       # Node for the npm package's type declarations and pack. setup-node works on any glibc Linux
       # runner, so bring our own rather than trust whichever one picked the job up.
       - uses: actions/setup-node@v6

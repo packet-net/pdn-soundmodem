@@ -81,6 +81,10 @@ jobs:
           cache-dependency-path: Directory.Packages.props
       - name: Check the tools this job needs
         run: scripts/ci-require-tools.sh dpkg-deb:dpkg readelf:binutils iconv:libc-bin gzip
+      # The suite's ALSA tests run wherever /dev/snd has a capture device, and need libasound there.
+      - name: Check libasound if this runner has sound hardware
+        run: |
+          if compgen -G '/dev/snd/pcmC*c' > /dev/null; then scripts/ci-require-tools.sh lib:libasound.so.2:libasound2t64; fi
       # Restore past the HTTP cache, for the same reason release.yml does: these runners are
       # self-hosted and keep their NuGet cache between jobs indefinitely, so a dependency
       # published minutes ago is invisible here while nuget.org already serves it. That is every
