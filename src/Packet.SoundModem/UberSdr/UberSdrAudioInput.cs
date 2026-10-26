@@ -52,7 +52,11 @@ internal readonly record struct UberSdrLine(string Sentence, bool BeforeAWait);
 /// on the ones measured), and a modem is expected to run for months. The receive loop therefore
 /// treats a closed socket as ordinary and reconnects, discarding the
 /// <see cref="UberSdrTuning.StartupGuardMs"/> level ramp each time; only a receiver that stays
-/// unreachable for <see cref="ReconnectGiveUpAfter"/> raises <see cref="Lost"/>.</para>
+/// unreachable for <see cref="ReconnectGiveUpAfter"/> raises <see cref="Lost"/>. Each reconnect
+/// is a new <c>user_session_id</c> with its own pre-flight: the instance times
+/// <c>max_session_time</c> from the first time it sees an id and then refuses that id for good,
+/// so reusing the start-up id locked a continuous station out three hours after every start
+/// (#736).</para>
 /// <para>Protocol per <c>docs/dev/archive/ms110d/ota-capture-client-plan.md</c>; the framing is decoded by
 /// <see cref="PcmBinaryDecoder"/>, which is a port from the upstream Go client.</para>
 /// </remarks>
@@ -265,7 +269,7 @@ public sealed class UberSdrAudioInput : IUberSdrSession
             }
 
             input._pump = Task.Run(
-                () => input.PumpAsync(sessionId, startRefused: refusedForNow), CancellationToken.None);
+                () => input.PumpAsync(startRefused: refusedForNow), CancellationToken.None);
             return input;
         }
         catch
@@ -368,7 +372,7 @@ public sealed class UberSdrAudioInput : IUberSdrSession
     /// forever" met a fixed one-second breath here once, and the result was a public receiver
     /// pelted all night.
     /// </remarks>
-    private async Task PumpAsync(string sessionId, bool startRefused)
+    private async Task PumpAsync(bool startRefused)
     {
         CancellationToken cancellation = _stopping.Token;
         ClientWebSocket? socket = Interlocked.Exchange(ref _first, null);
@@ -386,7 +390,7 @@ public sealed class UberSdrAudioInput : IUberSdrSession
             {
                 try
                 {
-                    socket = await ConnectAsync(sessionId, cancellation).ConfigureAwait(false);
+                    socket = await ReconnectAsync(cancellation).ConfigureAwait(false);
                     downSince = null;
                     _journal?.Invoke(ReconnectedLine(_endpoint));
                 }
@@ -790,6 +794,33 @@ public sealed class UberSdrAudioInput : IUberSdrSession
         }
 
         Lost?.Invoke(reason);
+    }
+
+    /// <summary>
+    /// Opens a new session after one ended: a new <c>user_session_id</c>, asked about in a
+    /// pre-flight of its own, then its IQ WebSocket. A pre-flight that says no is a refusal for
+    /// the receive loop to wait out; one that cannot reach the instance is a transient failure.
+    /// </summary>
+    private async Task<ClientWebSocket> ReconnectAsync(CancellationToken cancellation)
+    {
+        string sessionId = Guid.NewGuid().ToString();
+        ConnectionResponse connection;
+        try
+        {
+            connection = await PreflightAsync(_endpoint, sessionId, _tuning, cancellation).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException) when (cancellation.IsCancellationRequested)
+        {
+            // The pre-flight reports a cancelled request as unreachability; here it is shutdown.
+            throw new OperationCanceledException(cancellation);
+        }
+
+        if (!connection.Allowed)
+        {
+            throw new UberSdrRefusedException(connection.Reason ?? "the instance refused a new session");
+        }
+
+        return await ConnectAsync(sessionId, cancellation).ConfigureAwait(false);
     }
 
     /// <summary>Opens the IQ WebSocket.</summary>
