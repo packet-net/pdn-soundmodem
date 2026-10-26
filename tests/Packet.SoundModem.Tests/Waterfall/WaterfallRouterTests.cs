@@ -67,6 +67,22 @@ public class WaterfallRouterTests : IAsyncLifetime
         _cancellation.Dispose();
     }
 
+    /// <summary>The front door answers <c>Host: localhost</c> as well as the address it is
+    /// bound to, for the same reason the single-station page does.</summary>
+    [Fact]
+    public async Task A_Receiver_Answers_A_Request_Addressed_To_Localhost()
+    {
+        LocalhostHost.SkipUnlessItSharesTheLoopbackSocket();
+        using var http = new HttpClient();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get, $"http://127.0.0.1:{_port}{ReadingBase}");
+        request.Headers.Host = $"localhost:{_port}";
+
+        using HttpResponseMessage response = await http.SendAsync(request, _cancellation.Token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
     [Fact]
     public async Task Two_Servers_Behind_One_Listener_Answer_On_Their_Own_Prefixes()
     {

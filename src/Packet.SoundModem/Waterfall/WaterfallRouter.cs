@@ -40,10 +40,12 @@ public sealed class WaterfallRouter : IAsyncDisposable
     {
         Port = port;
         _listener = new HttpListener();
-        // The same spelling translation the single-station server does, for the same reason: the
-        // daemon has one bind setting and HttpListener wants "+" where a TcpListener wants 0.0.0.0.
+        foreach (string prefix in ListenerPrefixes.For(bind, port))
+        {
+            _listener.Prefixes.Add(prefix);
+        }
+
         bool everyInterface = bind is "*" or "0.0.0.0" or "::" or "[::]";
-        _listener.Prefixes.Add($"http://{(everyInterface ? "+" : bind)}:{port}/");
         Url = $"http://{(everyInterface ? "127.0.0.1" : bind)}:{port}/";
     }
 
