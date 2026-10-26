@@ -7,6 +7,7 @@ using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
 using Packet.SoundModem.Modems;
+using Packet.SoundModem.Rig;
 using M0LTE.Radio.Audio;
 using Packet.SoundModem.Tests.Channel;
 using Packet.SoundModem.Waterfall;
@@ -367,6 +368,26 @@ public class TxTestTests
         rig.Output.Snapshot().Length.Should().BeLessThanOrEqualTo(
             (int)((TxTestRunner.CeilingSeconds + 1) * Rate));
         rig.Lines.Should().Contain(line => line.Contains("60.0 s"));
+    }
+
+    [Fact]
+    public async Task A_Vox_Station_Plays_The_Test_Through_The_Api_And_Reports_It_Sent()
+    {
+        // No ptt section: NullPtt keys nothing and the radio's VOX trips on the audio. The head
+        // end's tone and probe come through /api/txtest, so that path must play on VOX.
+        await using var rig = new Rig(o => o with { Time = new FakeTimeProvider() }, new NullPtt());
+
+        List<(HttpStatusCode Status, string Body)> answers = await PostAllAsync(rig.Runner,
+        [
+            """{"twoTone": false, "toneHz": 1800, "seconds": 1, "probe": {"kind": "zc255", "gapSeconds": 0.5, "audioHz": 1800}}""",
+        ]);
+
+        answers[0].Status.Should().Be(HttpStatusCode.OK, answers[0].Body);
+        JsonNode sent = JsonNode.Parse(answers[0].Body)!;
+        sent["transmitted"]!.GetValue<bool>().Should().BeTrue();
+        sent["refused"].Should().BeNull();
+        rig.Output.Snapshot().Length.Should().BeGreaterThanOrEqualTo(Rate, "the audio went out for its seconds");
+        rig.Errors.Should().BeEmpty();
     }
 
     [Fact]

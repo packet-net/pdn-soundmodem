@@ -216,7 +216,7 @@ Your software reports connection refused. Either the modem is not running, or it
 
 Your software attaches but hears nothing. It may be reading a sub-channel no modem answers to. The `kiss tcp:` lines say which modems each port carries; match one to the channel number your software is set to, or give that modem its own port.
 
-Frames arrive but nothing transmits. Look for `tx[N] DROPPED` in the journal, which names the reason. If `tx[N]` lines appear and the radio never keys, look for `tx test: unavailable - no "ptt" is configured, so this daemon does not key the radio` at start-up. [12-troubleshooting.md](12-troubleshooting.md) works through both, along with a config file the daemon refused.
+Frames arrive but nothing transmits. Look for `tx[N] DROPPED` in the journal, which names the reason. If `tx[N]` lines appear and the radio never keys, check the `ptt` section, or the radio's VOX if there is none. [12-troubleshooting.md](12-troubleshooting.md) works through both, along with a config file the daemon refused.
 
 ## Related
 

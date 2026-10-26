@@ -12,7 +12,7 @@ Every key the modem reads from its configuration file, with type, default and on
 | Written by the modem | Never, with one exception: `POST /api/config?persist=true` replaces it on an operator's explicit instruction. |
 | Seeded from | `/usr/share/pdn-soundmodem/soundmodem.example.json`, copied in by the package on first install. |
 
-An empty object `{}` is a valid file. It gives a station on ALSA device `default` at 48000 Hz capture, one `afsk1200` modem on sub-channel 0 at 1700 Hz, KISS on `127.0.0.1:8105`, no PTT line (the radio's VOX or nothing), the transmitter test enabled but unusable without a `ptt`, id-beacon listening and frequency matching on, and no browser page, frame log or other service.
+An empty object `{}` is a valid file. It gives a station on ALSA device `default` at 48000 Hz capture, one `afsk1200` modem on sub-channel 0 at 1700 Hz, KISS on `127.0.0.1:8105`, no PTT line (the radio's VOX or nothing), the transmitter test enabled, id-beacon listening and frequency matching on, and no browser page, frame log or other service.
 
 An unknown key anywhere in the file is reported at start-up and ignored. The journal line is `config: WARNING - <section>: "<key>" is not a setting this version knows, and is being IGNORED. Check the spelling against <url>`, where `<section>` is the object it was found in (`waterfall`, `modem 1`, `alsa mixer`, `monitor uplink GB7RDG-2` and so on) and is omitted for a top-level key. Unknown keys inside `metrics` and `frequencyMatching` are the two exceptions: those objects keep them but nothing reports them.
 
@@ -260,7 +260,7 @@ The short form: every packet modem in `modems` goes behind port 8120, the first 
 - `"rigctld"` takes no other key here; it keys through the `rig` section's rigctld and is refused without one (`"ptt": {"type": "rigctld"} keys the radio through the "rig" section's rigctld, and this file has no "rig" section`). It is config-file only; the `--ptt` flag has no form for it.
 - Refused: a `type` other than `serial`, `cm108` or `rigctld` (`unknown ptt type 'X'`); any `ptt` with a `flex:` device (`--device flex: keys the radio itself; remove the conflicting --ptt (serial:/cm108:)`); any `ptt` with a `ubersdr:`, `openwebrx:`, `rtltcp:` or `sdrconnect:` device (`--device ubersdr: is a receive-only station ... Remove "ptt".`).
 - A device that cannot be opened exits 1, with the file, the key, an `ls` to run and the udev note for `/dev/hidraw*`, and the service retries. The [`--ptt` flag](command-line.md#station-flags) replaces this section.
-- Without a `ptt` the transmitter test is refused: `tx test: unavailable - no "ptt" is configured, so this daemon does not key the radio`.
+- Without a `ptt` the transmitter test still plays its audio, and the radio's VOX keys on it.
 
 ## `carrierSense`
 
@@ -313,7 +313,7 @@ A station with no serial link to its radio, or one that is not a Tait, reads car
 
 - The section is present by default; there is nothing to switch on. The tones are not settings: two-tone is 700 and 1900 Hz, and a single tone takes its frequency per request.
 - Refused at load: an `amplitude` that is not above 0 and at most 1 (`"txTest"."amplitude": A is not a level`) and a `seconds` of zero or below (`"txTest"."seconds": S is not a length`).
-- The test is unavailable, with the reason in the journal, when `enabled` is false, when the station receives only, or when there is no `ptt`. The control is never on a public page. On a monitor `--two-tone` and `--tone` are refused with exit 2.
+- The test is unavailable, with the reason in the journal, when `enabled` is false, or when the station receives only. The control is never on a public page. On a monitor `--two-tone` and `--tone` are refused with exit 2.
 - While a [transmit lease](ports-and-endpoints.md#the-transmit-lease) is held, a test runs only when `POST /api/txtest` names the holder's `subChannel`; the page's button is refused until the lease ends.
 
 ### The channel probe

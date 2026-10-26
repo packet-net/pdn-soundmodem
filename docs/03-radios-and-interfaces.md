@@ -109,11 +109,7 @@ ptt: rigctld 127.0.0.1:4532 (T 1 to key, T 0 to unkey)
 
 Leave the `ptt` section out and the modem keys nothing. The radio's own VOX trips on the transmit audio instead.
 
-It is a poor way to run data. The radio decides when the carrier comes up, so TXDELAY, the pause between keying and the first data, has to be long enough to cover the VOX attack, and the hang time keeps the transmitter up while the other station is answering. The transmitter test is refused:
-
-```
-tx test: unavailable - no "ptt" is configured, so this daemon does not key the radio
-```
+It is a poor way to run data. The radio decides when the carrier comes up, so TXDELAY, the pause between keying and the first data, has to be long enough to cover the VOX attack, and the hang time keeps the transmitter up while the other station is answering. The transmitter test works as on any station: it plays its audio and the radio's VOX keys on it.
 
 ## FlexRadio
 
