@@ -73,7 +73,7 @@ jobs:
       # The suite's ALSA tests run wherever /dev/snd has a capture device, and need libasound there.
       - name: Check libasound if this runner has sound hardware
         run: |
-          if compgen -G '/dev/snd/pcmC*c' > /dev/null; then scripts/ci-require-tools.sh lib:libasound.so.2:libasound2t64; fi
+          if compgen -G '/dev/snd/pcmC*c' > /dev/null; then scripts/ci-require-tools.sh lib:libasound.so.2:libasound2t64/libasound2; fi
       # Node for the npm package's type declarations and pack. setup-node works on any glibc Linux
       # runner, so bring our own rather than trust whichever one picked the job up.
       - uses: actions/setup-node@v6
