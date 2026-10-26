@@ -375,9 +375,7 @@ internal sealed class UberSdrDirectory : IDisposable
             if (why == "not a usable hostname" && _complainedAbout.Add(instance.Host!))
             {
                 _journal.WriteError(
-                    $"directory: \"{Ascii(instance.Host!)}\" is not a hostname, so that entry is "
-                    + "being ignored. Nothing here can fix it; the receiver's operator or the "
-                    + "directory can.");
+                    $"directory: \"{Ascii(instance.Host!)}\" is not a hostname; entry ignored (the directory must fix it)");
             }
         }
 

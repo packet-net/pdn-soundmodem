@@ -222,7 +222,7 @@ public class RfPlanTests
         Action disagreeing = () => RfPlan.Solve(TwoMetreChannel(), "fm", pinnedDialHz: 145_325_000);
 
         disagreeing.Should().Throw<InvalidDataException>()
-            .WithMessage("*145.325000 MHz*145.300000 MHz*same thing said twice*");
+            .WithMessage("*145.325000 MHz*145.300000 MHz*same channel*");
     }
 
     [Fact]
@@ -232,7 +232,7 @@ public class RfPlanTests
             [new(0, "afsk1200", FmChannel, 1200), new(1, "afsk1200", 145_325_000, 1200)], "fm");
 
         solve.Should().Throw<InvalidDataException>()
-            .WithMessage("*one channel the radio is set to*145.300000 MHz, 145.325000 MHz*");
+            .WithMessage("*shares one channel*145.300000 MHz, 145.325000 MHz*");
     }
 
     [Fact]
@@ -511,7 +511,7 @@ public class RfPlanTests
         Action solve = () => RfPlan.Solve(slots, "usb");
 
         solve.Should().Throw<InvalidDataException>()
-            .WithMessage("*both have an audio centre fixed by their own standard*")
+            .WithMessage("*have fixed audio centres*")
             .WithMessage("*7.049800 MHz*7.053500 MHz*");
     }
 

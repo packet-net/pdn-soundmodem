@@ -24,8 +24,8 @@ A `--two-tone` or `--tone` run opens no listener at all. A station with only an 
 Beyond loopback the journal warns at start-up, because none of these listeners has any authentication except the API's key and the uplink's token:
 
 ```
-kiss: WARNING - listening beyond loopback. KISS has no authentication: anything that can reach these ports can transmit on your licence.
-waterfall: WARNING - listening beyond loopback. The page has no authentication, and on an operator's page it carries a transmit test: anything that can reach this port can key your transmitter on your licence.
+kiss: WARNING - listening beyond loopback, no authentication: anyone who can reach these ports can transmit on your licence
+waterfall: WARNING - listening beyond loopback, no authentication: anyone who can reach this port can key your transmitter
 ```
 
 The page line shown is the operator page's. A `public` page ends `anything that can reach this port can watch this station.` instead, and with `enableAudioControls` a sentence saying the mixer is open with no key is appended.
@@ -35,7 +35,7 @@ Each listener says where it is when it starts:
 ```
 kiss tcp: 127.0.0.1:8105 (all modems, by sub-channel nibble)
 kiss tcp: 127.0.0.1:8110 (modem 1 bpsk300 only, as nibble 0)
-ardop host tcp: 127.0.0.1:8515 (data 8516, ardopcf-compatible virtual TNC, modem 2, ARQBW 500MAX, centre 950 Hz, busy watch 661-1239 Hz)
+ardop host tcp: 127.0.0.1:8515 (data 8516, modem 2, ARQBW 500MAX, centre 950 Hz, busy watch 661-1239 Hz)
 paging tcp: 127.0.0.1:8106 (pocsag1200, DAPNET/POCSAG-compatible)
 waterfall: http://127.0.0.1:8107/
 metrics: http://127.0.0.1:8107/metrics (prometheus) and http://127.0.0.1:8107/metrics/frames (one point per frame, influx line protocol). No authentication.

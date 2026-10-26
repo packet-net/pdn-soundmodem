@@ -275,8 +275,8 @@ public class AlsaMixerConfigTests : IDisposable
             """);
 
         DaemonConfig.TryLoad(path, out string error).Should().BeNull();
-        error.Should().Contain("which is not a sound card");
-        error.Should().Contain("Remove the \"alsa\" section");
+        error.Should().Contain("not a sound card");
+        error.Should().Contain("remove \"alsa\"");
     }
 
     [Fact]
@@ -287,7 +287,7 @@ public class AlsaMixerConfigTests : IDisposable
             """);
 
         DaemonConfig.TryLoad(path, out string error).Should().BeNull();
-        error.Should().Contain("which is not a sound card");
+        error.Should().Contain("not a sound card");
     }
 
     [Fact]
@@ -329,7 +329,7 @@ public class AlsaMixerConfigTests : IDisposable
             Directory.SetCurrentDirectory(_dir);
             DaemonConfig.TryLoad(path, out string error).Should().BeNull();
             error.Should().Contain("which is this configuration file");
-            error.Should().Contain("point \"stateFile\" somewhere else");
+            error.Should().Contain("point it elsewhere");
         }
         finally
         {

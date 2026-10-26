@@ -226,10 +226,8 @@ public sealed class UberSdrAudioInput : IUberSdrSession
         if (iqRate % tuning.OutputRate != 0)
         {
             throw new InvalidOperationException(
-                $"{tuning.Mode} delivers {iqRate} Hz IQ, which is not a whole multiple of this "
-                + $"channel's {tuning.OutputRate} Hz DSP rate. Resampling by a fraction is not "
-                + "something this path does; the 12 kHz and 48 kHz mode families both divide "
-                + "48000, so an iq48 stream serves either.");
+                $"{tuning.Mode} delivers {iqRate} Hz IQ, not a whole multiple of this channel's "
+                + $"{tuning.OutputRate} Hz DSP rate; use iq48.");
         }
 
         string sessionId = Guid.NewGuid().ToString();
@@ -355,9 +353,7 @@ public sealed class UberSdrAudioInput : IUberSdrSession
         }
 
         throw new InvalidOperationException(
-            $"'{mode}' is not an UberSDR IQ mode. Use \"iq48\" (every instance) or \"iq96\" "
-            + "where the receiver offers it - this device streams complex baseband, not the "
-            + "instance's own demodulated audio.");
+            $"'{mode}' is not an UberSDR IQ mode. Use \"iq48\", or \"iq96\" where offered.");
     }
 
     /// <summary>The reconnecting receive loop. Runs until disposed.</summary>
@@ -552,9 +548,8 @@ public sealed class UberSdrAudioInput : IUberSdrSession
     /// <param name="dailyTimeUsedSecs">Seconds of listening this address has used today.</param>
     internal static UberSdrLine RefusedAtStartupLine(
         UberSdrEndpoint endpoint, string reason, int dailyTimeUsedSecs) =>
-        new($"{endpoint} is refusing us for now ({reason}, {dailyTimeUsedSecs} s used today). "
-            + "The stream will be retried patiently; audio starts when the receiver lets us "
-            + "back in.", BeforeAWait: false);
+        new($"{endpoint} is refusing us for now ({reason}, {dailyTimeUsedSecs} s used today); "
+            + "will retry.", BeforeAWait: false);
 
     /// <summary>Nothing drained the ring in time and audio was lost.</summary>
     /// <param name="dropped">Samples lost since the stream started.</param>
@@ -897,9 +892,8 @@ public sealed class UberSdrAudioInput : IUberSdrSession
             && !modes.Contains(tuning.Mode, StringComparer.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                $"{endpoint} does not offer IQ mode '{tuning.Mode}' to this client - it allows "
-                + $"{string.Join(", ", modes)}. Set \"ubersdr\": {{ \"mode\": \"{modes[0]}\" }}, or "
-                + "ask the receiver's operator for access.");
+                $"{endpoint} does not offer IQ mode '{tuning.Mode}' (allows "
+                + $"{string.Join(", ", modes)}). Set \"ubersdr\": {{ \"mode\": \"{modes[0]}\" }}.");
         }
     }
 

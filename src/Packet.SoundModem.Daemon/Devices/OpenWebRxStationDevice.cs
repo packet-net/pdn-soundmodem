@@ -82,7 +82,7 @@ internal sealed class OpenWebRxStationDevice(
     /// <inheritdoc/>
     public override string? ReceiveOnlyReason =>
         $"this station receives only: its audio comes from the OpenWebRX receiver at "
-        + $"{endpoint}, which is a receiver and has no transmitter.";
+        + $"{endpoint}.";
 
     /// <inheritdoc/>
     public override string? PttRefusal =>
@@ -158,9 +158,8 @@ internal sealed class OpenWebRxStationDevice(
         if (context.DspRate % OpenWebRxProtocol.AudioRate != 0)
         {
             Console.Error.WriteLine(
-                $"\"device\": \"{Spec}\" delivers {OpenWebRxProtocol.AudioRate} Hz audio, and this "
-                + $"station's modems run the channel at {context.DspRate} Hz, which is not a whole "
-                + "multiple of it. Choose modes from the 12 kHz or 48 kHz families.");
+                $"\"device\": \"{Spec}\" delivers {OpenWebRxProtocol.AudioRate} Hz audio, not a whole "
+                + $"divisor of the {context.DspRate} Hz DSP rate; use 12 kHz or 48 kHz modes.");
             return DeviceOpening.Refused(2);
         }
 

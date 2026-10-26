@@ -304,7 +304,7 @@ public class UberSdrDirectoryTests
 
         h.Directory.Snapshot.Receivers.Should().NotContain(r => r.Host.Contains(' '));
         h.Errors.Should().ContainSingle().Which.Should()
-            .Contain("is not a hostname").And.Contain("being ignored");
+            .Contain("is not a hostname").And.Contain("entry ignored");
 
         // Once per host, ever. A directory carrying one bad entry for a week is not a reason to
         // write the same line every five minutes.

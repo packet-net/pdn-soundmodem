@@ -30,7 +30,7 @@ A healthy start-up is a handful of lines, each prefixed by the thing that wrote 
 pdn-soundmodem 0.69.0, commit 1cd85706f54a5bf84546dd2fbb04467992cdfcab
 config: /etc/pdn-soundmodem/soundmodem.json
 modem 0: afsk1200
-frequency matching: on - answering a station on its own frequency after 3 frames, if they agree within 20 Hz, ...
+frequency matching: on - after 3 frames within 20 Hz, trim up to ... Hz; ...
 waterfall: http://127.0.0.1:8107/
 kiss tcp: 127.0.0.1:8105 (all modems, by sub-channel nibble)
 audio: plughw:CARD=Device,DEV=0 capture 48000 Hz -> 12000 Hz
@@ -132,7 +132,7 @@ Grouped by what causes them:
 | Two services on one TCP port | `the waterfall and "kissPort" both want TCP port 8105. Give them different ports.` | See [every listener](reference/ports-and-endpoints.md#every-listener). |
 | A section that needs the station page | `"api" is served on the waterfall's HTTP listener, and this station has no "waterfall" section`; `"publish" needs a "waterfall" section`; `"monitor" needs a "waterfall" section` | Add a [`waterfall`](reference/config.md#waterfall) section, or remove the other one. |
 | Both a station and a monitor site | `this file sets both "device" ... and "monitor"`, `this file sets both "publish" and "monitor"` | One process is one of them. See [the public monitor](10-public-monitor.md). |
-| An uplink credential | `which is not an absolute ws or wss URL`, `it is the credential the site issued this station` | See [the public monitor](10-public-monitor.md). |
+| An uplink credential | `which is not an absolute ws or wss URL`, `use the credential the site issued` | See [the public monitor](10-public-monitor.md). |
 
 An unknown mode looks like this, and the suggestion is usually right:
 

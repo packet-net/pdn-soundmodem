@@ -445,8 +445,8 @@ public sealed class RigControl : IAsyncDisposable
             {
                 Wake();
                 throw new IOException(
-                    $"rigctld at {Endpoint} is not connected, so the unkey could not be sent; the "
-                    + "radio may still be keyed, and is unkeyed the moment rigctld answers");
+                    $"rigctld at {Endpoint} is not connected, so the unkey could not be sent; "
+                    + "the radio may still be keyed");
             }
 
             try
@@ -778,7 +778,7 @@ public sealed class RigControl : IAsyncDisposable
                 // Nothing may end this loop but shutdown: everything owed (an unkey, a restore)
                 // is done from here.
                 Warn(
-                    $"rig: WARNING - the rigctld watch hit an error it did not expect "
+                    $"rig: WARNING - rigctld watch failed unexpectedly "
                     + $"({unexpected.GetType().Name}: {unexpected.Message}); reconnecting");
                 lock (_io)
                 {
@@ -875,9 +875,8 @@ public sealed class RigControl : IAsyncDisposable
             }
 
             Warn(
-                $"rig: WARNING - cannot reach rigctld at {Endpoint} ({unreachable.Message}). "
-                + "The station carries on without rig control and keeps trying. Is rigctld "
-                + "running? For example: rigctld -m <model> -r /dev/ttyUSB0");
+                $"rig: WARNING - cannot reach rigctld at {Endpoint} ({unreachable.Message}); "
+                + "carrying on without rig control. Is rigctld running?");
             return false;
         }
 
@@ -1138,9 +1137,8 @@ public sealed class RigControl : IAsyncDisposable
         _unkeyOwed = true;
         _unkeyAttempts++;
         Warn(
-            $"rig: WARNING - the unkey was refused ({refused.Message}), attempt {_unkeyAttempts}. The "
-            + $"radio may still be keyed; nothing is sent until it is unkeyed, and the unkey is tried "
-            + $"again every {_options.UnkeyRetry.TotalSeconds:0.#} s");
+            $"rig: WARNING - the unkey was refused ({refused.Message}), attempt {_unkeyAttempts}; "
+            + $"the radio may still be keyed, retrying every {_options.UnkeyRetry.TotalSeconds:0.#} s");
         Wake();
         RaiseChanged();
     }
@@ -1159,7 +1157,7 @@ public sealed class RigControl : IAsyncDisposable
             {
                 Warn(
                     $"rig: WARNING - rigctld at {Endpoint} is not connected, so the rig cannot be put "
-                    + $"back to {restore} yet. The station does not transmit until it has been");
+                    + $"back to {restore} yet; no transmitting until it is");
             }
 
             return;
@@ -1201,7 +1199,7 @@ public sealed class RigControl : IAsyncDisposable
                 Warn(
                     $"rig: WARNING - the rig could not be put back to {restore} ({refused.Message}"
                     + (more > 0 ? $", {more} more refusals since the last line" : "")
-                    + "). The station does not transmit until it has been; trying again at every poll");
+                    + "); no transmitting until it is, retrying");
             }
         }
     }
@@ -1238,8 +1236,8 @@ public sealed class RigControl : IAsyncDisposable
         catch (Exception unwritable) when (unwritable is IOException or UnauthorizedAccessException)
         {
             Warn(
-                $"rig: WARNING - could not write {file} ({unwritable.Message}). The window goes ahead, "
-                + "but a station killed during it would not know to put the rig back");
+                $"rig: WARNING - could not write {file} ({unwritable.Message}); "
+                + "a crash during this window would not restore the rig");
         }
     }
 
@@ -1303,8 +1301,7 @@ public sealed class RigControl : IAsyncDisposable
         {
             Warn(
                 $"rig: WARNING - the rig would not take a {tuning.PassbandHz} Hz passband in "
-                + $"{tuning.Mode} ({RigctldException.Describe(narrow.Code)}); using its normal width "
-                + "for the mode instead");
+                + $"{tuning.Mode} ({RigctldException.Describe(narrow.Code)}); using its normal width");
             connection.SetMode(tuning.Mode, 0);
         }
 
@@ -1318,8 +1315,7 @@ public sealed class RigControl : IAsyncDisposable
         {
             Warn(
                 $"rig: WARNING - asked the rig for a {tuning.PassbandHz} Hz passband {purpose}, and "
-                + $"it reports {now.PassbandHz} Hz. A modem outside the rig's filter is clipped or "
-                + "deaf; \"rig\".\"passbandHz\" sets the width asked for, 0 the rig's normal one");
+                + $"it reports {now.PassbandHz} Hz; see \"rig\".\"passbandHz\"");
         }
     }
 
@@ -1379,7 +1375,7 @@ public sealed class RigControl : IAsyncDisposable
             Warn(
                 $"rig: WARNING - lost rigctld at {Endpoint} ({why}); reconnecting"
                 + (KeysThroughRig && (_keyed || _unkeyOwed)
-                    ? ". The radio may still be keyed: it is unkeyed the moment rigctld answers"
+                    ? "; the radio may still be keyed"
                     : ""));
         }
     }

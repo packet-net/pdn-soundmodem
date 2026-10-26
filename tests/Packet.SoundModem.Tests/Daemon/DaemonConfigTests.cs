@@ -474,7 +474,7 @@ public class DaemonConfigTests : IDisposable
         DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
 
         config.Should().BeNull();
-        error.Should().Contain("One ARDOP TNC per channel");
+        error.Should().Contain("only one ARDOP TNC per channel");
     }
 
     [Fact]
@@ -609,7 +609,7 @@ public class DaemonConfigTests : IDisposable
         error.Should().Contain($"\"bandwidth\": {bandwidth}", "name the value that is wrong");
         error.Should().Contain("modem 1", "and say which modem carries it");
         error.Should().Contain("200, 500, 1000 or 2000", "and list the ones that work");
-        error.Should().Contain("remove \"bandwidth\"", "and say what happens if it is dropped");
+        error.Should().Contain("remove it for 2000", "and say what happens if it is dropped");
         ShouldGuideTheOperator(error, path);
     }
 
@@ -1127,7 +1127,7 @@ public class DaemonConfigTests : IDisposable
 
         config.Should().BeNull();
         error.Should().Contain("starvationSeconds").And.Contain("-30");
-        error.Should().Contain("0 to turn that watch off");
+        error.Should().Contain("0 to turn it off");
         ShouldGuideTheOperator(error, path);
     }
 
@@ -1306,7 +1306,7 @@ public class DaemonConfigTests : IDisposable
 
         config.Should().BeNull();
         error.Should().Contain("\"publish\".\"token\" is missing");
-        error.Should().Contain("Ask the site owner",
+        error.Should().Contain("the credential the site issued",
             "there is no default and no way to generate one locally");
         ShouldGuideTheOperator(error, path);
     }
@@ -1362,7 +1362,7 @@ public class DaemonConfigTests : IDisposable
 
         config.Should().BeNull();
         error.Should().Contain("\"publish\" needs a \"waterfall\" section");
-        error.Should().Contain("nothing to publish");
+        error.Should().Contain("needs a \"waterfall\" section");
         ShouldGuideTheOperator(error, path);
     }
 

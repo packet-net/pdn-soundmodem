@@ -143,8 +143,8 @@ Two headless instances that both take the default land on channel 2 and displace
 The transmit filter high cut is a radio-global setting that survives whoever set it last, and it decides how much of your audio reaches the air. A headless station works it out from the modems you configured and says so:
 
 ```
-flex: setting the transmit filter high cut to 3150 Hz - modem 0 (afsk1200) reaches 2906 Hz
-flex: setting the slice receive filter to 300-3150 Hz, to hear everything the modems are placed across
+flex: transmit filter high cut 3150 Hz (modem 0 afsk1200 reaches 2906 Hz)
+flex: setting the slice receive filter to 300-3150 Hz (all modems)
 ```
 
 Pin it with `transmitFilterHighHz` (500 to 10000 Hz), or set it to `0` to leave whatever the radio already had. Attach mode sets neither filter, leaving both to SmartSDR.
@@ -300,7 +300,7 @@ You want one `audio:` line naming your device, and one `ptt:` line if you config
 
 `cannot listen through "sdrconnect:..."` means SDRconnect is not running on that PC, its WebSocket server is not switched on (Other Actions -> Preferences -> WebSocket Server), the radio is not started in it, or the PC's firewall is keeping the station out of port 5454 (on Windows, check the network is Private). The service keeps retrying.
 
-`rig: WARNING - cannot reach rigctld at ...` means rigctld is not running, or is on another port. Start it, and the station picks it up within half a minute.
+`rig: WARNING - cannot reach rigctld at ...` means rigctld is not running, or is on another port. Start it, and the station picks it up within half a minute. For example `rigctld -m <model> -r /dev/ttyUSB0`.
 
 `cannot reach the FlexRadio "..."` means the radio is off, still booting, or on another network. `ping` the address, or open SmartSDR.
 

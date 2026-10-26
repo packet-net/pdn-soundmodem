@@ -1787,9 +1787,8 @@ public sealed class DaemonConfig
     {
         var config = JsonSerializer.Deserialize<DaemonConfig>(File.ReadAllText(path), Options)
             ?? throw new InvalidDataException(
-                "the file contains only `null` - there is nothing to configure from. A minimal "
-                + "working file is {\"device\": \"default\", \"modems\": [{\"subChannel\": 0, "
-                + "\"mode\": \"afsk1200\"}]}");
+                "the file contains only `null`. A minimal file is {\"device\": \"default\", "
+                + "\"modems\": [{\"subChannel\": 0, \"mode\": \"afsk1200\"}]}");
         config.DeviceWasStated = StatesKey(path, "device");
         if (config.Waterfall is not null)
         {
@@ -1841,16 +1840,14 @@ public sealed class DaemonConfig
         if (ardopModems > 1)
         {
             throw new InvalidDataException(
-                "two modems have \"mode\": \"ardop\". One ARDOP TNC per channel - it is a whole "
-                + "virtual TNC with its own host interface, not a demodulator you can run twice.");
+                "two modems have \"mode\": \"ardop\": only one ARDOP TNC per channel; remove one.");
         }
 
         if (ardopModems > 0 && config.Ardop is not null)
         {
             throw new InvalidDataException(
-                "ARDOP is configured twice - once as a modem entry and once in the top-level "
-                + "\"ardop\" section. Keep the modem entry (it can also carry \"frequency\" and "
-                + "\"port\") and delete the \"ardop\" section.");
+                "ARDOP is configured as both a modem entry and the \"ardop\" section: "
+                + "delete the \"ardop\" section.");
         }
 
         // "bandwidth" on an ardop entry is the TNC's ARQBW as well as the planner's reservation,
@@ -1863,12 +1860,9 @@ public sealed class DaemonConfig
             if (!ArdopChannelBridge.TryArqBandwidth(ardop.Bandwidth!.Value, out _))
             {
                 throw new InvalidDataException(
-                    $"modem {ardop.SubChannel} is \"mode\": \"ardop\" with \"bandwidth\": "
-                    + ardop.Bandwidth.Value.ToString(
-                        "0.###", System.Globalization.CultureInfo.InvariantCulture)
-                    + ". ARDOP negotiates "
-                    + $"{ArdopChannelBridge.NegotiableBandwidths} Hz and nothing else - use one "
-                    + "of those, or remove \"bandwidth\" to plan for the widest (2000) as before.");
+                    $"modem {ardop.SubChannel} has \"bandwidth\": "
+                    + ardop.Bandwidth.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
+                    + $": use one of {ArdopChannelBridge.NegotiableBandwidths} Hz, or remove it for 2000.");
             }
         }
 
@@ -1884,15 +1878,15 @@ public sealed class DaemonConfig
             if (!levelled.Mode.StartsWith("ms110d-", StringComparison.Ordinal))
             {
                 throw new InvalidDataException(
-                    $"modem {levelled.SubChannel} is \"mode\": \"{levelled.Mode}\" with \"txAmplitude\". "
-                    + "Only the ms110d-* modes take a transmit level - remove it from this entry.");
+                    $"modem {levelled.SubChannel} is \"mode\": \"{levelled.Mode}\" with \"txAmplitude\": "
+                    + "only ms110d-* modes take a transmit level; remove it.");
             }
             if (!double.IsFinite(level) || level <= 0 || level > 1)
             {
                 throw new InvalidDataException(
                     $"modem {levelled.SubChannel} has \"txAmplitude\": "
                     + level.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
-                    + ". Use a level above 0 and at most 1 (1.0 peaks at about 0.75 of full scale), or remove it for the default 0.5.");
+                    + ": use above 0 and at most 1, or remove it for 0.5.");
             }
         }
 
@@ -1919,8 +1913,7 @@ public sealed class DaemonConfig
         {
             throw new InvalidDataException(
                 $"modem {bothWays.SubChannel} sets both \"frequency\" ({bothWays.Frequency}) and "
-                + $"\"rfFrequency\" ({bothWays.RfFrequency}). Those say the same thing two ways - "
-                + "\"frequency\" is an audio offset, \"rfFrequency\" is a place on the band. Keep one.");
+                + $"\"rfFrequency\" ({bothWays.RfFrequency}): keep one.");
         }
 
         // A band plan is all-or-nothing: the dial is shared, so a modem pinned in audio terms
@@ -1932,9 +1925,7 @@ public sealed class DaemonConfig
                 .Where(m => m.RfFrequency is null)
                 .Select(m => $"modem {m.SubChannel} ({m.Mode})"));
             throw new InvalidDataException(
-                $"some modems have \"rfFrequency\" and some do not ({audioOnly}). Give every modem "
-                + "an \"rfFrequency\" or none of them: the dial is shared, so one pinned to an audio "
-                + "offset would sit at whatever RF the dial chosen for the others happens to put it.");
+                $"some modems have \"rfFrequency\" and some do not ({audioOnly}): give every modem one, or none.");
         }
 
         // 0 is the documented "leave the radio's own filter alone"; anything else has to be a
@@ -1943,9 +1934,8 @@ public sealed class DaemonConfig
         if (config.Flex?.TransmitFilterHighHz is int filterHigh && filterHigh is not 0 and (< 500 or > 10_000))
         {
             throw new InvalidDataException(
-                $"\"flex\".\"transmitFilterHighHz\" is {filterHigh}. That is an audio cut-off in Hz "
-                + "(3000 is a radio's usual default, 3400 clears ms110d) - use 500-10000, 0 to "
-                + "leave the radio's own filter alone, or remove it to have it set from the modems.");
+                $"\"flex\".\"transmitFilterHighHz\" is {filterHigh}: use 500-10000, 0 to leave the radio's "
+                + "filter alone, or remove it to set it from the modems.");
         }
 
         // Negative seconds is a sign error or a misunderstood off-switch either way; 0 is the
@@ -1960,10 +1950,8 @@ public sealed class DaemonConfig
             if (seconds is < 0)
             {
                 throw new InvalidDataException(
-                    $"\"deadFeed\".\"{name}\" is {seconds}. That is how many seconds the watch "
-                    + "waits before declaring the feed dead and restarting the service - use a "
-                    + "positive number of seconds, 0 to turn that watch off, or remove it for "
-                    + "the device's default.");
+                    $"\"deadFeed\".\"{name}\" is {seconds}: use a positive number of seconds, 0 to turn it off, "
+                    + "or remove it for the device default.");
             }
         }
 
@@ -1979,9 +1967,8 @@ public sealed class DaemonConfig
         if (config.ModemPlugins.FirstOrDefault(p => string.IsNullOrWhiteSpace(p.Path)) is not null)
         {
             throw new InvalidDataException(
-                "a \"modemPlugins\" entry has no \"path\". Each entry names one assembly to load, "
-                + "as {\"path\": \"/opt/pdn/plugins/MyModem.dll\"} - there is no directory to "
-                + "scan and no default location, deliberately.");
+                "a \"modemPlugins\" entry has no \"path\": give the assembly, "
+                + "e.g. {\"path\": \"/opt/pdn/plugins/MyModem.dll\"}.");
         }
 
         RequireBind(config);
@@ -2007,9 +1994,8 @@ public sealed class DaemonConfig
             if (rigctldPtt)
             {
                 throw new InvalidDataException(
-                    "\"ptt\": {\"type\": \"rigctld\"} keys the radio through the \"rig\" section's "
-                    + "rigctld, and this file has no \"rig\" section. Add \"rig\": {} (it looks for "
-                    + $"rigctld at {RigctldEndpoint.Default}), or \"rig\": {{\"rigctld\": \"host:port\"}}.");
+                    "\"ptt\": {\"type\": \"rigctld\"} needs a \"rig\" section: add \"rig\": {} "
+                    + $"(rigctld at {RigctldEndpoint.Default}) or \"rig\": {{\"rigctld\": \"host:port\"}}.");
             }
 
             return;
@@ -2041,18 +2027,16 @@ public sealed class DaemonConfig
             {
                 throw new InvalidDataException(
                     $"\"rig\".\"mode\" is \"{mode}\", "
-                    + (implies is null ? "which is not a sideband or FM mode" : $"which is {implies.ToUpperInvariant()}")
-                    + $", and \"sideband\" is \"{config.Sideband}\". The band plan sets this mode, so the "
-                    + "two have to agree: change one of them.");
+                    + (implies is null ? "not a sideband or FM mode" : $"which is {implies.ToUpperInvariant()}")
+                    + $", but \"sideband\" is \"{config.Sideband}\": make them agree.");
             }
         }
 
         if (rig.PassbandHz is int passband && (passband < 0 || passband > RigModes.MaxPassbandHz))
         {
             throw new InvalidDataException(
-                $"\"rig\".\"passbandHz\" is {passband}. That is the receive filter width in Hz the band "
-                + "plan asks the rig for - use 0 for the rig's normal width, a width such as 2400 or "
-                + "3000, or leave it out for the plan's own.");
+                $"\"rig\".\"passbandHz\" is {passband}: use 0 for the rig's normal width, a width such as "
+                + "2400, or remove it for the band plan's own.");
         }
     }
 
@@ -2099,33 +2083,30 @@ public sealed class DaemonConfig
         if (!modem.Mode.StartsWith("ms110d-", StringComparison.Ordinal))
         {
             throw new InvalidDataException(
-                $"modem {modem.SubChannel} is \"mode\": \"{modem.Mode}\" with \"maxBurstSeconds\" "
-                + "or \"burstGatherSeconds\". Only the ms110d-* modes pack several frames into one "
-                + "burst - remove them from this entry.");
+                $"modem {modem.SubChannel} is \"mode\": \"{modem.Mode}\" with \"maxBurstSeconds\" or "
+                + "\"burstGatherSeconds\": only ms110d-* modes pack bursts; remove them.");
         }
 
         if (modem.MaxBurstSeconds is not double max)
         {
             throw new InvalidDataException(
-                $"modem {modem.SubChannel} has \"burstGatherSeconds\" without \"maxBurstSeconds\". "
-                + "The gather only matters when frames are packed - add \"maxBurstSeconds\" (for "
-                + "example 60) or remove \"burstGatherSeconds\".");
+                $"modem {modem.SubChannel} has \"burstGatherSeconds\" without \"maxBurstSeconds\": "
+                + "add \"maxBurstSeconds\" (e.g. 60) or remove it.");
         }
 
         if (!double.IsFinite(max) || max < 1 || max > ModemConfig.MaxBurstSecondsCeiling)
         {
             throw new InvalidDataException(
-                $"modem {modem.SubChannel} has \"maxBurstSeconds\": {invariant(max)}. Use 1 to "
-                + $"{invariant(ModemConfig.MaxBurstSecondsCeiling)} seconds, or remove it for one frame per burst.");
+                $"modem {modem.SubChannel} has \"maxBurstSeconds\": {invariant(max)}: use 1 to "
+                + $"{invariant(ModemConfig.MaxBurstSecondsCeiling)}, or remove it.");
         }
 
         if (modem.BurstGatherSeconds is double gather
             && (!double.IsFinite(gather) || gather < 0 || gather > ModemConfig.BurstGatherSecondsCeiling))
         {
             throw new InvalidDataException(
-                $"modem {modem.SubChannel} has \"burstGatherSeconds\": {invariant(gather)}. Use 0 to "
-                + $"{invariant(ModemConfig.BurstGatherSecondsCeiling)} seconds; the default is "
-                + $"{invariant(ModemConfig.DefaultBurstGatherSeconds)}.");
+                $"modem {modem.SubChannel} has \"burstGatherSeconds\": {invariant(gather)}: use 0 to "
+                + $"{invariant(ModemConfig.BurstGatherSecondsCeiling)} (default {invariant(ModemConfig.DefaultBurstGatherSeconds)}).");
         }
     }
 
@@ -2153,18 +2134,15 @@ public sealed class DaemonConfig
         if (config.Monitor is not null)
         {
             throw new InvalidDataException(
-                "this file sets both \"monitor\" and \"alsa\".\"mixer\". A monitor fronts web "
-                + "receivers and has no sound card of its own, so there is no mixer to set - "
+                "this file sets both \"monitor\" and \"alsa\".\"mixer\": a monitor has no sound card; "
                 + "remove the \"alsa\" section.");
         }
 
         if (!IsSoundCard(config.Device))
         {
             throw new InvalidDataException(
-                $"\"alsa\".\"mixer\" is set but \"device\" is \"{config.Device}\", which is not a "
-                + "sound card. The capture gain and the transmit level are the card's mixer; a "
-                + "FlexRadio or a web receiver has none. Remove the \"alsa\" section, or point "
-                + "\"device\" at the card.");
+                $"\"alsa\".\"mixer\" is set but \"device\" is \"{config.Device}\", not a sound card: "
+                + "remove \"alsa\", or point \"device\" at the card.");
         }
 
         // The one way the promise "this daemon never writes your config file" could be broken is
@@ -2175,10 +2153,8 @@ public sealed class DaemonConfig
         if (mixer.StateFile is { Length: > 0 } state && SamePath(state, configPath))
         {
             throw new InvalidDataException(
-                $"\"alsa\".\"mixer\".\"stateFile\" is \"{mixer.StateFile}\", which is this "
-                + "configuration file. That file is never written by this daemon and a mixer "
-                + "change would overwrite it; point \"stateFile\" somewhere else, or remove it "
-                + $"to take the default ({MixerStateFile.DefaultName} in the state directory).");
+                $"\"alsa\".\"mixer\".\"stateFile\" is \"{mixer.StateFile}\", the configuration file itself: "
+                + $"point it elsewhere, or remove it for {MixerStateFile.DefaultName}.");
         }
     }
 
@@ -2226,17 +2202,15 @@ public sealed class DaemonConfig
             if (!IsSoundCard(value))
             {
                 throw new InvalidDataException(
-                    $"\"{key}\" is \"{value}\", which is not a sound card. Only a sound card can "
-                    + "be split into a receive device and a transmit device; a FlexRadio, a web "
-                    + "receiver or a pipe carries both directions itself and goes in \"device\".");
+                    $"\"{key}\" is \"{value}\", not a sound card: only a sound card can be split like this; "
+                    + "use \"device\" instead.");
             }
 
             if (!IsSoundCard(config.Device))
             {
                 throw new InvalidDataException(
-                    $"\"{key}\" is set but \"device\" is \"{config.Device}\", which is not a "
-                    + "sound card. A FlexRadio, a web receiver or a pipe carries both directions "
-                    + $"itself; remove \"{key}\", or point \"device\" at a sound card.");
+                    $"\"{key}\" is set but \"device\" is \"{config.Device}\", not a sound card: "
+                    + $"remove \"{key}\", or point \"device\" at a sound card.");
             }
         }
     }
@@ -2317,10 +2291,7 @@ public sealed class DaemonConfig
             }
 
             throw new InvalidDataException(
-                $"{where}: {(kind is null ? "null" : $"\"{kind}\"")} is not a kind of radio this "
-                + $"knows. Use {RfPlan.RadioKinds} "
-                + "- the two sidebands, where RF is the dial plus or minus the audio, or FM, "
-                + "where the channel is the RF and the audio is only audio.");
+                $"{where}: {(kind is null ? "null" : $"\"{kind}\"")} is not a kind of radio. Use {RfPlan.RadioKinds}.");
         }
     }
 
@@ -2354,10 +2325,7 @@ public sealed class DaemonConfig
         throw new InvalidDataException(
             "\"carrierSense\".\"radio\": "
             + (sense.Radio is null ? "null" : $"\"{sense.Radio}\"")
-            + " is not a radio this build can read "
-            + "carrier sense from. Use \"tait\" (a TM8100 or TM9100 series set with its data "
-            + "port in command mode), or \"none\" to switch the section off without deleting "
-            + "it.");
+            + " is not supported: use \"tait\", or \"none\" to switch the section off.");
     }
 
     /// <summary>
@@ -2376,46 +2344,35 @@ public sealed class DaemonConfig
         if (config.DeviceWasStated)
         {
             throw new InvalidDataException(
-                $"this file sets both \"device\" (\"{config.Device}\") and \"monitor\". They say "
-                + "incompatible things about what this process is: \"device\" is one radio or one "
-                + "receiver with a KISS port and a transmitter, \"monitor\" is many web receivers "
-                + "behind one page with neither. Remove whichever one you did not mean.");
+                $"this file sets both \"device\" (\"{config.Device}\") and \"monitor\"; remove one.");
         }
 
         if (config.Polyglot is { Count: > 0 } || config.PolyglotPort is not null)
         {
             string key = config.PolyglotPort is not null ? "polyglotPort" : "polyglot";
             throw new InvalidDataException(
-                $"this file sets both \"{key}\" and \"monitor\". A polyglot port is a KISS "
-                + "port for a node to transmit through, and a monitor has neither. Remove "
-                + $"\"{key}\".");
+                $"this file sets both \"{key}\" and \"monitor\"; remove \"{key}\".");
         }
 
         if (monitor.Modems.Count == 0)
         {
             throw new InvalidDataException(
-                "\"monitor\".\"modems\" is empty. Every receiver gets the same modems, and a "
-                + "monitor with none would connect to receivers and decode nothing. Give it the "
-                + "band plan you want watched, e.g. [{\"subChannel\": 0, \"mode\": "
-                + "\"afsk300-il2pc\", \"rfFrequency\": 7050300}].");
+                "\"monitor\".\"modems\" is empty: give it the band plan to watch, e.g. "
+                + "[{\"subChannel\": 0, \"mode\": \"afsk300-il2pc\", \"rfFrequency\": 7050300}].");
         }
 
         if (config.Waterfall is null)
         {
             throw new InvalidDataException(
-                "\"monitor\" needs a \"waterfall\" section: the picker and every receiver's page "
-                + "are served on its \"port\", and the page's viewers are what asks for a "
-                + "receiver. Add {\"waterfall\": {\"port\": 8099, \"title\": \"...\"}}.");
+                "\"monitor\" needs a \"waterfall\" section: add "
+                + "{\"waterfall\": {\"port\": 8099, \"title\": \"...\"}}.");
         }
 
         if (!config.Waterfall.PortWasStated)
         {
             throw new InvalidDataException(
-                "\"waterfall\" has no \"port\". A monitor serves its whole site on that one port "
-                + $"and would otherwise come up on {config.Waterfall.Port}, which is the "
-                + "single-station default and not a decision anybody made - and this is a site "
-                + "meant to be reached from outside, usually through a tunnel pointed at a port "
-                + "somebody chose. Set it, e.g. {\"waterfall\": {\"port\": 8099}}.");
+                $"\"waterfall\" has no \"port\", which a monitor needs (it would use {config.Waterfall.Port}). "
+                + "Set it, e.g. {\"waterfall\": {\"port\": 8099}}.");
         }
 
         // Forced rather than checked. A picker is a page for strangers by definition - it lists
@@ -2432,9 +2389,9 @@ public sealed class DaemonConfig
             if (seconds < 0)
             {
                 throw new InvalidDataException(
-                    $"\"monitor\".\"{name}\" is {seconds}. That is a number of "
+                    $"\"monitor\".\"{name}\" is {seconds}: use 0 or a positive number of "
                     + (name == "refreshMinutes" ? "minutes" : "seconds")
-                    + " to wait, so it cannot be negative - use 0 or a positive number.");
+                    + ".");
             }
         }
 
@@ -2442,9 +2399,8 @@ public sealed class DaemonConfig
             || (directory.Scheme != Uri.UriSchemeHttp && directory.Scheme != Uri.UriSchemeHttps))
         {
             throw new InvalidDataException(
-                $"\"monitor\".\"directory\" is \"{monitor.Directory}\", which is not an absolute "
-                + "http or https URL. It is where the list of receivers is fetched from; the "
-                + "public one is https://instances.ubersdr.org/api/instances.");
+                $"\"monitor\".\"directory\" is \"{monitor.Directory}\", not an absolute http or https URL, "
+                + "e.g. https://instances.ubersdr.org/api/instances.");
         }
 
         if (monitor.PublicUrl is { Length: > 0 } publicUrl)
@@ -2456,11 +2412,8 @@ public sealed class DaemonConfig
                 && site.UserInfo.Length > 0)
             {
                 throw new InvalidDataException(
-                    "\"monitor\".\"publicUrl\" carries credentials, and this message does not "
-                    + "repeat it back because that would write them to the journal. It is the "
-                    + "address visitors reach this site at, which is a scheme, a host and an "
-                    + "optional port and nothing else: nothing signs in to a public monitor "
-                    + "page. Write it as \"https://monitor.ukpacketradio.network\".");
+                    "\"monitor\".\"publicUrl\" carries credentials (not repeated here): use scheme, host and "
+                    + "optional port only, e.g. \"https://monitor.ukpacketradio.network\".");
             }
 
             if (site is null
@@ -2470,15 +2423,8 @@ public sealed class DaemonConfig
                 || site.Fragment.Length > 0)
             {
                 throw new InvalidDataException(
-                    $"\"monitor\".\"publicUrl\" is {Quoted(publicUrl)}. It is this site's own "
-                    + "address as the world reaches it, which is a scheme, a host and an optional "
-                    + "port and nothing after them, e.g. "
-                    + "\"https://monitor.ukpacketradio.network\" - with or without a trailing "
-                    + "slash, both being the same address. A path, a query or a fragment is "
-                    + "refused because the site is served from the root of its port and every "
-                    + "link on its pages is written from there. Leave it out to work the address "
-                    + "out from each request instead, which is right for a site nothing rewrites "
-                    + "the Host header in front of.");
+                    $"\"monitor\".\"publicUrl\" is {Quoted(publicUrl)}: use scheme, host and optional port only, "
+                    + "e.g. \"https://monitor.ukpacketradio.network\" (no path, query or fragment), or remove it.");
             }
 
             // Normalised as the file is read, so the one place that uses it can append
@@ -2500,9 +2446,8 @@ public sealed class DaemonConfig
                 if (!IsPlausibleHostname(host))
                 {
                     throw new InvalidDataException(
-                        $"\"monitor\".\"{list}\" contains \"{host}\", which is not a hostname. "
-                        + "Each entry is a receiver's host exactly as the directory gives it, "
-                        + "e.g. \"m9psy-1.instance.ubersdr.org\" - no scheme, no port, no path.");
+                        $"\"monitor\".\"{list}\" contains \"{host}\", not a hostname: use the host as the "
+                        + "directory gives it, e.g. \"m9psy-1.instance.ubersdr.org\".");
                 }
             }
         }
@@ -2530,10 +2475,8 @@ public sealed class DaemonConfig
         if (config.Monitor is not null)
         {
             throw new InvalidDataException(
-                "this file sets both \"publish\" and \"monitor\". A station publishes itself to a "
-                + "monitor site and a monitor accepts stations; one process is not both. Remove "
-                + "whichever one you did not mean - a site lists a station through its own "
-                + "\"monitor\".\"uplinks\", not through a \"publish\" block of its own.");
+                "this file sets both \"publish\" and \"monitor\"; remove one. A monitor lists stations "
+                + "through \"monitor\".\"uplinks\".");
         }
 
         // A kind that cannot be published says why rather than just refusing.
@@ -2545,19 +2488,16 @@ public sealed class DaemonConfig
         if (config.Waterfall is null)
         {
             throw new InvalidDataException(
-                "\"publish\" needs a \"waterfall\" section: the uplink publishes what the "
-                + "waterfall server already computes - the audio, the frames and the status "
-                + "sentence - and without one there is nothing to publish. Add "
-                + "{\"waterfall\": {\"port\": 8107}}, or remove \"publish\".");
+                "\"publish\" needs a \"waterfall\" section: add {\"waterfall\": {\"port\": 8107}}, "
+                + "or remove \"publish\".");
         }
 
         if (!Uri.TryCreate(publish.Url, UriKind.Absolute, out Uri? url)
             || (url.Scheme != "ws" && url.Scheme != "wss"))
         {
             throw new InvalidDataException(
-                $"\"publish\".\"url\" is {Quoted(publish.Url)}, which is not an absolute ws or wss "
-                + "URL. It is the site's uplink endpoint, given to you with the token, e.g. "
-                + "\"wss://monitor.ukpacketradio.network/uplink\".");
+                $"\"publish\".\"url\" is {Quoted(publish.Url)}, not an absolute ws or wss URL, "
+                + "e.g. \"wss://monitor.ukpacketradio.network/uplink\".");
         }
 
         if (publish.Token is not { Length: >= MinimumTokenLength })
@@ -2565,17 +2505,14 @@ public sealed class DaemonConfig
             throw new InvalidDataException(
                 "\"publish\".\"token\" is "
                 + (string.IsNullOrEmpty(publish.Token) ? "missing" : "too short")
-                + $" - it is the credential the site issued this station, at least "
-                + $"{MinimumTokenLength} characters, and there is no default. Ask the site owner "
-                + "for one, paste it in as it was given, and do not edit it by hand.");
+                + $": use the credential the site issued (at least {MinimumTokenLength} characters), unedited.");
         }
 
         if (!IsPlausibleCallsign(publish.Callsign))
         {
             throw new InvalidDataException(
-                $"\"publish\".\"callsign\" is {Quoted(publish.Callsign)}, which is not a callsign "
-                + "with an optional SSID (e.g. \"GB7RDG-2\"). A station on a public page has to "
-                + "say whose it is, and the site checks this against the token it issued.");
+                $"\"publish\".\"callsign\" is {Quoted(publish.Callsign)}, not a callsign with an optional SSID "
+                + "(e.g. \"GB7RDG-2\").");
         }
 
         if (publish.Site is { Length: > 0 }
@@ -2583,10 +2520,8 @@ public sealed class DaemonConfig
                 || (site.Scheme != Uri.UriSchemeHttp && site.Scheme != Uri.UriSchemeHttps)))
         {
             throw new InvalidDataException(
-                $"\"publish\".\"site\" is {Quoted(publish.Site)}, which is not an absolute http or "
-                + "https URL. It is linked from a public page in your name, so it goes through "
-                + "the same check the site applies to every other URL it is handed - remove it, "
-                + "or write it out in full as \"https://example.org/\".");
+                $"\"publish\".\"site\" is {Quoted(publish.Site)}, not an absolute http or https URL: "
+                + "remove it, or write it as \"https://example.org/\".");
         }
 
         foreach ((string name, string? value, int limit) in (ReadOnlySpan<(string, string?, int)>)
@@ -2600,28 +2535,21 @@ public sealed class DaemonConfig
             if (value is not null && value.Length > limit)
             {
                 throw new InvalidDataException(
-                    $"\"publish\".\"{name}\" is {value.Length} characters and the limit is "
-                    + $"{limit}. Said here rather than cut in half on somebody else's website: "
-                    + "shorten it to something that reads as a picker row.");
+                    $"\"publish\".\"{name}\" is {value.Length} characters; the limit is {limit}: shorten it.");
             }
         }
 
         if (publish.Frames is not ("always" or "watched"))
         {
             throw new InvalidDataException(
-                $"\"publish\".\"frames\" is {Quoted(publish.Frames)}. It is \"always\" (the "
-                + "default: decoded frames go up whether or not anybody is watching, which costs "
-                + "well under a kilobit a second and is what makes a quiet band look alive) or "
-                + "\"watched\".");
+                $"\"publish\".\"frames\" is {Quoted(publish.Frames)}: use \"always\" (the default) or \"watched\".");
         }
 
         if (publish.AudioRate is { } rate && rate is < MinimumAudioRate or > MaximumAudioRate)
         {
             throw new InvalidDataException(
-                $"\"publish\".\"audioRate\" is {rate} Hz, and the range is {MinimumAudioRate} to "
-                + $"{MaximumAudioRate}. It is the rate this station's audio is published at, so "
-                + "the relayed picture spans 0 to half of it; leave it out for the default of "
-                + "12000, which is about 194 kbit/s upstream while somebody is watching.");
+                $"\"publish\".\"audioRate\" is {rate} Hz: use {MinimumAudioRate} to {MaximumAudioRate}, "
+                + "or remove it for 12000.");
         }
     }
 
@@ -2720,54 +2648,42 @@ public sealed class DaemonConfig
             if (!IsPlausibleCallsign(uplink.Callsign))
             {
                 throw new InvalidDataException(
-                    $"\"monitor\".\"uplinks\" has {named} for a \"callsign\". A station on a "
-                    + "public page that will not say who it is has no business being there, and "
-                    + "the callsign is what its token is issued against: one to six letters and "
-                    + "digits with an optional -SSID, e.g. \"GB7RDG-2\".");
+                    $"\"monitor\".\"uplinks\" has {named} for a \"callsign\": use 1 to 6 letters and digits "
+                    + "with an optional -SSID, e.g. \"GB7RDG-2\".");
             }
 
             if (!IsUsableSlug(uplink.Slug))
             {
                 throw new InvalidDataException(
-                    $"\"monitor\".\"uplinks\" gives {named} the slug \"{uplink.Slug}\", which "
-                    + "cannot be a path segment. It is lower-case letters, digits and hyphens "
-                    + "with no hyphen at either end - normally the callsign lower-cased, so "
-                    + $"\"{uplink.Callsign}\" would be "
-                    + $"\"{UberSdrDirectory.SlugForCallsign(uplink.Callsign)}\", and the page is "
-                    + $"served at /r/{UberSdrDirectory.SlugForCallsign(uplink.Callsign)}/.");
+                    $"\"monitor\".\"uplinks\" gives {named} the slug \"{uplink.Slug}\": use lower-case letters, digits "
+                    + $"and hyphens (no hyphen at either end), e.g. \"{UberSdrDirectory.SlugForCallsign(uplink.Callsign)}\".");
             }
 
             if (!IsSha256Hex(uplink.TokenSha256))
             {
                 throw new InvalidDataException(
-                    $"\"monitor\".\"uplinks\" gives {named} a \"tokenSha256\" that is not 64 hex "
-                    + "characters. This site stores the HASH of the token it issued, never the "
-                    + $"token: run \"pdn-soundmodem --uplink-token {uplink.Callsign}\", paste the "
-                    + "hash here and give the token to the station's operator.");
+                    $"\"monitor\".\"uplinks\" gives {named} a \"tokenSha256\" that is not 64 hex characters: "
+                    + $"run \"pdn-soundmodem --uplink-token {uplink.Callsign}\" and paste the hash.");
             }
 
             if (slugs.TryGetValue(uplink.Slug, out string? already))
             {
                 throw new InvalidDataException(
-                    $"\"monitor\".\"uplinks\" gives both {already} and {named} the slug "
-                    + $"\"{uplink.Slug}\". One page cannot be two stations: give each its own, "
-                    + "normally its own callsign lower-cased.");
+                    $"\"monitor\".\"uplinks\" gives both {already} and {named} the slug \"{uplink.Slug}\": "
+                    + "give each its own.");
             }
 
             if (!callsigns.Add(uplink.Callsign))
             {
                 throw new InvalidDataException(
-                    $"\"monitor\".\"uplinks\" lists {named} twice. One entry per station: a "
-                    + "second token for the same callsign would let two stations claim to be it, "
-                    + "and only one of them could have the page.");
+                    $"\"monitor\".\"uplinks\" lists {named} twice: keep one entry per station.");
             }
 
             if (!hashes.Add(uplink.TokenSha256))
             {
                 throw new InvalidDataException(
-                    $"\"monitor\".\"uplinks\" gives {named} a \"tokenSha256\" another entry "
-                    + "already has. A token names one station, so the same one twice cannot say "
-                    + "which of them is connecting: issue each a token of its own.");
+                    $"\"monitor\".\"uplinks\" gives {named} a \"tokenSha256\" another entry already has: "
+                    + "issue each station its own token.");
             }
 
             slugs[uplink.Slug] = named;
@@ -2975,9 +2891,8 @@ public sealed class DaemonConfig
             && !uplink.IsLoopback)
         {
             warnings.Add(
-                $"publish: \"url\" is \"{published}\", which is unencrypted ws to {uplink.Host}. "
-                + "The token and everything this station publishes cross the network in clear. "
-                + "Use wss unless this is a test on your own wire.");
+                $"publish: \"url\" is \"{published}\", unencrypted ws to {uplink.Host}; "
+                + "the token crosses the network in clear. Use wss.");
         }
 
         return warnings;
@@ -3005,17 +2920,14 @@ public sealed class DaemonConfig
         if (!double.IsFinite(test.Amplitude) || test.Amplitude <= 0 || test.Amplitude > 1)
         {
             throw new InvalidDataException(
-                $"\"txTest\".\"amplitude\": {test.Amplitude} is not a level. It is the peak the "
-                + "test burst reaches, above 0 and at most 1; the default 0.8 is what the "
-                + "modulators use, so the test presents the transmitter with the drive the data "
-                + "does.");
+                $"\"txTest\".\"amplitude\": {test.Amplitude} is not a level: use above 0 and at most 1 "
+                + "(default 0.8).");
         }
 
         if (!double.IsFinite(test.Seconds) || test.Seconds <= 0)
         {
             throw new InvalidDataException(
-                $"\"txTest\".\"seconds\": {test.Seconds} is not a length. It is how long a test "
-                + "runs when the request does not say, in seconds, and it must be above zero.");
+                $"\"txTest\".\"seconds\": {test.Seconds} is not a length: it must be above zero.");
         }
     }
 
@@ -3033,9 +2945,8 @@ public sealed class DaemonConfig
         if (config.KissMaxFrameBytes < Least)
         {
             throw new InvalidDataException(
-                $"\"kissMaxFrameBytes\": {config.KissMaxFrameBytes} is below {Least}. It is the "
-                + "most bytes one KISS frame from a host may carry; leave it out for the default "
-                + $"of {Kiss.KissDecoder.DefaultMaxFrame}, or set it above what your modems carry.");
+                $"\"kissMaxFrameBytes\": {config.KissMaxFrameBytes} is below {Least}: raise it, or remove it "
+                + $"for {Kiss.KissDecoder.DefaultMaxFrame}.");
         }
     }
 
@@ -3055,9 +2966,8 @@ public sealed class DaemonConfig
             if (packet.Count < 2)
             {
                 throw new InvalidDataException(
-                    $"\"polyglotPort\": {shorthand} puts every packet modem behind one port, and "
-                    + $"this station has {packet.Count}. It needs two or more in \"modems\" to "
-                    + "choose between; with one, use \"kissPort\" or that modem's own \"port\".");
+                    $"\"polyglotPort\": {shorthand} needs two or more packet modems; this station has {packet.Count}. "
+                    + "With one, use \"kissPort\" or that modem's own \"port\".");
             }
 
             config.Polyglot.Add(new PolyglotConfig
@@ -3089,9 +2999,8 @@ public sealed class DaemonConfig
             if (polyglot.SubChannels.Count < 2)
             {
                 throw new InvalidDataException(
-                    $"{where} lists {polyglot.SubChannels.Count} sub-channel(s) in \"subChannels\". "
-                    + "It overlays two or more modems; for one modem on a port of its own, give that "
-                    + "modem entry a \"port\" instead.");
+                    $"{where} lists {polyglot.SubChannels.Count} sub-channel(s) in \"subChannels\": it needs two or more; "
+                    + "for one modem, give that modem entry a \"port\".");
             }
 
             if (polyglot.SubChannels.GroupBy(s => s).FirstOrDefault(g => g.Count() > 1) is { } repeated)
@@ -3114,34 +3023,30 @@ public sealed class DaemonConfig
                 if (IsArdop(modem.Mode))
                 {
                     throw new InvalidDataException(
-                        $"{where} lists sub-channel {sub}, which is \"mode\": \"ardop\". ARDOP is "
-                        + "an ARQ session with its own host interface, not a packet modem, so it "
-                        + "cannot sit behind a KISS port. Take it out of \"subChannels\".");
+                        $"{where} lists sub-channel {sub}, which is ARDOP and cannot sit behind a KISS port: "
+                        + "remove it from \"subChannels\".");
                 }
             }
 
             if (polyglot.Default is not int fallback)
             {
                 throw new InvalidDataException(
-                    $"{where} has no \"default\". It is the sub-channel a frame goes out on when "
-                    + "the station it is for has not been heard recently, so it should be the mode "
-                    + "every peer has, e.g. your afsk1200 modem.");
+                    $"{where} has no \"default\": name the sub-channel to use for stations not heard recently, "
+                    + "e.g. your afsk1200 modem.");
             }
 
             if (!polyglot.SubChannels.Contains(fallback))
             {
                 throw new InvalidDataException(
-                    $"{where} has \"default\": {fallback}, which is not in its \"subChannels\" "
-                    + $"[{string.Join(", ", polyglot.SubChannels)}]. The default has to be one of "
-                    + "the modems it overlays.");
+                    $"{where} has \"default\": {fallback}, not in its \"subChannels\" "
+                    + $"[{string.Join(", ", polyglot.SubChannels)}]: pick one of them.");
             }
 
             if (!(polyglot.ForgetAfterMinutes is > 0 and <= MaxForgetAfterMinutes))
             {
                 throw new InvalidDataException(
-                    $"{where} has \"forgetAfterMinutes\": {polyglot.ForgetAfterMinutes}. It is how "
-                    + $"long a station is remembered after it was last heard, and has to be above 0 "
-                    + $"and at most {MaxForgetAfterMinutes} (a week); leave it out for 60.");
+                    $"{where} has \"forgetAfterMinutes\": {polyglot.ForgetAfterMinutes}: use above 0 and at most "
+                    + $"{MaxForgetAfterMinutes}, or remove it for 60.");
             }
         }
     }

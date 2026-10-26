@@ -169,8 +169,7 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
             channel.TransmitInhibit = () =>
                 (priorInhibit?.Invoke() ?? false) || arbitratedPtt.AnotherStationTransmitting;
             Console.WriteLine(
-                "flex: arbitrated keying - every keyup waits out other stations, re-asserts the "
-                + "transmit filter and the TX slice, and is confirmed against the interlock");
+                "flex: arbitrated keying on (keyups wait for other stations)");
         }
 
         string flexModeDesc = flexSpec.Headless
@@ -204,8 +203,7 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
         flex.Station.Client.Disconnected += () =>
         {
             Console.Error.WriteLine(
-                "flex: the radio's session ended - rebooted, dropped off the network, or closed the "
-                + "connection. Stopping so the service restarts and rediscovers it.");
+                "flex: the radio's session ended; stopping so the service restarts and rediscovers it.");
             context.RadioLost();
         };
 
@@ -242,10 +240,8 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
                     // same move the other client is making, and two daemons rebuilding at each
                     // other churns the radio for both. Stay up, stay off the air, and be loud.
                     Console.Error.WriteLine(
-                        $"flex: STANDING DOWN - {report.Detail} This station is now off the air and "
-                        + "will not retake the slice. Check what else is connected to the radio "
-                        + "(SmartSDR, a capture tool, a second modem), stop it, and restart this "
-                        + "service.");
+                        $"flex: STANDING DOWN - {report.Detail} Off the air; stop whatever else is "
+                        + "using the radio, then restart this service.");
                     break;
 
                 case M0LTE.Flex.FlexStationHealth.Disposed:
@@ -373,7 +369,7 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
                 Console.Error.WriteLine(
                     $"flex: WARNING - modem {band.SubChannel} ({band.Mode}) occupies "
                     + $"{band.LowHz:F0}-{band.HighHz:F0} Hz, outside the radio's "
-                    + $"{txFilterLow}..{txFilterHigh} Hz transmit filter - it will be clipped. "
+                    + $"{txFilterLow}..{txFilterHigh} Hz transmit filter, so it will be clipped. "
                     + remedy);
             }
         }
@@ -391,7 +387,7 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
                 Console.Error.WriteLine(
                     $"flex: WARNING - modem {band.SubChannel} ({band.Mode}) occupies "
                     + $"{band.LowHz:F0}-{band.HighHz:F0} Hz, outside the slice's "
-                    + $"{rxFilterLow}..{rxFilterHigh} Hz receive filter - it will hear nothing there.");
+                    + $"{rxFilterLow}..{rxFilterHigh} Hz receive filter, so it will hear nothing.");
             }
         }
 

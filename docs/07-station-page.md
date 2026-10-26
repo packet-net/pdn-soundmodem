@@ -134,7 +134,7 @@ The same key also serves the configuration, proposal and transmit-test endpoints
 Set the top-level `bind` to the address you want, or `"*"` for every interface, and restart. There is no separate bind for the page.
 
 ```
-waterfall: WARNING - listening beyond loopback. The page has no authentication, and on an operator's page it carries a transmit test: anything that can reach this port can key your transmitter on your licence.
+waterfall: WARNING - listening beyond loopback, no authentication: anyone who can reach this port can key your transmitter
 ```
 
 The page has no login. Anyone who can reach the port can press Send on the TX test and put a signal on the air under your callsign, and with `enableAudioControls` set they can move your levels too. Put it behind your firewall, a VPN, or a reverse proxy that asks for a password, and read [Every listener](reference/ports-and-endpoints.md#every-listener) before you open anything else.

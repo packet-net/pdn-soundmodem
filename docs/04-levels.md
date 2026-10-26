@@ -120,7 +120,7 @@ A slider that is disabled with a read-back like `12% (no dB scale)` means the ca
 
 `tx test: unavailable - no "ptt" is configured, so this daemon does not key the radio` beside a greyed-out TX test means the station cannot key. Add a `ptt` block; see [03-radios-and-interfaces.md](03-radios-and-interfaces.md).
 
-`tx test: refused, the channel did not clear within 60 s, so the test was withdrawn and nothing was transmitted` means the test waited for a clear channel, as any transmission does, and gave up. A PTT line that does not key at all is in [12-troubleshooting.md](12-troubleshooting.md).
+`tx test: refused, the channel did not clear within 60 s; nothing was transmitted` means the test waited for a clear channel, as any transmission does, and gave up. A PTT line that does not key at all is in [12-troubleshooting.md](12-troubleshooting.md).
 
 ## How it works
 

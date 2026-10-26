@@ -219,9 +219,7 @@ internal sealed class RelayStation : IMonitorStation
     private SoundModemChannel NewChannel() => new(Hello.AudioRate)
     {
         ReceiveOnlyReason =
-            "this station receives only: its audio is relayed from "
-            + $"{UberSdrDirectory.Ascii(Callsign)}'s own receiver over a one-way uplink, and "
-            + "nothing on this site can reach its transmitter.",
+            $"this station receives only: audio is relayed from {UberSdrDirectory.Ascii(Callsign)}'s receiver",
     };
 
     private void Build()

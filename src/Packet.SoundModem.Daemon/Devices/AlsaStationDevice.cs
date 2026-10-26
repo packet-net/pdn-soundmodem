@@ -142,7 +142,7 @@ internal sealed class AlsaStationDevice(DeviceKind kind, string spec) : StationD
             {
                 Console.WriteLine(
                     $"{MixerSetup.JournalPrefix}{playbackMixerCard} (transmit) has no mixer "
-                    + $"({playbackWhy}); the transmit level is left as the card has it");
+                    + $"({playbackWhy}); transmit level left as the card has it");
             }
         }
 
@@ -150,9 +150,8 @@ internal sealed class AlsaStationDevice(DeviceKind kind, string spec) : StationD
         if (mixerSplit && !captureMixerOpened)
         {
             Console.WriteLine(
-                $"{MixerSetup.JournalPrefix}{mixerCard} (receive) has no mixer ({mixerWhy}); the "
-                + "capture gain is left as the card has it, and there is no AGC or mic boost to "
-                + "switch off");
+                $"{MixerSetup.JournalPrefix}{mixerCard} (receive) has no mixer ({mixerWhy}); "
+                + "capture gain left as the card has it");
         }
 
         if (captureMixerOpened || playbackMixer is not null)
@@ -205,9 +204,7 @@ internal sealed class AlsaStationDevice(DeviceKind kind, string spec) : StationD
             // a station to stop receiving.
             mixerWhyNot = $"{mixerCard} has no mixer: {mixerWhy}";
             Console.WriteLine(
-                $"{MixerSetup.JournalPrefix}{mixerCard} has no mixer ({mixerWhy}); the capture gain "
-                + "and the transmit level are left as the card has them, and there is no AGC or mic "
-                + "boost to switch off");
+                $"{MixerSetup.JournalPrefix}{mixerCard} has no mixer ({mixerWhy}); levels left as the card has them");
         }
 
         // Which key chose the device being opened, so a failure names the one to fix: on a split

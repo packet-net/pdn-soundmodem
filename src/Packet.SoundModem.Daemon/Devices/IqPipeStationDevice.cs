@@ -242,9 +242,8 @@ internal sealed class IqPipeStationDevice : StationDevice
         {
             source.Dispose();
             Console.Error.WriteLine(
-                $"\"device\": \"{Spec}\" at {rate} S/s centred on {RfPlan.Mhz(centreHz)} cannot carry the "
-                + $"channel at {RfPlan.Mhz(dialHz)}: {e.Message}. Move \"iqpipe\".\"centreFrequency\" "
-                + "or raise the rate.");
+                $"\"device\": \"{Spec}\" at {rate} S/s centred on {RfPlan.Mhz(centreHz)} cannot carry "
+                + $"{RfPlan.Mhz(dialHz)}: {e.Message}. Move \"iqpipe\".\"centreFrequency\" or raise the rate.");
             return Task.FromResult(DeviceOpening.Refused(2));
         }
 

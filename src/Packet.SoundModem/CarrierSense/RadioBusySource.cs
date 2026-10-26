@@ -66,9 +66,8 @@ public sealed class RadioBusySource : IChannelBusySource, IBusyReadingSource
         if (!_dcdUsable && !_rssiUsable)
         {
             Console.Error.WriteLine(
-                "carrier sense: this radio offers neither carrier sense nor a usable RSSI "
-                + "threshold, so it will report no opinion and the station transmits as it did "
-                + "before. Check the radio's programming and that unsolicited reporting is on.");
+                "carrier sense: this radio gives no carrier sense or usable RSSI, so no opinion. "
+                + "Check its programming and that unsolicited reporting is on.");
         }
     }
 

@@ -65,7 +65,7 @@ public class MonitorConfigTests : IDisposable
         error.Should().Contain("device").And.Contain("monitor")
             .And.Contain("ubersdr:m9psy-1.instance.ubersdr.org",
                 "the message names what it found, not just the key");
-        error.Should().Contain("Remove whichever one you did not mean.");
+        error.Should().Contain("remove one.");
         ShouldGuideTheOperator(error);
     }
 
@@ -95,7 +95,7 @@ public class MonitorConfigTests : IDisposable
 
         config.Should().BeNull();
         error.Should().Contain("\"monitor\".\"modems\" is empty")
-            .And.Contain("decode nothing")
+            .And.Contain("give it the band plan")
             .And.Contain("afsk300-il2pc", "the message shows what an entry looks like");
         ShouldGuideTheOperator(error);
     }
@@ -127,7 +127,7 @@ public class MonitorConfigTests : IDisposable
         config.Should().BeNull();
         error.Should().Contain("\"waterfall\" has no \"port\"")
             .And.Contain("8107", "the message names the default it would otherwise have taken")
-            .And.Contain("not a decision anybody made");
+            .And.Contain("which a monitor needs");
         ShouldGuideTheOperator(error);
     }
 
@@ -416,8 +416,8 @@ public class MonitorConfigTests : IDisposable
         Load(WithUplinks(OneUplink.Replace("\"gb7rdg-2\"", "\"GB7RDG 2/\"")), out string error)
             .Should().BeNull();
 
-        error.Should().Contain("GB7RDG 2/").And.Contain("cannot be a path segment")
-            .And.Contain("/r/gb7rdg-2/", "and it says what the callsign would have given");
+        error.Should().Contain("GB7RDG 2/").And.Contain("use lower-case letters, digits")
+            .And.Contain("\"gb7rdg-2\"", "and it says what the callsign would have given");
         ShouldGuideTheOperator(error);
     }
 
@@ -448,7 +448,7 @@ public class MonitorConfigTests : IDisposable
             """;
 
         Load(WithUplinks(twice), out string error).Should().BeNull();
-        error.Should().Contain("gb7rdg-2").And.Contain("One page cannot be two stations");
+        error.Should().Contain("gb7rdg-2").And.Contain("give each its own");
         ShouldGuideTheOperator(error);
     }
 
@@ -467,7 +467,7 @@ public class MonitorConfigTests : IDisposable
         // A token names one station. The same one twice cannot say which of them is connecting,
         // and the one-connection-per-token rule would have them closing each other's sockets.
         Load(WithUplinks(shared), out string error).Should().BeNull();
-        error.Should().Contain("another entry already has").And.Contain("a token of its own");
+        error.Should().Contain("another entry already has").And.Contain("its own token");
         ShouldGuideTheOperator(error);
     }
 
@@ -479,7 +479,7 @@ public class MonitorConfigTests : IDisposable
 
         // Ignored silently by the deserialiser, which is exactly what makes it worth saying: a
         // station with a typo for a slug would be served under an empty path segment.
-        error.Should().Contain("cannot be a path segment", "the missing slug is caught first");
+        error.Should().Contain("use lower-case letters, digits", "the missing slug is caught first");
         config.Should().BeNull();
     }
 

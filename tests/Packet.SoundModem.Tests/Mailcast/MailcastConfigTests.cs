@@ -87,8 +87,8 @@ public sealed class MailcastConfigTests : IDisposable
     [InlineData("""{"bbs": {"password": "x"}, "stateDirectory": ""}""", "\"stateDirectory\" is empty")]
     [InlineData("""{"bbs": {"password": "x"}, "sources": []}""", "\"sources\" is empty, so no frame would ever be taken")]
     [InlineData("""{"bbs": {"password": "x"}, "sources": ["GB7RDG", ""]}""", "\"sources\" has \"\", which is not a callsign")]
-    [InlineData("""{"bbs": {"password": "x"}, "sources": ["GB7RDG", null]}""", "\"sources\" has null, which is not a callsign")]
-    [InlineData("""{"bbs": {"password": "x"}, "sources": ["GB7 RDG"]}""", "\"sources\" has \"GB7 RDG\", which is not a callsign")]
+    [InlineData("""{"bbs": {"password": "x"}, "sources": ["GB7RDG", null]}""", "\"sources\" has null, not a callsign")]
+    [InlineData("""{"bbs": {"password": "x"}, "sources": ["GB7 RDG"]}""", "\"sources\" has \"GB7 RDG\", not a callsign")]
     [InlineData("""{"bbs": {"password": "x"}, "sources": ["GB7RDGX"]}""", "\"sources\" has \"GB7RDGX\"")]
     [InlineData("""{"bbs": {"password": "x"}, "sources": ["M0LTE-16"]}""", "\"sources\" has \"M0LTE-16\"")]
     [InlineData("""{"bbs": {"password": "x"}, "sources": ["M0LTE-"]}""", "\"sources\" has \"M0LTE-\"")]
@@ -145,7 +145,7 @@ public sealed class MailcastConfigTests : IDisposable
 
         ConfigApi.Validate(Station + """, "sources": []}}""", asPath).Should().Contain("\"mailcast\".\"sources\" is empty");
         ConfigApi.Validate(Station + """, "sources": ["M0LTE", "not a call"]}}""", asPath)
-            .Should().Contain("\"mailcast\".\"sources\" has \"not a call\", which is not a callsign");
+            .Should().Contain("\"mailcast\".\"sources\" has \"not a call\", not a callsign");
         ConfigApi.Validate(Station + """, "sources": ["m0lte-1", "GB7RDG"]}}""", asPath).Should().BeNull();
         ConfigApi.Validate(Station + "}}", asPath).Should().BeNull("left out, the default sources are used");
     }

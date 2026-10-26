@@ -200,9 +200,7 @@ internal static class RfPlan
         if (!upper && !sideband.Equals("lsb", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidDataException(
-                $"\"sideband\": \"{sideband}\" is not a radio kind this can plan for. "
-                + $"Use {RadioKinds} - FM being a channel radio, whose audio is not an offset "
-                + "from a dial at all.");
+                $"\"sideband\": \"{sideband}\" is not a radio kind. Use {RadioKinds}.");
         }
 
         (double dialLow, double dialHigh)? limits = ModemDialLimits(slots, upper);
@@ -293,17 +291,15 @@ internal static class RfPlan
             string channels = string.Join(
                 ", ", slots.Select(s => s.RfCentreHz).Distinct().Order().Select(Mhz));
             throw new InvalidDataException(
-                "on FM every modem is on the one channel the radio is set to, and these ask "
-                + $"for {channels}. Modems that share a channel share a radio; give the others "
-                + "a radio of their own.");
+                $"on FM every modem shares one channel, but these ask for {channels}: "
+                + "give the others a radio of their own.");
         }
 
         if (pinnedChannelHz is double pinned && Math.Abs(pinned - asked) > 0.5)
         {
             throw new InvalidDataException(
-                $"\"dialFrequency\" is {Mhz(pinned)} and the modems' \"rfFrequency\" is "
-                + $"{Mhz(asked)}. On FM those are the same thing said twice - the channel - and "
-                + "a radio is on one channel at a time. Keep whichever you meant.");
+                $"\"dialFrequency\" is {Mhz(pinned)} but the modems' \"rfFrequency\" is {Mhz(asked)}: "
+                + "on FM they are the same channel; keep one.");
         }
 
         // The audio centres are not the planner's to set here, so they are reported as they
@@ -351,11 +347,8 @@ internal static class RfPlan
         {
             throw new InvalidDataException(
                 $"modem {pinned[0].SubChannel} ({pinned[0].Mode}) and modem {disagrees.SubChannel} "
-                + $"({disagrees.Mode}) both have an audio centre fixed by their own standard, and "
-                + $"the RF frequencies asked for would need the dial at {Mhz(dial)} and "
-                + $"{Mhz(DialFor(disagrees))} at the same time. Two spec-fixed modes can share a "
-                + "dial only where their RF frequencies differ by exactly the difference of their "
-                + "audio centres - move one, or give it a channel of its own.");
+                + $"({disagrees.Mode}) have fixed audio centres that need the dial at {Mhz(dial)} and "
+                + $"{Mhz(DialFor(disagrees))}: move one, or give it a channel of its own.");
         }
 
         return dial;

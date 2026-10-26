@@ -136,17 +136,14 @@ public sealed partial class MailcastConfig
         if (config.Monitor is not null)
         {
             throw new InvalidDataException(
-                "\"mailcast\" is set in a \"monitor\" configuration. A monitor fronts other people's "
-                + "web receivers and has no BBS to deliver to - remove \"mailcast\", or run the "
-                + "receiver on a station of its own.");
+                "\"mailcast\" is set in a \"monitor\" configuration, which has no BBS: remove \"mailcast\".");
         }
 
         if (!(mailcast.DialKHz >= LowestDialKHz && mailcast.DialKHz <= HighestDialKHz))
         {
             throw new InvalidDataException(string.Create(CultureInfo.InvariantCulture,
-                $"\"mailcast\".\"dialKHz\" is {mailcast.DialKHz}. That is the USB dial in kHz the "
-                + $"signal is heard on, between {LowestDialKHz:F0} and {HighestDialKHz:F0}; the usual one is "
-                + $"{DefaultDialKHz:F1}, which is also what you get if you leave it out."));
+                $"\"mailcast\".\"dialKHz\" is {mailcast.DialKHz}: use {LowestDialKHz:F0} to {HighestDialKHz:F0}, "
+                + $"or remove it for {DefaultDialKHz:F1}."));
         }
 
         if (mailcast.Sources is { } sources)
@@ -155,8 +152,7 @@ public sealed partial class MailcastConfig
             if (sources.Count == 0)
             {
                 throw new InvalidDataException(
-                    "\"mailcast\".\"sources\" is empty, so no frame would ever be taken. List the "
-                    + $"callsigns the broadcast is sent from, or leave it out for [{defaults}].");
+                    $"\"mailcast\".\"sources\" is empty: list the sending callsigns, or remove it for [{defaults}].");
             }
 
             foreach (string? source in sources)
@@ -164,9 +160,8 @@ public sealed partial class MailcastConfig
                 if (source is null || !SourcePattern().IsMatch(source.Trim()))
                 {
                     throw new InvalidDataException(
-                        $"\"mailcast\".\"sources\" has {(source is null ? "null" : $"\"{MailcastOnAir.Ascii(source)}\"")}, "
-                        + "which is not a callsign. Give each source as a callsign of 1 to 6 letters and "
-                        + $"digits, such as [{defaults}]; any SSID is accepted, so none is needed.");
+                        $"\"mailcast\".\"sources\" has {(source is null ? "null" : $"\"{MailcastOnAir.Ascii(source)}\"")}, not a callsign: "
+                        + $"use 1 to 6 letters and digits, e.g. [{defaults}] (no SSID needed).");
                 }
             }
         }
@@ -179,9 +174,7 @@ public sealed partial class MailcastConfig
         }
 
         MailcastBbsConfig bbs = mailcast.Bbs ?? throw new InvalidDataException(
-            "\"mailcast\" has no \"bbs\" section. The receiver forwards bulletins into your BBS, so it "
-            + "needs at least {\"bbs\": {\"password\": \"...\"}} (LinBPQ on 127.0.0.1:8011 as Q0CAST "
-            + "unless you say otherwise).");
+            "\"mailcast\" has no \"bbs\" section: add at least {\"bbs\": {\"password\": \"...\"}}.");
 
         foreach ((string key, string? value) in (ReadOnlySpan<(string, string?)>)
             [("type", bbs.Type), ("host", bbs.Host), ("login", bbs.Login), ("password", bbs.Password), ("command", bbs.Command)])
@@ -189,8 +182,8 @@ public sealed partial class MailcastConfig
             if (value is null)
             {
                 throw new InvalidDataException(
-                    $"\"mailcast\".\"bbs\".\"{key}\" is null. Give it a value, or leave it out for the default"
-                    + (key == "password" ? "; the password has none and is required." : "."));
+                    $"\"mailcast\".\"bbs\".\"{key}\" is null: give it a value"
+                    + (key == "password" ? " (required)." : ", or remove it for the default."));
             }
         }
 
@@ -217,8 +210,7 @@ public sealed partial class MailcastConfig
         if (string.IsNullOrWhiteSpace(bbs.Login) || bbs.Login.Any(c => c is <= ' ' or > '~'))
         {
             throw new InvalidDataException(
-                "\"mailcast\".\"bbs\".\"login\" must be one word, such as Q0CAST (the default): the "
-                + "receiver's own login on your BBS, never your callsign or a mailcast source's.");
+                "\"mailcast\".\"bbs\".\"login\" must be one word, e.g. Q0CAST (the default).");
         }
 
         if (string.IsNullOrEmpty(bbs.Password))

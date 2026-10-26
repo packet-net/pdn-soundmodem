@@ -75,7 +75,7 @@ internal sealed class UberSdrStationDevice(
     /// <inheritdoc/>
     public override string? ReceiveOnlyReason =>
         $"this station receives only: its audio comes from the UberSDR instance at "
-        + $"{uberSdrEndpoint}, which is a receiver and has no transmitter.";
+        + $"{uberSdrEndpoint}.";
 
     /// <inheritdoc/>
     public override string? PttRefusal =>
@@ -124,8 +124,7 @@ internal sealed class UberSdrStationDevice(
         {
             Console.Error.WriteLine(
                 $"\"sideband\": \"fm\" cannot be served by {uberSdrEndpoint}: a web receiver is an "
-                + "SSB receiver, and this station would be demodulating one sideband of an FM "
-                + "signal. Point \"device\" at a sound card fed by the FM radio instead.");
+                + "SSB receiver. Point \"device\" at a sound card fed by the FM radio.");
             return DeviceOpening.Refused(2);
         }
 

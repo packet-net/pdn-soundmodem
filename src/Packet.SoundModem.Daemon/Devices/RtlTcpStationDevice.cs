@@ -239,10 +239,9 @@ internal sealed class RtlTcpStationDevice(
         catch (ArgumentException e)
         {
             Console.Error.WriteLine(readOnly
-                ? $"\"device\": \"{Spec}\" cannot serve a dial of {RfPlan.Mhz(dialHz)}: {e.Message}. A read-only "
-                    + $"server's profile is centred on {RfPlan.Mhz(source.CentreFrequencyHz)} at {rate} samples a "
-                    + "second, which is what \"rtltcp\".\"centreFrequency\" and \"sampleRate\" say; the dial has to "
-                    + "fall inside that band, its filter included."
+                ? $"\"device\": \"{Spec}\" cannot serve a dial of {RfPlan.Mhz(dialHz)}: {e.Message}. "
+                    + $"A read-only server is fixed at {RfPlan.Mhz(source.CentreFrequencyHz)}, {rate} S/s "
+                    + "(\"rtltcp\".\"centreFrequency\", \"sampleRate\")."
                 : $"\"device\": \"{Spec}\" cannot listen on {RfPlan.Mhz(dialHz)}: {e.Message}");
             return DeviceOpening.Refused(2);
         }
