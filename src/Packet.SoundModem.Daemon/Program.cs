@@ -2652,12 +2652,6 @@ string? txTestRefusal =
         ? "\"txTest\".\"enabled\" is false in this station's configuration"
     : channel.ReceiveOnlyReason is string txTestReceiveOnly
         ? txTestReceiveOnly
-    : ptt is NullPtt
-        // Refused rather than left to VOX, deliberately. A test transmission has to be keyed and
-        // unkeyed by the station that made it; a VOX trip is the radio deciding, and "the daemon
-        // put a carrier up and something else decided when to stop" is not a transmission anybody
-        // should be able to start from a web page.
-        ? "no \"ptt\" is configured, so this daemon does not key the radio"
     : null;
 
 var txTestRunner = new TxTestRunner(new TxTestOptions
