@@ -313,8 +313,7 @@ internal sealed class TxTestRunner
                 run.Cancel();
                 await SettleAsync(send).ConfigureAwait(false);
                 return Refuse(
-                    $"the channel did not clear within {_options.ChannelWait.TotalSeconds:F0} s, "
-                    + "so the test was withdrawn and nothing was transmitted");
+                    $"the channel did not clear within {_options.ChannelWait.TotalSeconds:F0} s; nothing was transmitted");
             }
 
             try

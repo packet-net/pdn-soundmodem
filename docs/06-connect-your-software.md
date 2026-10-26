@@ -99,7 +99,7 @@ KISS has no authentication of any kind. Anything that can open the port can tran
 Every listener binds to the top-level `bind`, which is `127.0.0.1`, so out of the box only software on this machine can attach. Setting `"bind": "*"` opens every listener on every interface, including the station page and ARDOP, and the journal says so at start-up.
 
 ```
-kiss: WARNING - listening beyond loopback. KISS has no authentication: anything that can reach these ports can transmit on your licence.
+kiss: WARNING - listening beyond loopback, no authentication: anyone who can reach these ports can transmit on your licence
 ```
 
 For software on another machine, an SSH tunnel to loopback is a better answer than opening the port: run `ssh -L 8105:127.0.0.1:8105 you@modem-host` there and point the software at `127.0.0.1:8105` on that machine. [`kissPort` and `bind`](reference/config.md#kissport-and-bind) has the rules.
@@ -149,7 +149,7 @@ ARDOP is a connected-mode HF protocol, so it does not travel over KISS. Add a mo
 `port` here is the command port, and the data port is always the next one up, so 8101 reserves 8102 as well. An entry with no `port` uses 8515 and 8516. `bandwidth` is the widest session the TNC will accept or ask for, and ARDOP negotiates 200, 500, 1000 or 2000 Hz and nothing else. `frequency` moves ARDOP off its native 1500 Hz centre, which is how it shares a passband with the packet modems; see [08-hf.md](08-hf.md) for placing several modes in one passband.
 
 ```
-ardop host tcp: 127.0.0.1:8101 (data 8102, ardopcf-compatible virtual TNC, modem 1, ARQBW 500MAX, centre 950 Hz)
+ardop host tcp: 127.0.0.1:8101 (data 8102, modem 1, ARQBW 500MAX, centre 950 Hz)
 ```
 
 Point your client at the command port. Pat, Winlink Express, ARIM, gARIM and hamChat connect unmodified. Pat's `~/.config/pat/config.json` needs the address and the bandwidth you configured.

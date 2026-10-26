@@ -103,8 +103,7 @@ internal sealed class MailcastFilterMeasurer
             else
             {
                 tcs.TrySetException(new TimeoutException(
-                    $"no {TargetSeconds:F0} s of clear audio in {Timeout.TotalSeconds:F0} s: the channel kept "
-                    + "transmitting, or stayed inside a mailcast slot. Try again when the band is quiet."));
+                    $"no {TargetSeconds:F0} s of clear audio in {Timeout.TotalSeconds:F0} s: try again when the band is quiet."));
             }
         });
 

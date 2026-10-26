@@ -201,9 +201,8 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
         if (tuning.OutputRate % OpenWebRxProtocol.AudioRate != 0)
         {
             throw new InvalidOperationException(
-                $"an OpenWebRX receiver delivers {OpenWebRxProtocol.AudioRate} Hz audio, which this "
-                + $"channel's {tuning.OutputRate} Hz DSP rate is not a whole multiple of. The 12 kHz "
-                + "and 48 kHz mode families both are.");
+                $"an OpenWebRX receiver delivers {OpenWebRxProtocol.AudioRate} Hz audio, not a whole "
+                + $"divisor of this channel's {tuning.OutputRate} Hz DSP rate; use 12 kHz or 48 kHz modes.");
         }
 
         WebSocket first;
@@ -229,7 +228,7 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
                 cancellation.ThrowIfCancellationRequested();
                 throw new InvalidOperationException(
                     $"{endpoint} did not say where it is listening within {(StartupTimeout + TimeSpan.FromSeconds(5)).TotalSeconds:F0} s "
-                    + "of connecting. Is that an OpenWebRX receiver's address, as you would open it in a browser?");
+                    + "of connecting. Is that an OpenWebRX address?");
             }
 
             if (await input._firstVerdict.Task.ConfigureAwait(false) is string refusal)

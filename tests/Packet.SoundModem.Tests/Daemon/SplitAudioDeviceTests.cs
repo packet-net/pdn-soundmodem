@@ -65,7 +65,7 @@ public class SplitAudioDeviceTests : IDisposable
         string path = WriteConfig($$"""{"device": "{{Receive}}", "{{key}}": "{{value}}"}""");
 
         DaemonConfig.TryLoad(path, out string error).Should().BeNull();
-        error.Should().Contain($"\"{key}\" is \"{value}\", which is not a sound card");
+        error.Should().Contain($"\"{key}\" is \"{value}\", not a sound card");
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public class SplitAudioDeviceTests : IDisposable
 
         DaemonConfig.TryLoad(path, out string error).Should().BeNull();
         error.Should().Contain(
-            "\"playbackDevice\" is set but \"device\" is \"flex:10.45.0.76\", which is not a sound card");
+            "\"playbackDevice\" is set but \"device\" is \"flex:10.45.0.76\", not a sound card");
     }
 
     [Fact]

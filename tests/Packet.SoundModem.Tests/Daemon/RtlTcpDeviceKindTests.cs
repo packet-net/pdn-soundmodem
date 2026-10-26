@@ -29,7 +29,7 @@ public class RtlTcpDeviceKindTests
         station.ClosesItsOwnStreams.Should().BeFalse();
         station.ReceiveOnlyReason.Should().Contain("rtl_tcp server");
         station.PttRefusal.Should().StartWith("--device rtltcp: is a receive-only station");
-        station.NoReceiveDialRefusal.Should().Contain("has to be told where to listen");
+        station.NoReceiveDialRefusal.Should().Contain("needs a dial");
         station.Kind.TransmitTestRefusal.Should().StartWith("tx test: refused");
         station.Kind.RigRefusal(device).Should().Contain("remove \"rig\"");
         station.Kind.PublishRefusal(device).Should().BeNull("an rtl_tcp server is the operator's own receiver");

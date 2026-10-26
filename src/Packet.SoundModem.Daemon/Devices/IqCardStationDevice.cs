@@ -30,9 +30,8 @@ internal sealed class IqCardDeviceKind : DeviceKind
         if (card.Length == 0)
         {
             throw new InvalidDataException(
-                $"\"device\": \"{device}\" names no sound card. Put the ALSA name of the card the IQ "
-                + "comes in on after the prefix, e.g. iqcard:plughw:CARD=Device,DEV=0 (arecord -L "
-                + "lists them).");
+                $"\"device\": \"{device}\" names no sound card. Use iqcard:<ALSA name>, e.g. "
+                + "iqcard:plughw:CARD=Device,DEV=0 (arecord -L lists them).");
         }
 
         return new IqCardStationDevice(this, device, card, settings.IqCard);
@@ -90,8 +89,7 @@ internal sealed class IqCardStationDevice(
 
     /// <inheritdoc/>
     public override string? ReceiveOnlyReason =>
-        $"this station receives only: its audio is IQ from the sound card {card}, and there is no "
-        + "transmit path on an iqcard: device.";
+        $"this station receives only: its audio is IQ from the sound card {card}.";
 
     /// <inheritdoc/>
     public override string? PttRefusal =>
@@ -264,9 +262,8 @@ internal sealed class IqCardStationDevice(
             {
                 // Exit 1: rigctld may only be slow, and the restart asks again.
                 Console.Error.WriteLine(
-                    $"\"device\": \"{Spec}\" takes its IQ centre from the rig, and rigctld at "
-                    + $"{rig.Endpoint} has not said where the rig is. Start rigctld, or set "
-                    + "\"iqCard\".\"centreFrequency\".");
+                    $"\"device\": \"{Spec}\" takes its IQ centre from the rig, but rigctld at "
+                    + $"{rig.Endpoint} has not answered. Start rigctld, or set \"iqCard\".\"centreFrequency\".");
                 return DeviceOpening.Refused(1);
             }
 
@@ -276,18 +273,17 @@ internal sealed class IqCardStationDevice(
             {
                 Console.Error.WriteLine(
                     $"\"device\": \"{Spec}\" takes its IQ centre from the rig's dial, {RfPlan.Mhz(known)}, plus "
-                    + "\"iqCard\".\"centreOffsetHz\", which comes to "
+                    + "\"iqCard\".\"centreOffsetHz\": "
                     + string.Create(CultureInfo.InvariantCulture, $"{centreHz:F0} Hz")
-                    + ", not a frequency. Check the offset's sign and size.");
+                    + " is not a frequency. Check the offset.");
                 return DeviceOpening.Refused(2);
             }
         }
         else
         {
             Console.Error.WriteLine(
-                $"\"device\": \"{Spec}\" needs to know what RF frequency the card's IQ is centred on. "
-                + "Set \"iqCard\".\"centreFrequency\" (Hz), or add a \"rig\" section so it can be read "
-                + "off the radio's dial.");
+                $"\"device\": \"{Spec}\" needs the card's IQ centre. "
+                + "Set \"iqCard\".\"centreFrequency\" (Hz), or add a \"rig\" section.");
             return DeviceOpening.Refused(2);
         }
 
@@ -338,9 +334,9 @@ internal sealed class IqCardStationDevice(
             source.Dispose();
             Console.Error.WriteLine(
                 $"\"device\": \"{Spec}\" cannot hear the dial {RfPlan.Mhz(dialHz)}: the card's IQ is "
-                + $"centred on {RfPlan.Mhz(centreHz)} at {SampleRate} Hz, which carries "
+                + $"centred on {RfPlan.Mhz(centreHz)}, +/-"
                 + string.Create(CultureInfo.InvariantCulture, $"{SampleRate / 2000.0:F1} kHz")
-                + $" either side. {e.Message}");
+                + $". {e.Message}");
             return DeviceOpening.Refused(2);
         }
 

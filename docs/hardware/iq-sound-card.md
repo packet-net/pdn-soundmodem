@@ -59,5 +59,5 @@ Put those figures in `gainImbalanceDb` and `phaseImbalanceDegrees`, restart, and
 
 - `cannot open the sound device`: the name is wrong, the card is in use, or it will not open two channels at that rate. Try `arecord -D plughw:CARD=Device,DEV=0 -c 2 -r 48000 -f S16_LE -d 5 test.wav` and play the file back.
 - Nothing decodes, signals you expect are missing from the station page and others turn up that belong the far side of the centre: I and Q are the wrong way round. Set `"swapIq": true`.
-- `needs to know what RF frequency the card's IQ is centred on`: set `centreFrequency`, or add a `rig` section.
+- `needs the card's IQ centre`: set `centreFrequency`, or add a `rig` section.
 - `cannot hear the dial`: the dial is further from the centre than the card carries. Move the centre (the radio's dial) nearer the channel.

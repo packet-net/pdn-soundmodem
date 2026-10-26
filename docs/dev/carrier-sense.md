@@ -140,7 +140,7 @@ One real property to know: **DCD reads null until the first squelch edge after t
 
 ## Verified on air, both stations
 
-* Daemon starts, the port opens, the native serial library resolves: `carrier sense from the radio on /dev/ttyUSB0 at 28800 baud, DCD plus RSSI above -75 dBm every 100 ms`.
+* Daemon starts, the port opens, the native serial library resolves: `carrier sense: from the radio on /dev/ttyUSB0 at 28800 baud, DCD plus RSSI above -75 dBm`.
 * Both stations still transmit: 14/15 and 13/15 UI frames delivered, both directions. **This is the regression that matters**, and it is what the quieting detector failed.
 * Deferral works: frames offered 2 s into a far-end transmission were held and went out after it stopped, on 4 of 4 valid trials. Release was 0.6 to 5 s after the channel cleared, varying between runs, which is the host's CSMA backoff rather than anything latching here.
 * Control: with the channel clear, the same frames go out 0.8 s after being offered.

@@ -315,8 +315,7 @@ if (configPath is not null)
         if (twoToneSeconds is not null || singleTone is not null)
         {
             Console.Error.WriteLine(
-                "tx test: refused, this configuration describes a monitor rather than a station "
-                + "- it fronts other people's web receivers and has no transmitter of its own");
+                "tx test: refused, this configuration is a monitor with no transmitter");
             return 2;
         }
 
@@ -454,9 +453,7 @@ foreach (string spec in modemSpecs)
         // say which way out there is rather than printing a number-format exception.
         Console.Error.WriteLine($"--modem {spec} is not N:MODE[:FREQ]");
         Console.Error.WriteLine(
-            "  a plugin mode is written pluginId:mode and already contains the ':' this option "
-            + "separates on, so it cannot be spelled here - put it in a config file, which is "
-            + "where \"modemPlugins\" has to name the plugin anyway");
+            "  plugin modes (pluginId:mode) cannot be spelled here; use a config file");
         return 2;
     }
 
@@ -484,17 +481,9 @@ if (DeviceKinds.Of(device).OwnsTheRadio(device))
         bool statedExplicitly = sidebandWasStated;
         if (statedExplicitly && !string.Equals(sideband, impliedSideband, StringComparison.OrdinalIgnoreCase))
         {
-            // What the disagreement would cost, which is not the same thing when one of the two
-            // is FM: that is not a mirrored plan but a plan for a different kind of radio.
-            string consequence =
-                RfPlan.IsFmRadio(sideband) || RfPlan.IsFmRadio(impliedSideband)
-                    ? "One of those is a channel radio and the other is not, so the modems would "
-                      + "be placed for a radio this is not"
-                    : "Every modem would land mirrored about the dial";
             Console.Error.WriteLine(
-                $"\"sideband\": \"{sideband}\" contradicts the Flex slice mode {flexTuning.Mode}, "
-                + $"which is {impliedSideband.ToUpperInvariant()}. {consequence}. "
-                + "Drop \"sideband\" - the slice mode already says which it is.");
+                $"\"sideband\": \"{sideband}\" contradicts the Flex slice mode {flexTuning.Mode} "
+                + $"({impliedSideband.ToUpperInvariant()}); drop \"sideband\"");
             return 2;
         }
 
@@ -667,10 +656,8 @@ if (bandPlan is not null)
         if (flexConfig?.Frequency is not null || flexFreq is not null)
         {
             Console.Error.WriteLine(
-                $"flex: WARNING - the slice frequency you set ({flexFreq ?? flexConfig!.Frequency}) "
-                + "is superseded by the band plan, which computed "
-                + $"{RfPlan.Mhz(bandPlan.DialHz)}. Remove it, or remove the modems' "
-                + "\"rfFrequency\" if you meant to place them by audio centre.");
+                $"flex: WARNING - slice frequency {flexFreq ?? flexConfig!.Frequency} is overridden by the band plan "
+                + $"({RfPlan.Mhz(bandPlan.DialHz)}); remove it, or the modems' \"rfFrequency\"");
         }
 
         int filterHigh = BandPlanner.TransmitFilterHighHz(bandPlan);
@@ -682,9 +669,9 @@ if (bandPlan is not null)
             TransmitFilterHighHz = deriveTransmitFilter ? filterHigh : flexTuning.TransmitFilterHighHz,
         };
         Console.WriteLine(
-            $"flex: setting the slice to {RfPlan.Mhz(bandPlan.DialHz)}"
-            + (deriveTransmitFilter ? $" and the transmit filter high cut to {filterHigh} Hz" : "")
-            + " from the band plan");
+            $"flex: slice {RfPlan.Mhz(bandPlan.DialHz)}"
+            + (deriveTransmitFilter ? $", transmit filter high cut {filterHigh} Hz" : "")
+            + " (from the band plan)");
     }
 }
 
@@ -730,19 +717,14 @@ using IDisposable? carrierSenseLifetime = carrierSenseOwned;
 if (carrierSenseFromAudio && DspRate < FmShapeBusyDetector.MinimumSampleRate)
 {
     Console.WriteLine(
-        $"carrier sense: this channel runs at {DspRate} Hz, and reading carrier sense off the "
-        + "shape of the audio is measured not to work below "
-        + $"{FmShapeBusyDetector.MinimumSampleRate} Hz. Falling back to the in-band energy "
-        + "detector, which on an open-squelch FM radio reads clear through every transmission "
-        + "and busy for about ten seconds after it. A control cable to the radio is the fix.");
+        $"carrier sense: audio shape needs {FmShapeBusyDetector.MinimumSampleRate} Hz, this channel runs at {DspRate} Hz; "
+        + "using the energy detector (a control cable to the radio is the fix)");
     carrierSenseFromAudio = false;
 }
 else if (carrierSenseFromAudio)
 {
     Console.WriteLine(
-        "carrier sense: no radio to ask, so from the shape of the received audio. That suits an "
-        + "open-squelch FM receiver and nothing else; on any other path it reports no opinion and "
-        + "the energy detectors decide, each frame waiting on the modems that share its passband.");
+        "carrier sense: from the audio (no radio to ask)");
 }
 
 var channel = new SoundModemChannel(
@@ -817,8 +799,8 @@ if (mailcastConfig is not null && mailcastPlacement is not null)
     catch (Exception e) when (e is IOException or UnauthorizedAccessException)
     {
         Console.Error.WriteLine(
-            $"mailcast: cannot open its state in {mailcastDirectory}: {e.Message}. Make it writable by "
-            + "the service, or set \"mailcast\".\"stateDirectory\" to a folder that is.");
+            $"mailcast: cannot open its state in {mailcastDirectory}: {e.Message}. "
+            + "Make it writable, or set \"mailcast\".\"stateDirectory\"");
         return 2;
     }
 
@@ -906,9 +888,7 @@ foreach (ModemConfig modemConfig in modems)
         // setting and never identify, say so: a silent no-op on a licence condition is the
         // worst of the three outcomes.
         Console.Error.WriteLine(
-            $"modem {subChannel}: \"identify\" is not supported on ardop - its ARQ bursts do "
-            + "not go out as addressed frames, so there is nothing here to count transmissions "
-            + "against. Identify on a packet modem sharing the channel instead.");
+            $"modem {subChannel}: \"identify\" is not supported on ardop; identify on a packet modem on the channel");
         return 2;
     }
 
@@ -931,20 +911,15 @@ foreach (ModemConfig modemConfig in modems)
     if (id.RfFrequency is not null && bandPlan is not null && bandPlan.IsFm)
     {
         Console.Error.WriteLine(
-            $"modem {subChannel}: \"identify\".\"rfFrequency\" has no meaning on FM. The channel "
-            + "is the RF and the ident is an audio tone sent over it, not an offset from a dial, "
-            + "so there is no arithmetic to turn one into the other. Set "
-            + "\"identify\".\"toneHz\" instead.");
+            $"modem {subChannel}: \"identify\".\"rfFrequency\" has no meaning on FM; set \"identify\".\"toneHz\"");
         return 2;
     }
 
     if (id.RfFrequency is not null && bandPlan is null)
     {
         Console.Error.WriteLine(
-            $"modem {subChannel}: \"identify\".\"rfFrequency\" needs a band plan - without one "
-            + "the daemon does not know this station's dial, so it cannot turn an RF frequency "
-            + "into a tone. Give the modems \"rfFrequency\", pin \"dialFrequency\", or set "
-            + "\"identify\".\"toneHz\" instead.");
+            $"modem {subChannel}: \"identify\".\"rfFrequency\" needs a band plan; give the modems "
+            + "\"rfFrequency\", pin \"dialFrequency\", or set \"identify\".\"toneHz\"");
         return 2;
     }
 
@@ -1004,8 +979,7 @@ foreach (ModemConfig modemConfig in modems)
         + (bandPlan is not null && !bandPlan.IsFm
             ? $" = {RfPlan.Mhz(bandPlan.IsUpperSideband ? bandPlan.DialHz + tone : bandPlan.DialHz - tone)}"
             : "")
-        + $", {id.Wpm:F0} wpm, every {id.IntervalMinutes:F0} min while transmitting "
-        + $"({identifier.DurationSeconds:F1} s)");
+        + $", {id.Wpm:F0} wpm, every {id.IntervalMinutes:F0} min ({identifier.DurationSeconds:F1} s)");
 
     if (bandPlan is not null && (tone < bandPlan.Window.LowHz || tone > bandPlan.Window.HighHz))
     {
@@ -1014,10 +988,9 @@ foreach (ModemConfig modemConfig in modems)
         // the transmit filter is set from that window, so an ident outside it goes out truncated
         // or not at all, and nothing else would say so.
         Console.Error.WriteLine(
-            $"modem {subChannel}: WARNING - the ident tone {tone:F0} Hz is outside the "
-            + $"{bandPlan.Window.LowHz:F0}-{bandPlan.Window.HighHz:F0} Hz passband this plan "
-            + "plays into, so it may be filtered away on transmit. Leave \"toneHz\" unset to "
-            + "identify on this modem's own centre.");
+            $"modem {subChannel}: WARNING - ident tone {tone:F0} Hz is outside the "
+            + $"{bandPlan.Window.LowHz:F0}-{bandPlan.Window.HighHz:F0} Hz passband and may be filtered; "
+            + "unset \"toneHz\" to use the modem's centre");
     }
 }
 
@@ -1044,8 +1017,8 @@ if (ownsTheRadio && deriveTransmitFilter && flexTuning.TransmitFilterHighHz is n
     TransmitFilterPlan.Band widest = txBands.MaxBy(b => b.HighHz);
     flexTuning = flexTuning with { TransmitFilterHighHz = derivedFilterHigh };
     Console.WriteLine(
-        $"flex: setting the transmit filter high cut to {derivedFilterHigh} Hz - modem "
-        + $"{widest.SubChannel} ({widest.Mode}) reaches {widest.HighHz:F0} Hz");
+        $"flex: transmit filter high cut {derivedFilterHigh} Hz (modem "
+        + $"{widest.SubChannel} {widest.Mode} reaches {widest.HighHz:F0} Hz)");
 }
 
 // The receive half of the same question, and the half that cannot be seen from the transmit side:
@@ -1070,10 +1043,8 @@ if (ownsTheRadio && heardBands.Count > 0)
         ReceiveFilterHighHz = receiveHigh,
     };
     Console.WriteLine(
-        $"flex: setting the slice receive filter to {receiveLow}-{receiveHigh} Hz, to hear "
-        + (heardBands.Count > txBands.Count
-            ? "everything the modems are placed across and the mailcast signal"
-            : "everything the modems are placed across"));
+        $"flex: setting the slice receive filter to {receiveLow}-{receiveHigh} Hz"
+        + (heardBands.Count > txBands.Count ? " (modems and mailcast signal)" : " (all modems)"));
 }
 
 // The transmit side has no per-frame quality to report the mode from, so it comes from the
@@ -1124,7 +1095,7 @@ if (frameLog is not null)
         int current = stationOffsets.Snapshot().Count;
         Console.WriteLine(
             $"frequency offsets: replayed {seeded} logged frames from {seenStations.Count} "
-            + $"station(s); {current} still current enough to use");
+            + $"station(s), {current} still current");
     }
 }
 
@@ -1146,12 +1117,9 @@ if (fmConfig.Enabled)
 {
     FrequencyMatchingConfig fm = fmConfig;
     Console.WriteLine(
-        $"frequency matching: on - answering a station on its own frequency after "
-        + $"{fm.MinSamples} frames, if they agree within {fm.MaxSpreadHz:F0} Hz, "
-        + $"up to {fm.MaxTrimHz:F0} Hz in full ({fm.Damping:0.##} for any station that has "
-        + "moved under it); backs off for "
-        + $"{fm.ChaseCooldownSeconds / 60:F0} min from any station whose own frequency then moves "
-        + $"more than {fm.ChaseThresholdHz:F0} Hz, and stops after {fm.MaxChases} such moves");
+        $"frequency matching: on - after {fm.MinSamples} frames within {fm.MaxSpreadHz:F0} Hz, "
+        + $"trim up to {fm.MaxTrimHz:F0} Hz; back off {fm.ChaseCooldownSeconds / 60:F0} min "
+        + $"if a station moves over {fm.ChaseThresholdHz:F0} Hz, give up after {fm.MaxChases} moves");
 
     var matching = new FrequencyMatchingPolicy(
         stationOffsets,
@@ -1380,8 +1348,7 @@ if (benchTxTest is null && waterfallConfig is not null)
         Console.Error.WriteLine(
             $"cannot serve the waterfall on {bindAddress}:{waterfallConfig.Port}\n"
             + $"  {e.Message}\n"
-            + "  Set by \"waterfall\".\"port\" and the top-level \"bind\". Another process may\n"
-            + "  already hold the port; \"*\" or \"0.0.0.0\" serves every interface.");
+            + "  Check \"waterfall\".\"port\" and \"bind\"; another process may hold the port.");
         return 2;
     }
     catch (ArgumentException e)
@@ -1392,12 +1359,8 @@ if (benchTxTest is null && waterfallConfig is not null)
         // seconds - exactly the failure mode the config-validation contract exists to
         // prevent.
         Console.Error.WriteLine(
-            "invalid waterfall settings\n"
-            + $"  {e.Message}\n"
-            + "  Set by \"waterfall\".\"fftSize\" and \"waterfall\".\"linesPerSecond\". The FFT\n"
-            + "  size must be a power of two no shorter than one line's hop (the DSP rate\n"
-            + "  divided by linesPerSecond), and linesPerSecond must divide the DSP rate.\n"
-            + "  Remove the settings to use the defaults.");
+            $"invalid waterfall settings: {e.Message} "
+            + "Check \"waterfall\".\"fftSize\" and \"linesPerSecond\", or remove them for the defaults.");
         return 2;
     }
 
@@ -1411,9 +1374,7 @@ if (benchTxTest is null && waterfallConfig is not null)
     if (waterfallConfig.EnableAudioControls && waterfallConfig.Public)
     {
         Console.Error.WriteLine(
-            "waterfall: \"enableAudioControls\" is IGNORED on a \"public\" page. The Mixer group "
-            + "is the operator's and a public page never carries it; set \"api\".\"key\" and use "
-            + "api/mixer if a script has to reach this card.");
+            "waterfall: \"enableAudioControls\" is ignored on a \"public\" page; use api/mixer with \"api\".\"key\" instead");
     }
 
     // The same warning the KISS ports carry, for the same reason and now with a sharper one.
@@ -1425,16 +1386,13 @@ if (benchTxTest is null && waterfallConfig is not null)
     if (!Equals(DaemonConfig.ParseBind(bindAddress), System.Net.IPAddress.Loopback))
     {
         Console.WriteLine(
-            "waterfall: WARNING - listening beyond loopback. The page has no authentication, and "
+            "waterfall: WARNING - listening beyond loopback, no authentication: "
             + (waterfallConfig.Public
-                ? "anything that can reach this port can watch this station."
-                : "on an operator's page it carries a transmit test: anything that can reach this "
-                  + "port can key your transmitter on your licence.")
+                ? "anyone who can reach this port can watch this station"
+                : "anyone who can reach this port can key your transmitter")
             + (openAudioControls
-                ? " \"enableAudioControls\" is on, so it also carries this sound card's mixer "
-                  + "with no key: anything that can reach this port can change your capture gain "
-                  + "and the level your transmitter is driven at."
-                : ""));
+                ? ". \"enableAudioControls\" is on: the mixer has no key either."
+                : "."));
     }
 }
 
@@ -1677,13 +1635,11 @@ if (surveyConfig is not null)
                 $"propose: on, {CaptureSweep.ModesFor(DspRate, proposeFor).Count} modes per capture"
                 + (proposeFor switch
                 {
-                    RadioPath.Ssb => " (the SSB modes)",
-                    RadioPath.Fm => " (the FM modes)",
-                    _ => " (SSB and FM: say \"sideband\" to try only one)",
+                    RadioPath.Ssb => " (SSB)",
+                    RadioPath.Fm => " (FM)",
+                    _ => " (SSB and FM; set \"sideband\" to try one)",
                 })
-                + ", "
-                + $"{surveyConfig.ProposeMinCaptures} capture(s) of evidence needed "
-                + $"(a twentieth of one core; the receive path is never waited on)");
+                + $", {surveyConfig.ProposeMinCaptures} capture(s) of evidence needed");
         }
     }
     catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -1691,8 +1647,7 @@ if (surveyConfig is not null)
         Console.Error.WriteLine(
             $"cannot open the survey directory at {surveyConfig.Path}\n"
             + $"  {e.Message}\n"
-            + "  Set by \"survey\".\"path\". The service user must be able to write to it;\n"
-            + "  remove the \"survey\" section to run without one.");
+            + "  Make \"survey\".\"path\" writable by the service, or remove the \"survey\" section.");
         return 2;
     }
 }
@@ -1745,8 +1700,7 @@ if (rawCaptureConfig is not null)
         Console.Error.WriteLine(
             $"cannot open the raw-capture directory at {rawCaptureConfig.Path}\n"
             + $"  {e.Message}\n"
-            + "  Set by \"rawCapture\".\"path\". The service user must be able to write to it;\n"
-            + "  remove the \"rawCapture\" section to run without one.");
+            + "  Make \"rawCapture\".\"path\" writable by the service, or remove the \"rawCapture\" section.");
         return 2;
     }
 
@@ -1875,9 +1829,7 @@ if (benchTxTest is null && (apiKey.Length > 0 || openAudioControls))
     if (openAudioControls)
     {
         Console.WriteLine(
-            $"api: audio controls are OPEN - the page's Mixer group and {waterfallServer.Url}"
-            + "api/mixer answer with NO key, because \"waterfall\".\"enableAudioControls\" is "
-            + "true. Anything that can reach this port can change this card's levels.");
+            $"api: audio controls are OPEN, no key ({waterfallServer.Url}api/mixer): \"waterfall\".\"enableAudioControls\" is true");
     }
 
     if (apiKey.Length > 0)
@@ -1900,8 +1852,7 @@ if (benchTxTest is null && (apiKey.Length > 0 || openAudioControls))
         if (Environment.GetEnvironmentVariable("INVOCATION_ID") is null)
         {
             Console.Error.WriteLine(
-                "api: WARNING - this daemon does not appear to be running under systemd, so an "
-                + "applied change will STOP it rather than restart it onto the new configuration.");
+                "api: WARNING - not running under systemd, so an applied change will stop the daemon, not restart it");
         }
     }
 }
@@ -1911,8 +1862,7 @@ if (apiEphemeralInForce)
     // Loud, and on every start-up it applies to: a station running something other than its own
     // config file is the kind of thing that gets forgotten and then debugged for an hour.
     Console.Error.WriteLine(
-        $"api: this station is running a ONE-RUN configuration applied over the API, not "
-        + $"{configPath}. Any restart from here returns it to the file.");
+        $"api: running a one-run configuration applied over the API; a restart returns to {configPath}");
 }
 // The mailcast panel's numbers, keyless and read-only like the operator's page itself, and never
 // on a public page: they name the BBS this station delivers to.
@@ -2082,7 +2032,7 @@ if (benchTxTest is null && modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
         Console.WriteLine(
             $"kiss tcp: {shown}:{polyglot.LocalPort} (polyglot: modems "
             + string.Join(", ", router.SubChannels.Select(s => $"{s} {ModeOn(s)}"))
-            + $", as nibble 0; unheard stations get modem {router.DefaultSubChannel}, "
+            + $", unheard stations get modem {router.DefaultSubChannel}, "
             + $"forgotten after {polyglotConfig.ForgetAfterMinutes:0.##} min)");
     }
 
@@ -2096,14 +2046,12 @@ if (benchTxTest is null && modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
         // The usual "anything that can reach this can transmit on your licence" warning is not
         // true here, and saying it anyway would teach operators to ignore it where it is.
         Console.WriteLine(
-            "kiss: this station receives only - frames arriving on these ports are refused, not "
-            + "transmitted. Everything the modems hear is still delivered.");
+            "kiss: receive only - frames arriving on these ports are refused, not transmitted");
     }
     else if (!Equals(listenAddress, System.Net.IPAddress.Loopback))
     {
         Console.WriteLine(
-            "kiss: WARNING - listening beyond loopback. KISS has no authentication: anything "
-            + "that can reach these ports can transmit on your licence.");
+            "kiss: WARNING - listening beyond loopback, no authentication: anyone who can reach these ports can transmit on your licence");
     }
 }
 
@@ -2138,10 +2086,7 @@ if (benchTxTest is null && ardopModem is not null)
     if (channel.ReceiveOnlyReason is not null)
     {
         Console.Error.WriteLine(
-            "ardop: WARNING - ARDOP is a connected-mode ARQ protocol and this station cannot "
-            + "transmit, so no session will ever complete: it will hear the channel and never "
-            + "answer. The host port is still served, and every frame it demodulates - including "
-            + "other stations' sessions - is still drawn and written down.");
+            "ardop: WARNING - this station cannot transmit, so no ARDOP session will complete; it only listens");
     }
 
     var ardopShift = ArdopChannelBridge.For(
@@ -2393,7 +2338,7 @@ if (benchTxTest is null && ardopModem is not null)
     ardopServer.Start();
     Console.WriteLine(
         $"ardop host tcp: {(Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString())}:{ardopServer.LocalCommandPort} (data {ardopServer.LocalDataPort}, "
-        + $"ardopcf-compatible virtual TNC, modem {ardopModem.SubChannel}, ARQBW "
+        + $"modem {ardopModem.SubChannel}, ARQBW "
         + $"{M0LTE.Ardop.Arq.ArdopBandwidthExtensions.Hertz(ardopTnc.Config.ArqBandwidth)}MAX"
         + $"{ardopShift.Describe()}"
         + (ardopBusy is null ? "" : $", busy watch {ardopBusy.LowHz:F0}-{ardopBusy.HighHz:F0} Hz")
@@ -2489,9 +2434,8 @@ if (rigConfig is not null)
     if (!rigAnswered && rigConfig.Required)
     {
         Console.Error.WriteLine(
-            $"rig: rigctld at {rigEndpoint} did not answer, and \"rig\".\"required\" is true in "
-            + $"{configPath}. Start rigctld (rigctld -m <model> -r <port>), or set \"required\" to "
-            + "false to run without it. The service keeps retrying.");
+            $"rig: rigctld at {rigEndpoint} did not answer and \"rig\".\"required\" is true; "
+            + "start rigctld (rigctld -m <model> -r <port>) or set \"required\" false");
         await rig.DisposeAsync();
         return 1;
     }
@@ -2880,18 +2824,15 @@ if (benchTxTest is null && publishConfig is not null)
     if (outside.Length > 0)
     {
         Console.Error.WriteLine(
-            $"publish: WARNING - the published audio spans 0 to {publishRate / 2} Hz, so "
-            + $"{outside} will not appear on the site. Raise \"publish\".\"audioRate\" to a "
-            + $"divisor of {DspRate} that covers it, or accept the narrower picture.");
+            $"publish: WARNING - audio spans 0 to {publishRate / 2} Hz, so {outside} will not appear; "
+            + $"raise \"publish\".\"audioRate\" to a divisor of {DspRate}");
     }
 
     // 4.5's ADSL caveat, said as a fact about their line rather than as a warning about ours.
     if (publishRate >= 48000)
     {
         Console.Error.WriteLine(
-            "publish: WARNING - 48000 Hz audio is about 770 kbit/s upstream while somebody is "
-            + "watching. That is fine on FTTC or FTTP and most of an ADSL upload; there is no "
-            + "codec, by decision, so the lever is \"publish\".\"audioRate\".");
+            "publish: WARNING - 48000 Hz audio is about 770 kbit/s upstream while watched; lower \"publish\".\"audioRate\" if that is too much");
     }
 
     uplink = new Packet.SoundModem.Waterfall.UplinkClient(

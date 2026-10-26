@@ -68,8 +68,7 @@ internal sealed class FrameLog : IAsyncDisposable
         catch (SqliteException e)
         {
             Console.Error.WriteLine(
-                $"frame log: could not fold the write-ahead log into {Path} ({e.Message}); the "
-                + "rows are safe in the .db-wal beside it and any reader will see them");
+                $"frame log: could not fold the write-ahead log into {Path} ({e.Message}); rows are safe in the .db-wal");
         }
     }
 

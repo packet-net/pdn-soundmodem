@@ -69,9 +69,8 @@ internal sealed class IqPipeStationDevice : StationDevice
 
     /// <inheritdoc/>
     public override string? NoReceiveDialRefusal =>
-        $"\"device\": \"{Spec}\" hands this station a band of IQ, and the station has to be told "
-        + "where in it to listen. Give every modem an \"rfFrequency\" and the dial is worked out "
-        + "from them, or set \"dialFrequency\" to pin it.";
+        $"\"device\": \"{Spec}\" needs a dial: give the modems \"rfFrequency\", "
+        + "or set \"dialFrequency\".";
 
     /// <inheritdoc/>
     public override string? ReceiveOnlyReason =>
@@ -242,9 +241,8 @@ internal sealed class IqPipeStationDevice : StationDevice
         {
             source.Dispose();
             Console.Error.WriteLine(
-                $"\"device\": \"{Spec}\" at {rate} S/s centred on {RfPlan.Mhz(centreHz)} cannot carry the "
-                + $"channel at {RfPlan.Mhz(dialHz)}: {e.Message}. Move \"iqpipe\".\"centreFrequency\" "
-                + "or raise the rate.");
+                $"\"device\": \"{Spec}\" at {rate} S/s centred on {RfPlan.Mhz(centreHz)} cannot carry "
+                + $"{RfPlan.Mhz(dialHz)}: {e.Message}. Move \"iqpipe\".\"centreFrequency\" or raise the rate.");
             return Task.FromResult(DeviceOpening.Refused(2));
         }
 

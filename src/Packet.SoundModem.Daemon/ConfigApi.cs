@@ -1006,9 +1006,8 @@ internal sealed class ConfigApi
         }
 
         Console.WriteLine(persist
-            ? $"api: configuration accepted and written to {_configPath} - restarting to apply it"
-            : $"api: configuration accepted for one run (not persisted) - restarting to apply it. "
-              + $"Any later restart returns this station to {_configPath}.");
+            ? $"api: configuration written to {_configPath}; restarting"
+            : $"api: configuration accepted for one run; restarting (a later restart returns to {_configPath})");
 
         // Answered before the shutdown starts, so the caller learns the outcome rather than
         // losing the connection to the restart it asked for.

@@ -172,8 +172,8 @@ internal sealed partial class MailcastBbsClient : IMailcastBbs
     private static partial Regex PromptCall();
 
     private string LoginHint() => _settings.IsLinBpq
-        ? $"check that \"{_settings.Login}\" and its password match a USER= line in LinBPQ's Telnet port, that the port is its FBBPORT, and that \"{_settings.Command}\" reaches the mail application"
-        : $"check that {_settings.Login} is a BBS user on FBB with this password";
+        ? $"check \"{_settings.Login}\", its password, the FBBPORT and \"{_settings.Command}\""
+        : $"check {_settings.Login} and its password on the BBS";
 
     /// <summary>Cancelled by the caller, or once <c>timeout</c> has passed on the station's clock.</summary>
     private sealed class Deadline : IDisposable

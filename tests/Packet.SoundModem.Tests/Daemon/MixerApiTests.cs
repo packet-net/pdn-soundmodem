@@ -481,7 +481,7 @@ public class MixerApiTests : IDisposable
         body.GetProperty("warn").GetBoolean().Should().BeTrue();
         string note = body.GetProperty("note").GetString()!;
         note.Should().Contain("could not be written");
-        note.Should().Contain("the next start-up will not set it");
+        note.Should().Contain("will not survive a restart");
     }
 
     [Fact]
@@ -529,7 +529,7 @@ public class MixerApiTests : IDisposable
         answer.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         string why = await answer.Content.ReadAsStringAsync();
         why.Should().Contain($"{gone} is no longer a setting")
-            .And.Contain("switched off at every start-up");
+            .And.Contain("always switched off at start-up");
         station.Card!.CaptureDb("Mic").Should().Be(
             8, "the whole request is refused, so the level beside it never reached the card");
         station.Card.Find("Auto Gain Control")!.On.Should().BeFalse(
@@ -541,13 +541,13 @@ public class MixerApiTests : IDisposable
     /// </summary>
     /// <remarks>
     /// A script that says <c>{"agc": true}</c> is asking for the opposite of what this station
-    /// does, and "the card ends up the way it asked for either way" would be a lie that sends
+    /// does, and "Remove it." would be a lie that sends
     /// whoever wrote it looking somewhere else. Asking for OFF gets the other half of the
     /// sentence, which is true.
     /// </remarks>
     [Theory]
-    [InlineData(true, "This station switches it off whatever the key says")]
-    [InlineData(false, "the card ends up the way it asked for either way")]
+    [InlineData(true, "Remove it; as written it asks for the opposite")]
+    [InlineData(false, "Remove it.")]
     public async Task The_Switch_Refusal_Says_What_Actually_Happens_To_That_Value(
         bool asked, string expected)
     {

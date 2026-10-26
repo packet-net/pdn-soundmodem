@@ -103,8 +103,8 @@ public class AlsaMixerConfigTests : IDisposable
 
         error.Should().BeEmpty("a stale key is a warning, not a station off the air");
         config!.Warnings.Should().ContainSingle(w => w.Contains(
-            $"{gone} is no longer a setting: AGC and mic boost are switched off at every "
-            + "start-up on any card that has them", StringComparison.Ordinal));
+            $"{gone} is no longer a setting: AGC and mic boost are always switched off at "
+            + "start-up", StringComparison.Ordinal));
 
         // And the generic line as well, so a reader scanning for "IGNORED" still finds it.
         config.Warnings.Should().ContainSingle(w =>
@@ -134,10 +134,9 @@ public class AlsaMixerConfigTests : IDisposable
 
         error.Should().BeEmpty();
         config!.Warnings.Should().ContainSingle(w =>
-            w.Contains("This station switches it off whatever the key says", StringComparison.Ordinal)
-            && w.Contains("asking for the opposite of what happens", StringComparison.Ordinal));
+            w.Contains("asks for the opposite of what happens", StringComparison.Ordinal));
         config.Warnings.Should().NotContain(w =>
-            w.Contains("the card ends up the way it asked for", StringComparison.Ordinal));
+            w.EndsWith("Remove it.", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -148,7 +147,7 @@ public class AlsaMixerConfigTests : IDisposable
             """);
 
         DaemonConfig.TryLoad(path, out _)!.Warnings.Should().ContainSingle(w =>
-            w.Contains("the card ends up the way it asked for either way", StringComparison.Ordinal));
+            w.EndsWith("Remove it.", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -275,8 +274,8 @@ public class AlsaMixerConfigTests : IDisposable
             """);
 
         DaemonConfig.TryLoad(path, out string error).Should().BeNull();
-        error.Should().Contain("which is not a sound card");
-        error.Should().Contain("Remove the \"alsa\" section");
+        error.Should().Contain("not a sound card");
+        error.Should().Contain("remove \"alsa\"");
     }
 
     [Fact]
@@ -287,7 +286,7 @@ public class AlsaMixerConfigTests : IDisposable
             """);
 
         DaemonConfig.TryLoad(path, out string error).Should().BeNull();
-        error.Should().Contain("which is not a sound card");
+        error.Should().Contain("not a sound card");
     }
 
     [Fact]
@@ -302,7 +301,7 @@ public class AlsaMixerConfigTests : IDisposable
             """);
 
         DaemonConfig.TryLoad(path, out string error).Should().BeNull();
-        error.Should().Contain("A monitor fronts web receivers and has no sound card of its own");
+        error.Should().Contain("has no sound card");
     }
 
     /// <summary>
@@ -328,8 +327,8 @@ public class AlsaMixerConfigTests : IDisposable
         {
             Directory.SetCurrentDirectory(_dir);
             DaemonConfig.TryLoad(path, out string error).Should().BeNull();
-            error.Should().Contain("which is this configuration file");
-            error.Should().Contain("point \"stateFile\" somewhere else");
+            error.Should().Contain("the configuration file itself");
+            error.Should().Contain("point it elsewhere");
         }
         finally
         {
@@ -358,7 +357,7 @@ public class AlsaMixerConfigTests : IDisposable
         {
             Directory.SetCurrentDirectory(_dir);
             DaemonConfig.TryLoad(path, out string error).Should().BeNull();
-            error.Should().Contain("which is this configuration file");
+            error.Should().Contain("the configuration file itself");
         }
         finally
         {

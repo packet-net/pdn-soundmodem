@@ -39,9 +39,7 @@ internal static class PipeAudio
             || string.IsNullOrWhiteSpace(parts[1]))
         {
             throw new InvalidDataException(
-                $"\"{device}\" is not a pipe device. It is pipe:<in>,<out>[,<rate>] - the FIFO to "
-                + "read capture audio from, the FIFO to write transmit audio to, and optionally "
-                + "the sample rate (48000 by default). Two daemons take each other's reversed.");
+                $"\"{device}\" is not a pipe device; use pipe:<in>,<out>[,<rate>] (capture FIFO, transmit FIFO, rate 48000 by default)");
         }
 
         int rate = 48000;

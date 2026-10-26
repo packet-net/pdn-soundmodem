@@ -67,10 +67,8 @@ internal static class MonitorStartup
         if (plan.IsFm)
         {
             journal.WriteError(
-                "\"sideband\": \"fm\" cannot be served by a monitor: every receiver a monitor "
-                + "fronts is a web receiver, which is an SSB receiver, and this site would be "
-                + "demodulating one sideband of an FM signal. A monitor is for the SSB packet "
-                + "windows; an FM radio belongs to the station its audio comes out of.");
+                "\"sideband\": \"fm\" cannot be served by a monitor: its web receivers are SSB. "
+                + "Remove \"sideband\", or run FM on a station.");
             return 2;
         }
 

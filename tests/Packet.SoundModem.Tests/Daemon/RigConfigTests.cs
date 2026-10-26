@@ -66,13 +66,13 @@ public sealed class RigConfigTests : IDisposable
     }
 
     [Theory]
-    [InlineData("""{"device": "null", "ptt": {"type": "rigctld"}}""", "has no \"rig\" section")]
+    [InlineData("""{"device": "null", "ptt": {"type": "rigctld"}}""", "needs a \"rig\" section")]
     [InlineData("""{"device": "flex:10.45.0.76", "rig": {}}""", "A FlexRadio is tuned and keyed")]
     [InlineData("""{"device": "ubersdr:example.org", "dialFrequency": 7049000, "rig": {}}""", "a web receiver")]
     [InlineData("""{"device": "null", "rig": {"rigctld": "host:port"}}""", "is not a TCP port")]
     [InlineData("""{"device": "null", "rig": {"mode": "DIGU"}}""", "is not a mode this station asks a rig for")]
-    [InlineData("""{"device": "null", "rig": {"mode": "LSB"}}""", "which is LSB, and \"sideband\" is \"usb\"")]
-    [InlineData("""{"device": "null", "sideband": "fm", "rig": {"mode": "PKTUSB"}}""", "which is USB, and \"sideband\" is \"fm\"")]
+    [InlineData("""{"device": "null", "rig": {"mode": "LSB"}}""", "which is LSB, but \"sideband\" is \"usb\"")]
+    [InlineData("""{"device": "null", "sideband": "fm", "rig": {"mode": "PKTUSB"}}""", "which is USB, but \"sideband\" is \"fm\"")]
     [InlineData("""{"device": "null", "rig": {"mode": "CW"}}""", "not a sideband or FM mode")]
     [InlineData("""{"device": "null", "rig": {"passbandHz": 7052000}}""", "\"rig\".\"passbandHz\" is 7052000")]
     public void A_Rig_That_Cannot_Work_Is_Refused(string json, string why)

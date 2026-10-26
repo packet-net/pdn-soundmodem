@@ -158,7 +158,7 @@ traffic rather than in a test.
 
 Seeding was exercised by a restart during a lull and correctly seeded nothing: the last frame
 was 36 minutes old, well outside the age window. A later restart, closer to traffic, reported
-`replayed 28 logged frames from 4 station(s); 1 still current enough to use`.
+`frequency offsets: replayed 28 logged frames from 4 station(s), 1 still current`.
 
 ## Still not proven
 

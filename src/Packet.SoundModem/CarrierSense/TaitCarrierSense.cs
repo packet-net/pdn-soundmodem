@@ -56,9 +56,9 @@ public sealed class TaitCarrierSense : IChannelBusySource, IBusyReadingSource, I
             _radio, config.BusyAboveDbm, TimeSpan.FromMilliseconds(config.PollMilliseconds));
 
         Console.Error.WriteLine(
-            $"carrier sense from the radio on {config.TaitPort} at {config.TaitBaud} baud"
+            $"carrier sense: from the radio on {config.TaitPort} at {config.TaitBaud} baud"
             + (config.BusyAboveDbm is { } dbm
-                ? $", DCD plus RSSI above {dbm:F0} dBm every {config.PollMilliseconds} ms"
+                ? $", DCD plus RSSI above {dbm:F0} dBm"
                 : ", DCD only"));
 
         // Both off the constructor's thread: a modem is built during daemon start-up and must not
@@ -118,7 +118,7 @@ public sealed class TaitCarrierSense : IChannelBusySource, IBusyReadingSource, I
         {
             Console.Error.WriteLine(
                 $"carrier sense: the radio would not enable PROGRESS messages "
-                + $"({e.Message}). DCD will not report; an RSSI threshold still would.");
+                + $"({e.Message}); no DCD.");
         }
     }
 

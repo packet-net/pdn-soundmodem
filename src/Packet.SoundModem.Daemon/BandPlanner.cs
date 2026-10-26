@@ -61,10 +61,8 @@ internal static class BandPlanner
         if (baseband is not null)
         {
             throw new InvalidDataException(
-                $"modem {baseband.SubChannel} ({baseband.Mode}) is a baseband mode - it occupies the "
-                + "audio band from DC upwards rather than sitting on a centre frequency, so it "
-                + "cannot be placed with \"rfFrequency\". Configure this channel by audio "
-                + "\"frequency\" instead, or give this modem a channel of its own.");
+                $"modem {baseband.SubChannel} ({baseband.Mode}) is a baseband mode and cannot use \"rfFrequency\": "
+                + "set its audio \"frequency\" instead, or give it a channel of its own.");
         }
 
         // Each modem's allowed range is measured once, off the modem, here.

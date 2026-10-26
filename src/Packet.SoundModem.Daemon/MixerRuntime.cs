@@ -176,8 +176,7 @@ internal sealed class MixerRuntime
                 $"{MixerSetup.JournalPrefix}{change.Describe()} -> set for this run only "
                 + $"(persist=false), not written to {StatePath}");
             notes.Add(
-                "Not written down, because this request said persist=false: the card is set and "
-                + "stays set until something sets it again, but the next start-up will not set it.");
+                "Not saved (persist=false): the card is set for this run only.");
         }
         else
         {
@@ -196,9 +195,7 @@ internal sealed class MixerRuntime
                     $"{MixerSetup.JournalPrefix}{change.Describe()} -> NOT written to "
                     + $"{StatePath}: {cannot}");
                 notes.Add(
-                    $"The card is set and stays set, but {StatePath} could not be written "
-                    + $"({cannot}), so nothing on disk records it and the next start-up will not "
-                    + "set it.");
+                    $"The card is set, but {StatePath} could not be written ({cannot}), so it will not survive a restart.");
             }
         }
 

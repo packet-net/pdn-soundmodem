@@ -44,7 +44,7 @@ Among the start-up lines you should see the dial the modem chose, the audio line
 
 ```
 band plan: dial 7.048800 MHz USB, afsk300-il2pc at 1500 Hz audio
-kiss: this station receives only - frames arriving on these ports are refused, not transmitted. Everything the modems hear is still delivered.
+kiss: receive only - frames arriving on these ports are refused, not transmitted
 audio: m9psy-1.instance.ubersdr.org iq48 IQ at 7.048800 MHz -> USB 150-3450 Hz audio at 12000 Hz (RECEIVE ONLY)
 ubersdr: M9PSY-1, RX888 with 40m Full Wave Loop (GPSDO), Dalgety Bay, Scotland, UK, reference offset 0 Hz
 ubersdr: session limit 10800 s - the stream is picked up again each time the receiver ends one
