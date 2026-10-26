@@ -120,8 +120,7 @@ public class RfPlanTests
         Action solve = () => RfPlan.Solve(impossible, "usb");
 
         solve.Should().Throw<InvalidDataException>()
-            .WithMessage("*more than the 3000 Hz a single SSB radio can carry*")
-            .WithMessage("*No dial frequency can place them all*")
+            .WithMessage("*more than the 3000 Hz one radio can carry*")
             .Which.Message.Should().NotContain("ARDOP", "there is no ARDOP modem in this plan");
     }
 
@@ -160,7 +159,7 @@ public class RfPlanTests
 
         plan.DialHz.Should().Be(7_045_000);
         plan.Warnings.Should().ContainSingle()
-            .Which.Should().Contain("pinned to 7.045000 MHz USB").And.Contain("fall outside");
+            .Which.Should().Contain("dialFrequency 7.045000 MHz USB").And.Contain("outside");
     }
 
     [Fact]
@@ -243,10 +242,8 @@ public class RfPlanTests
         BandPlanner.Report(RfPlan.Solve(TwoMetreChannel(), "fm"), report, radioIsSelfTuning: false);
 
         string said = report.ToString();
-        said.Should().Contain("channel: 145.300000 MHz FM - set your radio to this");
-        said.Should().Contain("modem 0 c4fsk9600 on the channel");
-        said.Should().Contain("modem 1 afsk1200 on the channel, 1700 Hz audio");
-        said.Should().NotContain("dial:", "there is no dial on an FM radio to report");
+        said.Should().Contain("band plan: channel 145.300000 MHz FM, set your radio to this");
+        said.Should().NotContain("dial", "there is no dial on an FM radio to report");
         said.Should().NotContain("= ", "and no audio arithmetic to show beside a modem");
     }
 
@@ -305,10 +302,11 @@ public class RfPlanTests
         var selfTuning = new StringWriter();
         BandPlanner.Report(plan, selfTuning, radioIsSelfTuning: true);
 
+        manual.ToString().Should().StartWith("band plan: dial 7.049450 MHz USB, ");
+        manual.ToString().Trim().Split('\n').Should().HaveCount(1, "one short line");
         manual.ToString().Should().Contain("set your radio to this");
         selfTuning.ToString().Should().NotContain("set your radio",
             "the daemon is setting it; telling the operator to do it as well is just confusing");
-        selfTuning.ToString().Should().Contain("7.049450 MHz USB");
     }
 
     // ---- The passband a plan is fitted into, which is worked out rather than configured ----
@@ -349,7 +347,7 @@ public class RfPlanTests
         Action solve = () => RfPlan.Solve([SpecFixedSlot()], "usb");
 
         solve.Should().Throw<InvalidDataException>()
-            .WithMessage("*more than the 2400 Hz a single SSB passband can carry*");
+            .WithMessage("*more than the 2400 Hz one radio can carry*");
     }
 
     [Fact]
@@ -364,9 +362,7 @@ public class RfPlanTests
         plan.Modems.Single().AudioCentreHz.Should().Be(1500);
         plan.Window.LowHz.Should().BeApproximately(105.5, 0.01);
         plan.Window.HighHz.Should().BeApproximately(2894.5, 0.01);
-        plan.Warnings.Should().ContainSingle()
-            .Which.Should().Contain("occupy 105-2895 Hz audio").And.Contain("have to pass that")
-            .And.NotContain("ARDOP");
+        plan.Warnings.Should().BeEmpty("a wide MS110D on an ordinary rig is normal, not a warning");
     }
 
     [Fact]
@@ -376,7 +372,7 @@ public class RfPlanTests
 
         plan.DialHz.Should().Be(7_055_300);
         plan.Modems.Single().AudioCentreHz.Should().Be(1500);
-        plan.Warnings.Should().ContainSingle();
+        plan.Warnings.Should().BeEmpty();
     }
 
     [Fact]
@@ -392,7 +388,7 @@ public class RfPlanTests
         Action solve = () => RfPlan.Solve(tooWide, "usb");
 
         solve.Should().Throw<InvalidDataException>()
-            .WithMessage("*span 3100 Hz of RF*more than the 3000 Hz a single SSB radio can carry*");
+            .WithMessage("*span 3100 Hz of RF*more than the 3000 Hz one radio can carry*");
     }
 
     [Theory]
@@ -408,7 +404,7 @@ public class RfPlanTests
         Action solve = () => RfPlan.Solve([Slot(0, "ms110d-wn4", 7_053_810, width)], sideband);
 
         solve.Should().Throw<InvalidDataException>()
-            .WithMessage("*more than the 3000 Hz a single SSB radio can carry*");
+            .WithMessage("*more than the 3000 Hz one radio can carry*");
     }
 
     [Theory]
@@ -425,15 +421,6 @@ public class RfPlanTests
         plan.Modems.Single().AudioCentreHz.Should().Be(1500);
         plan.Window.LowHz.Should().Be(5);
         plan.Window.HighHz.Should().Be(2995);
-    }
-
-    [Fact]
-    public void The_Warning_And_Its_Modem_Line_Quote_The_Same_Edges()
-    {
-        RfPlan.Result plan = RfPlan.Solve([Ms110dSlot(7_053_800)], "usb");
-
-        plan.Warnings.Single().Should().Contain("occupy 105-2895 Hz audio")
-            .And.Contain("occupying 105-2895 Hz");
     }
 
     [Fact]
@@ -462,7 +449,7 @@ public class RfPlanTests
 
         Action solve = () => RfPlan.Solve(withArdop, "usb");
 
-        solve.Should().Throw<InvalidDataException>().WithMessage("*ARQBW*");
+        solve.Should().Throw<InvalidDataException>().WithMessage("*one radio can carry*").Which.Message.Should().NotContain("ARQBW");
     }
 
     [Fact]
@@ -507,8 +494,8 @@ public class RfPlanTests
             slots, "usb", window: Passband.Fit(slots, Passband.WideCeilingHz));
 
         solve.Should().Throw<InvalidDataException>()
-            .WithMessage("*fixed at 1800 Hz by its own standard*")
-            .WithMessage("*Put the spec-fixed modem lowest in the plan*");
+            .WithMessage("*fixes the dial at*")
+            .WithMessage("*put it lowest in the plan*");
     }
 
     [Fact]
@@ -569,7 +556,7 @@ public class RfPlanTests
 
         window.HighHz.Should().Be(Passband.WideCeilingHz);
         solve.Should().Throw<InvalidDataException>()
-            .WithMessage("*this radio can be opened to pass in one go*");
+            .WithMessage("*one radio can carry*");
     }
 
     [Fact]
@@ -592,11 +579,10 @@ public class RfPlanTests
         var report = new StringWriter();
         BandPlanner.Report(plan, report, radioIsSelfTuning: true);
 
-        report.ToString().Should().Contain("passband:");
+        plan.Window.IsNominal.Should().BeFalse("the widened window is still on the plan for the rig to follow");
 
         var ordinary = new StringWriter();
         BandPlanner.Report(RfPlan.Solve(FortyMetres(), "usb"), ordinary, radioIsSelfTuning: true);
-        ordinary.ToString().Should().NotContain("passband:",
-            "an ordinary window is the assumption; saying so every time is noise");
+        ordinary.ToString().Should().NotContain("passband", "the report is one short line per fact");
     }
 }

@@ -1,3 +1,4 @@
+using M0LTE.Dsp;
 using M0LTE.HfChannel;
 using AwesomeAssertions;
 using Packet.SoundModem.Modems;
@@ -334,5 +335,96 @@ public class FrequencyShiftedModemTests(ITestOutputHelper output)
         }
 
         return decoded;
+    }
+
+    private static double ToneDensity(float[] audio, double[] freqs)
+    {
+        const int N = 16384;
+        int offset = Math.Max(0, (audio.Length - N) / 2);
+        double total = 0;
+        foreach (double f in freqs)
+        {
+            double re = 0, im = 0;
+            for (int i = 0; i < N && offset + i < audio.Length; i++)
+            {
+                double w = 0.5 - (0.5 * Math.Cos(2 * Math.PI * i / (N - 1)));
+                double angle = -2 * Math.PI * f * i / Rate;
+                re += audio[offset + i] * w * Math.Cos(angle);
+                im += audio[offset + i] * w * Math.Sin(angle);
+            }
+
+            total += (re * re) + (im * im);
+        }
+
+        return total / freqs.Length;
+    }
+
+    [Theory]
+    [InlineData("ms110d-wn4", 1000)]
+    [InlineData("ms110d-wn4", 1278)]
+    [InlineData("ms110d-wn4", 1580)]
+    [InlineData("ms110d-wn4", 1600)]
+    [InlineData("ms110d-wn4", 1650)]
+    [InlineData("ms110d-wn4", 1700)]
+    [InlineData("ms110d-wn1", 1000)]
+    [InlineData("ms110d-wn1", 1600)]
+    [InlineData("ms110d-wn1", 1650)]
+    [InlineData("ms110d-wn1", 1700)]
+    public void Ms110d_Placed_Low_Sends_Nothing_Below_The_Floor_And_No_Mirror_Image(string mode, double centre)
+    {
+        // Wherever part of the nominal band (including its skirts, below the measured 99 % edge)
+        // is below 0 Hz, it must simply not be transmitted: no energy at the bottom of the audio
+        // band, and nothing folded back as a mirror image into 50-150 Hz.
+        IModem modem = Create(mode, centre, _ => { });
+        float[] burst = modem.Modulate(TestFrame(200, 3), txDelayMilliseconds: 50);
+
+        double[] inBandBins = [.. Enumerable.Range(0, 9).Select(i => centre - 400 + (i * 100.0))];
+        double inBand = ToneDensity(burst, inBandBins);
+        double floor = ToneDensity(burst, [5, 10, 15, 20, 25, 30, 35, 40, 45]);
+        double image = ToneDensity(burst, [60, 80, 100, 120, 140]);
+        double top = ToneDensity(burst, [Rate / 2.0 - 30, Rate / 2.0 - 20, Rate / 2.0 - 10]);
+
+        output.WriteLine($"{mode} {centre}: floor {10 * Math.Log10(floor / inBand):F1} dB, image {10 * Math.Log10(image / inBand):F1} dB");
+        (10 * Math.Log10(floor / inBand)).Should().BeLessThan(-40);
+        if (centre >= 1500)
+        {
+            // Close to native the legitimate band reaches down here; unfiltered the fold put
+            // this at about -11 dB, filtered it is -22 or lower.
+            (10 * Math.Log10(image / inBand)).Should().BeLessThan(-18);
+        }
+
+        (10 * Math.Log10(top / inBand)).Should().BeLessThan(-40);
+    }
+
+    private static float[] RigFilter(float[] audio, double lowHz, double highHz)
+    {
+        var filter = new FirFilter(FilterDesign.BandPass(lowHz, highHz, Rate, 1023));
+        var filtered = new float[audio.Length];
+        for (int i = 0; i < audio.Length; i++)
+        {
+            filtered[i] = filter.Next(audio[i]);
+        }
+
+        return filtered;
+    }
+
+    [Theory]
+    [InlineData(1278, 367, 2190)]
+    [InlineData(1500, 300, 2700)]
+    public void Ms110d_Decodes_At_A_Low_Centre_Through_A_Rigs_Narrow_Passband(
+        double centre, double rigLowHz, double rigHighHz)
+    {
+        // The FT-450D case: 367-2190 Hz in its data mode, with the signal in the middle of it.
+        // Part of the nominal band is cut on transmit and again on receive, and MS110D copes.
+        byte[] frame = TestFrame(60, 21);
+        var received = new List<byte[]>();
+        IModem modem = Create("ms110d-wn4", centre, received.Add);
+
+        float[] audio = RigFilter(modem.Modulate(frame, txDelayMilliseconds: 50), rigLowHz, rigHighHz);
+        var channel = new float[(Rate / 2) + audio.Length + Rate];
+        audio.CopyTo(channel, Rate / 2);
+        modem.Process(RigFilter(channel, rigLowHz, rigHighHz));
+
+        received.Should().ContainSingle().Which.Should().Equal(frame);
     }
 }

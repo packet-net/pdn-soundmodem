@@ -60,7 +60,7 @@ public class ModeReaderTests
         // nothing: one collapses it into a single line of report, the other ignores it silently.
         Action tooWide = () => ModeReader.Run(
             "ms110d-wn0", new float[48000], 48000,
-            ModeReader.At("ms110d-wn0", 500), (_, _) => { });
+            ModeReader.At("ms110d-wn0", 5), (_, _) => { });
 
         // ArgumentException, not the narrower ArgumentOutOfRangeException: the catalogue has two
         // guards on a centre and they throw different types. Both callers matched only the

@@ -377,6 +377,36 @@ public static class ModemCatalog
             ? found.Centre != CentreSemantics.Baseband
             : ModemPluginRegistry.DescriptorFor(mode)?.AcceptsCentre ?? false;
 
+    /// <summary>MS110D tolerates its edges being cut by the audio band, so it may be placed with
+    /// part of its nominal band below DC or above Nyquist; the other shifted families keep their
+    /// guard.</summary>
+    private static bool ClipsEdges(string mode) => mode.StartsWith("ms110d-", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The lowest and highest audio centre <see cref="Create"/> will accept for a mode whose centre
+    /// can be moved by decoration (the spec-fixed families, which are the ones with such a guard),
+    /// measured off the modem itself, or null where the mode has no movable centre or
+    /// will not render a probe. Asks <see cref="FrequencyShiftedModem"/>, which owns the guard
+    /// against DC and Nyquist, so a planner placing modems never keeps a second copy of it.
+    /// </summary>
+    public static (double MinHz, double MaxHz)? AudioCentreRange(string mode, int dspRate)
+    {
+        if (!ByName.TryGetValue(mode, out ModeDescriptor? descriptor)
+            || descriptor.Centre != CentreSemantics.Shifted
+            || descriptor.DefaultCentreHz is not double native)
+        {
+            return null;
+        }
+
+        IModem probe = Create(mode, dspRate, _ => { });
+        if (!ModemBandProbe.TryMeasure(probe, dspRate, out double low, out double high))
+        {
+            return null;
+        }
+
+        return FrequencyShiftedModem.AllowedCentreRange(low, high, native, dspRate, ClipsEdges(mode));
+    }
+
     /// <summary>
     /// The audio centre a mode sits on when no override is given: the tone-pair midpoint, the PSK
     /// carrier, or - for the spec-fixed families - the centre their standard pins them to. Null for
@@ -511,7 +541,8 @@ public static class ModemCatalog
         // Asked-for centre equal to the native one included: Wrap returns the bare modem then,
         // so a config that spells out the default is bit-identical to one that omits it.
         return shiftedCentre is double centre
-            ? FrequencyShiftedModem.Wrap(modem, dspRate, centre, descriptor.DefaultCentreHz!.Value)
+            ? FrequencyShiftedModem.Wrap(
+                modem, dspRate, centre, descriptor.DefaultCentreHz!.Value, clip: ClipsEdges(mode))
             : modem;
     }
 

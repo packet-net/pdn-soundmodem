@@ -60,6 +60,18 @@ public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFram
     /// and Nyquist even at 639 taps, taking image rejection with it.</summary>
     private const double EdgeGuardHz = 350;
 
+    /// <summary>For a clipping wrap: how close to DC or Nyquist transmitted energy may reach.</summary>
+    private const double ClipFloorHz = 50;
+
+    /// <summary>For a clipping wrap: where the transmit band-limit's -6 dB point is put, in shifted
+    /// terms. The FIR's transition is about 250 Hz wide, so putting the half-way point this far
+    /// above <see cref="ClipFloorHz"/> leaves the stopband (40 dB or more down) below the floor.</summary>
+    private const double ClipCutHz = 175;
+
+    /// <summary>For a clipping wrap: the least of the mode's band that must stay inside the audio
+    /// band, as a fraction. Below it the mode is mostly cut off and refused rather than built.</summary>
+    private const double ClipKeepFraction = 0.5;
+
     private readonly IModem _inner;
     private readonly int _sampleRate;
     private readonly double _shiftHz;
@@ -68,8 +80,12 @@ public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFram
     private readonly float[] _banded = new float[4096];
     private readonly float[] _scratch = new float[4096];
 
+    private readonly double _transmitLowCutHz;
+    private readonly double _transmitHighCutHz;
+
     private FrequencyShiftedModem(
-        IModem inner, int sampleRate, double shiftHz, double onAirLowHz, double onAirHighHz)
+        IModem inner, int sampleRate, double shiftHz, double onAirLowHz, double onAirHighHz,
+        bool clip = false, double nativeLowHz = 0, double nativeHighHz = 0)
     {
         _inner = inner;
         _sampleRate = sampleRate;
@@ -79,6 +95,47 @@ public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFram
             Math.Min((sampleRate / 2.0) - 50, onAirHighHz + BandpassMarginHz),
             sampleRate, BandpassTaps));
         _receive = new FrequencyShifter(sampleRate, -shiftHz, HilbertTaps);
+
+        // A clipping wrap lets part of the band fall below DC or above Nyquist. A real signal has
+        // no energy there to send, but the analytic shift would fold it back into the band as a
+        // mirror image, so it is removed from the inner modem's burst BEFORE the shift: the
+        // transmit band-limit works in the inner modem's own (unshifted) frequencies.
+        if (clip)
+        {
+            double nyquist = sampleRate / 2.0;
+            _transmitLowCutHz = ClipCutHz - shiftHz;
+            _transmitHighCutHz = nyquist - ClipCutHz - shiftHz;
+            // On whenever the shifted band comes inside the old guard, so the skirts below the
+            // measured 99 % edge are cut too; a centre the guard accepted is left untouched and
+            // its output stays byte-identical to what it always was.
+            _clipLow = onAirLowHz < EdgeGuardHz;
+            _clipHigh = onAirHighHz > nyquist - EdgeGuardHz;
+        }
+    }
+
+    private readonly bool _clipLow;
+    private readonly bool _clipHigh;
+
+    /// <summary>
+    /// The audio centres a mode whose measured band is <paramref name="lowHz"/> to
+    /// <paramref name="highHz"/> at its native <paramref name="nativeCentreHz"/> may be moved to
+    /// and still be accepted by <see cref="Wrap"/>. The one place that rule is applied, shared
+    /// with the band planner so the two cannot disagree. Without <paramref name="clip"/> the
+    /// shifted band must stay clear of the guard at DC and at Nyquist; with it, any centre that
+    /// keeps half the band inside the audio band.
+    /// </summary>
+    public static (double MinCentreHz, double MaxCentreHz) AllowedCentreRange(
+        double lowHz, double highHz, double nativeCentreHz, int sampleRate, bool clip = false)
+    {
+        if (!clip)
+        {
+            return (nativeCentreHz + EdgeGuardHz - lowHz,
+                    nativeCentreHz + (sampleRate / 2.0) - EdgeGuardHz - highHz);
+        }
+
+        double keep = ClipKeepFraction * (highHz - lowHz);
+        return (nativeCentreHz + ClipFloorHz + keep - highHz,
+                nativeCentreHz + (sampleRate / 2.0) - ClipFloorHz - keep - lowHz);
     }
 
     /// <summary>
@@ -87,9 +144,21 @@ public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFram
     /// modem's own modulator and checked clear of DC and Nyquist before anything is built -
     /// a centre that would fold the band over is refused with the numbers, not discovered on air.
     /// </summary>
+    /// <param name="inner">The modem at its native centre.</param>
+    /// <param name="sampleRate">The channel rate.</param>
+    /// <param name="centreHz">The audio centre wanted.</param>
+    /// <param name="nativeCentreHz">The centre the inner modem is built on.</param>
+    /// <param name="clip">
+    /// True for a mode that tolerates its edges being cut (MS110D): any centre that keeps at least
+    /// half its band inside the audio band is accepted, the part below 50 Hz or above Nyquist is
+    /// simply not transmitted, and nothing of it folds back as a mirror image. False keeps the
+    /// guard against DC and Nyquist.
+    /// </param>
     /// <exception cref="ArgumentException">The shifted band would reach within
-    /// <see cref="EdgeGuardHz"/> of DC or Nyquist.</exception>
-    public static IModem Wrap(IModem inner, int sampleRate, double centreHz, double nativeCentreHz)
+    /// <see cref="EdgeGuardHz"/> of DC or Nyquist (or, with <paramref name="clip"/>, leave less than
+    /// half the band inside the audio band).</exception>
+    public static IModem Wrap(
+        IModem inner, int sampleRate, double centreHz, double nativeCentreHz, bool clip = false)
     {
         double shift = centreHz - nativeCentreHz;
         if (shift == 0)
@@ -107,18 +176,23 @@ public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFram
         }
 
         double nyquist = sampleRate / 2.0;
-        if (low + shift < EdgeGuardHz || high + shift > nyquist - EdgeGuardHz)
+        (double minCentre, double maxCentre) =
+            AllowedCentreRange(low, high, nativeCentreHz, sampleRate, clip);
+        if (centreHz < minCentre - 1e-6 || centreHz > maxCentre + 1e-6)
         {
             throw new ArgumentException(
                 $"centre {centreHz:F0} Hz would put {inner.Mode}'s band at "
-                + $"{low + shift:F0}-{high + shift:F0} Hz, which is not clear of the "
-                + $"{EdgeGuardHz:F0} Hz guard against DC and the {nyquist:F0} Hz Nyquist edge "
+                + $"{low + shift:F0}-{high + shift:F0} Hz, "
+                + (clip
+                    ? "which leaves less than half of it inside the audio band "
+                    : $"which is not clear of the {EdgeGuardHz:F0} Hz guard against DC and the {nyquist:F0} Hz Nyquist edge ")
                 + $"(the mode occupies {low:F0}-{high:F0} Hz at its native "
-                + $"{nativeCentreHz:F0} Hz centre)",
+                + $"{nativeCentreHz:F0} Hz centre; it accepts centres from {minCentre:F0} to "
+                + $"{maxCentre:F0} Hz)",
                 nameof(centreHz));
         }
 
-        return new FrequencyShiftedModem(inner, sampleRate, shift, low + shift, high + shift);
+        return new FrequencyShiftedModem(inner, sampleRate, shift, low + shift, high + shift, clip, low, high);
     }
 
     /// <summary>The wrapped modem, for in-process hosts that want its typed surface
@@ -253,11 +327,41 @@ public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFram
         // the EOT in the MS110D case - would never come out. The leading transient lands in
         // the burst's own TXDELAY silence.
         const int groupDelay = (HilbertTaps - 1) / 2;
+        if (_clipLow || _clipHigh)
+        {
+            burst = LimitForShift(burst);
+        }
+
         var shifter = new FrequencyShifter(_sampleRate, _shiftHz, HilbertTaps);
         var shifted = new float[burst.Length + groupDelay];
         shifter.Process(burst, shifted.AsSpan(0, burst.Length));
         shifter.Process(new float[groupDelay], shifted.AsSpan(burst.Length));
         return shifted;
+    }
+
+    /// <summary>
+    /// Removes the part of the inner burst that the shift would push below the floor or above
+    /// Nyquist, so it cannot fold back as a mirror image. Zero-phase (the FIR's delay is taken out
+    /// by padding and skipping) so the burst keeps its timing.
+    /// </summary>
+    private float[] LimitForShift(float[] burst)
+    {
+        double nyquist = _sampleRate / 2.0;
+        double low = _clipLow ? Math.Max(20, _transmitLowCutHz) : 20;
+        double high = _clipHigh ? Math.Min(nyquist - 20, _transmitHighCutHz) : nyquist - 20;
+        var filter = new FirFilter(FilterDesign.BandPass(low, high, _sampleRate, HilbertTaps));
+        int delay = (HilbertTaps - 1) / 2;
+        var limited = new float[burst.Length];
+        for (int i = 0; i < burst.Length + delay; i++)
+        {
+            float y = filter.Next(i < burst.Length ? burst[i] : 0f);
+            if (i >= delay)
+            {
+                limited[i - delay] = y;
+            }
+        }
+
+        return limited;
     }
 
     /// <inheritdoc/>
