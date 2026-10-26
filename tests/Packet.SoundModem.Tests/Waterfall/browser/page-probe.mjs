@@ -447,13 +447,32 @@ run(`logFrame({sub:0, mode:"afsk300-multi11", from:"KK4HEJ", to:"IDENT", lenByte
 // Our own transmission, through the dispatch the socket handler uses - the point is what the
 // page does with the event, not what the two drawing functions do when called by hand. Driven
 // against a received frame through the same entry point, so "listed but not tagged" is measured
-// rather than assumed.
+// rather than assumed. A heard frame is tagged once its line has been drawn, so line 0 goes
+// through the socket handler first, as the server sends it.
+run(`globalThis.__line = i => {
+  const b = new Uint8Array(5 + cfg.lineLength); b[0] = 0x01;
+  new DataView(b.buffer).setUint32(1, i, true);
+  ws.onmessage({ data: b.buffer });
+}`);
+run(`__line(0)`);
 const beforeHeard = sandbox.__text().length;
 run(`onFrameEvent({sub:0, mode:"afsk1200", from:"GB7RDG", to:"M0LTE", line:0, burstLines:9, lenBytes:31, snrDb:9.5})`);
 const heardTag = sandbox.__text().slice(beforeHeard);
 const beforeTx = sandbox.__text().length;
 run(`onFrameEvent({sub:0, mode:"afsk1200", from:"M0LTE-9", to:"GB7RDG", line:0, lenBytes:24, tx:true})`);
 const txTag = sandbox.__text().slice(beforeTx);
+
+// A feed that arrives in lumps (rtl_tcp sends about half a second of lines at once) is drawn at
+// the display rate, not all on arrival. A frame whose line is still in the queue is not tagged
+// until that line is drawn, or its callsign would sit at the top of the lump.
+const beforeLump = sandbox.__text().length;
+run(`for (let i = 1; i <= 16; i++) __line(i)`);
+run(`onFrameEvent({sub:0, mode:"afsk1200", from:"G4LMP", to:"M0LTE", line:16, burstLines:9, lenBytes:31, snrDb:11.0})`);
+const lumpDrawnOnArrival = run(`lastLine`);
+const lumpTagOnArrival = sandbox.__text().slice(beforeLump);
+await untilTrue(() => run(`lastLine`) === 16, 5000);
+const lumpDrawnLater = run(`lastLine`);
+const lumpTagLater = sandbox.__text().slice(beforeLump);
 
 // A frame read as plain IL2P on a link that runs IL2P+CRC: nothing but Reed-Solomon behind it,
 // and by default not passed to the host. Driven twice - withheld and, on a modem told to accept
@@ -923,6 +942,43 @@ if (holdKeepAlives > 0) {
   await untilTrue(() => keepAlives >= holdKeepAlives, 120000);
 }
 
+// Skipped while holding for keep-alives: the test winding the server's clock expects pings answered promptly,
+// and this is a long synchronous run.
+let delayAfterStall, drawnMidRecovery, drawnAfterLongStall, delayAfterLongStall, delayAfterDrift, heldFrameCount, heldCaptureCount;
+if (!holdKeepAlives) {
+// Pacing under stress, in virtual time (a base far ahead of the real clock, so the page's own
+// timer never releases anything early). Three feeds: a steady feed after a 1.5 s stall, a 2.5 s
+// stall that overflows the queue, and a source clock 0.1% fast for three minutes (6 periods of delay without the catch-up). The delay is
+// how far ahead of "now" the next line would be due; "drawn" is read from lastLine.
+run(`resetSpectrumPacing()`);
+run(`globalThis.__n = 0; globalThis.__t = 1e9;
+globalThis.__feed = (count, gap) => { for (let k = 0; k < count; k++) {
+  const b = new Uint8Array(5 + cfg.lineLength); b[0] = 0x01;
+  new DataView(b.buffer).setUint32(1, __n++, true);
+  enqueueSpectrum(b.buffer, __t); releaseDueSpectrum(__t); if (gap) __t += gap; } };
+globalThis.__delay = () => Math.max(0, nextSpectrumDue - __t);`);
+const period = 1000 / run(`cfg.linesPerSecond`);
+run(`__feed(90, ${period})`);
+run(`__t += 1500; __feed(45, 0); __feed(900, ${period})`);
+delayAfterStall = run(`__delay()`) / period;
+run(`resetSpectrumPacing()`);
+run(`__n = 0; __feed(90, ${period}); __t += 2500; __feed(75, 0)`);
+run(`__t += 500; releaseDueSpectrum(__t)`);
+drawnMidRecovery = run(`lastLine`);
+run(`__feed(60, ${period})`);
+drawnAfterLongStall = run(`lastLine`);
+delayAfterLongStall = run(`__delay()`) / period;
+run(`resetSpectrumPacing()`);
+run(`__n = 0; __feed(6000, ${period * 0.999})`);
+delayAfterDrift = run(`__delay()`) / period;
+// Held tags in a window that is never sent a spectrum line (lastLine stays -1).
+run(`resetSpectrumPacing()`);
+run(`for (let i = 0; i < 1000; i++) { holdFrameTag({line: 5 + i}); holdCapture({atLine: 5, secondsAgo: 0}); }`);
+heldFrameCount = run(`heldFrames.length`);
+heldCaptureCount = run(`heldCaptures.length`);
+run(`resetSpectrumPacing()`);
+}
+
 process.stdout.write(JSON.stringify({
   mixerOnArrival,
   mixerAfterGain,
@@ -951,6 +1007,12 @@ process.stdout.write(JSON.stringify({
   identTag,
   heardTag,
   txTag,
+  lumpDrawnOnArrival,
+  lumpTagOnArrival,
+  lumpDrawnLater,
+  lumpTagLater,
+  delayAfterStall, drawnMidRecovery, drawnAfterLongStall, delayAfterLongStall, delayAfterDrift,
+  heldFrameCount, heldCaptureCount,
   frameRows: rows,
   frameRowClasses: rowClasses,
   captureTag,
