@@ -55,34 +55,26 @@ jobs:
         with:
           fetch-depth: 0 # the release notes are written from first-parent history between tags
 
-      # The xUnit v3 / MTP test apphosts (OutputType=Exe) resolve the runtime via
-      # DOTNET_ROOT; the runner's distro dotnet lives outside the apphost's default
-      # search paths, so register it explicitly or every test invocation dies with
-      # "You must install .NET". Same fix as ci.yml.
-      - name: Register .NET root for MTP apphosts
-        run: echo "DOTNET_ROOT=$(dirname "$(readlink -f "$(which dotnet)")")" >> "$GITHUB_ENV"
-
-      # Not every self-hosted runner has Node, and the npm package is built in this job, so
-      # bring our own rather than fail preflight on whichever runner picks the job up.
+      # Self-hosted runners: put the SDK under the runner account's home, which it can always write,
+      # never in the system install (which it cannot). Workloads install there too, without root.
+      - name: Choose where setup-dotnet installs
+        if: runner.environment == 'self-hosted'
+        run: echo "DOTNET_INSTALL_DIR=$HOME/.dotnet" >> "$GITHUB_ENV"
+      # Install the SDK in the job instead of trusting the runner's: every build then bundles the
+      # current runtime whichever runner picked it up. It also sets DOTNET_ROOT, which the xUnit v3
+      # / MTP test apphosts need to find the runtime.
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: Directory.Packages.props
+      - name: Check the tools this job needs
+        run: scripts/ci-require-tools.sh dpkg-deb:dpkg readelf:binutils iconv:libc-bin gzip tar python3 gh sha256sum:coreutils
+      # Node for the npm package's type declarations and pack. setup-node works on any glibc Linux
+      # runner, so bring our own rather than trust whichever one picked the job up.
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
-
-      - name: Preflight
-        run: |
-          # dpkg-deb ships in the Essential `dpkg` package, so this only trips if the
-          # runner is not Debian-family - in which case it cannot build .debs at all.
-          command -v dpkg-deb >/dev/null || {
-            echo "::error::dpkg-deb is missing - this job needs a Debian-family runner"
-            exit 1
-          }
-          command -v gh >/dev/null || { echo "::error::gh CLI is missing on this runner"; exit 1; }
-          # The npm package is built here too, which needs Node for the type declarations
-          # and the pack. Fail in preflight rather than 20 minutes in.
-          command -v npm >/dev/null || {
-            echo "::error::npm is missing - this job builds @packet-net/soundmodem"
-            exit 1
-          }
 
       - name: Resolve version
         id: version
@@ -169,7 +161,7 @@ jobs:
       # The browser modem. AOT is the shipped build: the download is 2.8 MB gzipped against
       # 1.4 MB for the interpreter, paid once and cached, and it buys roughly 3.5x the CPU
       # headroom on every station for ever - which matters most on the phones and the slow
-      # modes. The workload install is a no-op once the runner has it.
+      # modes. The workload goes into the SDK setup-dotnet installed in this job.
       - name: Install the WebAssembly workload
         run: dotnet workload install wasm-tools
 
