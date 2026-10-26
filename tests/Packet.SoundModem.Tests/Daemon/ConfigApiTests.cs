@@ -271,7 +271,7 @@ public class ConfigApiTests : IDisposable
             """;
 
         ConfigApi.Validate(json, "/etc/pdn-soundmodem/soundmodem.json")
-            .Should().Contain("which is this configuration file");
+            .Should().Contain("the configuration file itself");
 
         // And it is still accepted for a station whose config file is somewhere else, so the
         // guard is about this file rather than about the name.

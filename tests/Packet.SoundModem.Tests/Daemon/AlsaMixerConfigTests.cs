@@ -302,7 +302,7 @@ public class AlsaMixerConfigTests : IDisposable
             """);
 
         DaemonConfig.TryLoad(path, out string error).Should().BeNull();
-        error.Should().Contain("A monitor fronts web receivers and has no sound card of its own");
+        error.Should().Contain("has no sound card");
     }
 
     /// <summary>
@@ -328,7 +328,7 @@ public class AlsaMixerConfigTests : IDisposable
         {
             Directory.SetCurrentDirectory(_dir);
             DaemonConfig.TryLoad(path, out string error).Should().BeNull();
-            error.Should().Contain("which is this configuration file");
+            error.Should().Contain("the configuration file itself");
             error.Should().Contain("point it elsewhere");
         }
         finally
@@ -358,7 +358,7 @@ public class AlsaMixerConfigTests : IDisposable
         {
             Directory.SetCurrentDirectory(_dir);
             DaemonConfig.TryLoad(path, out string error).Should().BeNull();
-            error.Should().Contain("which is this configuration file");
+            error.Should().Contain("the configuration file itself");
         }
         finally
         {

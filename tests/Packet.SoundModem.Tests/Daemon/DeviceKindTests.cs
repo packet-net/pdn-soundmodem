@@ -140,7 +140,7 @@ public class DeviceKindTests
 
         station.ReceiveOnlyReason.Should().Be(
             "this station receives only: its audio comes from the UberSDR instance at "
-            + "m9psy-1.instance.ubersdr.org, which is a receiver and has no transmitter.");
+            + "m9psy-1.instance.ubersdr.org.");
         station.PttRefusal.Should().StartWith("--device ubersdr: is a receive-only station");
     }
 
@@ -174,7 +174,7 @@ public class DeviceKindTests
 
         station.ReceiveOnlyReason.Should().Be(
             "this station receives only: its audio comes from the OpenWebRX receiver at "
-            + "sdr.example.org/owrx, which is a receiver and has no transmitter.");
+            + "sdr.example.org/owrx.");
         station.PttRefusal.Should().StartWith("--device openwebrx: is a receive-only station");
         station.Kind.PublishRefusal("openwebrx:https://sdr.example.org/owrx/").Should().Contain(
             "somebody else's public web receiver");

@@ -481,7 +481,7 @@ public class MixerApiTests : IDisposable
         body.GetProperty("warn").GetBoolean().Should().BeTrue();
         string note = body.GetProperty("note").GetString()!;
         note.Should().Contain("could not be written");
-        note.Should().Contain("the next start-up will not set it");
+        note.Should().Contain("will not survive a restart");
     }
 
     [Fact]

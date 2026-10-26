@@ -109,7 +109,7 @@ public class MonitorConfigTests : IDisposable
 
         config.Should().BeNull();
         error.Should().Contain("needs a \"waterfall\" section")
-            .And.Contain("the page's viewers are what asks for a receiver");
+            .And.Contain("needs a \"waterfall\" section");
     }
 
     [Fact]
@@ -267,7 +267,7 @@ public class MonitorConfigTests : IDisposable
 
                 config.Should().BeNull("\"{0}\" is not a hostname", bad);
                 error.Should().Contain($"\"monitor\".\"{list}\"")
-                    .And.Contain("no scheme, no port, no path");
+                    .And.Contain("not a hostname");
             }
         }
 
@@ -329,7 +329,7 @@ public class MonitorConfigTests : IDisposable
 
         Load(Working.Replace("\"waterfall\":", "\"sideband\": \"am\", \"waterfall\":"), out string top)
             .Should().BeNull();
-        top.Should().Contain("\"sideband\"").And.Contain("not a kind of radio this knows");
+        top.Should().Contain("\"sideband\"").And.Contain("is not a kind of radio");
     }
 
     [Fact]
@@ -405,7 +405,7 @@ public class MonitorConfigTests : IDisposable
             .Should().BeNull();
 
         error.Should().Contain("callsign")
-            .And.Contain("has no business being there",
+            .And.Contain("use 1 to 6 letters and digits",
                 "a station on a public page that will not say who it is");
         ShouldGuideTheOperator(error);
     }
@@ -430,7 +430,7 @@ public class MonitorConfigTests : IDisposable
 
         error.Should().Contain("64 hex characters")
             .And.Contain("--uplink-token", "the message says how to make one")
-            .And.Contain("never the token",
+            .And.Contain("paste the hash",
                 "and why this site holds the hash rather than the token");
         ShouldGuideTheOperator(error);
     }

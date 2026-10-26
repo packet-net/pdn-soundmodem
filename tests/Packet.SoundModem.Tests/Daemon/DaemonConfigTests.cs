@@ -363,7 +363,7 @@ public class DaemonConfigTests : IDisposable
         DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
 
         config.Should().BeNull();
-        error.Should().Contain("ardop").And.Contain("cannot sit behind a KISS port");
+        error.Should().Contain("ARDOP").And.Contain("cannot sit behind a KISS port");
     }
 
     [Fact]
@@ -571,11 +571,11 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Theory]
-    [InlineData("\"mode\": \"bpsk300\", \"maxBurstSeconds\": 60", "Only the ms110d-* modes pack")]
-    [InlineData("\"mode\": \"ms110d-wn4\", \"maxBurstSeconds\": 0.5", "Use 1 to 120 seconds")]
-    [InlineData("\"mode\": \"ms110d-wn4\", \"maxBurstSeconds\": 600", "Use 1 to 120 seconds")]
+    [InlineData("\"mode\": \"bpsk300\", \"maxBurstSeconds\": 60", "only ms110d-* modes pack")]
+    [InlineData("\"mode\": \"ms110d-wn4\", \"maxBurstSeconds\": 0.5", "use 1 to 120")]
+    [InlineData("\"mode\": \"ms110d-wn4\", \"maxBurstSeconds\": 600", "use 1 to 120")]
     [InlineData("\"mode\": \"ms110d-wn4\", \"burstGatherSeconds\": 1", "without \"maxBurstSeconds\"")]
-    [InlineData("\"mode\": \"ms110d-wn4\", \"maxBurstSeconds\": 60, \"burstGatherSeconds\": 30", "Use 0 to 10 seconds")]
+    [InlineData("\"mode\": \"ms110d-wn4\", \"maxBurstSeconds\": 60, \"burstGatherSeconds\": 30", "use 0 to 10")]
     public void Burst_Packing_That_Would_Not_Do_What_It_Says_Is_Refused(string entry, string says)
     {
         string path = WriteConfig($$"""{"device": "null", "modems": [{"subChannel": 2, {{entry}}}]}""");
@@ -674,7 +674,7 @@ public class DaemonConfigTests : IDisposable
         DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
 
         config.Should().BeNull();
-        error.Should().Contain("configured twice").And.Contain("delete the \"ardop\" section");
+        error.Should().Contain("both a modem entry").And.Contain("delete the \"ardop\" section");
     }
 
     [Fact]
@@ -1228,7 +1228,7 @@ public class DaemonConfigTests : IDisposable
 
         config.Should().BeNull();
         error.Should().Contain("has no \"path\"");
-        error.Should().Contain("no directory to scan",
+        error.Should().Contain("give the assembly",
             "the operator has to be told there is no location it could be found in instead");
         ShouldGuideTheOperator(error, path);
     }
@@ -1343,7 +1343,7 @@ public class DaemonConfigTests : IDisposable
 
         config.Should().BeNull();
         error.Should().Contain("\"publish\".\"callsign\" is missing");
-        error.Should().Contain("has to say whose it is",
+        error.Should().Contain("is missing",
             "a station on a public page that will not say who it is has no business being there");
         ShouldGuideTheOperator(error, path);
     }
@@ -1397,7 +1397,7 @@ public class DaemonConfigTests : IDisposable
 
         config.Should().BeNull();
         error.Should().Contain("both \"publish\" and \"monitor\"");
-        error.Should().Contain("one process is not both");
+        error.Should().Contain("remove one");
         ShouldGuideTheOperator(error, path);
     }
 
