@@ -2782,7 +2782,7 @@ let skippedThrough = -1;
 // (or a source clock a touch fast) is caught up within seconds rather than kept for the whole
 // session. The queue is also bounded: past the cap the oldest lines are dropped and the rest are
 // re-timed from now, so the due times can never all sit in the future and freeze the picture.
-const CATCH_UP_SPACING = 0.8;
+const CATCH_UP_SPACING = 0.95;
 const HELD_MARKS_MAX = 200;
 
 function enqueueSpectrum(data, at) {
