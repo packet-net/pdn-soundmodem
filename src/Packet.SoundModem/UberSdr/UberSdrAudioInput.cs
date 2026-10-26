@@ -548,8 +548,8 @@ public sealed class UberSdrAudioInput : IUberSdrSession
     /// <param name="dailyTimeUsedSecs">Seconds of listening this address has used today.</param>
     internal static UberSdrLine RefusedAtStartupLine(
         UberSdrEndpoint endpoint, string reason, int dailyTimeUsedSecs) =>
-        new($"{endpoint} is refusing us for now ({reason}, {dailyTimeUsedSecs} s used today); "
-            + "will retry.", BeforeAWait: false);
+        new($"{endpoint} is refusing us for now ({reason}, {dailyTimeUsedSecs} s used today). "
+            + "The stream will be retried.", BeforeAWait: false);
 
     /// <summary>Nothing drained the ring in time and audio was lost.</summary>
     /// <param name="dropped">Samples lost since the stream started.</param>

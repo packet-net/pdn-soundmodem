@@ -87,11 +87,9 @@ public class StartUpRefusalTests
         string source = Program();
 
         source.Should().Contain(
-            "Every modem would land mirrored about the dial",
-            "the sideband-against-sideband sentence is unchanged, word for word");
-        source.Should().Contain(
-            "One of those is a channel radio and the other is not",
-            "and FM against a sideband gets its own");
+            "contradicts the Flex slice mode",
+            "one short line names the setting, the slice mode and the fix");
+        source.Should().Contain("drop \\\"sideband\\\"");
     }
 
     [Fact]

@@ -109,7 +109,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 ```
 
 - Each key overrides `device` for one direction: `captureDevice` for receive, `playbackDevice` for transmit. Leave both out and `device` does both, as before.
-- Sound cards only. Refused, exit 2: either key naming a `pipe:`, `flex:`, `ubersdr:` or `openwebrx:` device (`"captureDevice" is "X", which is not a sound card`); either key when `device` itself is not a sound card (`"captureDevice" is set but "device" is "X", which is not a sound card`); either key beside `monitor`; an empty value.
+- Sound cards only. Refused, exit 2: either key naming a `pipe:`, `flex:`, `ubersdr:` or `openwebrx:` device (`"captureDevice" is "X", not a sound card`); either key when `device` itself is not a sound card (`"captureDevice" is set but "device" is "X", which is not a sound card`); either key beside `monitor`; an empty value.
 - Both directions run at `captureRate`.
 - The start-up line names both: `audio: capture <capture device> 48000 Hz -> 12000 Hz, playback <playback device>`.
 - When the two are on different cards, the capture gain, AGC and mic boost are set on the receive card's mixer and `playbackDb` on the transmit card's; see [`alsa`](#alsa).
@@ -174,8 +174,8 @@ Rules and refusals:
 - Two entries with the same `subChannel`: `two modems share "subChannel": N. Each modem needs its own KISS sub-channel (0-15) - renumber one of them.`
 - A `mode` that is not a catalogue mode, `ardop` or a loaded plugin's mode: `modem N: unknown mode 'X'`, followed by `did you mean: ...` for a near miss and a link to the mode list. For a `pluginId:mode` name the second line says whether the plugin is loaded and what it provides.
 - `frequency` and `rfFrequency` on one entry, on USB or LSB: `modem N sets both "frequency" (F) and "rfFrequency" (R). Those say the same thing two ways ... Keep one.` On FM both are allowed; `rfFrequency` is the channel and `frequency` is where the tones sit in its audio.
-- `rfFrequency` on some entries and not others: `some modems have "rfFrequency" and some do not (...). Give every modem an "rfFrequency" or none of them`.
-- Two entries with `"mode": "ardop"`: `two modems have "mode": "ardop". One ARDOP TNC per channel`.
+- `rfFrequency` on some entries and not others: `some modems have "rfFrequency" and some do not (...): give every modem one, or none`.
+- Two entries with `"mode": "ardop"`: `two modems have "mode": "ardop": only one ARDOP TNC per channel; remove one`.
 - An `ardop` entry beside a top-level `ardop` section: `ARDOP is configured twice - once as a modem entry and once in the top-level "ardop" section. Keep the modem entry ... and delete the "ardop" section.`
 - A plugin mode whose declared rate is neither 12000 nor 48000 is refused with a sentence naming that mode and the two rates a channel runs at; one that differs from the rate the other modems settle the channel at is refused with a sentence naming it and the built-in mode that fixed the rate. Built-in modes share a channel at either rate.
 - An `ardop` entry whose `bandwidth` is not one of the four widths ARDOP negotiates: `modem N is "mode": "ardop" with "bandwidth": B. ARDOP negotiates 200, 500, 1000 or 2000 Hz and nothing else - use one of those, or remove "bandwidth" to plan for the widest (2000) as before.` The value that is accepted becomes the TNC's ARQBW at start-up, reported on the `ardop host tcp:` line; an entry with no `bandwidth` keeps ARDOP's own default of `2000MAX`.
@@ -352,7 +352,7 @@ A test asked for through `POST /api/txtest` can follow its tone with a channel-s
 - A level pinned here is applied at every start-up and wins over the state file; the state file fills in only for a control this section says nothing about. AGC and mic boost are switched off at every start-up on any card that has them.
 - The default state file is `$STATE_DIRECTORY/mixer-state.json`, which is `/var/lib/pdn-soundmodem/mixer-state.json` under the shipped unit, else a file beside the config file.
 - Removed keys are warned about by name. `captureGainPercent` and `playbackPercent`: `alsa mixer: <key> is no longer read; use <captureGainDb or playbackDb>, the card's range is shown by --mixer-show`. `agc` and `micBoost`: `alsa mixer: <key> is no longer a setting: AGC and mic boost are switched off at every start-up on any card that has them ...`, with a second sentence saying to remove the key.
-- Refused: `alsa.mixer` beside `monitor` (`A monitor fronts web receivers and has no sound card of its own`); `alsa.mixer` with a `device` that is not a sound card (`"alsa"."mixer" is set but "device" is "X", which is not a sound card`); a `stateFile` that names the configuration file itself (`which is this configuration file. That file is never written by this daemon and a mixer change would overwrite it`).
+- Refused: `alsa.mixer` beside `monitor` (`a monitor has no sound card`); `alsa.mixer` with a `device` that is not a sound card (`"alsa"."mixer" is set but "device" is "X", which is not a sound card`); a `stateFile` that names the configuration file itself (`the configuration file itself`; the daemon never writes that file, so a mixer change would overwrite your configuration).
 - A card with no mixer is not a failure: `alsa: mixer: <card> has no mixer (<why>); levels left as the card has them (so no AGC or mic boost is switched off)`.
 - With [`captureDevice` or `playbackDevice`](#two-cards-capturedevice-and-playbackdevice) on two different cards, and no `card`, each card's mixer is found from its own device. `captureGainDb`, AGC and mic boost go to the receive card, `playbackDb` to the transmit card. The journal lists each card as `<card> (receive) has ...` and `<card> (transmit) has ...`. A card with no mixer costs only its own side: `alsa: mixer: <card> (transmit) has no mixer (<why>); transmit level left as the card has it`. The state file is stamped with both devices, so one written for a single card is not applied to the pair.
 
@@ -406,7 +406,7 @@ A test asked for through `POST /api/txtest` can follow its tone with a channel-s
 | `arbitration` | bool | `false` | Key through the arbitrated PTT: wait for the radio to be quiet, re-assert the filter and slice, believe only a confirmed keyup. |
 
 - The `--flex-freq`, `--flex-ant`, `--flex-mode` and `--flex-daxch` flags override `frequency`, `antenna`, `mode` and `daxChannel`.
-- Refused: `transmitFilterHighHz` outside 500 to 10000 and not 0 (`"flex"."transmitFilterHighHz" is N. That is an audio cut-off in Hz ... use 500-10000, 0 to leave the radio's own filter alone, or remove it`); `txPowerWatts` below 0 or above 100 (`"flex"."txPowerWatts" is N W, outside the 0-100 W a 6000-series PA can produce`); a stated top-level `sideband` that contradicts what `mode` implies (`"sideband": "usb" contradicts the Flex slice mode DIGL, which is LSB ... Drop "sideband"`). A defaulted `sideband` is corrected to the slice mode's without a word.
+- Refused: `transmitFilterHighHz` outside 500 to 10000 and not 0 (`"flex"."transmitFilterHighHz" is N: use 500-10000, 0 to leave the radio's filter alone, or remove it`; it is an audio cut-off in Hz, 3000 being a radio's usual default and 3400 clearing ms110d); `txPowerWatts` below 0 or above 100 (`"flex"."txPowerWatts" is N W, outside the 0-100 W a 6000-series PA can produce`); a stated top-level `sideband` that contradicts what `mode` implies (`"sideband": "usb" contradicts the Flex slice mode DIGL (LSB); drop "sideband"`). A defaulted `sideband` is corrected to the slice mode's without a word.
 - With a band plan, a stated `frequency` is superseded and warned about: `flex: WARNING - slice frequency F is overridden by the band plan (D)`. The modem sets the slice, the transmit filter high cut and the slice receive filter from the plan and says so.
 - A modem outside the radio's transmit or receive filter is a warning naming the modem, its edges and the filter; it is clipped or deaf, not refused.
 - `ptt` and `alsa.mixer` are refused with a `flex:` device.
@@ -465,7 +465,7 @@ The built-in pdn-mailcast receiver. Absent, there is none. Present, the station 
 | `type` | string | `"linBpq"` | `"linBpq"` for LinBPQ's mail on its Telnet port's `FBBPORT`, or `"fbb"` for Linux FBB. |
 | `host` | string | `"127.0.0.1"` | The BBS's address. |
 | `port` | int | `8011` | LinBPQ's `FBBPORT`, or FBB's telnet port. |
-| `login` | string | `"Q0CAST"` | The receiver's own login on the BBS, set up as a BBS forwarding partner; never your callsign or one of the `sources`. FBB is sent `.Q0CAST`, asking for a binary session. |
+| `login` | string | `"Q0CAST"` | The receiver's own login on the BBS (a `USER=` line in LinBPQ's Telnet port, on the port that is its `FBBPORT`), set up as a BBS forwarding partner; never your callsign or one of the `sources`. FBB is sent `.Q0CAST`, asking for a binary session. |
 | `password` | string | required | The login's password. Never logged, never served; `GET /api/config` reads it as `(set, not shown)`. |
 | `command` | string | `"BBS"` | LinBPQ only: the node command that reaches the mail application. |
 
@@ -691,7 +691,7 @@ There is no `bind` key here. The page listens on the top-level `bind`.
 | `about` | string | none | One paragraph for a visitor on a public page. |
 
 - The `--waterfall PORT` flag stands in for or overrides `port`; `--dial HZ` sets `dialFrequencyHz` and is refused without a page.
-- Refused: a `sideband` that is not `usb`, `lsb` or `fm` (`"waterfall"."sideband": "X" is not a kind of radio this knows`); a port already claimed (see [`kissPort` and `bind`](#kissport-and-bind)); a port that cannot be opened (`cannot serve the waterfall on ADDR:PORT ... Set by "waterfall"."port" and the top-level "bind"`); an `fftSize` or `linesPerSecond` the spectrum source will not take (`invalid waterfall settings ... Set by "waterfall"."fftSize" and "waterfall"."linesPerSecond"`).
+- Refused: a `sideband` that is not `usb`, `lsb` or `fm` (`"waterfall"."sideband": "X" is not a kind of radio`); a port already claimed (see [`kissPort` and `bind`](#kissport-and-bind)); a port that cannot be opened (`cannot serve the waterfall on ADDR:PORT ... Check "waterfall"."port" and "bind"`); an `fftSize` or `linesPerSecond` the spectrum source will not take (`invalid waterfall settings ... Check "waterfall"."fftSize" and "linesPerSecond"`; the FFT size must be a power of two no shorter than one line's hop, which is the DSP rate divided by `linesPerSecond`, and `linesPerSecond` must divide the DSP rate).
 - `enableAudioControls` with `public` is ignored and said so: `waterfall: "enableAudioControls" is ignored on a "public" page`. A public page never carries the Mixer group; use `api/mixer` with `"api"."key"` if a script has to reach the card.
 - A `bind` beyond loopback prints a `waterfall: WARNING - listening beyond loopback` line naming the transmitter test on an operator's page and, when open, the mixer; the text is under [Every listener](ports-and-endpoints.md#every-listener).
 - The mixer group and its level meter appear only on an operator's page of a sound-card station where `/api/mixer` answers, which needs `api.key` or `enableAudioControls`.
@@ -948,7 +948,7 @@ Rules and refusals:
 - A pinned `dialFrequency` that leaves a modem outside is a warning, not a refusal: `band plan: dialFrequency D USB puts these outside the nominal 300-2700 Hz:`.
 - A baseband mode (`fsk*`, `c4fsk*`) cannot take an `rfFrequency` on USB or LSB: `band plan: modem N (X) is a baseband mode ... cannot be placed with "rfFrequency"`. On FM it can; `c4fsk9600` on a channel is the ordinary case.
 - On FM, modems asking for different channels are refused: `on FM every modem is on the one channel the radio is set to, and these ask for A, B`. A `dialFrequency` that differs from the modems' `rfFrequency` is refused: `On FM those are the same thing said twice - the channel`.
-- A `sideband` that is not `usb`, `lsb` or `fm`, at the top level or under `waterfall`, is refused: `"sideband": "X" is not a kind of radio this knows. Use "usb", "lsb" or "fm"`.
+- A `sideband` that is not `usb`, `lsb` or `fm`, at the top level or under `waterfall`, is refused: `"sideband": "X" is not a kind of radio. Use "usb", "lsb" or "fm"`.
 - On a headless Flex the slice `mode` states the sideband (`DIGU` and `USB` mean `usb`, `DIGL` and `LSB` mean `lsb`, `FM` and `NFM` mean `fm`); see [`flex`](#flex).
 - With no `rfFrequency` anywhere there is no plan: modems sit at their `frequency`, the page's dial comes from `waterfall.dialFrequencyHz` or `dialFrequency`, and a web receiver needs `dialFrequency` to tune at all.
 - The plan is printed at start-up as one line, `band plan: dial <MHz> USB, <mode> at <Hz> Hz audio, ...` (or `band plan: channel <MHz> FM`). Refusals and warnings from the plan are prefixed `band plan:`.

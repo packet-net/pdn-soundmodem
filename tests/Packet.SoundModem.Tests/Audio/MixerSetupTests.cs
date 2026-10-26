@@ -568,7 +568,7 @@ public class MixerSetupTests
             .And.Contain("snd_mixer_selem_set_capture_dB_all",
                 "a genuine fault has to stay visible rather than be swallowed");
         journal.Should().ContainSingle(line => line.Contains(
-            "the capture gain and the transmit level are left as the card has them",
+            "levels left as the card has them",
             StringComparison.Ordinal));
     }
 

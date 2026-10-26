@@ -285,9 +285,7 @@ public static class MixerSetup
         {
             why = $"{e.GetType().Name}: {e.Message}";
             journal?.Invoke(
-                $"{JournalPrefix}could not be read or set ({why}); the capture gain and the "
-                + "transmit level are left as the card has them, and AGC and mic boost could not "
-                + "be switched off");
+                $"{JournalPrefix}could not be read or set ({why}); levels left as the card has them");
             return null;
         }
     }

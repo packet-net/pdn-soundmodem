@@ -53,9 +53,8 @@ internal sealed class SdrConnectStationDevice(
 
     /// <inheritdoc/>
     public override string? NoReceiveDialRefusal =>
-        $"SDRconnect at {endpoint} has to be told where to listen. Give every modem an "
-        + "\"rfFrequency\" and the dial is worked out from them, or set \"dialFrequency\" to pin it - "
-        + "unlike a radio there is no dial already set to read off.";
+        $"SDRconnect at {endpoint} needs a dial: give the modems \"rfFrequency\", "
+        + "or set \"dialFrequency\".";
 
     /// <inheritdoc/>
     public override string? ReceiveOnlyReason =>

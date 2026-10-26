@@ -178,8 +178,8 @@ public sealed class UberSdrAudioInputTests
 
         UberSdrAudioInput.RefusedAtStartupLine(Endpoint, "quota spent", 86400).Should().Be(
             new UberSdrLine(
-                "rx.example.org is refusing us for now (quota spent, 86400 s used today); "
-                + "will retry.",
+                "rx.example.org is refusing us for now (quota spent, 86400 s used today). "
+                + "The stream will be retried.",
                 BeforeAWait: false));
 
         UberSdrAudioInput.BufferFilledLine(24000, 12000).Should().Be(

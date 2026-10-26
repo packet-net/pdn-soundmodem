@@ -581,7 +581,7 @@ internal sealed class MonitorHost : IAsyncDisposable
                 // answer for the same reason. Nothing in this flavour can, but the channel is the
                 // same class the transmitting one uses and this is where it is told.
                 ReceiveOnlyReason =
-                    $"this station receives only: audio comes from the UberSDR at {receiver.Endpoint}",
+                    $"this station receives only: audio comes from the UberSDR at {receiver.Endpoint}.",
             };
 
             // The modems, from the one loop both flavours use.

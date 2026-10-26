@@ -481,17 +481,9 @@ if (DeviceKinds.Of(device).OwnsTheRadio(device))
         bool statedExplicitly = sidebandWasStated;
         if (statedExplicitly && !string.Equals(sideband, impliedSideband, StringComparison.OrdinalIgnoreCase))
         {
-            // What the disagreement would cost, which is not the same thing when one of the two
-            // is FM: that is not a mirrored plan but a plan for a different kind of radio.
-            string consequence =
-                RfPlan.IsFmRadio(sideband) || RfPlan.IsFmRadio(impliedSideband)
-                    ? "One of those is a channel radio and the other is not, so the modems would "
-                      + "be placed for a radio this is not"
-                    : "Every modem would land mirrored about the dial";
             Console.Error.WriteLine(
-                $"\"sideband\": \"{sideband}\" contradicts the Flex slice mode {flexTuning.Mode}, "
-                + $"which is {impliedSideband.ToUpperInvariant()}. {consequence}. "
-                + "Drop \"sideband\" - the slice mode already says which it is.");
+                $"\"sideband\": \"{sideband}\" contradicts the Flex slice mode {flexTuning.Mode} "
+                + $"({impliedSideband.ToUpperInvariant()}); drop \"sideband\"");
             return 2;
         }
 
@@ -1399,10 +1391,8 @@ if (benchTxTest is null && waterfallConfig is not null)
                 ? "anyone who can reach this port can watch this station"
                 : "anyone who can reach this port can key your transmitter")
             + (openAudioControls
-                ? " \"enableAudioControls\" is on, so it also carries this sound card's mixer "
-                  + "with no key: anything that can reach this port can change your capture gain "
-                  + "and the level your transmitter is driven at."
-                : ""));
+                ? ". \"enableAudioControls\" is on: the mixer has no key either."
+                : "."));
     }
 }
 

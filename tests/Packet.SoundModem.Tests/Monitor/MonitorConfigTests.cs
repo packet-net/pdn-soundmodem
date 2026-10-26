@@ -311,7 +311,7 @@ public class MonitorConfigTests : IDisposable
 
         exit.Should().Be(2, "a site that cannot serve this radio must not start pretending to");
         said.Should().Contain(line => line.Contains("cannot be served by a monitor", StringComparison.Ordinal));
-        said.Should().Contain(line => line.Contains("SSB receiver", StringComparison.Ordinal));
+        said.Should().Contain(line => line.Contains("web receivers are SSB", StringComparison.Ordinal));
         said.Should().NotContain(
             line => line.Contains("monitor: iq48", StringComparison.Ordinal),
             "it has to stop before it tunes anything");

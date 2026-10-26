@@ -124,15 +124,15 @@ Grouped by what causes them:
 | Two modems on one sub-channel | `two modems share "subChannel": 0` | Renumber one. See [`modems`](reference/config.md#modems). |
 | A mode name that does not exist | `unknown mode 'fsk9600il2p'` with a `did you mean:` list | A hyphen is easy to lose among 38 names. See [Modes](05-modes.md). |
 | A mode option that mode does not have | `mode 'X' ... has no centre frequency to move`, `mode 'X' does not run IL2P+CRC` | Drop the key. See [`modems`](reference/config.md#modems). |
-| Band placement | `"sideband": "am" is not a kind of radio this knows`, `on FM every modem is on the one channel the radio is set to`, `band plan: no dial frequency places every modem inside the 300-2700 Hz passband` | See [band placement](reference/config.md#band-placement-sideband-dialfrequency-and-rffrequency) and [HF](08-hf.md). |
+| Band placement | `"sideband": "am" is not a kind of radio`, `on FM every modem is on the one channel the radio is set to`, `band plan: no dial frequency places every modem inside the 300-2700 Hz passband` | See [band placement](reference/config.md#band-placement-sideband-dialfrequency-and-rffrequency) and [HF](08-hf.md). |
 | Keying a radio that keys itself | `--device flex: keys the radio itself; remove the conflicting --ptt`, `--device ubersdr: is a receive-only station` | Delete the [`ptt`](reference/config.md#ptt) section. |
 | A keying method that does not exist | `unknown ptt type 'X'` | `serial` or `cm108`, or no section at all for VOX. |
-| A mixer on something that is not a sound card | `... which is not a sound card ... Remove the "alsa" section` | See [`alsa`](reference/config.md#alsa). |
+| A mixer on something that is not a sound card | `... not a sound card: remove "alsa", or point "device" at the card` | See [`alsa`](reference/config.md#alsa). |
 | A capture rate the modems cannot use | `--capture-rate must be a multiple of 12000` | 48000 suits everything. |
 | Two services on one TCP port | `the waterfall and "kissPort" both want TCP port 8105. Give them different ports.` | See [every listener](reference/ports-and-endpoints.md#every-listener). |
 | A section that needs the station page | `"api" is served on the waterfall's HTTP listener, and this station has no "waterfall" section`; `"publish" needs a "waterfall" section`; `"monitor" needs a "waterfall" section` | Add a [`waterfall`](reference/config.md#waterfall) section, or remove the other one. |
 | Both a station and a monitor site | `this file sets both "device" ... and "monitor"`, `this file sets both "publish" and "monitor"` | One process is one of them. See [the public monitor](10-public-monitor.md). |
-| An uplink credential | `which is not an absolute ws or wss URL`, `use the credential the site issued` | See [the public monitor](10-public-monitor.md). |
+| An uplink credential | `not an absolute ws or wss URL`, `use the credential the site issued` | See [the public monitor](10-public-monitor.md). |
 
 An unknown mode looks like this, and the suggestion is usually right:
 
@@ -149,8 +149,7 @@ If the page's port is taken, the message names it and the station exits 2:
 ```
 cannot serve the waterfall on 127.0.0.1:8107
   Address already in use
-  Set by "waterfall"."port" and the top-level "bind". Another process may
-  already hold the port; "*" or "0.0.0.0" serves every interface.
+  Check "waterfall"."port" and "bind"; another process may hold the port.
 ```
 
 A KISS port that is taken is less tidy: the station aborts with `Unhandled exception. System.Net.Sockets.SocketException (98): Address already in use` and a stack trace, and systemd retries it every five seconds. `ss -ltnp | grep 8105` finds the holder. The usual holder is another instance of the modem.

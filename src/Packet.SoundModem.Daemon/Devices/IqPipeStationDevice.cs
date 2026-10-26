@@ -69,9 +69,8 @@ internal sealed class IqPipeStationDevice : StationDevice
 
     /// <inheritdoc/>
     public override string? NoReceiveDialRefusal =>
-        $"\"device\": \"{Spec}\" hands this station a band of IQ, and the station has to be told "
-        + "where in it to listen. Give every modem an \"rfFrequency\" and the dial is worked out "
-        + "from them, or set \"dialFrequency\" to pin it.";
+        $"\"device\": \"{Spec}\" needs a dial: give the modems \"rfFrequency\", "
+        + "or set \"dialFrequency\".";
 
     /// <inheritdoc/>
     public override string? ReceiveOnlyReason =>

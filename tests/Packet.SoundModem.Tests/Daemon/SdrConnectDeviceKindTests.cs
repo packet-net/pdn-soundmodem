@@ -29,7 +29,7 @@ public class SdrConnectDeviceKindTests
         station.ClosesItsOwnStreams.Should().BeFalse();
         station.ReceiveOnlyReason.Should().Contain("SDRconnect");
         station.PttRefusal.Should().StartWith("--device sdrconnect: is a receive-only station");
-        station.NoReceiveDialRefusal.Should().Contain("has to be told where to listen");
+        station.NoReceiveDialRefusal.Should().Contain("needs a dial");
         station.Kind.TransmitTestRefusal.Should().StartWith("tx test: refused");
         station.Kind.RigRefusal(device).Should().Contain("remove \"rig\"");
         station.Kind.PublishRefusal(device).Should().BeNull("SDRconnect is the operator's own receiver");

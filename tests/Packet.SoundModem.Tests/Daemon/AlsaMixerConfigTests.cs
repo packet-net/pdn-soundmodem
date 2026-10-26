@@ -103,8 +103,8 @@ public class AlsaMixerConfigTests : IDisposable
 
         error.Should().BeEmpty("a stale key is a warning, not a station off the air");
         config!.Warnings.Should().ContainSingle(w => w.Contains(
-            $"{gone} is no longer a setting: AGC and mic boost are switched off at every "
-            + "start-up on any card that has them", StringComparison.Ordinal));
+            $"{gone} is no longer a setting: AGC and mic boost are always switched off at "
+            + "start-up", StringComparison.Ordinal));
 
         // And the generic line as well, so a reader scanning for "IGNORED" still finds it.
         config.Warnings.Should().ContainSingle(w =>
@@ -134,10 +134,9 @@ public class AlsaMixerConfigTests : IDisposable
 
         error.Should().BeEmpty();
         config!.Warnings.Should().ContainSingle(w =>
-            w.Contains("This station switches it off whatever the key says", StringComparison.Ordinal)
-            && w.Contains("asking for the opposite of what happens", StringComparison.Ordinal));
+            w.Contains("asks for the opposite of what happens", StringComparison.Ordinal));
         config.Warnings.Should().NotContain(w =>
-            w.Contains("the card ends up the way it asked for", StringComparison.Ordinal));
+            w.EndsWith("Remove it.", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -148,7 +147,7 @@ public class AlsaMixerConfigTests : IDisposable
             """);
 
         DaemonConfig.TryLoad(path, out _)!.Warnings.Should().ContainSingle(w =>
-            w.Contains("the card ends up the way it asked for either way", StringComparison.Ordinal));
+            w.EndsWith("Remove it.", StringComparison.Ordinal));
     }
 
     /// <summary>

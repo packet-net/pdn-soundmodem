@@ -693,13 +693,11 @@ public sealed class AlsaMixerConfig
     /// <param name="asked">What it was set to, or null when that cannot be read.</param>
     public static string? WhyForcedOff(string key, bool? asked = null) =>
         ForcedOffKeys.Contains(key ?? "")
-            ? $"{key} is no longer a setting: AGC and mic boost are switched off at every "
-                + "start-up on any card that has them, because automatic gain fights the modem's "
-                + "own level tracking and a boost left on puts the receive path into clipping. "
+            ? $"{key} is no longer a setting: AGC and mic boost are always switched off at "
+                + "start-up. "
                 + (asked == true
-                    ? "This station switches it off whatever the key says, so remove it: as "
-                        + "written it is asking for the opposite of what happens."
-                    : "Remove the key; the card ends up the way it asked for either way.")
+                    ? "Remove it; as written it asks for the opposite of what happens."
+                    : "Remove it.")
             : null;
 
     /// <summary>An override list if there is a usable one, else the built-in fallbacks.</summary>
@@ -2188,8 +2186,8 @@ public sealed class DaemonConfig
             if (config.Monitor is not null)
             {
                 throw new InvalidDataException(
-                    $"this file sets both \"{key}\" and \"monitor\". A monitor fronts web "
-                    + $"receivers and has no sound card of its own - remove \"{key}\".");
+                    $"this file sets both \"{key}\" and \"monitor\"; a monitor has no sound card, "
+                    + $"remove \"{key}\".");
             }
 
             if (string.IsNullOrWhiteSpace(value))
