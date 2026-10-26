@@ -1,0 +1,11 @@
+{
+  "label": "unknown-signal-b",
+  "from": "2026-10-26T14:45:30Z",
+  "to": "2026-10-26T14:55:30Z",
+  "requestedAt": "2026-10-26T14:45:59Z",
+  "sampleRate": 8000,
+  "seconds": 600,
+  "heldSeconds": 600,
+  "busySeconds": 131,
+  "note": null
+}
