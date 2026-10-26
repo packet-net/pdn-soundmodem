@@ -73,7 +73,11 @@ internal static class BandPlanner
                 // ARDOP is shifted to wherever it is put, so it moves like a variable-centre mode.
                 FixedCentreHz: DaemonConfig.IsArdop(m.Mode) || ModemCatalog.AcceptsCentreFrequency(m.Mode)
                     ? null
-                    : ModemCatalog.DefaultCentreFrequencyFor(m.Mode)))
+                    : ModemCatalog.DefaultCentreFrequencyFor(m.Mode),
+                // The modem's own limit, asked of the catalogue (which asks the wrapper that
+                // enforces it) rather than copied here.
+                MinCentreHz: CentreRangeOf(m, dspRate)?.MinHz,
+                MaxCentreHz: CentreRangeOf(m, dspRate)?.MaxHz))
             .ToList();
 
         RfPlan.Result plan = RfPlan.Solve(
@@ -90,6 +94,23 @@ internal static class BandPlanner
         }
 
         return plan;
+    }
+
+    private static (double MinHz, double MaxHz)? CentreRangeOf(ModemConfig modem, int dspRate)
+    {
+        if (DaemonConfig.IsArdop(modem.Mode))
+        {
+            return null;
+        }
+
+        try
+        {
+            return ModemCatalog.AudioCentreRange(modem.Mode, dspRate);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -167,47 +188,12 @@ internal static class BandPlanner
     {
         if (plan.IsFm)
         {
-            // Said as a channel, because that is what an operator sets on an FM radio, and with
-            // no "= N Hz audio" arithmetic beside each modem: there is none to do, and printing
-            // one would be the very claim this whole path exists to stop making.
-            output.WriteLine(
-                $"channel: {RfPlan.Mhz(plan.DialHz)} FM"
-                + (radioIsSelfTuning ? "" : " - set your radio to this"));
-            foreach (PlannedModem m in plan.Modems)
-            {
-                output.WriteLine(
-                    $"  modem {m.Slot.SubChannel} {m.Slot.Mode} on the channel"
-                    + (m.AudioCentreHz > 0 ? $", {m.AudioCentreHz:F0} Hz audio" : ""));
-            }
-
-            output.WriteLine(
-                "  on FM the audio is audio: a tone is not an offset from the channel, so no "
-                + "modem here is placed by RF");
+            output.WriteLine($"band plan: channel {RfPlan.Mhz(plan.DialHz)} FM");
             return;
         }
 
         output.WriteLine(
-            $"dial: {RfPlan.Mhz(plan.DialHz)} {plan.Sideband.ToUpperInvariant()}"
-            + (radioIsSelfTuning ? "" : " - set your radio to this"));
-        foreach (PlannedModem m in plan.Modems)
-        {
-            output.WriteLine(
-                $"  modem {m.Slot.SubChannel} {m.Slot.Mode} at {RfPlan.Mhz(m.Slot.RfCentreHz)} "
-                + $"= {m.AudioCentreHz:F0} Hz audio");
-        }
-
-        // Only worth saying when it is not the ordinary SSB window: a plan that needed more room
-        // than a rig usually passes is one whose radio has to be opened up to match, and the
-        // operator should see that stated rather than infer it from a filter line further down.
-        if (!plan.Window.IsNominal)
-        {
-            output.WriteLine(
-                $"  passband: {RfPlan.AudioRange(plan.Window.LowHz, plan.Window.HighHz)} - wider than an "
-                + $"ordinary {Passband.Nominal.LowHz:F0}-{Passband.Nominal.HighHz:F0} Hz SSB "
-                + "window, because these modems do not fit one; "
-                + (radioIsSelfTuning
-                    ? "the radio is asked for a passband this wide"
-                    : "set your radio's filters to pass it"));
-        }
+            $"band plan: dial {RfPlan.Mhz(plan.DialHz)} {plan.Sideband.ToUpperInvariant()}, "
+            + string.Join(", ", plan.Modems.Select(m => $"{m.Slot.Mode} at {m.AudioCentreHz:F0} Hz audio")));
     }
 }

@@ -91,7 +91,7 @@ internal static class MonitorStartup
         BandPlanner.Report(plan, Console.Out, radioIsSelfTuning: true);
         foreach (string warning in plan.Warnings)
         {
-            journal.WriteError($"band plan: WARNING - {warning}");
+            journal.WriteError($"band plan: {warning}");
         }
 
         // What a receiver has to cover to be worth listing: the whole span the modems occupy,

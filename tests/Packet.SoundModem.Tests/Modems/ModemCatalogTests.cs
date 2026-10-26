@@ -120,15 +120,16 @@ public class ModemCatalogTests
     }
 
     [Theory]
-    // Down: ms110d's band reaches 170 Hz at its native 1800; another 200 down folds into DC.
-    [InlineData("ms110d-wn6", 1600)]
-    // Up: past the 24 kHz Nyquist guard at a 48 kHz channel rate.
-    [InlineData("ms110d-wn6", 23000)]
+    // ms110d tolerates its edges being cut, but not more than half of its band.
+    [InlineData("ms110d-wn6", 20)]
+    [InlineData("ms110d-wn6", 24500)]
+    // The other shifted families keep the guard against DC and Nyquist.
+    [InlineData("freedv-datac3", 100)]
     public void Create_Refuses_A_Centre_That_Folds_The_Band_Over(string mode, double centre)
     {
         Action act = () => ModemCatalog.Create(
             mode, ModemCatalog.DspRateFor(mode), Sink, new ModemOptions(CentreFrequencyHz: centre));
-        act.Should().Throw<ArgumentException>().WithMessage("*not clear of*");
+        act.Should().Throw<ArgumentException>().WithMessage("*would put*band at*");
     }
 
     [Theory]

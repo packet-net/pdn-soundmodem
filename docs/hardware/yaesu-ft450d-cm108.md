@@ -117,8 +117,7 @@ Then select the data mode on the front panel with the [MODE] buttons. **The rear
 `D DISP` is the one that will silently ruin a band plan. It offsets the *displayed* frequency during data mode by up to 3 kHz either way, and pdn-soundmodem prints a dial to set on the assumption that the display means what it says:
 
 ```
-dial: 7.049450 MHz USB - set your radio to this
-  modem 0 afsk300-il2pc at 7.050300 MHz = 850 Hz audio
+band plan: dial 7.049450 MHz USB, afsk300-il2pc at 850 Hz audio
 ```
 
 Leave `D DISP` at 0 and let the modem do the offset arithmetic, which it shows you. A non-zero value moves every modem in the plan together and nothing in the journal can see it.

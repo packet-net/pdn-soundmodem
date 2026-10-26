@@ -653,7 +653,7 @@ if (bandPlan is not null)
         bandPlan, Console.Out, radioIsSelfTuning: stationDevice.SelfTunes || rigConfig is not null);
     foreach (string warning in bandPlan.Warnings)
     {
-        Console.Error.WriteLine($"band plan: WARNING - {warning}");
+        Console.Error.WriteLine($"band plan: {warning}");
     }
 
     // A Flex is its own dial: rather than telling the operator to set it, set it. Headless
