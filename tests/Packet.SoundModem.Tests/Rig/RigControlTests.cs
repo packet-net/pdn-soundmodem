@@ -331,6 +331,71 @@ public sealed class RigControlTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_Data_Mode_The_Rig_Refuses_Is_Asked_For_As_Its_Plain_Mode_And_Logged()
+    {
+        _fake.RefusesModes.Add("PKTUSB");
+        RigControl rig = await Started();
+
+        RigTuneResult result = rig.Tune(new RigTuning(7_052_000, "PKTUSB", 0), TimeSpan.FromSeconds(60), "mailcast");
+
+        result.Outcome.Should().Be(RigTuneOutcome.Tuned);
+        _fake.Sets.Should().Equal(["M PKTUSB 0", "M USB 0", "F 7052000"]);
+        _fake.DialHz.Should().Be(7_052_000);
+        _fake.Mode.Should().Be("USB");
+        _said.Should().Contain("rig: the rig refused PKTUSB (the rig rejected the command); using USB");
+        _warned.Should().BeEmpty();
+
+        result.Window!.Dispose();
+        _fake.DialHz.Should().Be(14_074_000);
+        _fake.Mode.Should().Be("USB");
+    }
+
+    [Fact]
+    public async Task A_Data_Mode_The_Rig_Takes_As_Its_Plain_Mode_Is_Logged_Not_Warned_About()
+    {
+        _fake.TakesModeAs["PKTUSB"] = "USB";
+        RigControl rig = await Started();
+
+        RigTuneResult result = rig.Tune(new RigTuning(7_052_000, "PKTUSB", 0), TimeSpan.FromSeconds(60), "mailcast");
+
+        result.Outcome.Should().Be(RigTuneOutcome.Tuned);
+        _fake.Mode.Should().Be("USB");
+        _said.Should().Contain("rig: asked for PKTUSB; the rig is in USB");
+        _warned.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task A_Rig_In_A_Data_Mode_Is_Put_Back_In_It()
+    {
+        _fake.Mode = "PKTUSB";
+        RigControl rig = await Started();
+
+        RigTuneResult result = rig.Tune(new RigTuning(7_052_000, "PKTUSB", 0), TimeSpan.FromSeconds(60), "mailcast");
+        result.Window!.Dispose();
+
+        _fake.Sets.Should().Equal(["M PKTUSB 0", "F 7052000", "M PKTUSB 2400", "F 14074000"]);
+        _fake.Mode.Should().Be("PKTUSB");
+        _warned.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task A_Band_Plan_Data_Mode_The_Rig_Takes_As_Its_Plain_Mode_Is_Not_Set_Again_On_Reconnect()
+    {
+        _fake.TakesModeAs["PKTUSB"] = "USB";
+        RigControl rig = await Started(plan: new RigTuning(7_049_450, "PKTUSB", 0));
+
+        _fake.Kill();
+        await Eventually(
+            () => _said.Count(s => s.StartsWith("rig: rigctld at", StringComparison.Ordinal)) >= 2,
+            "the connection should come back",
+            TimeSpan.FromSeconds(5));
+
+        rig.Connected.Should().BeTrue();
+        _said.Should().NotContain(s => s.Contains("not where the band plan puts it"));
+        _warned.Should().NotContain(s => s.Contains("asked the rig for"));
+    }
+
+    [Fact]
     public async Task Releasing_A_Window_Puts_The_Rig_Back_At_Once()
     {
         RigControl rig = await Started();

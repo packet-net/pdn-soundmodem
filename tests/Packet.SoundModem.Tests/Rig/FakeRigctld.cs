@@ -52,6 +52,12 @@ internal sealed class FakeRigctld : IAsyncDisposable
     /// <summary>Answer an <c>M</c> with a non-zero passband with RPRT -9.</summary>
     internal bool RefusesPassband { get; set; }
 
+    /// <summary>Modes an <c>M</c> is answered RPRT -9 for, as a rig without them does.</summary>
+    internal HashSet<string> RefusesModes { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Modes the rig takes as another (PKTUSB as USB, say), as an Icom without a data mode does.</summary>
+    internal Dictionary<string, string> TakesModeAs { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>The widest passband the rig will set; wider asks get this.</summary>
     internal int? WidestPassbandHz { get; set; }
 
@@ -232,12 +238,12 @@ internal sealed class FakeRigctld : IAsyncDisposable
                     return "RPRT 0\n";
                 case ["M", string mode, string width]:
                     int passband = int.Parse(width, CultureInfo.InvariantCulture);
-                    if (RefusesPassband && passband != 0)
+                    if (RefusesPassband && passband != 0 || RefusesModes.Contains(mode))
                     {
                         return "RPRT -9\n";
                     }
 
-                    Mode = mode;
+                    Mode = TakesModeAs.GetValueOrDefault(mode, mode);
                     PassbandHz = passband == 0 ? NormalPassbandHz
                         : WidestPassbandHz is int widest ? Math.Min(passband, widest)
                         : passband;

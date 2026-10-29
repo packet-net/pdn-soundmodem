@@ -191,7 +191,7 @@ rig: setting the rig to 7.049450 MHz USB (2400 Hz passband) from the band plan
 
 Without `rfFrequency` the dial is left where you put it.
 
-- Many rigs only take audio from their data jack in a data mode. Set `"mode": "PKTUSB"` (or `PKTLSB`) for that.
+- Many rigs only take audio from their data jack in a data mode. Set `"mode": "PKTUSB"` (or `PKTLSB`) for that. A rig that refuses it gets plain USB (or LSB), and the journal says so.
 - The modem asks for a 2400 Hz passband, the window the band plan assumes. If your rig will not set it, the journal says so; `"passbandHz": 0` leaves the rig on its normal width.
 - If rigctld is not running, the journal warns and the station carries on without it, trying again in the background. `"required": true` makes the station wait for it instead.
 - Start rigctld without `--vfo`; the modem does not speak that form.
