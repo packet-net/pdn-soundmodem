@@ -409,6 +409,13 @@ public sealed class RigControlTests : IAsyncDisposable
         _fake.Mode.Should().Be("USB");
         _said.Should().Contain("rig: asked for PKTUSB; the rig is in USB");
         _warned.Should().BeEmpty();
+
+        // It may be in the data mode and only read back plain, so it is still asked for, and said once.
+        result.Window!.Dispose();
+        rig.Tune(new RigTuning(7_052_000, "PKTUSB", 0), TimeSpan.FromSeconds(60), "mailcast").Outcome.Should().Be(RigTuneOutcome.Tuned);
+        _fake.Sets.Count(c => c == "M PKTUSB 0").Should().Be(2);
+        _fake.Sets.Should().NotContain("M USB 0");
+        _said.Count(s => s.Contains("asked for PKTUSB")).Should().Be(1);
     }
 
     [Fact]

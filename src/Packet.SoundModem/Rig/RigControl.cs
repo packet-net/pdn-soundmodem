@@ -204,9 +204,12 @@ public sealed class RigControl : IAsyncDisposable
     private bool _everConnected;
     private bool _planApplied;
 
-    // Data modes the rig refused, or took as their plain mode, kept across reconnects (a rig does
-    // not gain a data mode by being reconnected); guarded by _io.
+    // Data modes the rig refused, so their plain mode is sent instead; and data modes the rig
+    // reads back as their plain mode, which are still sent (the rig may be in the data mode and
+    // not say so). Kept across reconnects (a rig does not gain a data mode by being reconnected);
+    // guarded by _io.
     private readonly HashSet<string> _plainOnly = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _readsPlain = new(StringComparer.OrdinalIgnoreCase);
     private bool _unreachableSaid;
     private bool _disposed;
     private int _disposing;
@@ -1328,7 +1331,8 @@ public sealed class RigControl : IAsyncDisposable
                 $"rig: WARNING - asked the rig for a {tuning.PassbandHz} Hz passband {purpose}, and "
                 + $"it reports {now.PassbandHz} Hz; see \"rig\".\"passbandHz\"");
         }
-        else if (!string.Equals(now.Mode, tuning.Mode, StringComparison.OrdinalIgnoreCase) && _plainOnly.Add(tuning.Mode))
+        else if (!string.Equals(now.Mode, tuning.Mode, StringComparison.OrdinalIgnoreCase)
+            && !_plainOnly.Contains(tuning.Mode) && _readsPlain.Add(tuning.Mode))
         {
             Say($"rig: asked for {tuning.Mode}; the rig is in {now.Mode}");
         }
@@ -1381,7 +1385,7 @@ public sealed class RigControl : IAsyncDisposable
     private bool IsOn(RigTuning state, RigTuning wanted) =>
         state.DialHz == wanted.DialHz
         && (string.Equals(state.Mode, wanted.Mode, StringComparison.OrdinalIgnoreCase)
-            || (_plainOnly.Contains(wanted.Mode) && string.Equals(state.Mode, RigModes.PlainOf(wanted.Mode), StringComparison.OrdinalIgnoreCase)))
+            || ((_plainOnly.Contains(wanted.Mode) || _readsPlain.Contains(wanted.Mode)) && string.Equals(state.Mode, RigModes.PlainOf(wanted.Mode), StringComparison.OrdinalIgnoreCase)))
         && (wanted.PassbandHz == 0 || state.PassbandHz == wanted.PassbandHz);
 
     private RigTuning ReadIo(RigctldConnection connection)
