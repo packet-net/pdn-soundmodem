@@ -61,6 +61,9 @@ internal sealed class FakeRigctld : IAsyncDisposable
     /// <summary>Modes the rig takes as another (PKTUSB as USB, say), as an Icom without a data mode does.</summary>
     internal Dictionary<string, string> TakesModeAs { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>False: <c>m</c> reads a passband of 0, as a backend that does not read the width (a Xiegu G90's) does.</summary>
+    internal bool ReportsPassband { get; set; } = true;
+
     /// <summary>The widest passband the rig will set; wider asks get this.</summary>
     internal int? WidestPassbandHz { get; set; }
 
@@ -228,7 +231,7 @@ internal sealed class FakeRigctld : IAsyncDisposable
                 case ["f"]:
                     return string.Create(CultureInfo.InvariantCulture, $"{DialHz}\n");
                 case ["m"]:
-                    return string.Create(CultureInfo.InvariantCulture, $"{Mode}\n{PassbandHz}\n");
+                    return string.Create(CultureInfo.InvariantCulture, $"{Mode}\n{(ReportsPassband ? PassbandHz : 0)}\n");
                 case ["t"]:
                     return Ptt ? "1\n" : "0\n";
                 case ["F", string hz]:

@@ -165,6 +165,51 @@ public sealed class RigControlTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_Passband_The_Rig_Refuses_Is_Warned_About_Once_And_Not_Asked_For_Again()
+    {
+        _fake.RefusesPassband = true;
+        RigControl rig = await Started();
+
+        for (int i = 0; i < 2; i++)
+        {
+            RigTuneResult result = rig.Tune(new RigTuning(7_052_000, "PKTUSB", 3000), TimeSpan.FromSeconds(60), "mailcast");
+            result.Outcome.Should().Be(RigTuneOutcome.Tuned);
+            result.Window!.Dispose();
+        }
+
+        _fake.Sets.Count(c => c == "M PKTUSB 3000").Should().Be(1);
+        _fake.Sets.Count(c => c == "M PKTUSB 0").Should().Be(2);
+        _warned.Should().ContainSingle(w => w.Contains("would not take a 3000 Hz passband in PKTUSB"));
+    }
+
+    [Fact]
+    public async Task A_Rig_That_Reads_No_Passband_Is_Not_Warned_About_It()
+    {
+        _fake.ReportsPassband = false;
+        RigControl rig = await Started();
+
+        RigTuneResult result = rig.Tune(new RigTuning(7_052_000, "PKTUSB", 3000), TimeSpan.FromSeconds(60), "mailcast");
+
+        result.Outcome.Should().Be(RigTuneOutcome.Tuned);
+        _fake.Sets.Should().Contain("M PKTUSB 3000");
+        _warned.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task A_Passband_The_Rig_Sets_Differently_Is_Warned_About_Once()
+    {
+        _fake.WidestPassbandHz = 2400;
+        RigControl rig = await Started();
+
+        for (int i = 0; i < 2; i++)
+        {
+            rig.Tune(new RigTuning(7_052_000, "PKTUSB", 3000), TimeSpan.FromSeconds(60), "mailcast").Window!.Dispose();
+        }
+
+        _warned.Should().ContainSingle(w => w.Contains("3000 Hz passband"));
+    }
+
+    [Fact]
     public async Task A_Passband_The_Rig_Sets_Differently_Is_Warned_About()
     {
         _fake.WidestPassbandHz = 1800;
