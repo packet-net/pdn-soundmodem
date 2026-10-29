@@ -431,14 +431,6 @@ public static class RigModes
             _ => null,
         };
 
-    /// <summary>Whether a rig that reports <paramref name="reported"/> is on <paramref name="asked"/>:
-    /// the same mode, or the plain one a data mode stands in for.</summary>
-    /// <param name="asked">The mode asked for.</param>
-    /// <param name="reported">The mode the rig reports.</param>
-    public static bool Matches(string asked, string reported) =>
-        string.Equals(asked, reported, StringComparison.OrdinalIgnoreCase)
-        || string.Equals(PlainOf(asked), reported, StringComparison.OrdinalIgnoreCase);
-
     /// <summary>The plain mode for a band plan's sideband: USB, LSB or FM.</summary>
     /// <param name="sideband"><c>usb</c>, <c>lsb</c> or <c>fm</c>.</param>
     public static string ForSideband(string sideband) =>

@@ -348,6 +348,53 @@ public sealed class RigControlTests : IAsyncDisposable
         result.Window!.Dispose();
         _fake.DialHz.Should().Be(14_074_000);
         _fake.Mode.Should().Be("USB");
+
+        // Said once: the next window goes straight to USB.
+        rig.Tune(new RigTuning(7_052_000, "PKTUSB", 0), TimeSpan.FromSeconds(60), "mailcast").Outcome.Should().Be(RigTuneOutcome.Tuned);
+        _fake.Sets.Count(c => c == "M PKTUSB 0").Should().Be(1);
+        _said.Count(s => s.Contains("refused PKTUSB")).Should().Be(1);
+        _said.Should().NotContain(s => s.Contains("asked for PKTUSB"));
+    }
+
+    [Fact]
+    public async Task A_Refused_Data_Mode_With_A_Passband_Falls_Back_Without_A_Passband_Warning()
+    {
+        _fake.RefusesModes.Add("PKTUSB");
+
+        await Started(plan: new RigTuning(7_049_450, "PKTUSB", 2400));
+
+        _fake.Sets.Should().Equal(["M PKTUSB 2400", "M PKTUSB 0", "M USB 2400", "F 7049450"]);
+        _fake.Mode.Should().Be("USB");
+        _warned.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task A_Fault_Is_Not_Taken_For_A_Missing_Data_Mode()
+    {
+        _fake.RefusesModes.Add("PKTUSB");
+        _fake.ModeRefusal = -8;
+        RigControl rig = await Started();
+
+        RigTuneResult result = rig.Tune(new RigTuning(7_052_000, "PKTUSB", 0), TimeSpan.FromSeconds(60), "mailcast");
+
+        result.Outcome.Should().Be(RigTuneOutcome.Failed);
+        _fake.Sets.Should().NotContain("M USB 0");
+        _fake.DialHz.Should().Be(14_074_000);
+    }
+
+    [Fact]
+    public async Task A_Put_Back_The_Rig_Refuses_Stays_Owed_Instead_Of_Falling_Back()
+    {
+        _fake.Mode = "PKTUSB";
+        RigControl rig = await Started();
+        RigTuneResult result = rig.Tune(new RigTuning(7_052_000, "PKTUSB", 0), TimeSpan.FromSeconds(60), "mailcast");
+
+        _fake.RefusesModes.Add("PKTUSB");
+        result.Window!.Dispose();
+
+        _fake.Sets.Should().NotContain("M USB 2400");
+        rig.Snapshot().RestoreOwed.Should().NotBeNull();
+        rig.HoldsTransmitter.Should().BeTrue();
     }
 
     [Fact]
