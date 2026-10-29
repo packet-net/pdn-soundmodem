@@ -49,8 +49,11 @@ internal sealed class FakeRigctld : IAsyncDisposable
     /// <summary>False: accept, then close at once.</summary>
     internal bool Accepting { get; set; } = true;
 
-    /// <summary>Answer an <c>M</c> with a non-zero passband with RPRT -9.</summary>
+    /// <summary>Answer an <c>M</c> with a non-zero passband with <see cref="PassbandRefusal"/>.</summary>
     internal bool RefusesPassband { get; set; }
+
+    /// <summary>The RPRT code <see cref="RefusesPassband"/> answers with.</summary>
+    internal int PassbandRefusal { get; set; } = -9;
 
     /// <summary>Modes an <c>M</c> is answered <see cref="ModeRefusal"/> for, as a rig without them does.</summary>
     internal HashSet<string> RefusesModes { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -60,6 +63,9 @@ internal sealed class FakeRigctld : IAsyncDisposable
 
     /// <summary>Modes the rig takes as another (PKTUSB as USB, say), as an Icom without a data mode does.</summary>
     internal Dictionary<string, string> TakesModeAs { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>False: <c>m</c> reads a passband of 0, as a backend that does not read the width (a Xiegu G90's) does.</summary>
+    internal bool ReportsPassband { get; set; } = true;
 
     /// <summary>The widest passband the rig will set; wider asks get this.</summary>
     internal int? WidestPassbandHz { get; set; }
@@ -228,7 +234,7 @@ internal sealed class FakeRigctld : IAsyncDisposable
                 case ["f"]:
                     return string.Create(CultureInfo.InvariantCulture, $"{DialHz}\n");
                 case ["m"]:
-                    return string.Create(CultureInfo.InvariantCulture, $"{Mode}\n{PassbandHz}\n");
+                    return string.Create(CultureInfo.InvariantCulture, $"{Mode}\n{(ReportsPassband ? PassbandHz : 0)}\n");
                 case ["t"]:
                     return Ptt ? "1\n" : "0\n";
                 case ["F", string hz]:
@@ -248,7 +254,7 @@ internal sealed class FakeRigctld : IAsyncDisposable
 
                     if (RefusesPassband && passband != 0)
                     {
-                        return "RPRT -9\n";
+                        return string.Create(CultureInfo.InvariantCulture, $"RPRT {PassbandRefusal}\n");
                     }
 
                     Mode = TakesModeAs.GetValueOrDefault(mode, mode);

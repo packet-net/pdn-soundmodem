@@ -210,6 +210,11 @@ public sealed class RigControl : IAsyncDisposable
     // guarded by _io.
     private readonly HashSet<string> _plainOnly = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _readsPlain = new(StringComparer.OrdinalIgnoreCase);
+
+    // Modes and passbands ("PKTUSB 3000") the rig would not set, so its normal width is asked for
+    // instead, and passbands already warned about; said once each, kept like the two above.
+    private readonly HashSet<string> _normalWidth = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _widthSaid = new(StringComparer.OrdinalIgnoreCase);
     private bool _unreachableSaid;
     private bool _disposed;
     private int _disposing;
@@ -1325,8 +1330,13 @@ public sealed class RigControl : IAsyncDisposable
         {
             Warn($"rig: WARNING - asked the rig for {tuning} {purpose}, and it reports {now}");
         }
-        else if (tuning.PassbandHz > 0 && now.PassbandHz != tuning.PassbandHz)
+        else if (tuning.PassbandHz > 0 && now.PassbandHz > 0 && now.PassbandHz != tuning.PassbandHz
+            && !_normalWidth.Contains(WidthKey(now.Mode, tuning.PassbandHz))
+            && !_normalWidth.Contains(WidthKey(tuning.Mode, tuning.PassbandHz))
+            && !(plain is not null && _normalWidth.Contains(WidthKey(plain, tuning.PassbandHz)))
+            && _widthSaid.Add(WidthKey(now.Mode, tuning.PassbandHz)))
         {
+            // A rig that reports a passband of 0 does not say what it is.
             Warn(
                 $"rig: WARNING - asked the rig for a {tuning.PassbandHz} Hz passband {purpose}, and "
                 + $"it reports {now.PassbandHz} Hz; see \"rig\".\"passbandHz\"");
@@ -1342,9 +1352,18 @@ public sealed class RigControl : IAsyncDisposable
     /// rejected, not available, out of range), rather than a fault such as a timeout or a busy bus.</summary>
     private static bool LacksMode(int code) => Math.Abs(code) is 1 or 4 or 9 or 11 or 17;
 
-    /// <summary>Sets the mode, on the rig's normal width if it will not take the passband. Call holding <c>_io</c>.</summary>
+    private static string WidthKey(string mode, int passbandHz) =>
+        string.Create(CultureInfo.InvariantCulture, $"{mode} {passbandHz}");
+
+    /// <summary>Sets the mode, on the rig's normal width if it will not take the passband (said
+    /// once, and its normal width asked for from then on). Call holding <c>_io</c>.</summary>
     private void SetModeIo(RigctldConnection connection, string mode, int passbandHz)
     {
+        if (passbandHz > 0 && _normalWidth.Contains(WidthKey(mode, passbandHz)))
+        {
+            passbandHz = 0;
+        }
+
         try
         {
             connection.SetMode(mode, passbandHz);
@@ -1359,6 +1378,12 @@ public sealed class RigControl : IAsyncDisposable
             {
                 // Not the passband, then: the mode itself.
                 throw narrow;
+            }
+
+            if (LacksMode(narrow.Code))
+            {
+                // A fault (a timeout, say) is not remembered: the next tune asks for the width again.
+                _normalWidth.Add(WidthKey(mode, passbandHz));
             }
 
             Warn(
