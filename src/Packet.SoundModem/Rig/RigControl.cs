@@ -203,6 +203,13 @@ public sealed class RigControl : IAsyncDisposable
     private RigTuning? _known;
     private bool _everConnected;
     private bool _planApplied;
+
+    // Data modes the rig refused, so their plain mode is sent instead; and data modes the rig
+    // reads back as their plain mode, which are still sent (the rig may be in the data mode and
+    // not say so). Kept across reconnects (a rig does not gain a data mode by being reconnected);
+    // guarded by _io.
+    private readonly HashSet<string> _plainOnly = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _readsPlain = new(StringComparer.OrdinalIgnoreCase);
     private bool _unreachableSaid;
     private bool _disposed;
     private int _disposing;
@@ -642,7 +649,7 @@ public sealed class RigControl : IAsyncDisposable
                     // Put back whatever half of it took, and keep any window that was open.
                     try
                     {
-                        ApplyIo(connection, existing?.Tuning ?? restoreTo, "");
+                        ApplyIo(connection, existing?.Tuning ?? restoreTo, "", exact: existing is null);
                         if (existing is null)
                         {
                             ClearRestoreIo(restoreTo);
@@ -1165,7 +1172,7 @@ public sealed class RigControl : IAsyncDisposable
 
         try
         {
-            if (!Retuning(() => ApplyIo(connection, restore, "after the window")))
+            if (!Retuning(() => ApplyIo(connection, restore, "after the window", exact: true)))
             {
                 // Keyed, or an unkey owed: the restore waits for it.
                 return;
@@ -1289,25 +1296,32 @@ public sealed class RigControl : IAsyncDisposable
     /// Sets the mode and passband, then the dial, and reads them back. The mode goes first because
     /// some rigs move the dial when the mode changes. Call holding <c>_io</c>.
     /// </summary>
+    /// <remarks>Unless <paramref name="exact"/>, a data mode (PKTUSB and the like) the rig refuses
+    /// is set as its plain mode (USB), and a rig that takes it as its plain mode is not warned
+    /// about; either is said once. A put-back is exact: it asks for the mode the rig
+    /// was read in, and a refusal leaves it owed.</remarks>
     /// <exception cref="IOException">The connection failed; drop it.</exception>
     /// <exception cref="RigctldException">The rig refused the mode or the dial.</exception>
-    private void ApplyIo(RigctldConnection connection, RigTuning tuning, string purpose)
+    private void ApplyIo(RigctldConnection connection, RigTuning tuning, string purpose, bool exact = false)
     {
+        string? plain = exact ? null : RigModes.PlainOf(tuning.Mode);
+        string mode = plain is not null && _plainOnly.Contains(tuning.Mode) ? plain : tuning.Mode;
         try
         {
-            connection.SetMode(tuning.Mode, tuning.PassbandHz);
+            SetModeIo(connection, mode, tuning.PassbandHz);
         }
-        catch (RigctldException narrow) when (tuning.PassbandHz > 0)
+        catch (RigctldException refused) when (plain is not null && mode != plain && LacksMode(refused.Code))
         {
-            Warn(
-                $"rig: WARNING - the rig would not take a {tuning.PassbandHz} Hz passband in "
-                + $"{tuning.Mode} ({RigctldException.Describe(narrow.Code)}); using its normal width");
-            connection.SetMode(tuning.Mode, 0);
+            Say($"rig: the rig refused {tuning.Mode} ({RigctldException.Describe(refused.Code)}); using {plain}");
+            _plainOnly.Add(tuning.Mode);
+            SetModeIo(connection, plain, tuning.PassbandHz);
         }
 
         connection.SetFrequency(tuning.DialHz);
         RigTuning now = ReadIo(connection);
-        if (now.DialHz != tuning.DialHz || !string.Equals(now.Mode, tuning.Mode, StringComparison.OrdinalIgnoreCase))
+        bool modeOk = string.Equals(now.Mode, tuning.Mode, StringComparison.OrdinalIgnoreCase)
+            || (plain is not null && string.Equals(now.Mode, plain, StringComparison.OrdinalIgnoreCase));
+        if (now.DialHz != tuning.DialHz || !modeOk)
         {
             Warn($"rig: WARNING - asked the rig for {tuning} {purpose}, and it reports {now}");
         }
@@ -1316,6 +1330,40 @@ public sealed class RigControl : IAsyncDisposable
             Warn(
                 $"rig: WARNING - asked the rig for a {tuning.PassbandHz} Hz passband {purpose}, and "
                 + $"it reports {now.PassbandHz} Hz; see \"rig\".\"passbandHz\"");
+        }
+        else if (!string.Equals(now.Mode, tuning.Mode, StringComparison.OrdinalIgnoreCase)
+            && !_plainOnly.Contains(tuning.Mode) && _readsPlain.Add(tuning.Mode))
+        {
+            Say($"rig: asked for {tuning.Mode}; the rig is in {now.Mode}");
+        }
+    }
+
+    /// <summary>Whether a refused mode means the rig does not have it (invalid, not implemented,
+    /// rejected, not available, out of range), rather than a fault such as a timeout or a busy bus.</summary>
+    private static bool LacksMode(int code) => Math.Abs(code) is 1 or 4 or 9 or 11 or 17;
+
+    /// <summary>Sets the mode, on the rig's normal width if it will not take the passband. Call holding <c>_io</c>.</summary>
+    private void SetModeIo(RigctldConnection connection, string mode, int passbandHz)
+    {
+        try
+        {
+            connection.SetMode(mode, passbandHz);
+        }
+        catch (RigctldException narrow) when (passbandHz > 0)
+        {
+            try
+            {
+                connection.SetMode(mode, 0);
+            }
+            catch (RigctldException)
+            {
+                // Not the passband, then: the mode itself.
+                throw narrow;
+            }
+
+            Warn(
+                $"rig: WARNING - the rig would not take a {passbandHz} Hz passband in "
+                + $"{mode} ({RigctldException.Describe(narrow.Code)}); using its normal width");
         }
     }
 
@@ -1334,9 +1382,10 @@ public sealed class RigControl : IAsyncDisposable
 
     /// <summary>Whether the rig is on <paramref name="wanted"/>: the dial and mode, and the
     /// passband when one was asked for.</summary>
-    private static bool IsOn(RigTuning state, RigTuning wanted) =>
+    private bool IsOn(RigTuning state, RigTuning wanted) =>
         state.DialHz == wanted.DialHz
-        && string.Equals(state.Mode, wanted.Mode, StringComparison.OrdinalIgnoreCase)
+        && (string.Equals(state.Mode, wanted.Mode, StringComparison.OrdinalIgnoreCase)
+            || ((_plainOnly.Contains(wanted.Mode) || _readsPlain.Contains(wanted.Mode)) && string.Equals(state.Mode, RigModes.PlainOf(wanted.Mode), StringComparison.OrdinalIgnoreCase)))
         && (wanted.PassbandHz == 0 || state.PassbandHz == wanted.PassbandHz);
 
     private RigTuning ReadIo(RigctldConnection connection)

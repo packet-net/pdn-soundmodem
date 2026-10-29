@@ -417,6 +417,20 @@ public static class RigModes
     /// <param name="mode">Hamlib's name for it, in any case.</param>
     public static string? SidebandOf(string mode) => Known.GetValueOrDefault(mode);
 
+    /// <summary>The plain mode a data mode stands in for on a rig without it (USB for PKTUSB and
+    /// so on), or null for a mode that is not a data mode.</summary>
+    /// <param name="mode">Hamlib's name for it, in any case.</param>
+    public static string? PlainOf(string mode) =>
+        mode.ToUpperInvariant() switch
+        {
+            "PKTUSB" => "USB",
+            "PKTLSB" => "LSB",
+            "PKTFM" => "FM",
+            "PKTFMN" => "FMN",
+            "PKTAM" => "AM",
+            _ => null,
+        };
+
     /// <summary>The plain mode for a band plan's sideband: USB, LSB or FM.</summary>
     /// <param name="sideband"><c>usb</c>, <c>lsb</c> or <c>fm</c>.</param>
     public static string ForSideband(string sideband) =>
