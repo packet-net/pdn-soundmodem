@@ -183,6 +183,33 @@ public sealed class RigControlTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_Passband_Lost_To_A_Fault_Is_Asked_For_Again_Next_Time()
+    {
+        _fake.RefusesPassband = true;
+        _fake.PassbandRefusal = -5;
+        RigControl rig = await Started();
+
+        for (int i = 0; i < 2; i++)
+        {
+            rig.Tune(new RigTuning(7_052_000, "PKTUSB", 3000), TimeSpan.FromSeconds(60), "mailcast").Window!.Dispose();
+        }
+
+        _fake.Sets.Count(c => c == "M PKTUSB 3000").Should().Be(2);
+    }
+
+    [Fact]
+    public async Task A_Refused_Passband_On_A_Rig_That_Reads_Plain_Is_Warned_About_Once()
+    {
+        _fake.RefusesPassband = true;
+        _fake.TakesModeAs["PKTUSB"] = "USB";
+        RigControl rig = await Started();
+
+        rig.Tune(new RigTuning(7_052_000, "PKTUSB", 3000), TimeSpan.FromSeconds(60), "mailcast").Outcome.Should().Be(RigTuneOutcome.Tuned);
+
+        _warned.Should().ContainSingle();
+    }
+
+    [Fact]
     public async Task A_Rig_That_Reads_No_Passband_Is_Not_Warned_About_It()
     {
         _fake.ReportsPassband = false;

@@ -1332,6 +1332,8 @@ public sealed class RigControl : IAsyncDisposable
         }
         else if (tuning.PassbandHz > 0 && now.PassbandHz > 0 && now.PassbandHz != tuning.PassbandHz
             && !_normalWidth.Contains(WidthKey(now.Mode, tuning.PassbandHz))
+            && !_normalWidth.Contains(WidthKey(tuning.Mode, tuning.PassbandHz))
+            && !(plain is not null && _normalWidth.Contains(WidthKey(plain, tuning.PassbandHz)))
             && _widthSaid.Add(WidthKey(now.Mode, tuning.PassbandHz)))
         {
             // A rig that reports a passband of 0 does not say what it is.
@@ -1378,7 +1380,12 @@ public sealed class RigControl : IAsyncDisposable
                 throw narrow;
             }
 
-            _normalWidth.Add(WidthKey(mode, passbandHz));
+            if (LacksMode(narrow.Code))
+            {
+                // A fault (a timeout, say) is not remembered: the next tune asks for the width again.
+                _normalWidth.Add(WidthKey(mode, passbandHz));
+            }
+
             Warn(
                 $"rig: WARNING - the rig would not take a {passbandHz} Hz passband in "
                 + $"{mode} ({RigctldException.Describe(narrow.Code)}); using its normal width");

@@ -49,8 +49,11 @@ internal sealed class FakeRigctld : IAsyncDisposable
     /// <summary>False: accept, then close at once.</summary>
     internal bool Accepting { get; set; } = true;
 
-    /// <summary>Answer an <c>M</c> with a non-zero passband with RPRT -9.</summary>
+    /// <summary>Answer an <c>M</c> with a non-zero passband with <see cref="PassbandRefusal"/>.</summary>
     internal bool RefusesPassband { get; set; }
+
+    /// <summary>The RPRT code <see cref="RefusesPassband"/> answers with.</summary>
+    internal int PassbandRefusal { get; set; } = -9;
 
     /// <summary>Modes an <c>M</c> is answered <see cref="ModeRefusal"/> for, as a rig without them does.</summary>
     internal HashSet<string> RefusesModes { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -251,7 +254,7 @@ internal sealed class FakeRigctld : IAsyncDisposable
 
                     if (RefusesPassband && passband != 0)
                     {
-                        return "RPRT -9\n";
+                        return string.Create(CultureInfo.InvariantCulture, $"RPRT {PassbandRefusal}\n");
                     }
 
                     Mode = TakesModeAs.GetValueOrDefault(mode, mode);
