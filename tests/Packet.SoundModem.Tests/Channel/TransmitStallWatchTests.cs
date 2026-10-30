@@ -9,12 +9,13 @@ namespace Packet.SoundModem.Tests.Channel;
 /// Counting the times transmit audio reaches a self-pacing output late (issue #748).
 /// </summary>
 /// <remarks>
-/// A Flex's DAX sink sends each packet when it falls due and sleeps until the next one, so the
-/// radio holds almost nothing ahead. Three MS110D WN13 bursts from GB7RDG on 2026-10-30 each had a
+/// A Flex's DAX sink sends each packet against the wall clock, a fixed lead ahead of the radio's
+/// playout (one packet up to M0LTE.Flex 0.15.1, 80 ms since). With one packet the radio holds
+/// almost nothing ahead. Three MS110D WN13 bursts from GB7RDG on 2026-10-30 each had a
 /// 25 to 38 ms hole of band noise in Sweden, with the rest of the burst shifted late by the same
 /// amount, and nothing on the station said so. These tests run the watch over a sink that behaves
-/// as the DAX one does, on a fake clock: it sleeps to each packet's due time, and after a stall it
-/// sends without sleeping until it has caught up.
+/// as the DAX one does, on a fake clock: it sleeps until it is no more than its lead ahead, and after
+/// a stall it sends without sleeping until it has its lead back.
 /// </remarks>
 public class TransmitStallWatchTests
 {
@@ -81,6 +82,9 @@ public class TransmitStallWatchTests
     [Fact]
     public void Two_Separate_Holds_In_One_Keyup_Are_Two_Stalls_In_One_Report()
     {
+        // With one packet of lead the sink catches up after the first hold by sending 25 ms in a
+        // rush, which the radio, now running 25 ms late, holds in hand. So the second hold costs
+        // only what that does not cover: a 15 ms gap, not 40.
         var time = new FakeTimeProvider();
         var sink = new PacedSink(time)
         {
@@ -98,8 +102,116 @@ public class TransmitStallWatchTests
 
         TransmitStallReport report = reports.Should().ContainSingle("one line per keyup").Subject;
         report.Stalls.Should().Be(2);
+        report.Worst.Should().Be(TimeSpan.FromMilliseconds(25));
+        watch.Snapshot.Seconds.Should().BeApproximately(0.040, 1e-9);
+    }
+
+    [Fact]
+    public void A_Hold_The_Radio_Has_In_Hand_After_An_Earlier_Stall_Is_Not_A_Stall()
+    {
+        // After a 40 ms hold the radio plays 40 ms late and holds the catch-up in hand, so a later
+        // 30 ms hold leaves it something to send. Measured against the keyup's start instead of
+        // against the radio, it would be counted as a second gap that never went on the air.
+        var time = new FakeTimeProvider();
+        var sink = new PacedSink(time)
+        {
+            HoldAtPacket = 50,
+            Hold = TimeSpan.FromMilliseconds(40),
+            SecondHoldAtPacket = 300,
+            SecondHold = TimeSpan.FromMilliseconds(30),
+        };
+        var watch = new TransmitStallWatch(sink, Packet, time);
+        var reports = new List<TransmitStallReport>();
+        watch.KeyupStalled += reports.Add;
+
+        watch.Write(new float[Rate * 3]);
+        watch.Drain();
+
+        TransmitStallReport report = reports.Should().ContainSingle().Subject;
+        report.Stalls.Should().Be(1);
         report.Worst.Should().Be(TimeSpan.FromMilliseconds(40));
-        watch.Snapshot.Seconds.Should().BeApproximately(0.065, 1e-9);
+    }
+
+    [Fact]
+    public void Small_Gaps_Under_The_Threshold_Do_Not_Add_Up_Into_A_Bigger_Stall()
+    {
+        // Five holds of 86 ms against an 80 ms lead: five 6 ms gaps, each too small to report,
+        // and each followed late by the sink. Then a 100 ms hold: a 20 ms gap, reported as 20.
+        var time = new FakeTimeProvider();
+        var lead = TimeSpan.FromMilliseconds(80);
+        var sink = new PacedSink(time)
+        {
+            Lead = lead,
+            Holds = new Dictionary<int, TimeSpan>
+            {
+                [100] = TimeSpan.FromMilliseconds(86),
+                [150] = TimeSpan.FromMilliseconds(86),
+                [200] = TimeSpan.FromMilliseconds(86),
+                [250] = TimeSpan.FromMilliseconds(86),
+                [300] = TimeSpan.FromMilliseconds(86),
+                [400] = TimeSpan.FromMilliseconds(100),
+            },
+        };
+        var watch = new TransmitStallWatch(sink, Packet, time, lead);
+        var reports = new List<TransmitStallReport>();
+        watch.KeyupStalled += reports.Add;
+
+        watch.Write(new float[Rate * 3]);
+        watch.Drain();
+
+        TransmitStallReport report = reports.Should().ContainSingle().Subject;
+        report.Stalls.Should().Be(1);
+        report.Worst.Should().Be(TimeSpan.FromMilliseconds(20));
+        watch.Snapshot.Seconds.Should().BeApproximately(0.020, 1e-9);
+    }
+
+    [Fact]
+    public void A_Hold_Inside_The_Lead_Is_Not_A_Stall()
+    {
+        // The sink keeps 80 ms at the radio, so a 50 ms hold, longer than any seen on the air,
+        // leaves the radio with audio to send throughout.
+        var time = new FakeTimeProvider();
+        var sink = new PacedSink(time)
+        {
+            Lead = TimeSpan.FromMilliseconds(80),
+            HoldAtPacket = 100,
+            Hold = TimeSpan.FromMilliseconds(50),
+        };
+        var watch = new TransmitStallWatch(sink, Packet, time, sink.Lead);
+        var reports = new List<TransmitStallReport>();
+        watch.KeyupStalled += reports.Add;
+
+        watch.Write(new float[Rate * 3]);
+        watch.Drain();
+
+        reports.Should().BeEmpty();
+        watch.Snapshot.Should().Be(new TransmitStallSnapshot(0, 0));
+    }
+
+    [Fact]
+    public void A_Hold_Longer_Than_The_Lead_Is_One_Stall_The_Size_Of_What_It_Did_Not_Cover()
+    {
+        var time = new FakeTimeProvider();
+        var sink = new PacedSink(time)
+        {
+            Lead = TimeSpan.FromMilliseconds(80),
+            HoldAtPacket = 100,
+            Hold = TimeSpan.FromMilliseconds(120),
+            SecondHoldAtPacket = 400,
+            SecondHold = TimeSpan.FromMilliseconds(60),
+        };
+        var watch = new TransmitStallWatch(sink, Packet, time, sink.Lead);
+        var reports = new List<TransmitStallReport>();
+        watch.KeyupStalled += reports.Add;
+
+        watch.Write(new float[Rate * 3]);
+        watch.Drain();
+
+        // The lead covered 80 ms of the 120 (to within the packet it holds over the lead). The
+        // sink rebuilds the lead afterwards, so the later 60 ms hold is covered in full.
+        TransmitStallReport report = reports.Should().ContainSingle().Subject;
+        report.Stalls.Should().Be(1);
+        report.Worst.Should().BeCloseTo(TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(6));
     }
 
     [Fact]
@@ -197,9 +309,11 @@ public class TransmitStallWatchTests
     }
 
     /// <summary>
-    /// Paces as <c>FlexAudioOutput</c> does: after each packet's worth it sleeps until that much
-    /// audio is due, and when it is already late it does not sleep at all, which is how it catches
-    /// up after a stall. A hold is the sending thread not being run.
+    /// Paces as <c>FlexAudioOutput</c> does: after each packet's worth it sleeps until it is no more
+    /// than <see cref="Lead"/> ahead, and when it is already late it does not sleep at all, which
+    /// is how it catches up after a stall. With a lead it also follows the radio late after a
+    /// stall the lead did not cover, so the lead is rebuilt rather than grown. A hold is the
+    /// sending thread not being run.
     /// </summary>
     private sealed class PacedSink(FakeTimeProvider time) : IAudioOutput
     {
@@ -208,7 +322,11 @@ public class TransmitStallWatchTests
         private int _packets;
         private int _pending;
 
+        public TimeSpan Lead { get; init; }
+
         public double? HoldAtPacket { get; init; }
+
+        public IReadOnlyDictionary<int, TimeSpan>? Holds { get; init; }
 
         public TimeSpan Hold { get; init; }
 
@@ -278,10 +396,17 @@ public class TransmitStallWatchTests
             {
                 _start = time.GetTimestamp();
             }
+            else if (Lead > TimeSpan.Zero)
+            {
+                TimeSpan shortfall = time.GetElapsedTime(_start) - Due(_sent);
+                if (shortfall > TimeSpan.Zero)
+                {
+                    _start += (long)(shortfall.TotalSeconds * time.TimestampFrequency);
+                }
+            }
 
             _sent += Packet;
-            TimeSpan due = TimeSpan.FromTicks(_sent * TimeSpan.TicksPerSecond / Rate);
-            TimeSpan ahead = due - time.GetElapsedTime(_start);
+            TimeSpan ahead = Due(_sent) - time.GetElapsedTime(_start) - Lead;
             if (ahead > TimeSpan.Zero)
             {
                 time.Advance(ahead);
@@ -299,7 +424,15 @@ public class TransmitStallWatchTests
                 time.Advance(SecondHold);
             }
 
+            if (Holds?.TryGetValue(_packets, out TimeSpan held) == true)
+            {
+                time.Advance(held);
+            }
+
             _packets++;
         }
+
+        private static TimeSpan Due(long samples) =>
+            TimeSpan.FromTicks(samples * TimeSpan.TicksPerSecond / Rate);
     }
 }

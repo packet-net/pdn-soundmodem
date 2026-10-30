@@ -208,11 +208,13 @@ The first such line carries a sentence of advice after the counts; later ones ar
 
 How much slack the station has comes from the card, and start-up says so: `audio: capture buffer 500 ms, period 30 ms` on the bench interface. Another card rounds to whatever it can do, and a card that refused the request says which error it refused with on the next line.
 
-A FlexRadio has no card buffer to underrun. Its DAX transmit audio is sent as it falls due, so if the modem is not run for a moment mid-keyup the radio has nothing to send, puts out a gap, and sends the rest of the burst late by the same amount. The modem says so once per keyup, with the advice on the first such line only:
+A FlexRadio has no card buffer to underrun. Its DAX transmit audio is sent 80 ms ahead of what the radio is playing, so if the modem is not run for longer than that mid-keyup the radio has nothing to send, puts out a gap, and sends the rest of the burst late by the same amount. The modem says so once per keyup, giving the size of the gap, with the advice on the first such line only:
 
 ```
 tx: keyup from 06:41:58.4 UTC (7.1 s): DAX audio fell up to 38 ms behind 1 time, so the radio likely sent a gap; give this host more CPU
 ```
+
+To go back to sending one packet at a time, as earlier versions did, set `M0LTE_FLEX_TX_LEAD_MS=0` in the service's environment (a number sets the lead in ms); start-up says which is in force: `flex: DAX transmit lead 80 ms`.
 
 Under LXC or Docker, a `Nice=` value inside the container does not rank the process against other containers. What ranks it is the container's CPU weight, which you set from the host (for LXC, `pct set ID --cpuunits N`; for Docker, `--cpu-shares`). Dedicated cores are the other answer.
 

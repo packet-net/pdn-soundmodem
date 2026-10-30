@@ -278,7 +278,7 @@ public sealed class StationTelemetry
                     + "likely gap on the air (Flex DAX).");
                 text.Append(CultureInfo.InvariantCulture, $"pdn_transmit_stalls_total {stalls.Stalls}\n");
                 Metric(text, "pdn_transmit_stall_seconds_total", "counter",
-                    "Sum of each transmit stall's furthest-behind: about the length of the gap, to within one packet (5 ms).");
+                    "Sum of the transmit stalls' sizes, each about the length of its gap, to within one packet (5 ms).");
                 text.Append(CultureInfo.InvariantCulture,
                     $"pdn_transmit_stall_seconds_total {stalls.Seconds:R}\n");
             }

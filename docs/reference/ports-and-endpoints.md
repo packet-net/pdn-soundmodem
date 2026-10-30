@@ -416,8 +416,8 @@ A frame counts only when the frame's own check sequence verified (a CRC that pas
 | `pdn_receive_realtime_ratio` | gauge | none | share of real time reaching the modems over the last minute; absent until the first minute has been measured |
 | `pdn_receive_behind` | gauge | none | 1 while the station is reported behind real time, else 0 |
 | `pdn_receive_input_losses_total` | counter | none | times the input counted audio as lost: a sound card's capture overruns, a Flex's missing DAX packets, a break in an IQ or web receiver's stream; absent for a device that cannot say |
-| `pdn_transmit_stalls_total` | counter | none | Flex only: times the DAX transmit audio fell more than 10 ms behind the radio mid-keyup, each a likely gap on the air |
-| `pdn_transmit_stall_seconds_total` | counter | none | Flex only: the sum of each stall's furthest-behind, about the length of the gap, to within one packet (5 ms) |
+| `pdn_transmit_stalls_total` | counter | none | Flex only: times the DAX transmit audio fell more than 10 ms behind the radio mid-keyup once its lead was used up, each a likely gap on the air |
+| `pdn_transmit_stall_seconds_total` | counter | none | Flex only: the sum of the stalls' sizes, each about the length of its gap, to within one packet (5 ms) |
 
 The `pdn_receive_*` series are the station's own receive path rather than anything it heard. A loop that falls below 95% of real time over a minute also says so in the journal (`receive: BEHIND real time`), with whether the loop itself is the bottleneck or the audio went missing on the way in, and says `receive: caught up` when it is back above 99%. Bench inputs (`wav-loop`, `flex:mock`) are not measured.
 
