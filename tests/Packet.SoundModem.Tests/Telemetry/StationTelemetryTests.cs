@@ -53,6 +53,23 @@ public class StationTelemetryTests
     }
 
     [Fact]
+    public void Transmit_Stalls_Are_Published_Only_Where_A_Source_Is_Given()
+    {
+        // Issue #748: a Flex's DAX transmit audio falling behind, each stall a likely gap on air.
+        new StationTelemetry(new FakeTime(Start)).Exposition().Should().NotContain("pdn_transmit_");
+
+        string text = new StationTelemetry(new FakeTime(Start))
+        {
+            TransmitStalls = () => new TransmitStallSnapshot(Stalls: 3, Seconds: 0.1),
+        }.Exposition();
+
+        text.Should().Contain("pdn_transmit_stalls_total 3\n")
+            .And.Contain("pdn_transmit_stall_seconds_total 0.1\n")
+            .And.Contain("# TYPE pdn_transmit_stalls_total counter")
+            .And.Contain("# TYPE pdn_transmit_stall_seconds_total counter");
+    }
+
+    [Fact]
     public void A_Bit_Error_Does_Not_Become_A_Station()
     {
         // The gate that makes this safe to leave running for years. Of the 77 distinct callsigns
