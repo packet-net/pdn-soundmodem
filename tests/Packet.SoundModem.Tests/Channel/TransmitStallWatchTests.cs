@@ -133,6 +133,39 @@ public class TransmitStallWatchTests
     }
 
     [Fact]
+    public void Small_Gaps_Under_The_Threshold_Do_Not_Add_Up_Into_A_Bigger_Stall()
+    {
+        // Five holds of 86 ms against an 80 ms lead: five 6 ms gaps, each too small to report,
+        // and each followed late by the sink. Then a 100 ms hold: a 20 ms gap, reported as 20.
+        var time = new FakeTimeProvider();
+        var lead = TimeSpan.FromMilliseconds(80);
+        var sink = new PacedSink(time)
+        {
+            Lead = lead,
+            Holds = new Dictionary<int, TimeSpan>
+            {
+                [100] = TimeSpan.FromMilliseconds(86),
+                [150] = TimeSpan.FromMilliseconds(86),
+                [200] = TimeSpan.FromMilliseconds(86),
+                [250] = TimeSpan.FromMilliseconds(86),
+                [300] = TimeSpan.FromMilliseconds(86),
+                [400] = TimeSpan.FromMilliseconds(100),
+            },
+        };
+        var watch = new TransmitStallWatch(sink, Packet, time, lead);
+        var reports = new List<TransmitStallReport>();
+        watch.KeyupStalled += reports.Add;
+
+        watch.Write(new float[Rate * 3]);
+        watch.Drain();
+
+        TransmitStallReport report = reports.Should().ContainSingle().Subject;
+        report.Stalls.Should().Be(1);
+        report.Worst.Should().Be(TimeSpan.FromMilliseconds(20));
+        watch.Snapshot.Seconds.Should().BeApproximately(0.020, 1e-9);
+    }
+
+    [Fact]
     public void A_Hold_Inside_The_Lead_Is_Not_A_Stall()
     {
         // The sink keeps 80 ms at the radio, so a 50 ms hold, longer than any seen on the air,
@@ -144,7 +177,7 @@ public class TransmitStallWatchTests
             HoldAtPacket = 100,
             Hold = TimeSpan.FromMilliseconds(50),
         };
-        var watch = new TransmitStallWatch(sink, Packet, time);
+        var watch = new TransmitStallWatch(sink, Packet, time, sink.Lead);
         var reports = new List<TransmitStallReport>();
         watch.KeyupStalled += reports.Add;
 
@@ -167,7 +200,7 @@ public class TransmitStallWatchTests
             SecondHoldAtPacket = 400,
             SecondHold = TimeSpan.FromMilliseconds(60),
         };
-        var watch = new TransmitStallWatch(sink, Packet, time);
+        var watch = new TransmitStallWatch(sink, Packet, time, sink.Lead);
         var reports = new List<TransmitStallReport>();
         watch.KeyupStalled += reports.Add;
 
@@ -293,6 +326,8 @@ public class TransmitStallWatchTests
 
         public double? HoldAtPacket { get; init; }
 
+        public IReadOnlyDictionary<int, TimeSpan>? Holds { get; init; }
+
         public TimeSpan Hold { get; init; }
 
         public int? SecondHoldAtPacket { get; init; }
@@ -387,6 +422,11 @@ public class TransmitStallWatchTests
             if (SecondHoldAtPacket == _packets)
             {
                 time.Advance(SecondHold);
+            }
+
+            if (Holds?.TryGetValue(_packets, out TimeSpan held) == true)
+            {
+                time.Advance(held);
             }
 
             _packets++;

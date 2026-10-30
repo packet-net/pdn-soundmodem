@@ -36,7 +36,8 @@ public readonly record struct TransmitStallReport(
 /// everything after the gap late by it, so the playout is moved late by the stall too: whatever
 /// the sender sends in catching up is lead the radio holds, and a later hold that it covers is
 /// not a gap. Each stall is therefore measured on its own, and the lead in hand is never counted
-/// as lateness.</para>
+/// as lateness. With a lead, a shortfall too small to report still moves the playout, as it
+/// moves the sink's own clock, so several small gaps do not add up into one overstated stall.</para>
 /// <para><b>What it changes.</b> Nothing on the air. The inner output still sees the same samples
 /// in the same order, only in packet-sized calls rather than one per frame, and it already cuts
 /// them into packets itself. A gap between two writes in one keyup (the transmitter rendering
@@ -57,6 +58,7 @@ public sealed class TransmitStallWatch : IAudioOutput, IDisposable
     private readonly IAudioOutput _inner;
     private readonly int _chunkSamples;
     private readonly TimeProvider _time;
+    private readonly bool _followsEveryShortfall;
 
     private bool _keyed;
     private long _startedAt;
@@ -75,13 +77,20 @@ public sealed class TransmitStallWatch : IAudioOutput, IDisposable
     /// <param name="chunkSamples">Samples per call to <paramref name="inner"/>: its packet size,
     /// so each check falls where it has just sent a packet and slept to its due time.</param>
     /// <param name="time">The wall clock; FakeTimeProvider under test.</param>
-    public TransmitStallWatch(IAudioOutput inner, int chunkSamples, TimeProvider? time = null)
+    /// <param name="lead">How far ahead of the radio <paramref name="inner"/> keeps its audio.
+    /// With a lead, the sink follows the radio late after every shortfall, however small, and so
+    /// does the watch, or small real gaps would add up into an overstated later stall. With none,
+    /// lateness under <see cref="Threshold"/> is the pacing's own wake-up jitter, which the sink
+    /// makes up by sending sooner, so the watch ignores it.</param>
+    public TransmitStallWatch(
+        IAudioOutput inner, int chunkSamples, TimeProvider? time = null, TimeSpan lead = default)
     {
         ArgumentNullException.ThrowIfNull(inner);
         ArgumentOutOfRangeException.ThrowIfLessThan(chunkSamples, 1);
         _inner = inner;
         _chunkSamples = chunkSamples;
         _time = time ?? TimeProvider.System;
+        _followsEveryShortfall = lead > TimeSpan.Zero;
     }
 
     /// <summary>Raised from <see cref="Drain"/> at the end of a keyup that stalled at least once.
@@ -165,13 +174,19 @@ public sealed class TransmitStallWatch : IAudioOutput, IDisposable
     {
         TimeSpan behind = _time.GetElapsedTime(_startedAt) - _late
             - TimeSpan.FromTicks(_written * TimeSpan.TicksPerSecond / _inner.SampleRate);
-        if (behind <= Threshold)
+        if (behind <= TimeSpan.Zero || (behind <= Threshold && !_followsEveryShortfall))
         {
             return;
         }
 
         // The radio ran dry for about this long and plays the rest of the keyup late by it.
         _late += behind;
+        if (behind <= Threshold)
+        {
+            // A gap too small to report, but the radio is late by it all the same.
+            return;
+        }
+
         _keyupStalls++;
         Interlocked.Increment(ref _totalStalls);
         Interlocked.Add(ref _totalStallTicks, behind.Ticks);

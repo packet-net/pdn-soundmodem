@@ -310,7 +310,8 @@ public static class FlexDevice
         // unless M0LTE_FLEX_TX_LEAD_MS says otherwise). A sending thread held up mid-keyup for
         // longer than that leaves the radio with nothing to send (issue #748). Watched at the DAX
         // rate, one packet per call, which is how the sink sends anyway.
-        var transmitStalls = new Channel.TransmitStallWatch(flexOutput, format.SamplesPerPacket);
+        var transmitStalls = new Channel.TransmitStallWatch(
+            flexOutput, format.SamplesPerPacket, lead: flexOutput.TransmitLead);
         IAudioOutput output = format.SampleRate == dspRate
             ? transmitStalls
             : new Channel.UpsamplingAudioOutput(transmitStalls, dspRate);

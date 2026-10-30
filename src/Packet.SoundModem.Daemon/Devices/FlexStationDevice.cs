@@ -346,10 +346,17 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
             Console.WriteLine($"flex: transmit power {watts:0.#} W{ceiling}{source}");
         }
 
-        // Which pacing is in force, so a rollback through the environment shows in the journal.
+        // Which pacing is in force, so a rollback through the environment shows in the journal,
+        // and a rollback mistyped says so rather than quietly running the default.
         Console.WriteLine(flex.TransmitLead > TimeSpan.Zero
             ? $"flex: DAX transmit lead {flex.TransmitLead.TotalMilliseconds:0} ms"
             : "flex: DAX transmit lead off, one packet at a time");
+        if (TransmitLeadProblem(
+            Environment.GetEnvironmentVariable(M0LTE.Flex.FlexAudioOutput.TransmitLeadVariable),
+            flex.TransmitLead) is string leadProblem)
+        {
+            Console.Error.WriteLine($"flex: {leadProblem}");
+        }
 
         if (flex.Station.TransmitFilter is (int txFilterLow, int txFilterHigh))
         {
@@ -416,5 +423,30 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
             Flex = flex,
             FlexMeters = flexMeters,
         };
+    }
+
+    /// <summary>
+    /// What is wrong with <c>M0LTE_FLEX_TX_LEAD_MS</c>, or null when it is unset or was taken.
+    /// M0LTE.Flex ignores a value it does not understand and keeps its default, so a rollback
+    /// with a typo in it would otherwise look like it worked.
+    /// </summary>
+    /// <param name="raw">The variable's value.</param>
+    /// <param name="inForce">The lead the sink took.</param>
+    internal static string? TransmitLeadProblem(string? raw, TimeSpan inForce)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        string text = raw.Trim();
+        bool understood = string.Equals(text, "off", StringComparison.OrdinalIgnoreCase)
+            || (int.TryParse(text, System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out int ms)
+                && TimeSpan.FromMilliseconds(ms) == inForce);
+        return understood
+            ? null
+            : string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"{M0LTE.Flex.FlexAudioOutput.TransmitLeadVariable}={text} not understood, so the DAX transmit lead is {inForce.TotalMilliseconds:0} ms; use 0 or off to turn it off, or 1 to 500 for ms");
     }
 }
