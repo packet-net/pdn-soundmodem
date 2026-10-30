@@ -30,8 +30,9 @@ public readonly record struct TransmitStallReport(
 /// packet the wall time since the keyup's first write is compared with the audio already
 /// written: an output that keeps up has written exactly as much as has played. Falling more
 /// than <see cref="Threshold"/> behind is one stall, counted once however long it lasts, and
-/// over when the lag is back under half of that. The lag is what the radio was short by, less
-/// whatever little it held, so it is an upper bound on the hole it sent.</para>
+/// over when the lag is back under half of that. The lag is what the radio was short by, so it is
+/// about the length of the gap it sent, to within one packet (5 ms): a hold that starts before a
+/// packet goes out is only seen once that packet has been counted as written.</para>
 /// <para><b>What it changes.</b> Nothing on the air. The inner output still sees the same samples
 /// in the same order, only in packet-sized calls rather than one per frame, and it already cuts
 /// them into packets itself. A gap between two writes in one keyup (the transmitter rendering
@@ -130,13 +131,23 @@ public sealed class TransmitStallWatch : IAudioOutput, IDisposable
     /// <inheritdoc />
     public void Drain()
     {
-        _inner.Drain();
-        if (!_keyed)
+        bool keyed = _keyed;
+        try
+        {
+            _inner.Drain();
+        }
+        finally
+        {
+            // Ended either way: a drain that throws has no keyup left to measure, and the next
+            // write must start a clock of its own rather than run on from this one.
+            _keyed = false;
+        }
+
+        if (!keyed)
         {
             return;
         }
 
-        _keyed = false;
         EndStall();
         if (_keyupStalls > 0)
         {

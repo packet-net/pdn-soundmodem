@@ -13,18 +13,30 @@ public class TransmitStallJournalTests
     [Fact]
     public void One_Line_Names_The_Keyup_Says_What_Happened_And_What_To_Do()
     {
-        string line = TransmitStallJournal.Line(new TransmitStallReport(
+        string line = new TransmitStallJournal().Line(new TransmitStallReport(
             KeyedAt, TimeSpan.FromSeconds(7.08), Stalls: 1, Worst: TimeSpan.FromMilliseconds(38.2)));
 
         line.Should().Be(
             "tx: keyup from 06:41:58.4 UTC (7.1 s): DAX audio fell up to 38 ms behind 1 time, "
-            + "so the radio sent a gap; give this host more CPU");
+            + "so the radio likely sent a gap; give this host more CPU");
+    }
+
+    [Fact]
+    public void The_Advice_Is_Given_Once_And_Later_Lines_Just_Report()
+    {
+        var journal = new TransmitStallJournal();
+        var report = new TransmitStallReport(
+            KeyedAt, TimeSpan.FromSeconds(7), Stalls: 1, Worst: TimeSpan.FromMilliseconds(30));
+
+        journal.Line(report).Should().EndWith("; give this host more CPU");
+        journal.Line(report).Should().EndWith("so the radio likely sent a gap")
+            .And.NotContain("CPU", "the advice was given on the first line");
     }
 
     [Fact]
     public void Several_Stalls_Read_As_Several_And_The_Line_Is_Plain_Ascii()
     {
-        string line = TransmitStallJournal.Line(new TransmitStallReport(
+        string line = new TransmitStallJournal().Line(new TransmitStallReport(
             KeyedAt, TimeSpan.FromSeconds(12), Stalls: 3, Worst: TimeSpan.FromMilliseconds(61)));
 
         line.Should().Contain("61 ms behind 3 times");

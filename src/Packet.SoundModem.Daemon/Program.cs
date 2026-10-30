@@ -2557,8 +2557,9 @@ channel.PttFailed += failure => Console.Error.WriteLine($"ptt: {failure.Message}
 // before the unkey, on the transmitter's thread, so the line is written from somewhere else.
 if (flex is not null)
 {
+    var stallJournal = new TransmitStallJournal();
     flex.TransmitStalls.KeyupStalled += report =>
-        _ = Task.Run(() => Console.Error.WriteLine(TransmitStallJournal.Line(report)));
+        _ = Task.Run(() => Console.Error.WriteLine(stallJournal.Line(report)));
 }
 
 // A rig's tuning window holds the transmitter: the dial is somewhere this station's modems are

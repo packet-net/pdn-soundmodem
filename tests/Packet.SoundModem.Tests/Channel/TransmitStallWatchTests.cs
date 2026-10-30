@@ -158,6 +158,27 @@ public class TransmitStallWatchTests
     }
 
     [Fact]
+    public void A_Drain_That_Fails_Does_Not_Carry_Its_Clock_Into_The_Next_Keyup()
+    {
+        var time = new FakeTimeProvider();
+        var sink = new PacedSink(time) { FailDrain = true };
+        var watch = new TransmitStallWatch(sink, Packet, time);
+        var reports = new List<TransmitStallReport>();
+        watch.KeyupStalled += reports.Add;
+
+        watch.Write(new float[Rate]);
+        Action failing = watch.Drain;
+        failing.Should().Throw<IOException>();
+        time.Advance(TimeSpan.FromSeconds(30));
+        sink.FailDrain = false;
+        watch.Write(new float[Rate]);
+        watch.Drain();
+
+        reports.Should().BeEmpty();
+        watch.Snapshot.Stalls.Should().Be(0);
+    }
+
+    [Fact]
     public void The_Audio_Reaches_The_Sink_Unchanged_And_In_Order()
     {
         var time = new FakeTimeProvider();
@@ -197,6 +218,8 @@ public class TransmitStallWatchTests
 
         public int? FailAtPacket { get; set; }
 
+        public bool FailDrain { get; set; }
+
         public bool Keep { get; init; }
 
         public List<float> Kept { get; } = [];
@@ -226,6 +249,14 @@ public class TransmitStallWatchTests
         public void Drain()
         {
             Drains++;
+            if (FailDrain)
+            {
+                _start = -1;
+                _sent = 0;
+                _pending = 0;
+                throw new IOException("the radio went away");
+            }
+
             if (_pending > 0)
             {
                 _pending = 0;
