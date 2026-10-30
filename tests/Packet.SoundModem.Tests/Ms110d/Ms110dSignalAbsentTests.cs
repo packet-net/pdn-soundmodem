@@ -710,7 +710,11 @@ public class Ms110dSignalAbsentFadeAndCarrierTests(ITestOutputHelper output) : M
         };
         var tx = new Ms110dModem(rate, _ => { }, new Ms110dTxSettings { WaveformNumber = wn });
         modem.Process(air.Noise(rate));
-        modem.Process(air.Burst(tx.Modulate(UiFrame(1, 200), 0), -6));
+        // The burst's last second (its EOM and flush) is cut off, so the receiver is still holding it
+        // when the carriers start, however well it decodes: a burst that ends cleanly lets go by
+        // itself and leaves nothing for the carriers to test.
+        float[] burst = tx.Modulate(UiFrame(1, 200), 0);
+        modem.Process(air.Burst(burst[..(burst.Length - rate)], -6));
         modem.CarrierDetect.Should().BeTrue("the weak burst is acquired");
 
         double amplitude = Math.Sqrt(2 * NoiseSigma * NoiseSigma * 3000 / (rate / 2.0) * Math.Pow(10, toneDb / 10));
