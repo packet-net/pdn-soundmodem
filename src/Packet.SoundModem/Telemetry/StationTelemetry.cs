@@ -100,6 +100,14 @@ public sealed class StationTelemetry
     /// </summary>
     public Func<ReceiveRateSnapshot>? ReceiveRate { get; set; }
 
+    /// <summary>
+    /// Where the transmit stall count comes from (issue #748), published as the
+    /// <c>pdn_transmit_stalls_total</c> and <c>pdn_transmit_stall_seconds_total</c> series. Null leaves them out: only an output that paces itself
+    /// off the wall clock (a Flex's DAX stream) can fall behind in this way; a sound card's
+    /// underruns are its own xrun count.
+    /// </summary>
+    public Func<TransmitStallSnapshot>? TransmitStalls { get; set; }
+
     /// <summary>Stations currently held.</summary>
     public int StationCount
     {
@@ -261,6 +269,18 @@ public sealed class StationTelemetry
             if (ReceiveRate?.Invoke() is { } receive)
             {
                 AppendReceiveRate(text, receive);
+            }
+
+            if (TransmitStalls?.Invoke() is { } stalls)
+            {
+                Metric(text, "pdn_transmit_stalls_total", "counter",
+                    "Times the transmit audio fell behind the radio's sample clock mid-keyup, each a "
+                    + "likely gap on the air (Flex DAX).");
+                text.Append(CultureInfo.InvariantCulture, $"pdn_transmit_stalls_total {stalls.Stalls}\n");
+                Metric(text, "pdn_transmit_stall_seconds_total", "counter",
+                    "Sum of each transmit stall's furthest-behind: about the length of the gap, to within one packet (5 ms).");
+                text.Append(CultureInfo.InvariantCulture,
+                    $"pdn_transmit_stall_seconds_total {stalls.Seconds:R}\n");
             }
         }
 

@@ -2551,6 +2551,17 @@ await using var flexLifetime = flex;
 // holds the PA" on an arbitrated radio, or a dead PTT lead anywhere else.
 channel.PttFailed += failure => Console.Error.WriteLine($"ptt: {failure.Message}");
 
+// A Flex's DAX transmit stream has no buffer of ours to underrun: the audio is sent as it falls
+// due, so a sending thread held up mid-keyup leaves the radio nothing to send, and the rest of the
+// burst goes out late by the same amount (issue #748). Said once per keyup that did it. Raised
+// before the unkey, on the transmitter's thread, so the line is written from somewhere else.
+if (flex is not null)
+{
+    var stallJournal = new TransmitStallJournal();
+    flex.TransmitStalls.KeyupStalled += report =>
+        _ = Task.Run(() => Console.Error.WriteLine(stallJournal.Line(report)));
+}
+
 // A rig's tuning window holds the transmitter: the dial is somewhere this station's modems are
 // not, so a frame sent then would land on the wrong frequency. Ordinary frames wait behind the
 // inhibit (composed over whatever is already installed, never instead of it) and the PTT itself
@@ -3003,6 +3014,10 @@ using var station = new Station(
 if (metrics is not null)
 {
     metrics.ReceiveRate = station.ReceiveRate;
+    if (flex is not null)
+    {
+        metrics.TransmitStalls = () => flex.TransmitStalls.Snapshot;
+    }
 }
 
 // This process runs one station, so a station fault IS the daemon's fault: journal the

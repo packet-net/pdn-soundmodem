@@ -10,13 +10,14 @@ public sealed class FlexRuntime : IAsyncDisposable
 {
     internal FlexRuntime(
         MockFlexRadio? mock, FlexStation station,
-        IAudioInput input, IAudioOutput output, IPttControl ptt)
+        IAudioInput input, IAudioOutput output, IPttControl ptt, Channel.TransmitStallWatch transmitStalls)
     {
         Mock = mock;
         Station = station;
         Input = input;
         Output = output;
         Ptt = ptt;
+        TransmitStalls = transmitStalls;
     }
 
     /// <summary>The in-process mock radio, when the device is <c>flex:mock</c>.</summary>
@@ -33,6 +34,10 @@ public sealed class FlexRuntime : IAsyncDisposable
 
     /// <summary>The slice PTT.</summary>
     public IPttControl Ptt { get; }
+
+    /// <summary>Counts the times the DAX transmit audio fell behind the radio's sample clock
+    /// (issue #748). It sits inside <see cref="Output"/>, at the DAX rate.</summary>
+    public Channel.TransmitStallWatch TransmitStalls { get; }
 
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
@@ -295,9 +300,13 @@ public static class FlexDevice
         // which is this modem's seam too - no adapter needed.
         IAudioInput input = station.CreateAudioInput(packetBuffer);
         FlexAudioOutput flexOutput = station.CreateAudioOutput(paceRealTime: true);
+        // The DAX sink paces itself off the wall clock with almost nothing queued at the radio, so
+        // a sending thread held up mid-keyup leaves the radio with nothing to send (issue #748).
+        // Watched at the DAX rate, one packet per call, which is how the sink sends anyway.
+        var transmitStalls = new Channel.TransmitStallWatch(flexOutput, format.SamplesPerPacket);
         IAudioOutput output = format.SampleRate == dspRate
-            ? flexOutput
-            : new Channel.UpsamplingAudioOutput(flexOutput, dspRate);
+            ? transmitStalls
+            : new Channel.UpsamplingAudioOutput(transmitStalls, dspRate);
         // Arbitrated keying carries the plan's transmit-filter high cut so every keyup
         // re-asserts it while the radio is quiet - the global, persistent filter is the
         // setting two stations otherwise overwrite under each other.
@@ -308,7 +317,7 @@ public static class FlexDevice
             })
             : station.CreatePtt();
 
-        return new FlexRuntime(mock, station, input, output, ptt);
+        return new FlexRuntime(mock, station, input, output, ptt, transmitStalls);
     }
 
     private static (string Host, int Port) SplitHostPort(string spec)
