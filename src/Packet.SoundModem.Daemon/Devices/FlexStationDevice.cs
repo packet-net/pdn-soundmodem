@@ -346,6 +346,11 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
             Console.WriteLine($"flex: transmit power {watts:0.#} W{ceiling}{source}");
         }
 
+        // Which pacing is in force, so a rollback through the environment shows in the journal.
+        Console.WriteLine(flex.TransmitLead > TimeSpan.Zero
+            ? $"flex: DAX transmit lead {flex.TransmitLead.TotalMilliseconds:0} ms"
+            : "flex: DAX transmit lead off, one packet at a time");
+
         if (flex.Station.TransmitFilter is (int txFilterLow, int txFilterHigh))
         {
             Console.WriteLine($"flex: transmit filter {txFilterLow}..{txFilterHigh} Hz (radio global - limits TX audio bandwidth)");

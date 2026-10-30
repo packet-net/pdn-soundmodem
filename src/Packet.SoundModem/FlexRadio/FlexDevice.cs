@@ -10,7 +10,8 @@ public sealed class FlexRuntime : IAsyncDisposable
 {
     internal FlexRuntime(
         MockFlexRadio? mock, FlexStation station,
-        IAudioInput input, IAudioOutput output, IPttControl ptt, Channel.TransmitStallWatch transmitStalls)
+        IAudioInput input, IAudioOutput output, IPttControl ptt, Channel.TransmitStallWatch transmitStalls,
+        TimeSpan transmitLead)
     {
         Mock = mock;
         Station = station;
@@ -18,6 +19,7 @@ public sealed class FlexRuntime : IAsyncDisposable
         Output = output;
         Ptt = ptt;
         TransmitStalls = transmitStalls;
+        TransmitLead = transmitLead;
     }
 
     /// <summary>The in-process mock radio, when the device is <c>flex:mock</c>.</summary>
@@ -38,6 +40,10 @@ public sealed class FlexRuntime : IAsyncDisposable
     /// <summary>Counts the times the DAX transmit audio fell behind the radio's sample clock
     /// (issue #748). It sits inside <see cref="Output"/>, at the DAX rate.</summary>
     public Channel.TransmitStallWatch TransmitStalls { get; }
+
+    /// <summary>How far ahead of the radio's playout the DAX sink keeps its audio: M0LTE.Flex's
+    /// default, or what <c>M0LTE_FLEX_TX_LEAD_MS</c> asked for. Zero is one packet at a time.</summary>
+    public TimeSpan TransmitLead { get; }
 
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
@@ -300,9 +306,10 @@ public static class FlexDevice
         // which is this modem's seam too - no adapter needed.
         IAudioInput input = station.CreateAudioInput(packetBuffer);
         FlexAudioOutput flexOutput = station.CreateAudioOutput(paceRealTime: true);
-        // The DAX sink paces itself off the wall clock with almost nothing queued at the radio, so
-        // a sending thread held up mid-keyup leaves the radio with nothing to send (issue #748).
-        // Watched at the DAX rate, one packet per call, which is how the sink sends anyway.
+        // The DAX sink paces itself off the wall clock, keeping a lead of audio at the radio (80 ms
+        // unless M0LTE_FLEX_TX_LEAD_MS says otherwise). A sending thread held up mid-keyup for
+        // longer than that leaves the radio with nothing to send (issue #748). Watched at the DAX
+        // rate, one packet per call, which is how the sink sends anyway.
         var transmitStalls = new Channel.TransmitStallWatch(flexOutput, format.SamplesPerPacket);
         IAudioOutput output = format.SampleRate == dspRate
             ? transmitStalls
@@ -317,7 +324,7 @@ public static class FlexDevice
             })
             : station.CreatePtt();
 
-        return new FlexRuntime(mock, station, input, output, ptt, transmitStalls);
+        return new FlexRuntime(mock, station, input, output, ptt, transmitStalls, flexOutput.TransmitLead);
     }
 
     private static (string Host, int Port) SplitHostPort(string spec)

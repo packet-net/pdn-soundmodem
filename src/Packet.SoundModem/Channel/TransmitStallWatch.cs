@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Channel;
 /// <param name="KeyedAt">UTC, when the keyup's first audio was written.</param>
 /// <param name="Length">From the first write to the end of the drain: how long the keyup took.</param>
 /// <param name="Stalls">How many times the audio fell behind.</param>
-/// <param name="Worst">The furthest behind it fell, which is the longest the radio can have been
+/// <param name="Worst">The longest single stall, which is the longest the radio can have been
 /// left with nothing to send.</param>
 public readonly record struct TransmitStallReport(
     DateTimeOffset KeyedAt, TimeSpan Length, int Stalls, TimeSpan Worst);
@@ -20,19 +20,23 @@ public readonly record struct TransmitStallReport(
 /// <remarks>
 /// <para><b>Why.</b> A sound card has its own clock and a buffer, and ALSA counts an underrun when
 /// the buffer runs dry. A Flex has neither on our side: <c>FlexAudioOutput</c> sends each DAX
-/// packet when it is due and sleeps until the next one is, so the radio holds almost nothing
-/// ahead of what it is playing. If the sending thread is held up for longer than that (not
-/// scheduled on a busy host, a garbage collection), the radio runs out, transmits nothing, and
-/// then plays the late packets as they arrive. On the air that is a hole of band noise followed
-/// by the rest of the burst shifted late by the length of the hole, which is what three MS110D
-/// WN13 bursts from GB7RDG looked like in Sweden on 2026-10-30. Nothing anywhere counted it.</para>
+/// packet against the wall clock, a fixed lead ahead of what the radio is playing (80 ms by
+/// default, one packet up to M0LTE.Flex 0.15.1 or with <c>M0LTE_FLEX_TX_LEAD_MS=0</c>). If the
+/// sending thread is held up for longer than the lead (not scheduled on a busy host, a garbage
+/// collection), the radio runs out, transmits nothing, and then plays the late packets as they
+/// arrive. On the air that is a hole of band noise followed by the rest of the burst shifted late
+/// by the length of the hole, which is what three MS110D WN13 bursts from GB7RDG looked like in
+/// Sweden on 2026-10-30, when the lead was one packet. Nothing anywhere counted it.</para>
 /// <para><b>What is measured.</b> The audio is handed on one DAX packet at a time. Before each
-/// packet the wall time since the keyup's first write is compared with the audio already
-/// written: an output that keeps up has written exactly as much as has played. Falling more
-/// than <see cref="Threshold"/> behind is one stall, counted once however long it lasts, and
-/// over when the lag is back under half of that. The lag is what the radio was short by, so it is
-/// about the length of the gap it sent, to within one packet (5 ms): a hold that starts before a
-/// packet goes out is only seen once that packet has been counted as written.</para>
+/// packet the radio's playout (the wall time since the keyup's first write, less the gaps it has
+/// already had) is compared with the audio already written. Written ahead of the playout is the
+/// lead the radio has in hand; written behind it means the radio ran dry. Falling more than
+/// <see cref="Threshold"/> behind is one stall, the size of the shortfall, which is about the
+/// length of the gap the radio sent, to within one packet (5 ms). The radio then plays
+/// everything after the gap late by it, so the playout is moved late by the stall too: whatever
+/// the sender sends in catching up is lead the radio holds, and a later hold that it covers is
+/// not a gap. Each stall is therefore measured on its own, and the lead in hand is never counted
+/// as lateness.</para>
 /// <para><b>What it changes.</b> Nothing on the air. The inner output still sees the same samples
 /// in the same order, only in packet-sized calls rather than one per frame, and it already cuts
 /// them into packets itself. A gap between two writes in one keyup (the transmitter rendering
@@ -59,8 +63,7 @@ public sealed class TransmitStallWatch : IAudioOutput, IDisposable
     private DateTimeOffset _keyedAt;
     private long _written;
 
-    private bool _inStall;
-    private TimeSpan _stallWorst;
+    private TimeSpan _late;
     private int _keyupStalls;
     private TimeSpan _keyupWorst;
 
@@ -102,7 +105,7 @@ public sealed class TransmitStallWatch : IAudioOutput, IDisposable
             _startedAt = _time.GetTimestamp();
             _keyedAt = _time.GetUtcNow();
             _written = 0;
-            _inStall = false;
+            _late = TimeSpan.Zero;
             _keyupStalls = 0;
             _keyupWorst = TimeSpan.Zero;
         }
@@ -148,7 +151,6 @@ public sealed class TransmitStallWatch : IAudioOutput, IDisposable
             return;
         }
 
-        EndStall();
         if (_keyupStalls > 0)
         {
             KeyupStalled?.Invoke(new TransmitStallReport(
@@ -161,41 +163,21 @@ public sealed class TransmitStallWatch : IAudioOutput, IDisposable
 
     private void Check()
     {
-        TimeSpan behind = _time.GetElapsedTime(_startedAt)
+        TimeSpan behind = _time.GetElapsedTime(_startedAt) - _late
             - TimeSpan.FromTicks(_written * TimeSpan.TicksPerSecond / _inner.SampleRate);
-        if (behind > Threshold)
-        {
-            if (!_inStall)
-            {
-                _inStall = true;
-                _stallWorst = TimeSpan.Zero;
-                _keyupStalls++;
-                Interlocked.Increment(ref _totalStalls);
-            }
-
-            if (behind > _stallWorst)
-            {
-                _stallWorst = behind;
-            }
-        }
-        else if (_inStall && behind < Threshold / 2)
-        {
-            EndStall();
-        }
-    }
-
-    private void EndStall()
-    {
-        if (!_inStall)
+        if (behind <= Threshold)
         {
             return;
         }
 
-        _inStall = false;
-        Interlocked.Add(ref _totalStallTicks, _stallWorst.Ticks);
-        if (_stallWorst > _keyupWorst)
+        // The radio ran dry for about this long and plays the rest of the keyup late by it.
+        _late += behind;
+        _keyupStalls++;
+        Interlocked.Increment(ref _totalStalls);
+        Interlocked.Add(ref _totalStallTicks, behind.Ticks);
+        if (behind > _keyupWorst)
         {
-            _keyupWorst = _stallWorst;
+            _keyupWorst = behind;
         }
     }
 }
