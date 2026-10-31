@@ -7,6 +7,7 @@ using M0LTE.Radio.Audio;
 using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
+using Packet.SoundModem.Ident;
 using Packet.SoundModem.Rig;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Waterfall;
@@ -1010,9 +1011,9 @@ public sealed class RigControlTests : IAsyncDisposable
     public async Task A_Receive_Window_Holds_Kiss_Frames_And_Refuses_The_Key_Until_It_Ends()
     {
         // The receive window is an ordinary rig window, so everything RigControl.HoldsTransmitter
-        // holds is held by it;
-        // goes through every source (KISS, idents, paging, the transmitter test, ARDOP) for any
-        // window. This pins that a window opened here is one of them.
+        // holds is held by it: every source of transmission (KISS, Morse idents, paging, the
+        // transmitter test, ARDOP) goes through the one guard, for any window. This pins that a
+        // window opened here holds all of them.
         RigControl rig = await Started();
         var channel = new SoundModemChannel(12000, randomSeed: 29);
         channel.AddModem(0, sink => ModemCatalog.Create("afsk1200", 12000, sink));
@@ -1024,20 +1025,49 @@ public sealed class RigControlTests : IAsyncDisposable
         ReceiveWindowApi.Handle(
             rig, channel.TransmitLease, "POST", """{"dialHz": 7052000, "seconds": 60}""").Status.Should().Be(200);
 
+        // A frame from a host on a KISS port.
         Task kiss = channel.EnqueueTransmit(
             0, UiFrame("G8ABC", "GB7TST", "hello"u8));
+
+        // A Morse ident, which is not even queued while a window is open, and waits if it is.
+        var identifier = new StationIdentifier("G8ABC", null, 1000, 25, TimeSpan.FromMinutes(10), 12000);
+        identifier.NoteTransmission();
+        IdentTransmission.ShouldSend(channel, identifier, held: rig.HoldsTransmitter).Should().BeFalse();
+        Task ident = IdentTransmission.SendAsync(channel, identifier);
+
+        // A service transmission (POCSAG paging goes this way).
+        Task page = channel.EnqueueTransmit(rate => new float[1200]);
+
+        // The operator's transmitter test.
+        var said = new ConcurrentQueue<string>();
+        var tests = new TxTestRunner(new TxTestOptions
+        {
+            Channel = channel,
+            Journal = new StationJournal("", said.Enqueue, said.Enqueue),
+            ChannelWait = TimeSpan.FromMinutes(1),
+        });
+        Task<TxTestOutcome> test = tests.RunAsync(new TxTestRequest(true, 0, 0.5));
+
+        // An ARDOP burst owns the channel's timing and passes the inhibit: refused at the key.
+        Task ardop = channel.EnqueueTransmit(_ => new float[1200], rejected: null, ownsChannelTiming: true);
+        Func<Task> ardopWait = () => ardop;
+        (await ardopWait.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*for a receive window*");
         await Task.Delay(TimeSpan.FromMilliseconds(300));
 
         rig.HoldsTransmitter.Should().BeTrue("idents read this, and are not sent while it is true");
         kiss.IsCompleted.Should().BeFalse("held, not sent and not dropped");
+        ident.IsCompleted.Should().BeFalse();
+        page.IsCompleted.Should().BeFalse();
+        test.IsCompleted.Should().BeFalse();
         line.Keys.Should().Be(0);
         Action key = rig.Guard(new CountingPtt()).Key;
         key.Should().Throw<TransmitterHeldException>().WithMessage("*for a receive window*");
 
         ReceiveWindowApi.Handle(rig, channel.TransmitLease, "POST", """{"release": true}""").Status.Should().Be(200);
 
-        await kiss.WaitAsync(TimeSpan.FromSeconds(30));
-        line.Keys.Should().Be(1);
+        await Task.WhenAll(kiss, ident, page).WaitAsync(TimeSpan.FromSeconds(60));
+        (await test.WaitAsync(TimeSpan.FromSeconds(60))).Ran.Should().BeTrue();
+        line.Keys.Should().BeGreaterThanOrEqualTo(4);
         _fake.DialHz.Should().Be(14_074_000);
         await stop.CancelAsync();
         Func<Task> ended = () => transmitter;

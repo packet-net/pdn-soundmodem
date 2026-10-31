@@ -564,7 +564,8 @@ internal sealed class ConfigApi
                 // Plan mutates the entries it is given, which is why this runs against the
                 // throwaway parse above and never against anything the station is using.
                 bool flex = proposed.Device.StartsWith("flex:", StringComparison.OrdinalIgnoreCase);
-                int dspRate = proposed.Modems.Any(
+                // A leftover mailcast section still counts as an MS110D modem, as start-up has it.
+                int dspRate = proposed.Mailcast is not null || proposed.Modems.Any(
                     m => !DaemonConfig.IsArdop(m.Mode) && ModemCatalog.DspRateFor(m.Mode) == 48000)
                     ? 48000
                     : 12000;

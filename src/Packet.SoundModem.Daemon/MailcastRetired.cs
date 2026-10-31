@@ -12,6 +12,9 @@ internal static class MailcastRetired
     internal const string GuideUrl =
         "https://github.com/packet-net/pdn-mailcast/blob/main/docs/moving-from-built-in.md";
 
+    /// <summary>The mode the removed receiver counted as, so the channel still runs at 48 kHz with the section.</summary>
+    internal const string RateMode = "ms110d-wn4";
+
     /// <summary>The one journal line, plain ASCII.</summary>
     internal const string Line =
         "mailcast: WARNING - the built-in mailcast receiver was removed and the \"mailcast\" section is ignored; "

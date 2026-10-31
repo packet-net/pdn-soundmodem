@@ -36,4 +36,4 @@ Leave out of the receiver's config anything your `mailcast` section left out: th
 
 ## Still need the old receiver?
 
-Its set-up guide is [this page as it was in 0.87.5](https://github.com/packet-net/pdn-soundmodem/blob/v0.87.5/docs/14-mailcast.md). The last release that has the built-in receiver is the one before this change.
+Its set-up guide is [this page as it was in 0.99.0](https://github.com/packet-net/pdn-soundmodem/blob/v0.99.0/docs/14-mailcast.md), the last release that has the built-in receiver.

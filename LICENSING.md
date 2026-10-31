@@ -58,7 +58,6 @@ These files mention a GPL program, or sit in a PROVENANCE row that does, but tak
 | `src/Packet.SoundModem/UberSdr/UberSdrAudioInput.cs`, `UberSdrDevice.cs`, `tools/Packet.SoundModem.UberSdr/UberSdrIqClient.cs` | Independent implementations of the ka9q_ubersdr connection protocol; only `PcmBinaryDecoder.cs` is a port |
 | `src/Packet.SoundModem/Modems/FreeDvDatacModem.cs`, `tools/gen-ldpc-tables/gen.py` | The codec2 lineage is LGPL-2.1, not GPL, and lives in the `M0LTE.Ofdm` and `M0LTE.FecLdpc` packages; this glue and the generator script are original |
 | `src/Packet.SoundModem.Daemon/ArdopChannelBridge.cs`, `ArdopBusyDetector.cs`, `ArdopReplyWindow.cs` | ardopcf is MIT, which an AGPL work can carry; the ported ARDOP code is in the `M0LTE.Ardop` package |
-| `src/Packet.SoundModem.Daemon/Mailcast/*` | The built-in pdn-mailcast receiver. It follows pdn-mailcast's own receiver, which is Tom's, and uses its libraries as packages; nothing in it comes from a third-party GPL program |
 | Tests and tools that run against Dire Wolf, QtSoundModem or multimon-ng (`DirewolfCrossValidationTests.cs`, `QtsmInteropTests.cs`, `Pocsag/MultimonNg.cs`, `tools/Packet.SoundModem.QtsmBench`) | Interoperability checks against those programs; no code taken |
 
 ## Other licences in the tree

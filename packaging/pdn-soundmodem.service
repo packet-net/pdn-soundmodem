@@ -16,6 +16,9 @@ RestartSec=5
 # copies of itself and never succeed, so stay stopped and let the operator read it. Every
 # other failure (a card that vanished, a crash) still restarts.
 RestartPreventExitStatus=2
+# SIGTERM to the daemon alone: it ends its own feed process (rtl_sdr, rx_sdr, an iqpipe command)
+# on the way out, and systemd must not kill that first.
+KillMode=mixed
 User=pdn-soundmodem
 # systemd creates /var/lib/pdn-soundmodem owned by the service user. Without it the frame log's
 # default path is unwritable - an unprivileged user cannot create a directory in /var/lib - and

@@ -82,10 +82,37 @@ public sealed class MailcastRetiredTests : IDisposable
         (string withLine, string withNotice) = await FilterLineAsync(OldSection + ",");
         (string withoutLine, string withoutNotice) = await FilterLineAsync("");
 
-        withLine.Should().Be(withoutLine, "the filter covers the modems and nothing else, with or without the section");
-        withLine.Should().EndWith(" (all modems)").And.NotContain("mailcast");
+        // Without the section the channel runs at 12 kHz; with it, as before the removal, at 48 kHz,
+        // where the band planner's edges differ. Either way the filter covers the modems and
+        // nothing else: no mailcast band is added to it.
+        withoutLine.Should().Be("flex: setting the slice receive filter to 300-3150 Hz (all modems)");
+        withLine.Should().Be("flex: setting the slice receive filter to 350-3100 Hz (all modems)");
         withNotice.Should().Be(MailcastRetired.Line);
         withoutNotice.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task A_Leftover_Section_Still_Gives_The_48_kHz_Channel_Other_Settings_Were_Written_For()
+    {
+        // publish.audioRate 24000 divides 48000 but not 12000: before the removal the section made
+        // the channel 48 kHz, and this must go on starting.
+        string with = Path.Combine(_dir.FullName, "rate-with.json");
+        string rest = "\"device\": \"flex:mock\", \"publish\": { \"audioRate\": 24000, \"token\": \"t\" }, ";
+        File.WriteAllText(with, "{ " + rest + OldSection + ", \"waterfall\": { \"port\": " + FreePorts.Next()
+            + " }, \"modems\": [ { \"mode\": \"afsk1200\", \"port\": " + FreePorts.Next() + " } ] }");
+        string withLine = await StartedLineAsync(with);
+        withLine.Should().StartWith(FilterPrefix, "it started");
+    }
+
+    [Fact]
+    public void A_Leftover_Sections_Secrets_Are_Never_Served_Whatever_The_Key_Case()
+    {
+        string redacted = ConfigApi.Redact(
+            """{"Mailcast": {"BBS": {"Password": "pick-one", "login": "Q0CAST"}, "Hooks": {"After": {"command": "/bin/x", "ARGS": ["s3cret"]}, "before": {"command": "/bin/y", "args": ["h1dden"]}}}}""");
+
+        redacted.Should().NotContain("pick-one").And.NotContain("s3cret").And.NotContain("h1dden");
+        redacted.Should().Contain("(set, not shown)").And.Contain("Q0CAST").And.Contain("/bin/x");
+        ConfigApi.Redact("""{"mailcast": {"bbs": {"password": "pick-one"}}}""").Should().NotContain("pick-one");
     }
 
     /// <summary>
@@ -99,6 +126,13 @@ public sealed class MailcastRetiredTests : IDisposable
             "{ \"device\": \"flex:mock\", " + extra
             + $" \"waterfall\": {{ \"port\": {FreePorts.Next()} }},"
             + $" \"modems\": [ {{ \"mode\": \"afsk1200\", \"port\": {FreePorts.Next()} }} ] }}");
+        return await RunUntilFilterLineAsync(path);
+    }
+
+    private async Task<string> StartedLineAsync(string path) => (await RunUntilFilterLineAsync(path)).Line;
+
+    private static async Task<(string Line, string Notice)> RunUntilFilterLineAsync(string path)
+    {
 
         string dll = Path.Combine(AppContext.BaseDirectory, "pdn-soundmodem.dll");
         var info = new ProcessStartInfo(UsageTests.DotnetHost())

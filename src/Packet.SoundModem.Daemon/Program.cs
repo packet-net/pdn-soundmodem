@@ -519,7 +519,7 @@ var stationJournal = StationJournal.Console();
 // without it, and says once where the receiver is.
 if (mailcastSectionLeft)
 {
-    stationJournal.Write(MailcastRetired.Line);
+    stationJournal.WriteError(MailcastRetired.Line);
 }
 
 // Looks in packet-net's apt repository for a newer pdn-soundmodem (issue #583): once soon after
@@ -533,7 +533,12 @@ using var updateCheck = new UpdateCheck(TimeProvider.System, stationJournal.Writ
 // Mode names are checked, and the rate the shared channel runs at is settled, before the band
 // planner and the transmit-filter plan: both ask the catalogue what a mode occupies, and the
 // catalogue answers an unknown mode with its defaults.
-if (!StationFactory.TryResolveDspRate(modems, stationJournal, out int DspRate))
+// A leftover "mailcast" section still counts as an MS110D modem here, as the removed receiver did,
+// so a station whose other settings were written for the 48 kHz channel (publish.audioRate, say)
+// starts exactly as before.
+if (!StationFactory.TryResolveDspRate(
+        mailcastSectionLeft ? [.. modems, new ModemConfig { Mode = MailcastRetired.RateMode }] : modems,
+        stationJournal, out int DspRate))
 {
     return 2;
 }
