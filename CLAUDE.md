@@ -112,6 +112,8 @@ row in the matrix. A fix isn't finished until the ledger records it.
   `release.yml`'s `publish-npm` was already hosted for a different reason that also survives
   the rule: npm refuses a provenance attestation built on a self-hosted runner. `release.yml`'s
   `deb-install-test` is hosted too: it compiles nothing, and arm64 has no self-hosted runner.
+  So is its `publish` job (GitHub Release, apt, nuget.org): it only moves the release job's
+  artifact, and hosted runners come with `gh`, which not every self-hosted runner has.
 - PRs merge on locally-run green tests (`dotnet test`); fix forward.
 - **Cross-repo iteration**: the co-developed packages swap to local checkouts with
   `-p:FecSourcePath=... -p:Il2pSourcePath=... -p:FlexSourcePath=...
