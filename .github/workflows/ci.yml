@@ -177,3 +177,5 @@ jobs:
           grep -q 'usr/share/pdn-soundmodem/soundmodem\.example\.json$' <<<"$listing"
           # Serial PTT dies with DllNotFoundException if this shim is missing.
           grep -q 'usr/lib/pdn-soundmodem/libSystem\.IO\.Ports\.Native\.so$' <<<"$listing"
+          # The frame log runs on the distribution's SQLite through this link (Debian 11 support).
+          grep -q 'usr/lib/pdn-soundmodem/libe_sqlite3\.so -> \.\./x86_64-linux-gnu/libsqlite3\.so\.0$' <<<"$listing"

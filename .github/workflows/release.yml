@@ -243,6 +243,10 @@ jobs:
             grep -q 'usr/share/pdn-soundmodem/soundmodem\.example\.json$' <<<"$listing"
             # Serial PTT dies with DllNotFoundException if this shim is missing.
             grep -q 'usr/lib/pdn-soundmodem/libSystem\.IO\.Ports\.Native\.so$' <<<"$listing"
+            # The frame log runs on the distribution's SQLite, through this link and the
+            # libsqlite3-0 dependency. The bundled copy would put the glibc floor back at 2.34.
+            grep -qE 'usr/lib/pdn-soundmodem/libe_sqlite3\.so -> \.\./[a-z0-9_]+-linux-gnu[a-z]*/libsqlite3\.so\.0$' <<<"$listing"
+            dpkg-deb -f "$deb" Depends | grep -qE 'libsqlite3-0 \(>= [0-9.]+\)'
             # build-deb.sh reads the libc6 floor out of the published binary because .NET
             # moves it per-RID without notice. An unversioned libc6 here means that came
             # unstuck, and apt would install onto machines the loader cannot start it on.
@@ -350,6 +354,38 @@ jobs:
       - name: Warn if NUGET_API_KEY missing
         if: steps.version.outputs.publish == 'true' && env.NUGET_API_KEY == ''
         run: echo "::warning::NUGET_API_KEY is not visible to this repo - NuGet push skipped (the GitHub Release still has the .debs). Grant the org secret access to pdn-soundmodem."
+
+  # Install the built .debs on real distributions, Debian 11 (bullseye) included, and run them:
+  # packaging/test-deb.sh, which also opens a frame log, so the SQLite the package relies on is
+  # loaded and used. Debian 11 is the floor for amd64 and arm64 since the frame log moved to the
+  # distribution's SQLite; nothing else proves it stays there. GitHub-hosted, because there is
+  # no arm64 self-hosted runner and the containers must run natively, and because nothing here
+  # compiles: it downloads the release job's artifact and runs Docker, a few minutes per arch.
+  # armhf is not tested here (no native runner); its glibc floor is .NET's, 2.34.
+  # This runs after the release job, so on a tag it reports rather than gates the publish.
+  deb-install-test:
+    name: install test (${{ matrix.arch }})
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pdn-soundmodem-${{ needs.release.outputs.version }}
+          path: artifacts
+      - name: Install and run on debian:bullseye, debian:bookworm, ubuntu:24.04 and under systemd
+        run: packaging/test-deb.sh "${{ needs.release.outputs.version }}" ./artifacts "${{ matrix.arch }}"
 
   # The npm leg is split out onto a GitHub-hosted runner, which is a DELIBERATE
   # EXCEPTION to the self-hosted-only rule. It was the only one until pages.yml

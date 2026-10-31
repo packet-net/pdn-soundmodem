@@ -2,7 +2,10 @@
 # Acceptance test for the pdn-soundmodem .deb, run in throwaway containers.
 #
 #   packaging/build-deb.sh 0.0.0-test amd64
-#   packaging/test-deb.sh [version] [debdir]
+#   packaging/test-deb.sh [version] [debdir] [arch]
+#
+# arch defaults to amd64 and must be the host's own (the containers run natively); the
+# release workflow runs it on an arm64 runner for the arm64 package.
 #
 # Exercises install / seed / enable / remove / purge on Debian and Ubuntu, plus a real
 # systemd instance (a plain image cannot catch a unit that systemd refuses to load, and
@@ -14,9 +17,10 @@ set -uo pipefail
 VERSION="${1:-0.0.0-test}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DEBDIR="$(cd "${2:-$(dirname "$HERE")/artifacts}" && pwd)"
-DEB="pdn-soundmodem_${VERSION}_amd64.deb"
+ARCH="${3:-amd64}"
+DEB="pdn-soundmodem_${VERSION}_${ARCH}.deb"
 
-[ -f "$DEBDIR/$DEB" ] || { echo "no $DEBDIR/$DEB - run packaging/build-deb.sh $VERSION amd64 first" >&2; exit 2; }
+[ -f "$DEBDIR/$DEB" ] || { echo "no $DEBDIR/$DEB - run packaging/build-deb.sh $VERSION $ARCH first" >&2; exit 2; }
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 2; }
 
 WORK="$(mktemp -d)"
@@ -35,14 +39,23 @@ bad(){ echo "  FAIL  $1"; FAIL=1; }
 check(){ if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 
 export DEBIAN_FRONTEND=noninteractive
+# Debian 11 is past its LTS and deb.debian.org is retiring it: on 2026-10-31 the security
+# suite there listed packages whose files 404. archive.debian.org still has the lot.
+if grep -q '^VERSION_CODENAME=bullseye' /etc/os-release; then
+  sed -i 's|http://deb.debian.org|http://archive.debian.org|' /etc/apt/sources.list
+fi
 apt-get update -qq >/dev/null 2>&1
-apt-get install -y -qq "/debs/$DEB" >/dev/null 2>&1
+apt-get install -y -qq "/debs/$DEB" >/dev/null 2>&1 || apt-get install -y "/debs/$DEB" 2>&1 | tail -15
 
 echo "== install =="
 check "package is installed"            "dpkg -l pdn-soundmodem | grep -q '^ii'"
 check "/usr/bin/pdn-soundmodem symlink" "[ -L /usr/bin/pdn-soundmodem ]"
 check "payload in /usr/lib"             "[ -x /usr/lib/pdn-soundmodem/pdn-soundmodem ]"
 check "native shim shipped"             "[ -f /usr/lib/pdn-soundmodem/libSystem.IO.Ports.Native.so ]"
+# The frame log runs on the distribution's SQLite: the bundled one needs a newer glibc than
+# Debian 11 has. A dangling link here is a wrong multiarch triplet in build-deb.sh.
+check "sqlite is a link to the distro's" "[ -L /usr/lib/pdn-soundmodem/libe_sqlite3.so ]"
+check "sqlite link resolves"            "[ -e /usr/lib/pdn-soundmodem/libe_sqlite3.so ]"
 check "systemd unit installed"          "[ -f /usr/lib/systemd/system/pdn-soundmodem.service ]"
 check "template unit installed"         "[ -f /usr/lib/systemd/system/pdn-soundmodem@.service ]"
 check "hidraw udev rule installed"      "[ -f /usr/lib/udev/rules.d/70-pdn-soundmodem.rules ]"
@@ -60,6 +73,26 @@ echo "$out" | grep -q 'DllNotFoundException' \
   && bad "native lib resolves (got DllNotFoundException)" \
   || ok  "native lib resolves - no DllNotFoundException"
 echo "$out" | grep -q 'kiss tcp' && ok "modem starts and binds KISS" || bad "modem did not bind KISS"
+
+echo
+echo "== the frame log opens (SQLite loads) =="
+# The frame log is where SQLite is first loaded, so a station without one never finds out its
+# SQLite cannot load. Opening it runs the schema, so a database with a frames table proves the
+# library resolved and works.
+# ALSA's null PCM is defined in libasound2-data's alsa.conf, which the Ubuntu image does not
+# pull in by itself; without it "null" does not exist and the modem stops for want of a device.
+apt-get install -y -qq libasound2-data >/dev/null 2>&1 || true
+printf '{ "device": "null", "kissPort": 18203, "frameLog": { "path": "/tmp/frames.db" } }\n' > /tmp/framelog.json
+/usr/bin/pdn-soundmodem --config /tmp/framelog.json > /tmp/framelog.out 2>&1 &
+pid=$!
+sleep 6
+check "still running with a frame log"  "kill -0 $pid 2>/dev/null"
+check "frame log file created"          "[ -s /tmp/frames.db ]"
+check "journal names the frame log"     "grep -q 'frame log: /tmp/frames.db' /tmp/framelog.out"
+grep -q 'DllNotFoundException\|GLIBC_' /tmp/framelog.out \
+  && { bad "SQLite failed to load"; tail -20 /tmp/framelog.out; } \
+  || ok  "no DllNotFoundException or glibc error"
+kill $pid 2>/dev/null; wait $pid 2>/dev/null
 
 echo
 echo "== remove =="
@@ -214,7 +247,8 @@ SYSD
 chmod +x "$WORK"/*.sh
 RC=0
 
-for img in debian:bookworm ubuntu:24.04; do
+# bullseye is the oldest Debian the amd64 and arm64 packages install on (glibc 2.31).
+for img in debian:bullseye debian:bookworm ubuntu:24.04; do
   echo "################ $img ################"
   docker run --rm -v "$DEBDIR:/debs:ro" -v "$WORK:/w:ro" "$img" bash /w/plain.sh || RC=1
   echo
