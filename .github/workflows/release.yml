@@ -13,9 +13,9 @@ name: release
 # releasing anything - a full dry run of the pipeline. Set `publish: true` to also cut the
 # GitHub Release and push to NuGet and npm.
 #
-# Runs as a single job on purpose: the runner is self-hosted and memory-bounded, so the
-# three self-contained publishes go one at a time, and keeping them in one job avoids
-# shuttling ~75 MB artifacts between jobs to do it.
+# The build runs as a single job on purpose: the runner is self-hosted and memory-bounded, so
+# the three self-contained publishes go one at a time. Its artifact then goes to the hosted
+# jobs that test the .debs and publish.
 
 on:
   push:
