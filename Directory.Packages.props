@@ -27,7 +27,7 @@
     <PackageVersion Include="M0LTE.Ofdm" Version="0.1.0" />
     <!-- The MIL-STD-188-110D Appendix D waveform, lifted out like the OFDM modem above; the
          IModem wrapper (Modems/Ms110dModem.cs) stays here. See docs/dev/modem-packages.md. -->
-    <PackageVersion Include="M0LTE.Ms110d" Version="0.4.0" />
+    <PackageVersion Include="M0LTE.Ms110d" Version="0.4.1" />
     <!-- The Tait CCDI driver, for OFDM-FM carrier sense taken from the radio's own squelch and
          signal-strength meter rather than inferred from the audio a receiver produces. AGPL-3.0,
          the same licence as this repo; see CLAUDE.md, Licence rules.
