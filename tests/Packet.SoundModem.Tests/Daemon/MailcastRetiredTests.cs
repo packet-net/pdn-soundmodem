@@ -97,7 +97,7 @@ public sealed class MailcastRetiredTests : IDisposable
         // publish.audioRate 24000 divides 48000 but not 12000: before the removal the section made
         // the channel 48 kHz, and this must go on starting.
         string with = Path.Combine(_dir.FullName, "rate-with.json");
-        string rest = "\"device\": \"flex:mock\", \"publish\": { \"audioRate\": 24000, \"token\": \"t\" }, ";
+        string rest = "\"device\": \"flex:mock\", \"publish\": { \"audioRate\": 24000, \"callsign\": \"G8ABC\", \"token\": \"" + new string('a', 40) + "\", \"url\": \"ws://127.0.0.1:9/uplink\" }, ";
         File.WriteAllText(with, "{ " + rest + OldSection + ", \"waterfall\": { \"port\": " + FreePorts.Next()
             + " }, \"modems\": [ { \"mode\": \"afsk1200\", \"port\": " + FreePorts.Next() + " } ] }");
         string withLine = await StartedLineAsync(with);
