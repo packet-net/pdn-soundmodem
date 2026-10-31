@@ -68,6 +68,8 @@ jobs:
           global-json-file: global.json
           cache: ${{ runner.environment == 'github-hosted' }}
           cache-dependency-path: Directory.Packages.props
+      - name: Fetch gh if this runner has none
+        run: scripts/ci-ensure-gh.sh
       - name: Check the tools this job needs
         run: scripts/ci-require-tools.sh dpkg-deb:dpkg readelf:binutils iconv:libc-bin gzip tar python3 gh sha256sum:coreutils
       # The suite's ALSA tests run wherever /dev/snd has a capture device, and need libasound there.
