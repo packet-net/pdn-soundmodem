@@ -22,9 +22,6 @@ internal sealed class OpenWebRxDeviceKind : DeviceKind
         new OpenWebRxStationDevice(this, device, OpenWebRxDevice.Parse(device), settings);
 
     /// <inheritdoc/>
-    public override MailcastRadioKind MailcastKindOf(string device) => MailcastRadioKind.OpenWebRx;
-
-    /// <inheritdoc/>
     public override string? TransmitTestRefusal =>
         "tx test: refused, this station's audio comes from a web receiver, which is a receiver "
         + "and has no transmitter - there is nothing here to key";

@@ -10,9 +10,8 @@ namespace Packet.SoundModem.Waterfall;
 /// <c>/rig-window</c> (issue #585, step 2 of the one-receiver plan, packet-net/pdn-mailcast#75):
 /// a program on the same machine asks this station to retune its rig and hold all transmitting
 /// for a while, then puts everything back. Built on the same <see cref="RigControl.Tune"/> window
-/// and <see cref="RigControl.HoldsTransmitter"/> hold the built-in mailcast receiver's own
-/// retuner uses, generalised so any local program can ask for it - nothing here is
-/// mailcast-specific.
+/// and <see cref="RigControl.HoldsTransmitter"/> hold that the old built-in mailcast receiver's
+/// retuner used, so any local program can ask for it - nothing here is mailcast-specific.
 /// </summary>
 /// <remarks>
 /// <para><b>The request handling without the HTTP</b>, the same split <c>TxLeaseApi</c> and
@@ -56,8 +55,7 @@ internal static class ReceiveWindowApi
 
     /// <summary>
     /// The passband asked for when the request does not say how wide a band it needs: wide
-    /// enough for a narrowband data signal such as pdn-mailcast's bulletins, the built-in
-    /// receiver's own fixed choice (<c>MailcastRetuner.PassbandHz</c>).
+    /// enough for a narrowband data signal such as pdn-mailcast's bulletins.
     /// </summary>
     internal const int DefaultWidthHz = 3000;
 

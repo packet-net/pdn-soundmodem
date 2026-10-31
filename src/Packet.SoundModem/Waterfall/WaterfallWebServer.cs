@@ -995,7 +995,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// <summary>
     /// This station's rig, if a program on the same machine may borrow it for a while: installs
     /// <c>/rig-window</c> (issue #585), keyless and loopback-only like <c>/channel-audio</c>,
-    /// generalising the tuning window the built-in mailcast receiver's own retuner already uses
+    /// generalising the tuning window the old built-in mailcast retuner used
     /// so any local program can retune the rig and hold all transmitting, then get it back. Null
     /// (the default) 404s the path - a station with no "rig" section offers no rig to borrow, the
     /// same answer <c>/api/rig</c> and <c>/api/rig/tune</c> give, and a Flex station (which is

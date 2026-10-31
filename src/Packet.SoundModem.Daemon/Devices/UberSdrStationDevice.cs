@@ -23,9 +23,6 @@ internal sealed class UberSdrDeviceKind : DeviceKind
         new UberSdrStationDevice(this, device, UberSdrDevice.Parse(device), settings);
 
     /// <inheritdoc/>
-    public override MailcastRadioKind MailcastKindOf(string device) => MailcastRadioKind.UberSdr;
-
-    /// <inheritdoc/>
     public override string? TransmitTestRefusal =>
         "tx test: refused, this station's audio comes from a web receiver, which is a receiver "
         + "and has no transmitter - there is nothing here to key";

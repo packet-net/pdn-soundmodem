@@ -182,7 +182,7 @@ var modems = new List<ModemConfig>();
 List<PolyglotConfig> polyglotPorts = [];
 PttConfig? pttConfig = null;
 RigConfig? rigConfig = null;
-MailcastConfig? mailcastConfig = null;
+bool mailcastSectionLeft = false;
 CarrierSenseConfig? carrierSenseConfig = null;
 AlsaConfig? alsaConfig = null;
 PagingConfig? paging = null;
@@ -257,7 +257,7 @@ if (configPath is not null)
     polyglotPorts = config.Polyglot;
     pttConfig = config.Ptt;
     rigConfig = config.Rig;
-    mailcastConfig = config.Mailcast;
+    mailcastSectionLeft = config.Mailcast is not null;
     carrierSenseConfig = config.CarrierSense;
     alsaConfig = config.Alsa;
     paging = config.Paging;
@@ -341,13 +341,6 @@ else if (singleTone is { } singleToneAsked)
 {
     benchTxTest = new Packet.SoundModem.Waterfall.TxTestRequest(
         false, singleToneAsked.Hz, singleToneAsked.Seconds);
-}
-
-// A bench test lives for a few seconds, and is the one run that must not retune the rig or log in
-// to a BBS behind the operator's back.
-if (benchTxTest is not null)
-{
-    mailcastConfig = null;
 }
 
 // --bind is not validated anywhere the way a config file's "bind" is, so an address that is not
@@ -522,13 +515,11 @@ if (modems.Count == 0)
 // running several gives each one its slug, so fifty of them in one journal are readable.
 var stationJournal = StationJournal.Console();
 
-// Said once, before anything else about mailcast, so a station whose mailcast section stops it
-// starting hears this too: the built-in receiver is going, and what replaces it (issue #587).
-// Through the mailcast journal, so the WARNING line goes to stderr and journald grades it as one.
-Action<string> deprecationJournal = MailcastStation.Journal(stationJournal);
-foreach (string line in MailcastDeprecation.JournalLines(mailcastConfig))
+// A leftover "mailcast" section: the built-in receiver is gone (issue #588), the station starts
+// without it, and says once where the receiver is.
+if (mailcastSectionLeft)
 {
-    deprecationJournal(line);
+    stationJournal.Write(MailcastRetired.Line);
 }
 
 // Looks in packet-net's apt repository for a newer pdn-soundmodem (issue #583): once soon after
@@ -542,17 +533,9 @@ using var updateCheck = new UpdateCheck(TimeProvider.System, stationJournal.Writ
 // Mode names are checked, and the rate the shared channel runs at is settled, before the band
 // planner and the transmit-filter plan: both ask the catalogue what a mode occupies, and the
 // catalogue answers an unknown mode with its defaults.
-// The mailcast receiver is an MS110D modem, which runs at 48 kHz, so it counts here like one.
-if (!StationFactory.TryResolveDspRate(
-        mailcastConfig is null ? modems : [.. modems, new ModemConfig { Mode = MailcastOnAir.Mode }],
-        stationJournal, out int DspRate))
+if (!StationFactory.TryResolveDspRate(modems, stationJournal, out int DspRate))
 {
     return 2;
-}
-
-if (mailcastConfig is not null && StationFactory.TryResolveDspRate(modems, StationJournal.Console(), out int ownRate) && ownRate != DspRate)
-{
-    stationJournal.Write($"mailcast: the channel runs at {DspRate} Hz rather than {ownRate} Hz, for the MS110D receiver");
 }
 
 // The one "publish" check that could not be made while the file was being read: the audio is
@@ -687,23 +670,6 @@ string pageSideband =
     ?? waterfallConfig?.Sideband
     ?? "usb";
 
-// Where the mailcast receiver listens: on the station's own passband if that reaches the signal,
-// else on a rig retuned around each slot if the config allows it, else nowhere, said now.
-MailcastPlacement? mailcastPlacement = null;
-if (mailcastConfig is not null)
-{
-    MailcastRadio mailcastRadio = MailcastStation.RadioFor(
-        stationDevice.MailcastKind, bandPlan, dialFrequency, receiveDialHz, sideband,
-        flexTuning, uberSdrConfig, hasRig: rigConfig is not null, openWebRxConfig);
-    mailcastPlacement = MailcastPlacement.Decide(
-        mailcastConfig, mailcastRadio, MailcastPlacement.HalfWidthHz(), out string? mailcastRefusal);
-    if (mailcastPlacement is null)
-    {
-        Console.Error.WriteLine(mailcastRefusal);
-        return 2;
-    }
-}
-
 // Carrier sense, once for the station: every modem on this channel listens to the same receiver,
 // so whether the channel is occupied is a fact about that receiver and not about any waveform.
 // Fails open - see StationCarrierSense.
@@ -777,72 +743,6 @@ PskDetector qpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFo
 if (!StationFactory.TryAddModems(channel, modems, DspRate, pskDetectorOverride, stationJournal))
 {
     return 2;
-}
-
-// The mailcast receiver: a receive tap beside the modems, never one of them (see MailcastReceiver).
-MailcastReceiver? mailcast = null;
-if (mailcastConfig is not null && mailcastPlacement is not null)
-{
-    string mailcastDirectory = mailcastConfig.StateDirectoryFor(MailcastStation.StationStateDirectory(configPath));
-    if (MailcastStation.StateDirectoryProblem(mailcastDirectory) is string unwritable)
-    {
-        Console.Error.WriteLine(unwritable);
-        return 2;
-    }
-
-    try
-    {
-        mailcast = MailcastReceiver.Create(
-            mailcastConfig, mailcastPlacement, DspRate, mailcastDirectory, TimeProvider.System,
-            MailcastStation.Journal(stationJournal));
-    }
-    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-    {
-        Console.Error.WriteLine(
-            $"mailcast: cannot open its state in {mailcastDirectory}: {e.Message}. "
-            + "Make it writable, or set \"mailcast\".\"stateDirectory\"");
-        return 2;
-    }
-
-    mailcast.Attach(channel);
-    foreach (string line in mailcast.Describe())
-    {
-        stationJournal.Write(line);
-    }
-}
-
-await using var mailcastLifetime = mailcast;
-
-// "Measure my filter" (POST /api/mailcast/measure): a receive tap beside the mailcast modem
-// itself, averaging the station's own quiet audio rather than anything mailcast sends. The
-// transmitter and a mailcast slot both shape the spectrum into something that is not the rig's
-// receive filter, so both are skipped - the transmitter through the channel's own event (the
-// same one MailcastReceiver.Attach subscribes to), a mailcast slot through the retuner's own
-// "on the mailcast dial" flag when there is one, else whether the signal's own listening window
-// is open on the station's passband.
-MailcastFilterMeasurer? mailcastMeasure = null;
-if (mailcast is not null)
-{
-    MailcastReceiver measuredReceiver = mailcast;
-    bool measureTransmitting = false;
-    channel.TransmittingChanged += keyed => measureTransmitting = keyed;
-    mailcastMeasure = new MailcastFilterMeasurer(DspRate, () => measureTransmitting || MailcastMeasureInSlot(measuredReceiver));
-    mailcastMeasure.Attach(channel);
-}
-
-// Whether now falls inside a mailcast slot's listening window, for the receiver given: the
-// retuner's own flag on a station that moves its rig for it, else the passband window the
-// receiver itself follows without retuning.
-static bool MailcastMeasureInSlot(MailcastReceiver receiver)
-{
-    if (receiver.Retuner is { } retuner)
-    {
-        return retuner.Listening;
-    }
-
-    DateTimeOffset now = DateTimeOffset.UtcNow;
-    return MailcastHooks.PassbandWindowAt(now, receiver.Slots.Timetable) is { } window
-        && now >= window.Opens && now < window.Closes;
 }
 
 if (modems.Any(m => m.Mode.StartsWith("bpsk", StringComparison.Ordinal)))
@@ -1026,12 +926,7 @@ if (ownsTheRadio && deriveTransmitFilter && flexTuning.TransmitFilterHighHz is n
 // filter hears nothing above ~3 kHz however wide the transmit filter is opened. Slice state rather
 // than global, so unlike the transmit filter this one is ours to set without affecting anything
 // else the radio does.
-// The mailcast signal is heard on the same slice when it is in reach, so the filter opens to it too.
 List<(double LowHz, double HighHz)> heardBands = [.. txBands.Select(b => (b.LowHz, b.HighHz))];
-if (mailcastPlacement is { Retunes: false } mailcastHeard)
-{
-    heardBands.Add((mailcastHeard.LowHz, mailcastHeard.HighHz));
-}
 
 if (ownsTheRadio && heardBands.Count > 0)
 {
@@ -1044,7 +939,7 @@ if (ownsTheRadio && heardBands.Count > 0)
     };
     Console.WriteLine(
         $"flex: setting the slice receive filter to {receiveLow}-{receiveHigh} Hz"
-        + (heardBands.Count > txBands.Count ? " (modems and mailcast signal)" : " (all modems)"));
+        + " (all modems)");
 }
 
 // The transmit side has no per-frame quality to report the mode from, so it comes from the
@@ -1864,18 +1759,9 @@ if (apiEphemeralInForce)
     Console.Error.WriteLine(
         $"api: running a one-run configuration applied over the API; a restart returns to {configPath}");
 }
-// The mailcast panel's numbers, keyless and read-only like the operator's page itself, and never
-// on a public page: they name the BBS this station delivers to.
-if (mailcast is not null && waterfallServer is not null && waterfallConfig?.Public != true)
-{
-    waterfallServer.ApiHandler = mailcast.Serve(waterfallServer.ApiHandler);
-    Console.WriteLine($"mailcast: status on the station page and at {waterfallServer.Url}api/mailcast");
-}
-
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
-    StopDeadline.Arm(StopDeadline.For(mailcastConfig));
     cancellation.Cancel();
 };
 
@@ -1888,9 +1774,6 @@ using var sigterm = System.Runtime.InteropServices.PosixSignalRegistration.Creat
     context =>
     {
         context.Cancel = true;
-        // The unit waits 400 s for a mailcast "after" hook; without hooks a wedged stop is cut
-        // off at the 90 s it always was.
-        StopDeadline.Arm(StopDeadline.For(mailcastConfig));
         cancellation.Cancel();
     });
 
@@ -2455,16 +2338,6 @@ if (rig is not null && waterfallServer is not null)
         + "rig-window (loopback only, no key)");
 }
 
-// A station whose passband does not reach the mailcast signal: the rig goes to it around each slot.
-// Placement only chooses this with a "rig" section, so the rig is there.
-if (mailcast is not null && mailcastPlacement is { Retunes: true })
-{
-    MailcastReceiver retuned = mailcast;
-    mailcast.Retuner = new MailcastRetuner(
-        rig!, mailcastConfig!, rigConfig?.Mode, () => retuned.Slots.Timetable, TimeProvider.System,
-        MailcastStation.Journal(stationJournal), mailcast.Hooks);
-}
-
 // Audio + PTT: the device opens itself (see StationDevice and the kinds in Devices/): a FlexRadio
 // DAX triplet (--device flex:...), an UberSDR web receiver's IQ stream (--device ubersdr:...,
 // receive only), an OpenWebRX receiver's audio (--device openwebrx:..., receive only), a pair
@@ -2570,14 +2443,6 @@ if (flex is not null)
 IPttControl stationPtt = rig is null ? ptt : rig.HoldTransmissions(channel, ptt);
 Task transmitter = channel.RunTransmitterAsync(playback, stationPtt, cancellation.Token);
 
-// The mailcast receiver's delivery into the BBS, its rig retuning and its hooks, once the
-// transmitter is held behind the rig: the first window may open at once, on a station started
-// mid-slot. On the way out it puts the rig back and then runs an "after" hook still owed, so
-// the shutdown below waits for that (up to its timeout; the unit's TimeoutStopSec allows it).
-Task? mailcastRun = mailcast is null
-    ? null
-    : Task.Run(() => mailcast.RunAsync(cancellation.Token));
-
 // A transmitter that dies (the output device failed mid-keyup) must stop the daemon, not
 // leave it running as a healthy-looking receive-only station for the rest of the process's
 // life - which is what discarding the task's fault used to do, silently. Exit 1 so the
@@ -2666,10 +2531,6 @@ var txLeaseJournal = new TxLeaseJournal(
 channel.TransmitLease.Changed += txLeaseJournal.Note;
 channel.TransmitLease.CarrierWaitCutShort += txLeaseJournal.NoteCarrierWaitCutShort;
 runtimeApi?.ServeTxLease(channel, channel.ReceiveOnlyReason);
-if (mailcastMeasure is not null)
-{
-    runtimeApi?.ServeMailcastMeasure(mailcastMeasure);
-}
 // Keep a stretch of receive audio on request (POST /api/keepaudio, issue #723): an in-memory ring
 // and a look at the carrier sense ten times a second, so a client told "busy" can later see what
 // the channel sounded like and which detector said so. Only with a keyed API, the only way to ask.
@@ -3104,17 +2965,6 @@ catch (OperationCanceledException)
 catch (Exception)
 {
     // Already journalled (and turned into exit 1) by the fault observer above.
-}
-
-if (mailcastRun is not null)
-{
-    try
-    {
-        await mailcastRun;
-    }
-    catch (OperationCanceledException)
-    {
-    }
 }
 
 if (!stationDevice.ClosesItsOwnStreams)

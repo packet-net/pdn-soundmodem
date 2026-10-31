@@ -1638,9 +1638,10 @@ public sealed class DaemonConfig
     /// See <see cref="RigConfig"/>.</summary>
     public RigConfig? Rig { get; set; }
 
-    /// <summary>The built-in pdn-mailcast receiver; null = none, the default. See
-    /// <see cref="MailcastConfig"/>.</summary>
-    public MailcastConfig? Mailcast { get; set; }
+    /// <summary>A leftover <c>mailcast</c> section from before the built-in receiver was removed
+    /// (issue #588). Read as anything at all and ignored apart from one start-up line; see
+    /// <see cref="MailcastRetired"/>.</summary>
+    public JsonElement? Mailcast { get; set; }
 
     /// <summary>
     /// Carrier sense read from the radio rather than inferred from the audio; null leaves the
@@ -1812,10 +1813,6 @@ public sealed class DaemonConfig
         // Above the flavour split too: a monitor listens to a radio like anything else, and a
         // misspelled driver name there should be refused rather than silently ignored.
         RequireKnownCarrierSenseRadio(config);
-
-        // Above the flavour split as well, so that a monitor file with a "mailcast" section is
-        // told so rather than having it silently ignored.
-        MailcastConfig.Validate(config);
 
         if (config.Monitor is not null)
         {
@@ -2822,10 +2819,6 @@ public sealed class DaemonConfig
         Unknown("deadFeed", config.DeadFeed?.UnknownSettings);
         Unknown("ptt", config.Ptt?.UnknownSettings);
         Unknown("rig", config.Rig?.UnknownSettings);
-        foreach ((string section, Dictionary<string, JsonElement>? settings) in MailcastConfig.UnknownSections(config.Mailcast))
-        {
-            Unknown(section, settings);
-        }
         Unknown("carrierSense", config.CarrierSense?.UnknownSettings);
         Unknown("txTest", config.TxTest.UnknownSettings);
         Unknown("paging", config.Paging?.UnknownSettings);
@@ -3193,10 +3186,6 @@ public sealed class DaemonConfig
         catch (UnauthorizedAccessException)
         {
             error = Describe(path, "permission denied reading the file");
-        }
-        catch (JsonException e) when (e.Path?.StartsWith("$.mailcast.hooks", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            error = Describe(path, MailcastConfig.HooksReadProblem(e));
         }
         catch (JsonException e)
         {

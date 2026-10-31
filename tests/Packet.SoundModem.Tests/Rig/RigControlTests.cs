@@ -987,11 +987,30 @@ public sealed class RigControlTests : IAsyncDisposable
         File.Exists(RestorePath).Should().BeFalse();
     }
 
+    /// <summary>A minimal AX.25 UI frame, PID F0.</summary>
+    private static byte[] UiFrame(string source, string destination, ReadOnlySpan<byte> payload)
+    {
+        static byte[] Address(string call, bool last)
+        {
+            var field = new byte[7];
+            string padded = call.PadRight(6);
+            for (int i = 0; i < 6; i++)
+            {
+                field[i] = (byte)(padded[i] << 1);
+            }
+
+            field[6] = (byte)(0x60 | (last ? 1 : 0));
+            return field;
+        }
+
+        return [.. Address(destination, last: false), .. Address(source, last: true), 0x03, 0xF0, .. payload.ToArray()];
+    }
+
     [Fact]
     public async Task A_Receive_Window_Holds_Kiss_Frames_And_Refuses_The_Key_Until_It_Ends()
     {
         // The receive window is an ordinary rig window, so everything RigControl.HoldsTransmitter
-        // holds is held by it; MailcastRetuneTests.Every_Source_Of_Transmission_Is_Held_While_The_Rig_Is_On_The_Mailcast_Dial
+        // holds is held by it;
         // goes through every source (KISS, idents, paging, the transmitter test, ARDOP) for any
         // window. This pins that a window opened here is one of them.
         RigControl rig = await Started();
@@ -1006,7 +1025,7 @@ public sealed class RigControlTests : IAsyncDisposable
             rig, channel.TransmitLease, "POST", """{"dialHz": 7052000, "seconds": 60}""").Status.Should().Be(200);
 
         Task kiss = channel.EnqueueTransmit(
-            0, Packet.SoundModem.Tests.Mailcast.MailcastSlotAudio.Ui("G8ABC", "GB7TST", "hello"u8));
+            0, UiFrame("G8ABC", "GB7TST", "hello"u8));
         await Task.Delay(TimeSpan.FromMilliseconds(300));
 
         rig.HoldsTransmitter.Should().BeTrue("idents read this, and are not sent while it is true");

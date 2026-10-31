@@ -26,10 +26,6 @@ internal sealed class FlexDeviceKind : DeviceKind
     public override bool OwnsTheRadio(string device) => FlexDevice.Parse(device).Headless;
 
     /// <inheritdoc/>
-    public override MailcastRadioKind MailcastKindOf(string device) =>
-        OwnsTheRadio(device) ? MailcastRadioKind.FlexHeadless : MailcastRadioKind.FlexAttach;
-
-    /// <inheritdoc/>
     public override string? RigRefusal(string device) =>
         $"\"rig\" is set and \"device\" is \"{device}\". A FlexRadio is tuned and keyed "
         + "over its own API, so it needs no rigctld - remove \"rig\".";
@@ -86,8 +82,8 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
     /// <summary>
     /// The local channel audio stream's band (issue #584) on this radio: a connection can ask for
     /// a band to hear, and while it is asking, a headless slice's receive filter widens to cover
-    /// it - the same thing bring-up already does for the configured modems and the mailcast
-    /// signal, just live rather than once, and never touching the filter until a connection asks.
+    /// it - the same thing bring-up already does for the configured modems,
+    /// just live rather than once, and never touching the filter until a connection asks.
     /// Put back to exactly what bring-up set the moment the last such connection goes.
     /// </summary>
     /// <remarks>

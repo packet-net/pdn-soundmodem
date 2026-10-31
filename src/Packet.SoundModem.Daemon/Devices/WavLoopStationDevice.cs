@@ -44,9 +44,6 @@ internal sealed class WavLoopStationDevice(StationDevice named, string path)
     /// <inheritdoc/>
     public override bool ReportsTransmitFilter => Named.ReportsTransmitFilter;
 
-    /// <inheritdoc/>
-    public override MailcastRadioKind MailcastKind => Named.MailcastKind;
-
     /// <summary>A bench input with no radio behind it.</summary>
     public override DeadFeedDevice DeadFeedKind => DeadFeedDevice.WavLoop;
 

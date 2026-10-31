@@ -33,7 +33,6 @@ public class RtlTcpDeviceKindTests
         station.Kind.TransmitTestRefusal.Should().StartWith("tx test: refused");
         station.Kind.RigRefusal(device).Should().Contain("remove \"rig\"");
         station.Kind.PublishRefusal(device).Should().BeNull("an rtl_tcp server is the operator's own receiver");
-        station.MailcastKind.Should().Be(MailcastRadioKind.SoundCard);
         station.DeadFeedKind.Should().Be(DeadFeedDevice.UberSdr);
         station.SettingsProblem.Should().BeNull();
         DaemonConfig.IsSoundCard(device).Should().BeFalse();
