@@ -110,7 +110,8 @@ row in the matrix. A fix isn't finished until the ledger records it.
   whether the job needs something that makes our runners ours (a toolchain, the NuGet cache,
   a sound card); if it does, it stays self-hosted, and that is still everything that compiles.
   `release.yml`'s `publish-npm` was already hosted for a different reason that also survives
-  the rule: npm refuses a provenance attestation built on a self-hosted runner.
+  the rule: npm refuses a provenance attestation built on a self-hosted runner. `release.yml`'s
+  `deb-install-test` is hosted too: it compiles nothing, and arm64 has no self-hosted runner.
 - PRs merge on locally-run green tests (`dotnet test`); fix forward.
 - **Cross-repo iteration**: the co-developed packages swap to local checkouts with
   `-p:FecSourcePath=... -p:Il2pSourcePath=... -p:FlexSourcePath=...

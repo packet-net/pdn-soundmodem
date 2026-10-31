@@ -7,7 +7,7 @@ What the Debian package installs, what pdn-soundmodem reads and writes on disk, 
 | Path | What it is |
 |---|---|
 | `/usr/lib/pdn-soundmodem/pdn-soundmodem` | The modem itself, a self-contained single-file build. No .NET runtime is installed or needed on the machine |
-| `/usr/lib/pdn-soundmodem/*.so` | Native libraries published beside the binary (`libSystem.IO.Ports.Native.so` for serial PTT, `libe_sqlite3.so` for the frame log). The modem finds them relative to its own real path, so the binary lives here and `/usr/bin` holds a symlink |
+| `/usr/lib/pdn-soundmodem/*.so` | Native libraries published beside the binary (`libSystem.IO.Ports.Native.so` for serial PTT, and `libe_sqlite3.so` for the frame log, which is a symlink to the distribution's `libsqlite3.so.0`). The modem finds them relative to its own real path, so the binary lives here and `/usr/bin` holds a symlink |
 | `/usr/bin/pdn-soundmodem` | Symlink to the binary above |
 | `/usr/lib/systemd/system/pdn-soundmodem.service` | The systemd unit. Enabled and started on install, restarted on upgrade |
 | `/usr/lib/systemd/system/pdn-soundmodem@.service` | The template unit. `pdn-soundmodem@NAME` runs `/etc/pdn-soundmodem/NAME.json` with `/var/lib/pdn-soundmodem/NAME/` as its state directory. Never enabled by the package |

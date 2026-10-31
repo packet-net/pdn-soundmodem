@@ -20,9 +20,9 @@ VERSION="${1:?usage: build-deb.sh <version> [arch] [outdir]}"
 ARCH="${2:-amd64}"
 
 case "$ARCH" in
-  amd64) RID=linux-x64 ;;
-  arm64) RID=linux-arm64 ;;
-  armhf) RID=linux-arm ;;
+  amd64) RID=linux-x64;   TRIPLET=x86_64-linux-gnu ;;
+  arm64) RID=linux-arm64; TRIPLET=aarch64-linux-gnu ;;
+  armhf) RID=linux-arm;   TRIPLET=arm-linux-gnueabihf ;;
   *) echo "unsupported arch $ARCH" >&2; exit 2 ;;
 esac
 
@@ -71,6 +71,20 @@ for so in "$STAGE"/publish/*.so; do
 done
 ln -s "..${PKGDIR#/usr}/pdn-soundmodem" "$STAGE/root/usr/bin/pdn-soundmodem"
 
+# The frame log's SQLite comes from the distribution, not from the bundle. The libe_sqlite3.so
+# that SQLitePCLRaw publishes needs glibc 2.33 or later (2.34 on amd64), well above the 2.27
+# the modem itself needs on amd64 and arm64, and so alone it put Debian 11 out of reach: apt refused
+# the package, and a forced install died with DllNotFoundException the moment a frame log was
+# configured. The provider binds the standard sqlite3_* API by name, so the distribution's
+# libsqlite3.so.0 answers it unchanged; ship the name .NET loads as a symlink to that, and let
+# libsqlite3-0 below pull it in. A side benefit: SQLite security fixes now arrive with the
+# distribution's own updates. Windows and the NuGet packages keep the bundled copy; only the
+# .deb does this. Relative, as Debian policy wants for a link within /usr.
+[ -e "$STAGE/root$PKGDIR/libe_sqlite3.so" ] \
+  || { echo "libe_sqlite3.so was not published - did the SQLite packaging change?" >&2; exit 4; }
+rm -f "$STAGE/root$PKGDIR/libe_sqlite3.so"
+ln -s "../$TRIPLET/libsqlite3.so.0" "$STAGE/root$PKGDIR/libe_sqlite3.so"
+
 install -m 0644 "$HERE/pdn-soundmodem.service" "$STAGE/root$UNITDIR/pdn-soundmodem.service"
 install -m 0644 "$HERE/pdn-soundmodem@.service" "$STAGE/root$UNITDIR/pdn-soundmodem@.service"
 # CM108 and AIOC hidraw nodes to the audio group, which the service runs in: without it every
@@ -113,12 +127,17 @@ INSTALLED_SIZE="$(du -k -s --exclude=DEBIAN "$STAGE/root" | cut -f1)"
 #
 # Every ELF the package ships, not just the executable. PublishSingleFile leaves the native
 # shims loose beside the binary and they are linked separately, so they do not share its
-# floor: libe_sqlite3.so needs glibc 2.34 on amd64 while the executable next to it needs
-# only 2.27. Reading the executable alone understated the package by seven glibc releases
-# and reintroduced this very bug, just deferred - the package installed, started, printed
-# its version, and would then have failed at the first frame written to the log, because
-# that is when .NET dlopens the shim. Detect ELF by its magic bytes rather than shelling
-# out to `file`, which is not Essential and need not be on a build host.
+# floor: the bundled libe_sqlite3.so needed glibc 2.34 on amd64 while the executable next to
+# it needs only 2.27. Reading the executable alone understated the package by seven glibc
+# releases and reintroduced this very bug, just deferred - the package installed, started,
+# printed its version, and would then have failed at the first frame written to the log,
+# because that is when .NET dlopens the shim. Detect ELF by its magic bytes rather than
+# shelling out to `file`, which is not Essential and need not be on a build host.
+#
+# Regular files only (`find -type f` does not follow links). That matters: libe_sqlite3.so is
+# now a symlink to the distribution's libsqlite3, and readelf would follow it to the BUILD
+# host's copy and read that host's floor into our Depends. The target machine's libsqlite3 is
+# covered by its own package's dependencies, not by ours.
 elf_files() {
   find "$STAGE/root" -type f -print | while IFS= read -r f; do
     [ "$(od -An -tx1 -N4 "$f" 2>/dev/null | tr -d ' \n')" = "7f454c46" ] && printf '%s\n' "$f"
@@ -174,9 +193,15 @@ case "$GLIBCXX_MIN" in
   *) echo "unknown GLIBCXX_$GLIBCXX_MIN - extend the table in $0" >&2; exit 4 ;;
 esac
 
+# The distribution SQLite the frame log runs on (see the libe_sqlite3.so symlink above). 3.34 is
+# Debian 11's, the oldest it has been run on. The frame log's SQL needs nothing newer: WAL,
+# ALTER TABLE ADD COLUMN and pragma_table_info, all far older; no RETURNING (3.35) or STRICT
+# tables (3.37). Raise this if the frame log starts to need a newer feature.
+SQLITE_MIN=3.34
+
 # libgcc-s1 is deliberately left unversioned: the binary asks it only for GCC_3.0 and
 # GCC_3.5, which every distribution in scope has carried for twenty years.
-echo "floors for $ARCH: libc6 >= $GLIBC_MIN, libstdc++6 >= $STDCXX_MIN (GLIBCXX_$GLIBCXX_MIN)"
+echo "floors for $ARCH: libc6 >= $GLIBC_MIN, libstdc++6 >= $STDCXX_MIN (GLIBCXX_$GLIBCXX_MIN), libsqlite3-0 >= $SQLITE_MIN"
 
 cat > "$STAGE/root/DEBIAN/control" <<EOF
 Package: pdn-soundmodem
@@ -184,7 +209,7 @@ Version: $VERSION
 Architecture: $ARCH
 Maintainer: Tom Fanning M0LTE <tom@m0lte.uk>
 Installed-Size: $INSTALLED_SIZE
-Depends: libc6 (>= $GLIBC_MIN), libgcc-s1, libstdc++6 (>= $STDCXX_MIN), libasound2 | libasound2t64, adduser
+Depends: libc6 (>= $GLIBC_MIN), libgcc-s1, libstdc++6 (>= $STDCXX_MIN), libasound2 | libasound2t64, libsqlite3-0 (>= $SQLITE_MIN), adduser
 Section: hamradio
 Priority: optional
 Homepage: https://github.com/packet-net/pdn-soundmodem

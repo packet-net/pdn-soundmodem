@@ -6,13 +6,14 @@ At the end of this page pdn-soundmodem is installed on your machine, the service
 
 A machine running Debian, Ubuntu or Raspberry Pi OS, on amd64, arm64 or armhf.
 
-It needs glibc 2.34 or newer, on every architecture. That means **Debian 12 (bookworm), Ubuntu 22.04, Raspberry Pi OS bookworm, or newer**. Debian 11 (bullseye) ships glibc 2.31 and is below the line.
+Which releases it installs on depends on the architecture:
 
-Two separate things set that floor, which is why it applies everywhere rather than only to 32-bit machines. The SQLite library the frame log writes through is built against glibc 2.34 on all three architectures, and on armhf .NET 10's own 32-bit ARM runtime needs 2.34 as well.
+- **amd64 and arm64**: Debian 11 (bullseye), Ubuntu 22.04, 64-bit Raspberry Pi OS bullseye, or newer.
+- **armhf** (32-bit ARM): Debian 12 (bookworm), Raspberry Pi OS bookworm, or newer. .NET 10's 32-bit ARM runtime needs glibc 2.34, and bullseye ships 2.31.
 
-The package declares this, so apt on an older machine refuses the install and says which dependency it cannot satisfy. That is deliberate. An earlier version of the package did not declare it and installed anyway, which is worse: on bullseye the modem would start, print its version, look healthy, and then fail at the first frame it tried to write to the log.
+The frame log uses the distribution's own SQLite (the `libsqlite3-0` package, 3.34 or newer), which apt installs alongside the modem.
 
-If you are on a bullseye machine, the ways forward are to upgrade it to bookworm, or on a Pi to reinstall from a bookworm image; the 64-bit image is the better choice on a Pi 3, Zero 2 W, 4 or 5.
+The package declares all of this, so apt on an older machine refuses the install and says which dependency it cannot satisfy. If you are on 32-bit bullseye, upgrade to bookworm, or on a Pi reinstall from a bookworm image; the 64-bit image is the better choice on a Pi 3, Zero 2 W, 4 or 5.
 
 Root, or an account with `sudo`.
 
