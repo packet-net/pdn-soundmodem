@@ -86,9 +86,6 @@ internal abstract class StationDevice
     /// </summary>
     public virtual bool ReportsTransmitFilter => false;
 
-    /// <summary>What the mailcast receiver's placement is told this station is.</summary>
-    public virtual MailcastRadioKind MailcastKind => Kind.MailcastKindOf(Spec);
-
     /// <summary>Which family of dead-feed defaults this device's input takes.</summary>
     public virtual DeadFeedDevice DeadFeedKind => DeadFeedDevice.Alsa;
 

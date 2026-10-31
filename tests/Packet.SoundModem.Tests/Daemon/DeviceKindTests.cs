@@ -60,7 +60,7 @@ public class DeviceKindTests
         bool flexIsHeadless = deviceIsFlex && FlexDevice.Parse(device).Headless;
         bool deviceIsUberSdr = UberSdrDevice.IsUberSdr(device);
         // A web receiver of the second kind (#599) answers as the first does, except where the
-        // two differ by name: its own dead-feed family and its own mailcast kind.
+        // two differ by name: its own dead-feed family.
         bool deviceIsOpenWebRx = OpenWebRxDevice.IsOpenWebRx(device);
         bool webReceiver = deviceIsUberSdr || deviceIsOpenWebRx;
         bool flexIsMock = deviceIsFlex
@@ -81,13 +81,6 @@ public class DeviceKindTests
         (station.Kind.RigRefusal(device) is not null).Should().Be(deviceIsFlex || webReceiver);
         (station.Kind.PublishRefusal(device) is not null).Should().Be(webReceiver);
         station.SettingsProblem.Should().BeNull();
-
-        station.MailcastKind.Should().Be(
-            flexIsHeadless ? MailcastRadioKind.FlexHeadless
-            : deviceIsUberSdr ? MailcastRadioKind.UberSdr
-            : deviceIsOpenWebRx ? MailcastRadioKind.OpenWebRx
-            : deviceIsFlex ? MailcastRadioKind.FlexAttach
-            : MailcastRadioKind.SoundCard);
 
         station.DeadFeedKind.Should().Be(
             deviceIsUberSdr ? DeadFeedDevice.UberSdr
@@ -119,7 +112,6 @@ public class DeviceKindTests
         looped.PttRefusal.Should().Be(named.PttRefusal);
         looped.ReceiveOnlyReason.Should().Be(named.ReceiveOnlyReason);
         looped.NoReceiveDialRefusal.Should().Be(named.NoReceiveDialRefusal);
-        looped.MailcastKind.Should().Be(named.MailcastKind);
         looped.DeadFeedKind.Should().Be(
             DeadFeedDevice.WavLoop, "a recording is a bench input whatever device it stands in for");
     }

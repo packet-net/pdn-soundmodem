@@ -86,7 +86,7 @@ public class UsageTests
     /// <summary>
     /// Runs the daemon built beside these tests (the project reference copies pdn-soundmodem.dll
     /// and its runtimeconfig into the test output) and waits for it to finish. Shared with the
-    /// mailcast deprecation tests, whose config stops the daemon before it opens anything.
+    /// retired mailcast tests, whose config stops the daemon before it opens anything.
     /// </summary>
     internal static (int ExitCode, string Stdout, string Stderr) RunDaemon(params string[] args)
     {
@@ -127,7 +127,7 @@ public class UsageTests
     /// the muxer, else the one DOTNET_ROOT names (CI sets it so that apphosts can find the
     /// runtime), else the one on PATH.
     /// </summary>
-    private static string DotnetHost()
+    internal static string DotnetHost()
     {
         string exe = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
 
