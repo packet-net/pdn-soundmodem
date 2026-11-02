@@ -95,6 +95,15 @@ internal sealed class TxLeaseTuning
         TimeSpan.FromSeconds(Math.Min(seconds, TransmitLease.MaxDuration.TotalSeconds))
         + TransmitLease.ClosingTimeout;
 
+    /// <summary>
+    /// The plan a sub-channel's transmissions are placed by: its own alone-plan for a modem that
+    /// transmits only under a tuned lease (so its ident tone is worked out against the tuned
+    /// dial), the station's everyday plan for any other.
+    /// </summary>
+    internal static RfPlan.Result? PlanFor(
+        int subChannel, RfPlan.Result? everyday, IReadOnlyDictionary<int, RfPlan.Result> leaseOnlyPlans) =>
+        leaseOnlyPlans.TryGetValue(subChannel, out RfPlan.Result? own) ? own : everyday;
+
     /// <summary>The tuning as an answer's fields.</summary>
     internal static void Describe(JsonObject answer, RigTuning? tuning)
     {

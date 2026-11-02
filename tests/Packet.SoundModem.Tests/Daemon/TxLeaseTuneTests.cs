@@ -344,4 +344,22 @@ public sealed class TxLeaseTuneTests : IAsyncDisposable
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    [Fact]
+    public void A_Lease_Only_Modems_Ident_Is_Placed_Against_The_Tuned_Dial()
+    {
+        List<ModemConfig> modems = Modems();
+        RfPlan.Result everyday = Plan(modems);
+        Dictionary<int, RfPlan.Result> alone = BandPlanner.PlanLeaseOnly(modems, "usb", 12000);
+
+        RfPlan.Result? plan = TxLeaseTuning.PlanFor(3, everyday, alone);
+
+        plan.Should().BeSameAs(alone[3]);
+        TxLeaseTuning.PlanFor(0, everyday, alone).Should().BeSameAs(everyday);
+        // An ident at rf 7053.8 MHz is the audio centre against the tuned dial, which the
+        // everyday dial would put elsewhere.
+        double tone = 7_053_800 - plan!.DialHz;
+        tone.Should().Be(modems.Single(m => m.SubChannel == 3).Frequency);
+        (7_053_800 - everyday.DialHz).Should().NotBe(tone);
+    }
 }
