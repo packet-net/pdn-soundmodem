@@ -34,8 +34,8 @@ public sealed class TxLeaseTuneTests : IAsyncDisposable
 
     private static List<ModemConfig> Modems() =>
     [
-        new() { SubChannel = 0, Mode = "afsk1200", RfFrequency = 7_051_700 },
-        new() { SubChannel = 3, Mode = "afsk1200", RfFrequency = 7_052_100 },
+        new() { SubChannel = 0, Mode = "afsk1200", RfFrequency = 7_049_900 },
+        new() { SubChannel = 3, Mode = "afsk1200", RfFrequency = 7_053_800, TransmitOnlyUnderLease = true },
     ];
 
     private static RfPlan.Result Plan(List<ModemConfig> modems) =>
@@ -61,8 +61,10 @@ public sealed class TxLeaseTuneTests : IAsyncDisposable
         channel.TransmitInhibit = () => rig.HoldsTransmitter;
         List<ModemConfig> modems = Modems();
         RfPlan.Result plan = Plan(modems);
+        Dictionary<int, RfPlan.Result> alone = BandPlanner.PlanLeaseOnly(modems, "usb", 12000);
+        channel.RequireTunedLease(3, () => rig.WindowOwner == TxLeaseTuning.Owner);
         var tuning = new TxLeaseTuning(
-            rig, channel.TransmitLease, sub => TxLeaseTuning.Resolve(sub, modems, plan, 0, null));
+            rig, channel.TransmitLease, sub => TxLeaseTuning.Resolve(sub, modems, plan, alone, 0, null));
         return (channel, rig, tuning, modems, plan);
     }
 
@@ -75,13 +77,14 @@ public sealed class TxLeaseTuneTests : IAsyncDisposable
     [Fact]
     public async Task A_Take_That_Asks_Tunes_The_Rig_For_The_Holders_Modem_And_Release_Puts_It_Back()
     {
-        (SoundModemChannel channel, RigControl rig, TxLeaseTuning tuning, _, RfPlan.Result plan) = await Station();
+        (SoundModemChannel channel, RigControl rig, TxLeaseTuning tuning, List<ModemConfig> modems, _) = await Station();
 
         (int status, JsonObject answer) = Post(channel, rig, tuning, """{"subChannel": 3, "seconds": 60, "tune": true}""");
 
         status.Should().Be(200);
-        double audio = plan.Modems.Single(p => p.Slot.SubChannel == 3).AudioCentreHz;
-        long dial = (long)Math.Round(7_052_100 - audio);
+        double audio = modems.Single(m => m.SubChannel == 3).Frequency!.Value;
+        long dial = (long)Math.Round(7_053_800 - audio);
+        (dial + audio).Should().BeApproximately(7_053_800, 0.5, "the modem's rfFrequency lands at its audio centre");
         answer["tuned"]!.GetValue<bool>().Should().BeTrue();
         answer["dialHz"]!.GetValue<long>().Should().Be(dial);
         answer["mode"]!.GetValue<string>().Should().Be("USB");
@@ -219,7 +222,7 @@ public sealed class TxLeaseTuneTests : IAsyncDisposable
     {
         (SoundModemChannel channel, RigControl rig, _, _, _) = await Station();
         var bare = new List<ModemConfig> { new() { SubChannel = 3, Mode = "afsk1200" } };
-        var tuning = new TxLeaseTuning(rig, channel.TransmitLease, sub => TxLeaseTuning.Resolve(sub, bare, null, 0, null));
+        var tuning = new TxLeaseTuning(rig, channel.TransmitLease, sub => TxLeaseTuning.Resolve(sub, bare, null, new Dictionary<int, RfPlan.Result>(), 0, null));
 
         (int status, JsonObject answer) = Post(channel, rig, tuning, """{"subChannel": 3, "tune": true}""");
 
@@ -251,5 +254,94 @@ public sealed class TxLeaseTuneTests : IAsyncDisposable
             rig, channel.TransmitLease, "POST", """{"dialHz": 7052000, "seconds": 60}""");
         status.Should().Be(409);
         tuning.Held.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void The_Band_Plan_Leaves_Out_A_Lease_Only_Modem_And_Plans_It_Alone()
+    {
+        List<ModemConfig> modems = Modems();
+        RfPlan.Result everyday = Plan(modems);
+        Dictionary<int, RfPlan.Result> alone = BandPlanner.PlanLeaseOnly(modems, "usb", 12000);
+
+        everyday.Modems.Select(m => m.Slot.SubChannel).Should().Equal(0);
+        RfPlan.Result onlyOrdinary = BandPlanner.Plan(
+            [new ModemConfig { SubChannel = 0, Mode = "afsk1200", RfFrequency = 7_049_900 }], "usb", null, 12000)!;
+        everyday.DialHz.Should().Be(onlyOrdinary.DialHz, "the flagged modem does not move the everyday dial");
+
+        double centre = modems.Single(m => m.SubChannel == 3).Frequency!.Value;
+        alone.Should().ContainKey(3);
+        alone[3].DialHz.Should().Be(7_053_800 - centre);
+        alone[3].Modems.Single().AudioCentreHz.Should().Be(centre);
+        centre.Should().BeInRange(300, 2700);
+    }
+
+    [Fact]
+    public async Task Frames_For_A_Lease_Only_Modem_Are_Refused_Unless_Its_Lease_Is_Tuned()
+    {
+        (SoundModemChannel channel, RigControl rig, TxLeaseTuning tuning, _, _) = await Station();
+
+        Task untuned = channel.EnqueueTransmit(3, new byte[20]);
+        untuned.IsFaulted.Should().BeTrue("no lease");
+        untuned.Exception!.InnerException!.Message.Should().Contain("tuned transmit lease");
+
+        // A lease taken without tuning is no use to it either.
+        channel.TransmitLease.Take(3, TimeSpan.FromSeconds(60));
+        channel.EnqueueTransmit(3, new byte[20]).IsFaulted.Should().BeTrue("a lease with no tuning");
+        channel.TransmitLease.Release(3);
+
+        Post(channel, rig, tuning, """{"subChannel": 3, "tune": true}""").Status.Should().Be(200);
+        Task tuned = channel.EnqueueTransmit(3, new byte[20]);
+        tuned.IsFaulted.Should().BeFalse("it holds a tuned lease");
+
+        // The everyday modem is an ordinary one, refused only by the lease as ever.
+        channel.EnqueueTransmit(0, new byte[20]).IsFaulted.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task A_Lease_Only_Modem_Hears_Nothing_For_The_Station_Outside_Its_Tuning()
+    {
+        (SoundModemChannel channel, _, _, _, _) = await Station();
+
+        channel.CarrierDetect.Should().BeFalse();
+        channel.ChannelBusy.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("""{"device": "flex:10.45.0.76", "modems": [{"subChannel": 0, "mode": "afsk1200", "rfFrequency": 7049900}, {"subChannel": 3, "mode": "afsk1200", "rfFrequency": 7053800, "transmitOnlyUnderLease": true}]}""", "needs a \"rig\" section")]
+    [InlineData("""{"device": "null", "modems": [{"subChannel": 0, "mode": "afsk1200", "rfFrequency": 7049900}, {"subChannel": 3, "mode": "afsk1200", "rfFrequency": 7053800, "transmitOnlyUnderLease": true}]}""", "needs a \"rig\" section")]
+    [InlineData("""{"device": "null", "rig": {}, "modems": [{"subChannel": 0, "mode": "afsk1200", "transmitOnlyUnderLease": true}]}""", "needs an \"rfFrequency\"")]
+    public void The_Flag_Is_Refused_Without_A_Rig_Or_An_Rf_Frequency(string json, string why)
+    {
+        string dir = Directory.CreateTempSubdirectory("pdnsm-lo").FullName;
+        try
+        {
+            string path = Path.Combine(dir, "soundmodem.json");
+            File.WriteAllText(path, json);
+            DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+            config.Should().BeNull();
+            error.Should().Contain(why);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void The_Flag_Loads_With_A_Rig()
+    {
+        string dir = Directory.CreateTempSubdirectory("pdnsm-lo").FullName;
+        try
+        {
+            string path = Path.Combine(dir, "soundmodem.json");
+            File.WriteAllText(path, """{"device": "null", "rig": {}, "modems": [{"subChannel": 0, "mode": "afsk1200", "rfFrequency": 7049900}, {"subChannel": 3, "mode": "afsk1200", "rfFrequency": 7053800, "transmitOnlyUnderLease": true}]}""");
+            DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+            error.Should().BeEmpty();
+            config!.Modems.Single(m => m.SubChannel == 3).TransmitOnlyUnderLease.Should().BeTrue();
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 }

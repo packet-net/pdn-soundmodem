@@ -108,18 +108,20 @@ internal sealed class TxLeaseTuning
     }
 
     /// <summary>
-    /// Where the rig has to be for one modem alone: its <c>rfFrequency</c> at its own audio
-    /// centre, the same sideband arithmetic the band plan uses, in the rig's data mode, with a
-    /// passband that clears the modem's occupied width.
+    /// Where the rig has to be for one modem. A <see cref="ModemConfig.TransmitOnlyUnderLease"/>
+    /// modem has its own plan, made as if it were alone: the dial that puts its
+    /// <c>rfFrequency</c> at the audio centre it was fixed at, with a passband wide enough for it.
+    /// Any other modem is already on the station's everyday plan, which is what it is given.
     /// </summary>
     /// <param name="subChannel">The lease holder.</param>
     /// <param name="modems">The station's modems as configured.</param>
-    /// <param name="plan">The band plan, or null without one.</param>
+    /// <param name="plan">The everyday band plan, or null without one.</param>
+    /// <param name="leaseOnlyPlans">The alone-plan of each lease-only modem, by sub-channel.</param>
     /// <param name="dialOffsetHz">The station device's rig dial offset for the plan's sideband.</param>
     /// <param name="mode">The rig section's own mode, or null for the sideband's data mode.</param>
     internal static (RigTuning? Tuning, string? Refusal) Resolve(
         int subChannel, IReadOnlyList<ModemConfig> modems, RfPlan.Result? plan,
-        double dialOffsetHz, string? mode)
+        IReadOnlyDictionary<int, RfPlan.Result> leaseOnlyPlans, double dialOffsetHz, string? mode)
     {
         ModemConfig? modem = modems.FirstOrDefault(m => m.SubChannel == subChannel);
         if (modem is null)
@@ -127,27 +129,30 @@ internal sealed class TxLeaseTuning
             return (null, $"no modem transmits on sub-channel {subChannel}");
         }
 
-        if (modem.RfFrequency is not double rf || plan is null)
+        if (modem.RfFrequency is null || (plan is null && !leaseOnlyPlans.ContainsKey(subChannel)))
         {
             return (null,
                 $"sub-channel {subChannel} has no \"rfFrequency\", so there is no dial to tune the rig to for it");
         }
 
-        string rigMode = mode?.ToUpperInvariant() ?? RigModes.ForSideband(plan.Sideband);
-        if (plan.IsFm)
+        bool alone = leaseOnlyPlans.TryGetValue(subChannel, out RfPlan.Result? own);
+        RfPlan.Result used = alone ? own! : plan!;
+        string rigMode = mode?.ToUpperInvariant() ?? RigModes.ForSideband(used.Sideband);
+        if (used.IsFm)
         {
-            return (new RigTuning((long)Math.Round(rf + dialOffsetHz), rigMode, 0), null);
+            return (new RigTuning((long)Math.Round(used.DialHz + dialOffsetHz), rigMode, 0), null);
         }
 
-        PlannedModem? planned = plan.Modems.FirstOrDefault(p => p.Slot.SubChannel == subChannel);
+        PlannedModem? planned = used.Modems.FirstOrDefault(p => p.Slot.SubChannel == subChannel);
         if (planned is null)
         {
             return (null, $"sub-channel {subChannel} is not in the band plan");
         }
 
-        double dial = plan.IsUpperSideband ? rf - planned.AudioCentreHz : rf + planned.AudioCentreHz;
-        int width = BandPlanner.HighCutClearing(planned.AudioCentreHz + (planned.Slot.BandwidthHz / 2));
+        int width = Math.Max(
+            (int)Math.Round(used.Window.WidthHz),
+            BandPlanner.HighCutClearing(planned.AudioCentreHz + (planned.Slot.BandwidthHz / 2)));
         return (new RigTuning(
-            (long)Math.Round(dial + dialOffsetHz), rigMode, Math.Clamp(width, 0, RigModes.MaxPassbandHz)), null);
+            (long)Math.Round(used.DialHz + dialOffsetHz), rigMode, Math.Clamp(width, 0, RigModes.MaxPassbandHz)), null);
     }
 }

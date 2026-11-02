@@ -31,6 +31,13 @@ internal static class BandPlanner
         IReadOnlyList<ModemConfig> modems, string sideband, double? pinnedDialHz, int dspRate,
         double? passbandCeilingHz = null)
     {
+        // Modems that transmit only under a tuned lease (issue #760) are planned alone, by
+        // PlanLeaseOnly; the everyday dial and passband are for the others.
+        if (modems.Any(m => m.TransmitOnlyUnderLease))
+        {
+            modems = [.. modems.Where(m => !m.TransmitOnlyUnderLease)];
+        }
+
         if (!modems.Any(m => m.RfFrequency is not null))
         {
             return null;
@@ -95,6 +102,36 @@ internal static class BandPlanner
         }
 
         return plan;
+    }
+
+    /// <summary>
+    /// Plans each <see cref="ModemConfig.TransmitOnlyUnderLease"/> modem as if it were the only
+    /// modem in the plan, setting its audio centre, and returns the plan by sub-channel: the dial
+    /// the rig is tuned to while the modem holds a lease.
+    /// </summary>
+    internal static Dictionary<int, RfPlan.Result> PlanLeaseOnly(
+        IReadOnlyList<ModemConfig> modems, string sideband, int dspRate, double? passbandCeilingHz = null)
+    {
+        var plans = new Dictionary<int, RfPlan.Result>();
+        foreach (ModemConfig modem in modems.Where(m => m.TransmitOnlyUnderLease))
+        {
+            // Planned on a copy that is not flagged, so the one modem goes through the ordinary
+            // planner, and the answer written back as the audio centre it will run at.
+            ModemConfig alone = new()
+            {
+                SubChannel = modem.SubChannel, Mode = modem.Mode, RfFrequency = modem.RfFrequency,
+                Bandwidth = modem.Bandwidth, Frequency = null,
+            };
+            RfPlan.Result plan = Plan([alone], sideband, null, dspRate, passbandCeilingHz)!;
+            if (alone.Frequency is double centre)
+            {
+                modem.Frequency = centre;
+            }
+
+            plans[modem.SubChannel] = plan;
+        }
+
+        return plans;
     }
 
     private static (double MinHz, double MaxHz)? CentreRangeOf(ModemConfig modem, int dspRate)

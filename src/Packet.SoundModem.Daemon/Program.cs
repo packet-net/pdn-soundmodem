@@ -615,6 +615,29 @@ catch (InvalidDataException planFailure)
     return 2;
 }
 
+// Modems that transmit only under a tuned lease (issue #760) are planned each on its own, as if
+// it were the only modem: the dial the rig is tuned to while it holds a lease.
+Dictionary<int, RfPlan.Result> leaseOnlyPlans;
+try
+{
+    leaseOnlyPlans = BandPlanner.PlanLeaseOnly(
+        modems, sideband, DspRate, ownsTheRadio ? Passband.WideCeilingHz : null);
+}
+catch (InvalidDataException planFailure)
+{
+    Console.Error.WriteLine($"band plan: {planFailure.Message}");
+    return 2;
+}
+
+foreach ((int leaseSub, RfPlan.Result alone) in leaseOnlyPlans)
+{
+    Console.WriteLine(
+        $"band plan: modem {leaseSub} transmits only under a tuned transmit lease: dial "
+        + $"{RfPlan.Mhz(alone.DialHz)} {alone.Sideband.ToUpperInvariant()}, "
+        + $"{alone.Modems[0].Slot.Mode} at {alone.Modems[0].AudioCentreHz:F0} Hz audio; it does not "
+        + "receive usefully outside the lease");
+}
+
 // Where a self-tuning receiver has to point. A band plan says it outright; failing that the
 // operator has to, because an SDR has no dial of its own to read a number off.
 double? receiveDialHz = bandPlan?.DialHz ?? dialFrequency;
@@ -748,6 +771,14 @@ PskDetector qpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFo
 if (!StationFactory.TryAddModems(channel, modems, DspRate, pskDetectorOverride, stationJournal))
 {
     return 2;
+}
+
+// A modem flagged "transmitOnlyUnderLease" transmits only while the rig is tuned for the lease;
+// until the rig exists (below) that is never.
+RigControl? leaseRig = null;
+foreach (ModemConfig leaseOnly in modems.Where(m => m.TransmitOnlyUnderLease))
+{
+    channel.RequireTunedLease(leaseOnly.SubChannel, () => leaseRig?.WindowOwner == TxLeaseTuning.Owner);
 }
 
 if (modems.Any(m => m.Mode.StartsWith("bpsk", StringComparison.Ordinal)))
@@ -2329,6 +2360,7 @@ if (rigConfig is not null)
     }
 }
 
+leaseRig = rig;
 await using var rigLifetime = rig;
 
 // The receive window (GET/POST /rig-window, issue #585): a program on the same machine retunes
@@ -2541,7 +2573,7 @@ TxLeaseTuning? txLeaseTuning = rig is null
     : new TxLeaseTuning(
         rig, channel.TransmitLease,
         sub => TxLeaseTuning.Resolve(
-            sub, modems, bandPlan,
+            sub, modems, bandPlan, leaseOnlyPlans,
             bandPlan is null ? 0 : stationDevice.RigDialOffsetHz(bandPlan.Sideband),
             rigConfig?.Mode));
 runtimeApi?.ServeTxLease(channel, channel.ReceiveOnlyReason, txLeaseTuning);

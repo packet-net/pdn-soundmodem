@@ -195,7 +195,7 @@ Without `rfFrequency` the dial is left where you put it.
 - The modem asks for a 2400 Hz passband, the window the band plan assumes. If your rig will not set it, the journal says so; `"passbandHz": 0` leaves the rig on its normal width.
 - If rigctld is not running, the journal warns and the station carries on without it, trying again in the background. `"required": true` makes the station wait for it instead.
 - Start rigctld without `--vfo`; the modem does not speak that form.
-- A scheduled sender holding the [transmit lease](reference/ports-and-endpoints.md#tuning-the-rig-for-the-lease) can ask for `"tune": true` and have the rig tuned for its modem, then put back when the lease ends.
+- A scheduled sender holding the [transmit lease](reference/ports-and-endpoints.md#tuning-the-rig-for-the-lease) can ask for `"tune": true` and have the rig tuned for its modem, then put back when the lease ends. A modem flagged `transmitOnlyUnderLease` is tuned on its own dial this way (for a bulletin signal outside your everyday passband) and only transmits under such a lease.
 
 `POST /api/rig/tune` retunes the rig for a while and always puts it back, for listening to something outside your passband. While it is retuned the station does not transmit. See [rig tuning windows](reference/ports-and-endpoints.md#rig-tuning-windows). pdn-mailcast-receiver, with `"retune": true`, asks for one through the [receive window](reference/ports-and-endpoints.md#the-receive-window) to hear GB7RDG's bulletins around each slot: [14-mailcast.md](14-mailcast.md).
 

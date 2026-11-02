@@ -80,6 +80,17 @@ public sealed class ModemConfig
     public double? RfFrequency { get; set; }
 
     /// <summary>
+    /// A modem that transmits only while it holds a tuned transmit lease (issue #760): the
+    /// band plan leaves it out when choosing the station's everyday dial and passband, its audio
+    /// centre is fixed at start-up as if it were the only modem in the plan, and a lease taken
+    /// with <c>"tune": true</c> tunes the rig to its <see cref="RfFrequency"/> minus that centre.
+    /// Its frames are refused at any other time, and what it hears outside the lease does not
+    /// count (receivers use their own audio). Needs a <c>rig</c> section and an
+    /// <see cref="RfFrequency"/>, so it is refused on a Flex or without CAT.
+    /// </summary>
+    public bool TransmitOnlyUnderLease { get; set; }
+
+    /// <summary>
     /// How much room to plan for this modem, in Hz; measured from the modem itself when unset.
     /// Meaningful mainly for <c>ardop</c>, which has no fixed width - its bandwidth is
     /// negotiated per session, so the planner assumes the widest (2000 Hz) unless told
@@ -1983,6 +1994,30 @@ public sealed class DaemonConfig
     /// </summary>
     private static void ValidateRig(DaemonConfig config)
     {
+        foreach (ModemConfig leaseOnly in config.Modems.Where(m => m.TransmitOnlyUnderLease))
+        {
+            if (config.Rig is null)
+            {
+                throw new InvalidDataException(
+                    $"modem {leaseOnly.SubChannel}: \"transmitOnlyUnderLease\" needs a \"rig\" section "
+                    + "(a station whose radio is a Flex or has no CAT has no dial to tune for it): add one, or remove the flag.");
+            }
+
+            if (leaseOnly.RfFrequency is null || DaemonConfig.IsArdop(leaseOnly.Mode)
+                || RfPlan.IsFmRadio(config.Sideband))
+            {
+                throw new InvalidDataException(
+                    $"modem {leaseOnly.SubChannel}: \"transmitOnlyUnderLease\" needs an \"rfFrequency\" on an "
+                    + "SSB station, and is not for ARDOP.");
+            }
+        }
+
+        if (config.Modems.Count > 0 && config.Modems.All(m => m.TransmitOnlyUnderLease))
+        {
+            throw new InvalidDataException(
+                "every modem has \"transmitOnlyUnderLease\": the station needs at least one ordinary modem for its everyday dial.");
+        }
+
         bool rigctldPtt = string.Equals(config.Ptt?.Type, "rigctld", StringComparison.Ordinal);
         if (config.Rig is not { } rig)
         {
