@@ -22,14 +22,21 @@ internal sealed class TxLeaseTuning
     /// <summary>Who the rig's window is held by, in the rig's journal lines.</summary>
     internal const string Owner = "the transmit lease";
 
+    /// <summary>The longest a tuned lease is granted for: the rig's window is capped at five
+    /// minutes and has to outlive the lease by its closing ident's allowance.</summary>
+    internal static readonly TimeSpan MaxTunedLease =
+        RigControl.MaxWindow - TransmitLease.ClosingTimeout;
+
     private readonly RigControl _rig;
-    private readonly Func<int, (RigTuning? Tuning, string? Refusal)> _resolve;
+    private readonly Func<int, LeaseTarget> _resolve;
+
+    /// <summary>How long a take waits for a keyed rig to unkey before it gives up on the tune.</summary>
+    internal TimeSpan KeyedWait { get; init; } = TimeSpan.FromSeconds(4);
 
     /// <param name="rig">The station's rig.</param>
     /// <param name="lease">The station's lease, whose end puts the rig back.</param>
     /// <param name="resolve">Where the rig goes for a sub-channel's modem, or why it cannot.</param>
-    internal TxLeaseTuning(
-        RigControl rig, TransmitLease lease, Func<int, (RigTuning? Tuning, string? Refusal)> resolve)
+    internal TxLeaseTuning(RigControl rig, TransmitLease lease, Func<int, LeaseTarget> resolve)
     {
         _rig = rig;
         _resolve = resolve;
@@ -41,6 +48,16 @@ internal sealed class TxLeaseTuning
             }
         };
     }
+
+    /// <summary>Where the rig goes for a sub-channel, and whether it is a lease-only one.</summary>
+    /// <param name="Tuning">The tuning, or null (not lease-only, or it cannot be worked out).</param>
+    /// <param name="Refusal">Why a lease-only sub-channel cannot be tuned for, or null.</param>
+    /// <param name="LeaseOnly">Whether the modem transmits only under a tuned lease.</param>
+    /// <param name="AudioCentreHz">The modem's audio centre, or null.</param>
+    internal sealed record LeaseTarget(RigTuning? Tuning, string? Refusal, bool LeaseOnly, double? AudioCentreHz);
+
+    /// <summary>Whether the sub-channel's modem transmits only under a tuned lease.</summary>
+    internal bool IsLeaseOnly(int subChannel) => _resolve(subChannel).LeaseOnly;
 
     /// <summary>What the rig is tuned to for the lease right now, or null when it is not.</summary>
     internal RigTuning? Held =>
@@ -54,17 +71,18 @@ internal sealed class TxLeaseTuning
 
     /// <summary>
     /// Tunes the rig for <paramref name="subChannel"/>'s modem, or keeps the tuning it already
-    /// has. <paramref name="status"/> is 0 on success.
+    /// has, waiting a few seconds for a keyed rig to unkey first. <paramref name="status"/> is 0
+    /// on success.
     /// </summary>
     internal RigTuning? Apply(int subChannel, double seconds, out int status, out string? why)
     {
         status = 0;
         why = null;
-        (RigTuning? target, string? refusal) = _resolve(subChannel);
-        if (target is null)
+        LeaseTarget found = _resolve(subChannel);
+        if (found.Tuning is not { } target)
         {
             status = 400;
-            why = refusal;
+            why = found.Refusal;
             return null;
         }
 
@@ -73,8 +91,21 @@ internal sealed class TxLeaseTuning
             return target;
         }
 
-        RigTuneResult result = _rig.Tune(
-            target, WindowFor(seconds), Owner, holdsTransmitter: false);
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        RigTuneResult result;
+        while (true)
+        {
+            result = _rig.Tune(target, WindowFor(seconds), Owner, holdsTransmitter: false);
+            RigState state = _rig.Snapshot();
+            if (result.Granted || result.Outcome != RigTuneOutcome.Refused
+                || !(state.Keyed || state.UnkeyOwed) || waited.Elapsed >= KeyedWait)
+            {
+                break;
+            }
+
+            Thread.Sleep(50);
+        }
+
         if (result.Granted)
         {
             return target;
@@ -92,7 +123,7 @@ internal sealed class TxLeaseTuning
 
     /// <summary>The window outlives the lease by its closing ident's allowance.</summary>
     private static TimeSpan WindowFor(double seconds) =>
-        TimeSpan.FromSeconds(Math.Min(seconds, TransmitLease.MaxDuration.TotalSeconds))
+        TimeSpan.FromSeconds(Math.Min(seconds, MaxTunedLease.TotalSeconds))
         + TransmitLease.ClosingTimeout;
 
     /// <summary>
@@ -104,15 +135,20 @@ internal sealed class TxLeaseTuning
         int subChannel, RfPlan.Result? everyday, IReadOnlyDictionary<int, RfPlan.Result> leaseOnlyPlans) =>
         leaseOnlyPlans.TryGetValue(subChannel, out RfPlan.Result? own) ? own : everyday;
 
-    /// <summary>The tuning as an answer's fields.</summary>
-    internal static void Describe(JsonObject answer, RigTuning? tuning)
+    /// <summary>The tuning as an answer's fields: whether the lease holds one, and where.</summary>
+    internal void Describe(JsonObject answer, int? holder)
     {
+        RigTuning? tuning = holder is not null ? Held : null;
         answer["tuned"] = tuning is not null;
         if (tuning is not null)
         {
             answer["dialHz"] = tuning.DialHz;
             answer["mode"] = tuning.Mode;
             answer["passbandHz"] = tuning.PassbandHz;
+            if (holder is int sub && _resolve(sub).AudioCentreHz is double centre)
+            {
+                answer["audioCentreHz"] = Math.Round(centre, 1);
+            }
         }
     }
 
@@ -128,40 +164,36 @@ internal sealed class TxLeaseTuning
     /// <param name="leaseOnlyPlans">The alone-plan of each lease-only modem, by sub-channel.</param>
     /// <param name="dialOffsetHz">The station device's rig dial offset for the plan's sideband.</param>
     /// <param name="mode">The rig section's own mode, or null for the sideband's data mode.</param>
-    internal static (RigTuning? Tuning, string? Refusal) Resolve(
+    internal static LeaseTarget Resolve(
         int subChannel, IReadOnlyList<ModemConfig> modems, RfPlan.Result? plan,
         IReadOnlyDictionary<int, RfPlan.Result> leaseOnlyPlans, double dialOffsetHz, string? mode)
     {
         ModemConfig? modem = modems.FirstOrDefault(m => m.SubChannel == subChannel);
         if (modem is null)
         {
-            return (null, $"no modem transmits on sub-channel {subChannel}");
+            return new(null, $"no modem transmits on sub-channel {subChannel}", false, null);
         }
 
-        if (modem.RfFrequency is null || (plan is null && !leaseOnlyPlans.ContainsKey(subChannel)))
+        if (!leaseOnlyPlans.TryGetValue(subChannel, out RfPlan.Result? own))
         {
-            return (null,
-                $"sub-channel {subChannel} has no \"rfFrequency\", so there is no dial to tune the rig to for it");
+            // Already on the station's everyday plan: nothing to tune.
+            return new(null, null, false, modem.Frequency);
         }
 
-        bool alone = leaseOnlyPlans.TryGetValue(subChannel, out RfPlan.Result? own);
-        RfPlan.Result used = alone ? own! : plan!;
-        string rigMode = mode?.ToUpperInvariant() ?? RigModes.ForSideband(used.Sideband);
-        if (used.IsFm)
-        {
-            return (new RigTuning((long)Math.Round(used.DialHz + dialOffsetHz), rigMode, 0), null);
-        }
-
-        PlannedModem? planned = used.Modems.FirstOrDefault(p => p.Slot.SubChannel == subChannel);
+        string rigMode = mode?.ToUpperInvariant() ?? RigModes.ForSideband(own.Sideband);
+        PlannedModem? planned = own.Modems.FirstOrDefault(p => p.Slot.SubChannel == subChannel);
         if (planned is null)
         {
-            return (null, $"sub-channel {subChannel} is not in the band plan");
+            return new(null, $"sub-channel {subChannel} is not in the band plan", true, null);
         }
 
         int width = Math.Max(
-            (int)Math.Round(used.Window.WidthHz),
+            (int)Math.Round(own.Window.WidthHz),
             BandPlanner.HighCutClearing(planned.AudioCentreHz + (planned.Slot.BandwidthHz / 2)));
-        return (new RigTuning(
-            (long)Math.Round(used.DialHz + dialOffsetHz), rigMode, Math.Clamp(width, 0, RigModes.MaxPassbandHz)), null);
+        return new(
+            new RigTuning(
+                (long)Math.Round(own.DialHz + dialOffsetHz), rigMode, Math.Clamp(width, 0, RigModes.MaxPassbandHz)),
+            null, true, planned.AudioCentreHz);
     }
+
 }

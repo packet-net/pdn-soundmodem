@@ -780,6 +780,7 @@ foreach (ModemConfig leaseOnly in modems.Where(m => m.TransmitOnlyUnderLease))
 {
     channel.RequireTunedLease(leaseOnly.SubChannel, () => leaseRig?.WindowOwner == TxLeaseTuning.Owner);
 }
+channel.LeaseTuningOpen = () => leaseRig?.WindowOwner == TxLeaseTuning.Owner;
 
 if (modems.Any(m => m.Mode.StartsWith("bpsk", StringComparison.Ordinal)))
 {

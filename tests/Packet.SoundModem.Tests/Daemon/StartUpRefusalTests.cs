@@ -52,7 +52,7 @@ public class StartUpRefusalTests
         string source = Program();
 
         int refusal = source.IndexOf("\"rfFrequency\\\" has no meaning on FM", StringComparison.Ordinal);
-        int arithmetic = source.IndexOf("identRf - bandPlan.DialHz", StringComparison.Ordinal);
+        int arithmetic = source.IndexOf("identRf - identPlan.DialHz", StringComparison.Ordinal);
 
         refusal.Should().BeGreaterThan(-1, "the refusal says FM in those words");
         arithmetic.Should().BeGreaterThan(-1, "and the sum it guards is still there for SSB");

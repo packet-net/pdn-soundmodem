@@ -32,7 +32,8 @@ internal static class IdentTransmission
     /// that ends.
     /// </summary>
     internal static bool ShouldSend(SoundModemChannel channel, StationIdentifier owed, bool held = false) =>
-        owed.IdentificationDue && !held && channel.TransmitLease.Admits(owed) && Pending(owed) is null;
+        owed.IdentificationDue && !held && channel.TransmitLease.Admits(owed)
+        && channel.TunedLeaseAdmits(owed) && Pending(owed) is null;
 
     /// <summary>The ident this identifier has queued or on the air, or null.</summary>
     internal static Task? Pending(StationIdentifier owed) =>

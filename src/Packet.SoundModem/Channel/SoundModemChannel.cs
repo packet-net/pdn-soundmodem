@@ -601,33 +601,61 @@ public sealed class SoundModemChannel
     /// <summary>True while any modem's packet DCD is asserted.</summary>
     public bool CarrierDetect => _modems.Values.Any(m => Hears(m) && m.CarrierDetect);
 
-    private readonly Dictionary<IModem, (int SubChannel, Func<bool> Tuned)> _leaseOnly = [];
+    private readonly Dictionary<int, Func<bool>> _leaseOnly = [];
+    private readonly Dictionary<IModem, int> _leaseOnlyModems = [];
 
     /// <summary>
-    /// Marks the modem on <paramref name="subChannel"/> as one that transmits only while it holds
-    /// the transmit lease with <paramref name="tuned"/> true (the rig tuned for it). Its frames are
-    /// refused otherwise, and what it hears does not count towards the station's carrier sense,
+    /// True while the rig is tuned for a transmit lease (set by the host). While it is true and
+    /// nobody holds the lease - the instants either side of one - every transmission is refused,
+    /// so an everyday modem can never key on the lease's dial.
+    /// </summary>
+    public Func<bool>? LeaseTuningOpen { get; set; }
+
+    /// <summary>
+    /// Marks <paramref name="subChannel"/> as one that transmits only while it holds the
+    /// transmit lease with <paramref name="tuned"/> true (the rig tuned for it). Everything
+    /// attributed to it - its modem's frames, its ident, a test tone or probe - is refused
+    /// otherwise, and what its modem hears does not count towards the station's carrier sense,
     /// since out of its tuning it listens on the wrong dial. Call before the channel runs.
     /// </summary>
-    public void RequireTunedLease(int subChannel, Func<bool> tuned) =>
-        _leaseOnly[_modems[subChannel]] = (subChannel, tuned);
+    public void RequireTunedLease(int subChannel, Func<bool> tuned)
+    {
+        _leaseOnly[subChannel] = tuned;
+        _leaseOnlyModems[_modems[subChannel]] = subChannel;
+    }
 
     /// <summary>Whether a modem's carrier and busy readings count: always, except for a
     /// lease-only modem outside its tuning.</summary>
-    private bool Hears(IModem modem) => !_leaseOnly.TryGetValue(modem, out var rule) || rule.Tuned();
+    private bool Hears(IModem modem) =>
+        _leaseOnlyModems.Count == 0
+        || !_leaseOnlyModems.TryGetValue(modem, out int sub)
+        || _leaseOnly[sub]();
 
-    /// <summary>Why a lease-only source's frame is refused right now, or null.</summary>
+    /// <summary>Whether a transmission from <paramref name="source"/> is allowed by the tuned-lease
+    /// rules right now: a lease-only sub-channel's own traffic only under its tuned lease, and
+    /// nothing at all while the lease's tuning is open with no holder.</summary>
+    public bool TunedLeaseAdmits(object? source) => source is null || UntunedRefusal(source) is null;
+
+    /// <summary>Why a source's frame is refused by the tuned-lease rules right now, or null.</summary>
     private Exception? UntunedRefusal(object source)
     {
-        if (source is not IModem modem || !_leaseOnly.TryGetValue(modem, out var rule))
+        int? holder = TransmitLease.HolderNow();
+        if (holder is null && LeaseTuningOpen?.Invoke() == true)
+        {
+            return new InvalidOperationException(
+                "the rig is being tuned for a transmit lease, so other transmissions are refused until it is settled");
+        }
+
+        if (_leaseOnly.Count == 0 || TransmitLease.SubChannelOf(source) is not int sub
+            || !_leaseOnly.TryGetValue(sub, out Func<bool>? tuned))
         {
             return null;
         }
 
-        return TransmitLease.HolderNow() is int held && TransmitLease.IsAttributed(source, held) && rule.Tuned()
+        return holder == sub && tuned()
             ? null
             : new InvalidOperationException(
-                $"sub-channel {rule.SubChannel} only transmits while it holds a tuned transmit lease; "
+                $"sub-channel {sub} only transmits while it holds a tuned transmit lease; "
                 + "take one with \"tune\": true");
     }
 
