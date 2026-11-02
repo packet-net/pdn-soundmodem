@@ -91,9 +91,10 @@ public sealed class RigWindow : IDisposable
 {
     private readonly RigControl _rig;
 
-    internal RigWindow(RigControl rig, string owner, RigTuning tuning, RigTuning restoreTo)
+    internal RigWindow(RigControl rig, string owner, RigTuning tuning, RigTuning restoreTo, bool holdsTransmitter = true)
     {
         _rig = rig;
+        HoldsTransmitter = holdsTransmitter;
         Owner = owner;
         Tuning = tuning;
         RestoreTo = restoreTo;
@@ -107,6 +108,13 @@ public sealed class RigWindow : IDisposable
 
     /// <summary>Where the rig was before, and goes back to.</summary>
     public RigTuning RestoreTo { get; }
+
+    /// <summary>
+    /// Whether the station may not transmit while this window is open. True for a window that
+    /// takes the station off the air (a receive window); false for one opened for a transmission
+    /// that is itself the point, such as the transmit lease's.
+    /// </summary>
+    public bool HoldsTransmitter { get; }
 
     /// <summary>When the window ends unless it is renewed.</summary>
     public DateTimeOffset Expires { get; internal set; }
@@ -286,7 +294,7 @@ public sealed class RigControl : IAsyncDisposable
     /// reads this, so it takes no lock.
     /// </summary>
     public bool HoldsTransmitter =>
-        _window is not null || _restoreTo is not null || _retuning || _unkeyOwed;
+        (_window is { } open ? open.HoldsTransmitter : _restoreTo is not null) || _retuning || _unkeyOwed;
 
     /// <summary>
     /// True while the rig is anywhere but where it is to be put back to: a tuning window is open,
@@ -495,8 +503,12 @@ public sealed class RigControl : IAsyncDisposable
     /// <param name="owner">Who is asking, as a journal line should name them.</param>
     /// <param name="ownerLifetime">Cancelled when the owner goes away; the window then ends at
     /// once. A token that cannot be cancelled leaves it to the window's own time.</param>
+    /// <param name="holdsTransmitter">True (the default) when the station must not transmit while
+    /// the window is open; false for a window opened for a transmission, which the station then
+    /// carries on making. Fixed by the window's first request.</param>
     public RigTuneResult Tune(
-        RigTuning tuning, TimeSpan duration, string owner, CancellationToken ownerLifetime = default)
+        RigTuning tuning, TimeSpan duration, string owner, CancellationToken ownerLifetime = default,
+        bool holdsTransmitter = true)
     {
         if (tuning.DialHz is <= 0 or > 100_000_000_000)
         {
@@ -577,7 +589,7 @@ public sealed class RigControl : IAsyncDisposable
         RigTuneResult result;
         try
         {
-            result = TuneIo(tuning, length, owner, existing, capped);
+            result = TuneIo(tuning, length, owner, existing, capped, holdsTransmitter);
         }
         finally
         {
@@ -602,12 +614,15 @@ public sealed class RigControl : IAsyncDisposable
             existing is not null
                 ? $"rig: {owner} renewed its window on {window.Tuning} until {Utc(window.Expires)}"
                 : $"rig: tuned to {window.Tuning} for {owner} until {Utc(window.Expires)}; "
-                  + $"transmissions are held until it is put back to {window.RestoreTo}");
+                  + (holdsTransmitter
+                      ? $"transmissions are held until it is put back to {window.RestoreTo}"
+                      : $"it is put back to {window.RestoreTo} when that ends"));
         RaiseChanged();
         return result;
     }
 
-    private RigTuneResult TuneIo(RigTuning tuning, TimeSpan length, string owner, RigWindow? existing, bool capped)
+    private RigTuneResult TuneIo(
+        RigTuning tuning, TimeSpan length, string owner, RigWindow? existing, bool capped, bool holdsTransmitter)
     {
         lock (_io)
         {
@@ -688,7 +703,7 @@ public sealed class RigControl : IAsyncDisposable
                         "the window ended while it was being renewed; ask again for a new one", null);
                 }
 
-                RigWindow window = existing ?? new RigWindow(this, owner, tuning, restoreTo);
+                RigWindow window = existing ?? new RigWindow(this, owner, tuning, restoreTo, holdsTransmitter);
                 window.Tuning = tuning;
                 window.Expires = _time.GetUtcNow() + length;
                 if (window.Timer is null)
@@ -705,6 +720,36 @@ public sealed class RigControl : IAsyncDisposable
                 return new(existing is null ? RigTuneOutcome.Tuned : RigTuneOutcome.Renewed, null, window, capped);
             }
         }
+    }
+
+    /// <summary>
+    /// Pushes the end of <paramref name="owner"/>'s open window out to <paramref name="duration"/>
+    /// from now, without touching the rig, so it works in the middle of a transmission where
+    /// <see cref="Tune"/> refuses. False when that owner has no window open.
+    /// </summary>
+    /// <param name="owner">As it was given to <see cref="Tune"/>.</param>
+    /// <param name="duration">How long from now; capped at <see cref="MaxWindow"/>.</param>
+    public bool Extend(string owner, TimeSpan duration)
+    {
+        if (duration <= TimeSpan.Zero)
+        {
+            return false;
+        }
+
+        TimeSpan length = duration > MaxWindow ? MaxWindow : duration;
+        lock (_gate)
+        {
+            if (_window is not { } window || window.Owner != owner || _disposed)
+            {
+                return false;
+            }
+
+            window.Expires = _time.GetUtcNow() + length;
+            window.Timer?.Change(length, Timeout.InfiniteTimeSpan);
+        }
+
+        RaiseChanged();
+        return true;
     }
 
     /// <summary>Ends <paramref name="owner"/>'s window now, if it has one.</summary>
@@ -1454,10 +1499,10 @@ public sealed class RigControl : IAsyncDisposable
     }
 
     private string? HoldReasonLocked() =>
-        _window is { } open
+        _window is { HoldsTransmitter: true } open
             ? $"the rig is tuned to {open.Tuning} for {open.Owner} until {Utc(open.Expires)}, "
               + "so this station does not transmit until it is put back"
-        : _restoreTo is { } owed
+        : _window is null && _restoreTo is { } owed
             ? $"the rig has not yet been put back to {owed} after a tuning window, so this station "
               + "does not transmit until it has been"
         : _unkeyOwed

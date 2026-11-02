@@ -2535,7 +2535,16 @@ var txLeaseJournal = new TxLeaseJournal(
     sub => channel.Modems.TryGetValue(sub, out IModem? leased) ? leased.Mode : "no modem");
 channel.TransmitLease.Changed += txLeaseJournal.Note;
 channel.TransmitLease.CarrierWaitCutShort += txLeaseJournal.NoteCarrierWaitCutShort;
-runtimeApi?.ServeTxLease(channel, channel.ReceiveOnlyReason);
+// Issue #760: with a rig, a take that asks to may tune it for the holder's modem first.
+TxLeaseTuning? txLeaseTuning = rig is null
+    ? null
+    : new TxLeaseTuning(
+        rig, channel.TransmitLease,
+        sub => TxLeaseTuning.Resolve(
+            sub, modems, bandPlan,
+            bandPlan is null ? 0 : stationDevice.RigDialOffsetHz(bandPlan.Sideband),
+            rigConfig?.Mode));
+runtimeApi?.ServeTxLease(channel, channel.ReceiveOnlyReason, txLeaseTuning);
 // Keep a stretch of receive audio on request (POST /api/keepaudio, issue #723): an in-memory ring
 // and a look at the carrier sense ten times a second, so a client told "busy" can later see what
 // the channel sounded like and which detector said so. Only with a keyed API, the only way to ask.
