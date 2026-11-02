@@ -31,6 +31,7 @@ internal static class TxLeaseApi
     internal const string Usage =
         "POST {\"subChannel\": 3, \"seconds\": 60} to take or renew the transmit lease for that "
         + "sub-channel (at most 300 s at a time, optionally with \"maxCarrierWaitSeconds\"), "
+        + "\"tune\": true to tune the rig for that sub-channel's modem first, "
         + "{\"release\": true, \"subChannel\": 3} to give it back, \"dropQueued\": true with or "
         + "without a release to drop its unsent frames; GET to read it";
 
@@ -44,13 +45,16 @@ internal static class TxLeaseApi
     /// (issue #585) holds it, so a listener's receive window and a head end's broadcast lease
     /// can never both be granted; see <see cref="Waterfall.WaterfallWebServer.ReceiveWindowOwner"/>.
     /// </param>
+    /// <param name="tuning">What tunes the rig for a take that asks for it (issue #760), or null
+    /// without a rig; then <c>"tune": true</c> is accepted and ignored.</param>
     internal static (int Status, JsonObject Answer) Handle(
-        SoundModemChannel channel, string method, string body, string? cannot, RigControl? rig = null)
+        SoundModemChannel channel, string method, string body, string? cannot, RigControl? rig = null,
+        TxLeaseTuning? tuning = null)
     {
         TransmitLease lease = channel.TransmitLease;
         if (method == "GET")
         {
-            return (200, Describe(channel));
+            return (200, Describe(channel, tuning));
         }
 
         if (method != "POST")
@@ -73,6 +77,7 @@ internal static class TxLeaseApi
         int? subChannel;
         double seconds;
         double? maxCarrierWait;
+        bool tune;
         try
         {
             release = asked?["release"]?.GetValue<bool>() == true;
@@ -80,12 +85,13 @@ internal static class TxLeaseApi
             subChannel = asked?["subChannel"]?.GetValue<int>();
             seconds = asked?["seconds"]?.GetValue<double>() ?? DefaultSeconds;
             maxCarrierWait = asked?["maxCarrierWaitSeconds"]?.GetValue<double>();
+            tune = asked?["tune"]?.GetValue<bool>() == true;
         }
         catch (Exception wrongType) when (wrongType is InvalidOperationException or FormatException)
         {
             return (400, Error(
                 "\"subChannel\" is a whole number, \"seconds\" and \"maxCarrierWaitSeconds\" numbers, "
-                + $"\"release\" and \"dropQueued\" true or false: {wrongType.Message}"));
+                + $"\"release\", \"dropQueued\" and \"tune\" true or false: {wrongType.Message}"));
         }
 
         if (release || dropQueued)
@@ -93,12 +99,12 @@ internal static class TxLeaseApi
             int? holder = lease.Holder;
             if (subChannel is int named && holder is int held && held != named)
             {
-                return (409, Conflict(channel, $"sub-channel {held} holds the transmit lease, not {named}"));
+                return (409, Conflict(channel, tuning, $"sub-channel {held} holds the transmit lease, not {named}"));
             }
 
             if (!release && holder is null)
             {
-                return (409, Conflict(channel, "no transmit lease is held, so there is nothing of its to drop"));
+                return (409, Conflict(channel, tuning, "no transmit lease is held, so there is nothing of its to drop"));
             }
 
             // Dropped first, so the closing ident a release may send is the last thing of the
@@ -107,7 +113,7 @@ internal static class TxLeaseApi
             // Released only when a holder was actually read, and only that one: never a bare
             // Release() that would free whoever happens to hold it by the time it runs.
             bool released = release && holder is int releasing && lease.Release(subChannel ?? releasing);
-            JsonObject answer = Describe(channel);
+            JsonObject answer = Describe(channel, tuning);
             if (release)
             {
                 answer["released"] = released;
@@ -147,8 +153,22 @@ internal static class TxLeaseApi
                 $"\"maxCarrierWaitSeconds\" must be 1 to {MaxCarrierWaitCeiling:0}, or left out for ordinary carrier sense"));
         }
 
-        double max = TransmitLease.MaxDuration.TotalSeconds;
+        // Issue #760. A sub-channel whose modem transmits only under a tuned lease can have no
+        // other kind, and a tuned lease is shorter so that its window outlives the closing ident.
+        bool leaseOnly = tuning is not null && tuning.IsLeaseOnly(sub);
+        double max = leaseOnly
+            ? TxLeaseTuning.MaxTunedLease.TotalSeconds
+            : TransmitLease.MaxDuration.TotalSeconds;
         bool capped = seconds > max;
+        if (leaseOnly && !tune)
+        {
+            JsonObject untuned = Describe(channel, tuning);
+            untuned["refused"] =
+                $"sub-channel {sub} only transmits under a tuned transmit lease: take it with \"tune\": true";
+            untuned["tuneFailed"] = true;
+            return (409, untuned);
+        }
+
         // A receive window (issue #585) and a transmit lease can never both be held: the window
         // takes the station off the air for another program's purposes, and a lease granted
         // underneath it would be a promise this station could not keep. The lease decides the two
@@ -159,7 +179,7 @@ internal static class TxLeaseApi
             maxCarrierWait is double limit ? TimeSpan.FromSeconds(limit) : null);
         if (taken is not TransmitLeaseGrant grant)
         {
-            return (409, Conflict(channel,
+            return (409, Conflict(channel, tuning,
                 rig?.Snapshot().Window is { Owner: Waterfall.WaterfallWebServer.ReceiveWindowOwner } open
                     ? $"a receive window holds the rig on {open.Tuning} until {Utc(open.Expires)}, so "
                       + "the transmit lease is refused until it ends"
@@ -175,10 +195,46 @@ internal static class TxLeaseApi
                         + "going out. It cannot be renewed; take a new one once \"closing\" reads false"
                     : $"sub-channel {grant.SubChannel}'s lease is closing and sending its closing ident; "
                         + "try again once \"closing\" reads false";
-            return (409, Conflict(channel, why));
+            return (409, Conflict(channel, tuning, why));
         }
 
-        JsonObject granted = Describe(channel);
+        // Tuned only once the lease is ours, so no other modem's frame can slip onto the new dial
+        // in a gap before it (the channel also refuses everything while a tuning is open and
+        // nobody holds the lease), and a keyed rig can finish its transmission first. A renewal
+        // keeps the tuning without retuning it, in the middle of a transmission too. Only a
+        // lease-only modem is ever retuned.
+        string? note = null;
+        if (tuning is not null && leaseOnly)
+        {
+            RigTuning? tuned = tuning.Apply(sub, Math.Min(seconds, max), out int tuneStatus, out string? tuneWhy);
+            if (tuned is null)
+            {
+                if (!grant.Renewed)
+                {
+                    lease.Release(sub);
+                }
+
+                JsonObject failed = Describe(channel, tuning);
+                failed["refused"] = $"the rig could not be tuned for sub-channel {sub}: {tuneWhy}"
+                    + (grant.Renewed ? "; the lease is still held" : "");
+                failed["tuneFailed"] = true;
+                return (tuneStatus, failed);
+            }
+        }
+        else if (tune)
+        {
+            note = tuning is null
+                ? "this station has no \"rig\" section, so there is no rig to tune; \"tune\" was ignored"
+                : $"sub-channel {sub} is already on its everyday dial; \"tune\" was ignored";
+        }
+
+        JsonObject granted = Describe(channel, tuning);
+        if (note is not null)
+        {
+            granted["tuned"] = false;
+            granted["note"] = note;
+        }
+
         granted["renewed"] = grant.Renewed;
         granted["seconds"] = Math.Min(seconds, max);
         granted["capped"] = capped;
@@ -189,12 +245,12 @@ internal static class TxLeaseApi
     /// The lease as it stands - who holds it, until when, and how - and the channel as carrier
     /// sense sees it right now, so a caller can decide without trying to transmit.
     /// </summary>
-    internal static JsonObject Describe(SoundModemChannel channel)
+    internal static JsonObject Describe(SoundModemChannel channel, TxLeaseTuning? tuning = null)
     {
         TransmitLease lease = channel.TransmitLease;
         int? holder = lease.Holder;
         DateTimeOffset? expires = lease.Expires;
-        return new JsonObject
+        var described = new JsonObject
         {
             ["held"] = holder is not null,
             ["subChannel"] = holder,
@@ -206,11 +262,17 @@ internal static class TxLeaseApi
             ["channelBusy"] = holder is int sub ? channel.ChannelBusyFor(sub) : channel.ChannelBusy,
             ["carrierDetect"] = channel.CarrierDetect,
         };
+        tuning?.Describe(described, holder);
+        if (tuning is null)
+        {
+            described["tuned"] = false;
+        }
+        return described;
     }
 
-    private static JsonObject Conflict(SoundModemChannel channel, string why)
+    private static JsonObject Conflict(SoundModemChannel channel, TxLeaseTuning? tuning, string why)
     {
-        JsonObject answer = Describe(channel);
+        JsonObject answer = Describe(channel, tuning);
         answer["refused"] = why;
         return answer;
     }

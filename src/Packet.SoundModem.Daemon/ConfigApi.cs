@@ -49,6 +49,7 @@ internal sealed class ConfigApi
     private Channel.SoundModemChannel? _txLease;
     private Func<int, bool>? _hasModem;
     private string? _txLeaseCannot;
+    private TxLeaseTuning? _txLeaseTuning;
     private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
     private MixerRuntime? _mixer;
     private RigControl? _rig;
@@ -119,8 +120,10 @@ internal sealed class ConfigApi
     /// </summary>
     /// <param name="channel">The station's channel, whose lease it is.</param>
     /// <param name="cannot">Why this station cannot transmit at all, or null.</param>
-    public void ServeTxLease(Channel.SoundModemChannel channel, string? cannot)
+    /// <param name="tuning">Tunes the rig for a take that asks for it, or null without a rig.</param>
+    public void ServeTxLease(Channel.SoundModemChannel channel, string? cannot, TxLeaseTuning? tuning = null)
     {
+        _txLeaseTuning = tuning;
         _txLease = channel;
         _hasModem = channel.Modems.ContainsKey;
         _txLeaseCannot = cannot;
@@ -192,7 +195,7 @@ internal sealed class ConfigApi
         }
 
         (int status, JsonObject answer) = TxLeaseApi.Handle(
-            _txLease, context.Request.HttpMethod, body, _txLeaseCannot, _rig);
+            _txLease, context.Request.HttpMethod, body, _txLeaseCannot, _rig, _txLeaseTuning);
         await RespondJsonAsync(context, status, answer.ToJsonString(Pretty)).ConfigureAwait(false);
     }
 

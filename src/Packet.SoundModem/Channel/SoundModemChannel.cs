@@ -358,8 +358,8 @@ public sealed class SoundModemChannel
         _transmitting
         || CarrierSenseRule.Occupied(
             _busySource?.Busy,
-            anyCarrierDetect: _modems.Values.Any(m => m.CarrierDetect),
-            anyAudioBusy: _modems.Values.Any(m => m.ChannelBusy));
+            anyCarrierDetect: _modems.Values.Any(m => Hears(m) && m.CarrierDetect),
+            anyAudioBusy: _modems.Values.Any(m => Hears(m) && m.ChannelBusy));
 
     /// <summary>
     /// True while the channel is occupied <em>as far as one sub-channel is concerned</em>: we are
@@ -438,7 +438,7 @@ public sealed class SoundModemChannel
         int detected = 0;
         foreach ((int sub, IModem modem) in _modems)
         {
-            if (modem.CarrierDetect)
+            if (Hears(modem) && modem.CarrierDetect)
             {
                 detected |= 1 << sub;
             }
@@ -476,7 +476,7 @@ public sealed class SoundModemChannel
     {
         foreach ((int sub, IModem other) in _modems)
         {
-            if (other.ChannelBusy && SharesPassband(source, other))
+            if (Hears(other) && other.ChannelBusy && SharesPassband(source, other))
             {
                 asserted |= 1 << sub;
             }
@@ -548,7 +548,7 @@ public sealed class SoundModemChannel
 
         foreach ((int number, IModem modem) in _modems)
         {
-            bool counts = sourceBusy is null && SharesPassband(asking, modem);
+            bool counts = sourceBusy is null && Hears(modem) && SharesPassband(asking, modem);
             BusyReading? reading = (modem as IBusyReadingSource)?.BusyReading;
             detectors.Add(new CarrierSenseDetector(
                 $"sub{number} {modem.Mode}", modem.ChannelBusy, modem.CarrierDetect,
@@ -599,7 +599,65 @@ public sealed class SoundModemChannel
     public IChannelBusySource? BusySource => _busySource;
 
     /// <summary>True while any modem's packet DCD is asserted.</summary>
-    public bool CarrierDetect => _modems.Values.Any(m => m.CarrierDetect);
+    public bool CarrierDetect => _modems.Values.Any(m => Hears(m) && m.CarrierDetect);
+
+    private readonly Dictionary<int, Func<bool>> _leaseOnly = [];
+    private readonly Dictionary<IModem, int> _leaseOnlyModems = [];
+
+    /// <summary>
+    /// True while the rig is tuned for a transmit lease (set by the host). While it is true and
+    /// nobody holds the lease - the instants either side of one - every transmission is refused,
+    /// so an everyday modem can never key on the lease's dial.
+    /// </summary>
+    public Func<bool>? LeaseTuningOpen { get; set; }
+
+    /// <summary>
+    /// Marks <paramref name="subChannel"/> as one that transmits only while it holds the
+    /// transmit lease with <paramref name="tuned"/> true (the rig tuned for it). Everything
+    /// attributed to it - its modem's frames, its ident, a test tone or probe - is refused
+    /// otherwise, and what its modem hears does not count towards the station's carrier sense,
+    /// since out of its tuning it listens on the wrong dial. Call before the channel runs.
+    /// </summary>
+    public void RequireTunedLease(int subChannel, Func<bool> tuned)
+    {
+        _leaseOnly[subChannel] = tuned;
+        _leaseOnlyModems[_modems[subChannel]] = subChannel;
+    }
+
+    /// <summary>Whether a modem's carrier and busy readings count: always, except for a
+    /// lease-only modem outside its tuning.</summary>
+    private bool Hears(IModem modem) =>
+        _leaseOnlyModems.Count == 0
+        || !_leaseOnlyModems.TryGetValue(modem, out int sub)
+        || _leaseOnly[sub]();
+
+    /// <summary>Whether a transmission from <paramref name="source"/> is allowed by the tuned-lease
+    /// rules right now: a lease-only sub-channel's own traffic only under its tuned lease, and
+    /// nothing at all while the lease's tuning is open with no holder.</summary>
+    public bool TunedLeaseAdmits(object? source) => source is null || UntunedRefusal(source) is null;
+
+    /// <summary>Why a source's frame is refused by the tuned-lease rules right now, or null.</summary>
+    private Exception? UntunedRefusal(object source)
+    {
+        int? holder = TransmitLease.HolderNow();
+        if (holder is null && LeaseTuningOpen?.Invoke() == true)
+        {
+            return new InvalidOperationException(
+                "the rig is being tuned for a transmit lease, so other transmissions are refused until it is settled");
+        }
+
+        if (_leaseOnly.Count == 0 || TransmitLease.SubChannelOf(source) is not int sub
+            || !_leaseOnly.TryGetValue(sub, out Func<bool>? tuned))
+        {
+            return null;
+        }
+
+        return holder == sub && tuned()
+            ? null
+            : new InvalidOperationException(
+                $"sub-channel {sub} only transmits while it holds a tuned transmit lease; "
+                + "take one with \"tune\": true");
+    }
 
     /// <summary>The modems keyed by sub-channel.</summary>
     public IReadOnlyDictionary<int, IModem> Modems => _modems;
@@ -1359,6 +1417,10 @@ public sealed class SoundModemChannel
             else if (IsExpiredHoldersModemLocked(source))
             {
                 leasedOut = new InvalidOperationException(ExpiredDropReason);
+            }
+            else if (UntunedRefusal(source) is { } untuned)
+            {
+                leasedOut = untuned;
             }
             else
             {
@@ -2687,20 +2749,40 @@ public sealed class SoundModemChannel
             return true;
         }
 
+        string? untunedWhy = null;
+        holder = -1;
         lock (_txGate)
         {
-            if (TransmitLease.HolderNow() is not int held || TransmitLease.IsAttributed(source, held))
+            if (TransmitLease.HolderNow() is int held && !TransmitLease.IsAttributed(source, held))
+            {
+                holder = held;
+            }
+            else if (UntunedRefusal(source) is { } untuned)
+            {
+                untunedWhy = untuned.Message;
+            }
+            else
             {
                 return false;
             }
 
-            holder = held;
             if (taken is not null)
             {
                 refused.AddRange(taken);
             }
 
             RemoveAllLocked(source, refused);
+        }
+
+        if (untunedWhy is not null)
+        {
+            if (refused.Count == 0)
+            {
+                return false;
+            }
+
+            RefuseWith(refused, untunedWhy);
+            return true;
         }
 
         RefuseLeased(refused, holder);

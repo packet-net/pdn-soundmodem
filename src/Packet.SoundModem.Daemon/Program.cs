@@ -615,6 +615,29 @@ catch (InvalidDataException planFailure)
     return 2;
 }
 
+// Modems that transmit only under a tuned lease (issue #760) are planned each on its own, as if
+// it were the only modem: the dial the rig is tuned to while it holds a lease.
+Dictionary<int, RfPlan.Result> leaseOnlyPlans;
+try
+{
+    leaseOnlyPlans = BandPlanner.PlanLeaseOnly(
+        modems, sideband, DspRate, ownsTheRadio ? Passband.WideCeilingHz : null);
+}
+catch (InvalidDataException planFailure)
+{
+    Console.Error.WriteLine($"band plan: {planFailure.Message}");
+    return 2;
+}
+
+foreach ((int leaseSub, RfPlan.Result alone) in leaseOnlyPlans)
+{
+    Console.WriteLine(
+        $"band plan: modem {leaseSub} transmits only under a tuned transmit lease: dial "
+        + $"{RfPlan.Mhz(alone.DialHz)} {alone.Sideband.ToUpperInvariant()}, "
+        + $"{alone.Modems[0].Slot.Mode} at {alone.Modems[0].AudioCentreHz:F0} Hz audio; it does not "
+        + "receive usefully outside the lease");
+}
+
 // Where a self-tuning receiver has to point. A band plan says it outright; failing that the
 // operator has to, because an SDR has no dial of its own to read a number off.
 double? receiveDialHz = bandPlan?.DialHz ?? dialFrequency;
@@ -750,6 +773,15 @@ if (!StationFactory.TryAddModems(channel, modems, DspRate, pskDetectorOverride, 
     return 2;
 }
 
+// A modem flagged "transmitOnlyUnderLease" transmits only while the rig is tuned for the lease;
+// until the rig exists (below) that is never.
+RigControl? leaseRig = null;
+foreach (ModemConfig leaseOnly in modems.Where(m => m.TransmitOnlyUnderLease))
+{
+    channel.RequireTunedLease(leaseOnly.SubChannel, () => leaseRig?.WindowOwner == TxLeaseTuning.Owner);
+}
+channel.LeaseTuningOpen = () => leaseRig?.WindowOwner == TxLeaseTuning.Owner;
+
 if (modems.Any(m => m.Mode.StartsWith("bpsk", StringComparison.Ordinal)))
 {
     Console.WriteLine($"psk detector (bpsk): {bpskDetector.ToString().ToLowerInvariant()}"
@@ -813,14 +845,18 @@ foreach (ModemConfig modemConfig in modems)
         return 2;
     }
 
-    if (id.RfFrequency is not null && bandPlan is not null && bandPlan.IsFm)
+    // A modem that transmits only under a tuned lease identifies on the dial its lease tunes to,
+    // not the everyday one.
+    RfPlan.Result? identPlan = TxLeaseTuning.PlanFor(subChannel, bandPlan, leaseOnlyPlans);
+
+    if (id.RfFrequency is not null && identPlan is not null && identPlan.IsFm)
     {
         Console.Error.WriteLine(
             $"modem {subChannel}: \"identify\".\"rfFrequency\" has no meaning on FM; set \"identify\".\"toneHz\"");
         return 2;
     }
 
-    if (id.RfFrequency is not null && bandPlan is null)
+    if (id.RfFrequency is not null && identPlan is null)
     {
         Console.Error.WriteLine(
             $"modem {subChannel}: \"identify\".\"rfFrequency\" needs a band plan; give the modems "
@@ -833,15 +869,15 @@ foreach (ModemConfig modemConfig in modems)
     // nothing back, because there is nothing to work out, so the plan is the only place the
     // centre is written down. A baseband mode has none either way and is refused below.
     double? plannedCentreHz =
-        bandPlan?.Modems.FirstOrDefault(m => m.Slot.SubChannel == subChannel)
+        identPlan?.Modems.FirstOrDefault(m => m.Slot.SubChannel == subChannel)
             is { AudioCentreHz: > 0 } placed
             ? placed.AudioCentreHz
             : null;
 
     double? toneHz =
         id.ToneHz
-        ?? (id.RfFrequency is double identRf && bandPlan is not null
-            ? (bandPlan.IsUpperSideband ? identRf - bandPlan.DialHz : bandPlan.DialHz - identRf)
+        ?? (id.RfFrequency is double identRf && identPlan is not null
+            ? (identPlan.IsUpperSideband ? identRf - identPlan.DialHz : identPlan.DialHz - identRf)
             : modemConfig.Frequency ?? plannedCentreHz);
 
     if (toneHz is not double tone)
@@ -881,12 +917,12 @@ foreach (ModemConfig modemConfig in modems)
         $"modem {subChannel}: identifying as {identifier.Text} in CW @ {tone:F0} Hz"
         // Not on FM, where the tone is a tone on the channel and adding it to one would be the
         // same false arithmetic the page stopped doing.
-        + (bandPlan is not null && !bandPlan.IsFm
-            ? $" = {RfPlan.Mhz(bandPlan.IsUpperSideband ? bandPlan.DialHz + tone : bandPlan.DialHz - tone)}"
+        + (identPlan is not null && !identPlan.IsFm
+            ? $" = {RfPlan.Mhz(identPlan.IsUpperSideband ? identPlan.DialHz + tone : identPlan.DialHz - tone)}"
             : "")
         + $", {id.Wpm:F0} wpm, every {id.IntervalMinutes:F0} min ({identifier.DurationSeconds:F1} s)");
 
-    if (bandPlan is not null && (tone < bandPlan.Window.LowHz || tone > bandPlan.Window.HighHz))
+    if (identPlan is not null && (tone < identPlan.Window.LowHz || tone > identPlan.Window.HighHz))
     {
         // Not fatal: the window is what the plan fitted the modems into, and an operator who
         // moved the ident deliberately may know something the planner does not. But on a Flex
@@ -894,7 +930,7 @@ foreach (ModemConfig modemConfig in modems)
         // or not at all, and nothing else would say so.
         Console.Error.WriteLine(
             $"modem {subChannel}: WARNING - ident tone {tone:F0} Hz is outside the "
-            + $"{bandPlan.Window.LowHz:F0}-{bandPlan.Window.HighHz:F0} Hz passband and may be filtered; "
+            + $"{identPlan.Window.LowHz:F0}-{identPlan.Window.HighHz:F0} Hz passband and may be filtered; "
             + "unset \"toneHz\" to use the modem's centre");
     }
 }
@@ -2329,6 +2365,7 @@ if (rigConfig is not null)
     }
 }
 
+leaseRig = rig;
 await using var rigLifetime = rig;
 
 // The receive window (GET/POST /rig-window, issue #585): a program on the same machine retunes
@@ -2535,7 +2572,16 @@ var txLeaseJournal = new TxLeaseJournal(
     sub => channel.Modems.TryGetValue(sub, out IModem? leased) ? leased.Mode : "no modem");
 channel.TransmitLease.Changed += txLeaseJournal.Note;
 channel.TransmitLease.CarrierWaitCutShort += txLeaseJournal.NoteCarrierWaitCutShort;
-runtimeApi?.ServeTxLease(channel, channel.ReceiveOnlyReason);
+// Issue #760: with a rig, a take that asks to may tune it for the holder's modem first.
+TxLeaseTuning? txLeaseTuning = rig is null
+    ? null
+    : new TxLeaseTuning(
+        rig, channel.TransmitLease,
+        sub => TxLeaseTuning.Resolve(
+            sub, modems, bandPlan, leaseOnlyPlans,
+            bandPlan is null ? 0 : stationDevice.RigDialOffsetHz(bandPlan.Sideband),
+            rigConfig?.Mode));
+runtimeApi?.ServeTxLease(channel, channel.ReceiveOnlyReason, txLeaseTuning);
 // Keep a stretch of receive audio on request (POST /api/keepaudio, issue #723): an in-memory ring
 // and a look at the carrier sense ten times a second, so a client told "busy" can later see what
 // the channel sounded like and which detector said so. Only with a keyed API, the only way to ask.
@@ -2621,10 +2667,11 @@ if (identifiers.Count > 0)
             // plan, there being no dial to add to, and null on FM, where the channel is
             // the RF and there is no arithmetic to do - the same rule the start-up line
             // and the operator page already follow.
-            double? identRfHz = bandPlan is not null && !bandPlan.IsFm
-                ? bandPlan.IsUpperSideband
-                    ? bandPlan.DialHz + owed.ToneHz
-                    : bandPlan.DialHz - owed.ToneHz
+            RfPlan.Result? sentPlan = TxLeaseTuning.PlanFor(sub, bandPlan, leaseOnlyPlans);
+            double? identRfHz = sentPlan is not null && !sentPlan.IsFm
+                ? sentPlan.IsUpperSideband
+                    ? sentPlan.DialHz + owed.ToneHz
+                    : sentPlan.DialHz - owed.ToneHz
                 : null;
 
             waterfallServer?.ReportTransmittedFrame(

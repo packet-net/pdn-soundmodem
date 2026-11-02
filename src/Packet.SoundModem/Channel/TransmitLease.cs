@@ -429,6 +429,10 @@ public sealed class TransmitLease
         }
     }
 
+    /// <summary>The sub-channel <paramref name="source"/> is attributed to, or null.</summary>
+    internal int? SubChannelOf(object? source) =>
+        source is not null && _attributed.TryGetValue(source, out StrongBox<int>? box) ? box.Value : null;
+
     /// <summary>Whether <paramref name="source"/> is attributed to <paramref name="subChannel"/>.</summary>
     internal bool IsAttributed(object? source, int subChannel) =>
         source is not null && _attributed.TryGetValue(source, out StrongBox<int>? box) && box.Value == subChannel;
