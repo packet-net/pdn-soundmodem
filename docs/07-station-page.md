@@ -127,9 +127,9 @@ A setting the station refuses is never applied: you get the same message the jou
 
 The JSON tab shows the whole configuration as text, for copying or for pasting a configuration in. Comments and trailing commas are fine in what you paste.
 
-With `api.key` set, the page asks for the key first. Without one, anyone who can reach the port can change the configuration. The modem only accepts a change from its own page, or from a program such as curl, so another website open in your browser cannot make one.
+With `api.key` set, the page asks for the key first. Without one, anyone who can reach the port can change the configuration. The modem only accepts a change from its own page, or from a program such as curl, so another website open in your browser cannot make one. Without a key, open the page by the station's address or its own host name (`http://192.168.1.20:8107/config`, `http://radio1.local:8107/config`); under any other name, such as a reverse proxy's, set a key. A public page never offers the configuration without a key.
 
-Secrets (`api.key`, `publish.token`, `ubersdr.password`) are never shown. Leave the field empty to keep the one that is set, type a new one to replace it, or press Clear to remove it.
+Secrets (`api.key`, `publish.token`, `ubersdr.password`) are never shown. Leave the field empty to keep the one that is set, type a new one to replace it, or press Clear to remove it. If you change where a secret goes (`publish.url` for the token, `device` for the UberSDR password), type the secret in again.
 
 ## A public page
 

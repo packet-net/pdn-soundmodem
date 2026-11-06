@@ -718,7 +718,7 @@ Rules and refusals:
 |---|---|---|---|
 | `key` | string | absent: configuration open, no other API | The shared secret every request must present, as `Authorization: Bearer KEY` or `X-API-Key: KEY`. It is also the configuration page's password. |
 
-- Served under `/api/` on the page port. Without a key, the configuration page and `/api/config` are open to anyone who can reach the port, and `/api/mixer` is open when `waterfall.enableAudioControls` is true. Everything else wants the key.
+- Served under `/api/` on the page port. Without a key, the configuration page and `/api/config` are open to anyone who reaches the port by the machine's address or its own host name (not on a `public` page), and `/api/mixer` is open when `waterfall.enableAudioControls` is true. Everything else wants the key.
 - Refused: `api` without a `waterfall` section (`"api" is served on the waterfall's HTTP listener, and this station has no "waterfall" section - add one, or remove "api"`); `api` on a station run without `--config` (`"api" needs a --config file to read back and to write changes to`).
 - `POST /api/config` takes a whole document, validates it with the same checks as start-up, and restarts the process onto it for one run; `?persist=true` writes it to the config file, the only time the modem writes that file. The mechanics are under [the API](ports-and-endpoints.md#the-api-under-api).
 - The start-up journal names the endpoints: `api: configuration page at http://.../config and http://.../api/config (key required)`, or `api: configuration page at http://.../config, open to anyone who can reach it (no "api"."key" set)`, and `api: modem proposals over .../api/proposals` when `survey.propose` is on.
