@@ -352,10 +352,10 @@ public partial class ConfigPageTests : IDisposable
             {
               // comments as a real file has them
               "api": { "key": "the-real-key" },
-              "publish": { "url": "wss://x/uplink", "token": "pdnsm_token" }
+              "publish": { "url": "wss://x/uplink", "token": "pdnsm_token", "callsign": "GB7RDG-2" }
             }
             """;
-        string posted = ConfigApi.Redact(running).Replace("wss://x/uplink", "wss://y/uplink", StringComparison.Ordinal);
+        string posted = ConfigApi.Redact(running).Replace("GB7RDG-2", "GB7RDG-3", StringComparison.Ordinal);
 
         string? restored = ConfigApi.RestoreHidden(posted, running, out string why);
 
@@ -363,7 +363,101 @@ public partial class ConfigPageTests : IDisposable
         JsonNode root = JsonNode.Parse(restored!)!;
         root["api"]!["key"]!.GetValue<string>().Should().Be("the-real-key");
         root["publish"]!["token"]!.GetValue<string>().Should().Be("pdnsm_token");
-        root["publish"]!["url"]!.GetValue<string>().Should().Be("wss://y/uplink", "the edit is kept");
+        root["publish"]!["callsign"]!.GetValue<string>().Should().Be("GB7RDG-3", "the edit is kept");
+    }
+
+    [Fact]
+    public void A_Placeholder_Does_Not_Follow_Its_Secret_To_A_New_Address()
+    {
+        // With the placeholder kept wherever it is posted, anyone who could post a configuration
+        // could point publish.url at their own server and have the station send them the token.
+        const string running = """{"publish": {"url": "wss://site/uplink", "token": "pdnsm_token"}}""";
+
+        string? moved = ConfigApi.RestoreHidden(
+            ConfigApi.Redact(running).Replace("wss://site/uplink", "wss://evil.example/", StringComparison.Ordinal),
+            running, out string why);
+
+        moved.Should().BeNull();
+        why.Should().Contain("publish.url").And.Contain("publish.token");
+    }
+
+    [Fact]
+    public void Every_Spelling_Of_A_Secret_Is_Hidden()
+    {
+        // The file is read without regard to case and the last spelling wins, so hiding only the
+        // first served the key in use.
+        string served = ConfigApi.Redact("""{"api": {"key": "a", "Key": "REALKEY"}, "Publish": {"token": "T2"}}""");
+
+        served.Should().NotContain("REALKEY").And.NotContain("T2");
+    }
+
+    [Theory]
+    [InlineData("192.168.1.20", true)]
+    [InlineData("[::1]", true)]
+    [InlineData("localhost", true)]
+    [InlineData("radio1", true)]
+    [InlineData("RADIO1.lan", true)]
+    [InlineData("radio1.local.", true)]
+    [InlineData("evil.example", false)]
+    [InlineData("radio10", false)]
+    public void Open_Configuration_Answers_Only_To_This_Machines_Own_Names(string host, bool answered)
+    {
+        // DNS rebinding (#423) gets past the same-site check, since the hostile page's Origin and
+        // Host are both its own name. That name is never this machine's.
+        ConfigApi.IsOwnName(host, "radio1").Should().Be(answered);
+    }
+
+    [Fact]
+    public async Task A_Public_Page_With_No_Key_Serves_No_Configuration()
+    {
+        // A public page is for visitors on the open internet; "private home networks" is not
+        // about it, so there the configuration wants a key like everything else.
+        using var station = new Station(_dir, key: "", openConfiguration: false);
+
+        (await station.Client.GetAsync(station.Url("api/config"))).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await station.Client.GetAsync(station.Url("config"))).StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public void Every_Key_Named_Like_A_Secret_Is_Treated_As_One()
+    {
+        // SecretPaths is a list kept by hand. A new password or token in a config class would be
+        // drawn as plain text and served in the clear on an open station, and no other test
+        // would notice; this one does. A key that only looks like a secret goes in NotSecrets
+        // with the reason.
+        string[] notSecrets =
+        [
+            // The SHA-256 of a token, which is what the monitor keeps so that it holds no token.
+            "monitor.uplinks.tokenSha256",
+        ];
+
+        var suspicious = new List<string>();
+        JsonObject types = ConfigSchema.Build()["types"]!.AsObject();
+        void Walk(string type, string path, int depth)
+        {
+            foreach (JsonNode? key in types[type]!["keys"]!.AsArray())
+            {
+                string name = key!["name"]!.GetValue<string>();
+                string at = path.Length == 0 ? name : $"{path}.{name}";
+                if (SecretLike().IsMatch(name) && !ConfigApi.IsSecret(at)
+                    && !notSecrets.Contains(at, StringComparer.OrdinalIgnoreCase))
+                {
+                    suspicious.Add(at);
+                }
+
+                string? next = key["ref"]?.GetValue<string>() ?? key["items"]?["ref"]?.GetValue<string>();
+                if (next is not null && depth < 6)
+                {
+                    Walk(next, at, depth + 1);
+                }
+            }
+        }
+
+        Walk(nameof(DaemonConfig), "", 0);
+
+        suspicious.Should().BeEmpty(
+            "add each to ConfigApi's secrets so it is never served, or to notSecrets here: {0}",
+            string.Join(", ", suspicious));
     }
 
     [Fact]
@@ -602,6 +696,9 @@ public partial class ConfigPageTests : IDisposable
     [GeneratedRegex("```json\\n(.*?)```", RegexOptions.Singleline)]
     private static partial Regex JsonBlock();
 
+    [GeneratedRegex("password|token|secret|^key$", RegexOptions.IgnoreCase)]
+    private static partial Regex SecretLike();
+
     /// <summary>A station's config API on a loopback port, with a config file of its own.</summary>
     private sealed class Station : IDisposable
     {
@@ -609,7 +706,7 @@ public partial class ConfigPageTests : IDisposable
         private readonly string _base;
         private readonly Task _serving;
 
-        public Station(string dir, string key)
+        public Station(string dir, string key, bool openConfiguration = true)
         {
             string mine = Path.Combine(dir, Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(mine);
@@ -628,7 +725,8 @@ public partial class ConfigPageTests : IDisposable
                 key, ConfigPath, PendingPath,
                 runningJson: () => File.ReadAllText(ConfigPath),
                 ephemeralInForce: false,
-                requestRestart: () => Restarts++);
+                requestRestart: () => Restarts++,
+                openConfiguration: openConfiguration);
 
             int port = FreePorts.Next();
             _base = $"http://127.0.0.1:{port}/";

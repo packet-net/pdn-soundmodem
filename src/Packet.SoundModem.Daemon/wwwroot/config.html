@@ -457,6 +457,7 @@ var ConfigModel = (function () {
   var doc = null;        // the configuration being edited
   var errors = {};       // path -> reason, for fields whose text is not a value
   var view = "form";
+  var instance = null;   // which daemon process answered the last read
   var busy = false;
 
   var $ = function (id) { return document.getElementById(id); };
@@ -497,6 +498,7 @@ var ConfigModel = (function () {
       return r.json();
     }).then(function (answer) {
       if (!answer) return;
+      instance = answer.instance || null;
       loaded = answer.running || {};
       doc = clone(loaded);
       errors = {};
@@ -618,6 +620,9 @@ var ConfigModel = (function () {
   }
 
   function render() {
+    // Every field is drawn again from the document, so text that was not a value is gone and
+    // its complaint with it.
+    errors = {};
     var root = $("form-view");
     var open = {};
     root.querySelectorAll("details[open]").forEach(function (d) { open[d.dataset.path] = true; });
@@ -918,28 +923,35 @@ var ConfigModel = (function () {
     });
   }
 
-  // The station answers before it restarts, so the page waits for it to go away and come back.
-  // A restart quicker than the poll is never seen to go, hence the ten seconds.
-  function waitForRestart(started, persist, gone) {
+  // The station answers before it restarts, and goes on answering while it shuts down, so the
+  // page waits for a different process to answer. A 401 is a station that is back with a key
+  // this browser does not hold (one just set, or changed): back, and the login says the rest.
+  function waitForRestart(started, persist) {
+    var was = instance;
     setTimeout(function () {
       api("api/config").then(function (r) {
+        if (r.status === 401) return { back: true };
         if (!r.ok) throw new Error();
-        if (!gone && Date.now() - started < 10000) { waitForRestart(started, persist, false); return; }
+        return r.json().then(function (a) { return { back: !was || a.instance !== was }; });
+      }).then(function (state) {
+        if (!state.back) { tryAgain(); return; }
         busy = false;
         return load().then(function () {
           result("good", "The station is back, running on the new configuration"
             + (persist ? "." : " until its next restart."));
         });
-      }).catch(function () {
-        if (Date.now() - started > 120000) {
-          busy = false;
-          updateChanges();
-          result("bad", "The station has not come back after two minutes. Its journal says why: journalctl -u pdn-soundmodem");
-        } else {
-          waitForRestart(started, persist, true);
-        }
-      });
+      }).catch(tryAgain);
     }, 1500);
+
+    function tryAgain() {
+      if (Date.now() - started > 120000) {
+        busy = false;
+        updateChanges();
+        result("bad", "The station has not come back after two minutes. Its journal says why: journalctl -u pdn-soundmodem");
+      } else {
+        waitForRestart(started, persist);
+      }
+    }
   }
 
   $("try").addEventListener("click", function () { apply(false); });

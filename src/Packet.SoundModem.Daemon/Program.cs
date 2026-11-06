@@ -1729,7 +1729,8 @@ string apiKey = apiConfig?.Key ?? "";
 // A station run from flags alone, with no file for a page to edit and nothing asking for the
 // API, has no page.
 if (benchTxTest is null
-    && (apiKey.Length > 0 || openAudioControls || (waterfallServer is not null && configPath is not null)))
+    && (apiKey.Length > 0 || openAudioControls
+        || (waterfallServer is not null && configPath is not null && waterfallConfig?.Public != true)))
 {
     if (waterfallServer is null)
     {
@@ -1761,9 +1762,12 @@ if (benchTxTest is null
             restartRequested = true;
             cancellation.Cancel();
         },
-        openAudioControls: openAudioControls);
+        openAudioControls: openAudioControls,
+        // A public page is for visitors on the open internet, not a private home network: there
+        // the configuration wants a key like everything else.
+        openConfiguration: waterfallConfig?.Public != true);
     waterfallServer.ApiHandler = configApi.HandleAsync;
-    waterfallServer.ServesConfigPage = true;
+    waterfallServer.ServesConfigPage = apiKey.Length > 0 || waterfallConfig?.Public != true;
 
     // One line, because this is the station's sound card in reach of whoever can reach the page,
     // and an operator who has forgotten the flag is set should be told at every start-up.
@@ -1787,7 +1791,7 @@ if (benchTxTest is null
             $"api: configuration page at {waterfallServer.Url}config and {waterfallServer.Url}api/config (key required). "
             + $"POST replaces it for one run; add ?persist=true to write {configPath}.");
     }
-    else
+    else if (waterfallConfig?.Public != true)
     {
         Console.WriteLine(
             $"api: configuration page at {waterfallServer.Url}config, open to anyone who can reach it (no \"api\".\"key\" set)");
@@ -2617,6 +2621,10 @@ using var keepAudioLifetime = new Disposer(() => keepAudio?.Dispose());
 if (rig is not null && runtimeApi is not null && waterfallServer is not null)
 {
     runtimeApi.ServeRig(rig);
+}
+
+if (rig is not null && runtimeApi is not null && waterfallServer is not null && apiKey.Length > 0)
+{
     Console.WriteLine(
         $"api: rig control over {waterfallServer.Url}api/rig and api/rig/tune (key required)");
 }
