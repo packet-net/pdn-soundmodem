@@ -330,21 +330,33 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
             try
             {
                 Playwright = await Microsoft.Playwright.Playwright.CreateAsync();
-                // Libraries CI fetched for a runner that lacks some (scripts/browser-libs.sh), for
-                // the browser alone: the daemon and the rest of the suite never see them.
+                // Libraries and fonts CI fetched for a runner that lacks them
+                // (scripts/browser-libs.sh), for the browser alone: the daemon and the rest of the
+                // suite never see them.
                 var launch = new BrowserTypeLaunchOptions { Headless = true };
-                if (Environment.GetEnvironmentVariable("PDN_BROWSER_LIBRARY_PATH") is { Length: > 0 } libs)
+                string? libs = Environment.GetEnvironmentVariable("PDN_BROWSER_LIBRARY_PATH");
+                string? fonts = Environment.GetEnvironmentVariable("PDN_BROWSER_FONTCONFIG_FILE");
+                if (!string.IsNullOrEmpty(libs) || !string.IsNullOrEmpty(fonts))
                 {
                     // Env replaces the browser's whole environment, so it is this process's
-                    // environment with the one variable added, not that variable alone.
+                    // environment with these added, not these alone.
                     var env = new Dictionary<string, string>();
                     foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
                     {
                         env[(string)entry.Key] = (string?)entry.Value ?? "";
                     }
 
-                    string? existing = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
-                    env["LD_LIBRARY_PATH"] = string.IsNullOrEmpty(existing) ? libs : $"{libs}:{existing}";
+                    if (!string.IsNullOrEmpty(libs))
+                    {
+                        string? existing = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
+                        env["LD_LIBRARY_PATH"] = string.IsNullOrEmpty(existing) ? libs : $"{libs}:{existing}";
+                    }
+
+                    if (!string.IsNullOrEmpty(fonts))
+                    {
+                        env["FONTCONFIG_FILE"] = fonts;
+                    }
+
                     launch.Env = env;
                 }
 
@@ -357,8 +369,9 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                 {
                     throw new InvalidOperationException(
                         "CI must run the browser tests, and Chromium would not start. The workflow's "
-                        + "install steps should have put it in $PLAYWRIGHT_BROWSERS_PATH and any libraries "
-                        + $"it lacks in $PDN_BROWSER_LIBRARY_PATH. Playwright said:\n{e.Message}", e);
+                        + "install steps should have put it in $PLAYWRIGHT_BROWSERS_PATH, and any libraries "
+                        + "and fonts the runner lacks in $PDN_BROWSER_LIBRARY_PATH and "
+                        + $"$PDN_BROWSER_FONTCONFIG_FILE. Playwright said:\n{e.Message}", e);
                 }
 
                 Unavailable = $"no browser for Playwright here ({e.Message.Split('\n')[0]}); {how}";

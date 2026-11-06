@@ -136,7 +136,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/browser-libs/root
-          key: browser-libs-${{ runner.name }}-${{ steps.playwright.outputs.version }}
+          key: browser-libs-${{ runner.name }}-${{ steps.playwright.outputs.version }}-${{ hashFiles('scripts/browser-libs.sh') }}
       - name: Install the browser for the configuration page tests
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
@@ -147,10 +147,9 @@ jobs:
           echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
           # Made even where nothing is fetched, so the cache always has a directory to keep.
           mkdir -p "$RUNNER_TEMP/browser-libs/root"
-          libs="$(scripts/browser-libs.sh "$RUNNER_TEMP/browser-libs")"
-          if [ -n "$libs" ]; then
-            echo "PDN_BROWSER_LIBRARY_PATH=$libs" >> "$GITHUB_ENV"
-          fi
+          # Prints PDN_BROWSER_LIBRARY_PATH and PDN_BROWSER_FONTCONFIG_FILE when this runner
+          # needed libraries or fonts fetched, and nothing when it has everything.
+          scripts/browser-libs.sh "$RUNNER_TEMP/browser-libs" >> "$GITHUB_ENV"
 
       # Same suite that wedged; same step-level timeout as ci.yml's Test step.
       - name: Test
