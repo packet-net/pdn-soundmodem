@@ -599,6 +599,14 @@ public partial class ConfigPageTests : IDisposable
         JsonNode file = JsonNode.Parse(File.ReadAllText(station.ConfigPath))!;
         file["api"]!["key"]!.GetValue<string>().Should().Be("sekrit");
         file["kissPort"]!.GetValue<int>().Should().Be(8200);
+
+        // The answer is written before the restart is asked for, on purpose (the caller hears
+        // the outcome first), so the restart can land a moment after the response does.
+        for (int i = 0; i < 100 && station.Restarts == 0; i++)
+        {
+            await Task.Delay(50);
+        }
+
         station.Restarts.Should().Be(1);
     }
 
@@ -740,7 +748,7 @@ public partial class ConfigPageTests : IDisposable
                 key, ConfigPath, PendingPath,
                 runningJson: () => File.ReadAllText(ConfigPath),
                 ephemeralInForce: false,
-                requestRestart: () => Restarts++,
+                requestRestart: () => Interlocked.Increment(ref _restarts),
                 openConfiguration: openConfiguration);
 
             int port = FreePorts.Next();
@@ -754,7 +762,9 @@ public partial class ConfigPageTests : IDisposable
 
         public string PendingPath { get; }
 
-        public int Restarts { get; private set; }
+        private int _restarts;
+
+        public int Restarts => Volatile.Read(ref _restarts);
 
         public HttpClient Client { get; } = new();
 
