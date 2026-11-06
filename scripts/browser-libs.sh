@@ -25,10 +25,21 @@ fi
 
 missing() { LD_LIBRARY_PATH="${1:-}" ldd "$chrome" | awk '/not found/ { print $1 }' | sort -u; }
 
+libpath() {
+  find "$work/root" -name '*.so*' -printf '%h\n' 2> /dev/null | sort -u | paste -sd: -
+}
+
 if [ -z "$(missing)" ]; then
   exit 0
 fi
 echo "browser-libs: the browser is missing $(missing | tr '\n' ' ')" >&2
+
+# Libraries fetched by an earlier job on this runner and restored from CI's cache: nothing to do.
+if [ -d "$work/root" ] && [ -z "$(missing "$(libpath)")" ]; then
+  echo "browser-libs: all found in $work/root, from an earlier fetch" >&2
+  libpath
+  exit 0
+fi
 
 # A package index of our own: apt-get update and download need no root when every directory they
 # write to is ours and nothing is locked.
@@ -42,9 +53,14 @@ opts=(
 )
 apt-get "${opts[@]}" -qq update
 
-# A real package that apt can download: not a virtual name such as libasound2, which on a t64
-# distribution only points at libasound2t64.
-real() { apt-cache "${opts[@]}" policy "$1" 2> /dev/null | grep -q 'Candidate: [^(]'; }
+# A real package that apt can download, by exactly that name: not a virtual name such as
+# libasound2, which on a t64 distribution only points at libasound2t64, and not a name apt would
+# read as an action ("libnss3-" means "remove libnss3" to apt).
+real() {
+  local out
+  out="$(apt-cache "${opts[@]}" policy "$1" 2> /dev/null)"
+  [ "$(echo "$out" | head -n 1)" = "$1:" ] && echo "$out" | grep -q 'Candidate: [^(]'
+}
 
 installed() { dpkg-query -W -f='${Status}' "$1" 2> /dev/null | grep -q 'install ok installed'; }
 
@@ -57,7 +73,11 @@ package_for() {
   base="${so%%.so*}"
   ver="${so#*.so}"; ver="${ver#.}"; ver="${ver%%.*}"
   stem="$(echo "${base//_/-}" | tr 'A-Z' 'a-z' | sed 's/-\([0-9]\)/\1/g')"
-  for candidate in "$stem-${ver}t64" "$stem${ver}t64" "$stem-$ver" "$stem$ver" "$stem"; do
+  local candidates=("${stem}t64" "$stem")
+  if [ -n "$ver" ]; then
+    candidates=("$stem-${ver}t64" "$stem${ver}t64" "$stem-$ver" "$stem$ver" "${candidates[@]}")
+  fi
+  for candidate in "${candidates[@]}"; do
     if real "$candidate"; then
       echo "$candidate"
       return 0
@@ -74,10 +94,6 @@ with_depends() {
     | while read -r pkg; do
         if ! installed "$pkg" && real "$pkg"; then echo "$pkg"; fi
       done
-}
-
-libpath() {
-  find "$work/root" -name '*.so*' -printf '%h\n' 2> /dev/null | sort -u | paste -sd: -
 }
 
 # Each pass fetches the packages for what is still missing and unpacks them; the libraries those
