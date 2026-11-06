@@ -79,23 +79,39 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
             }
         }
 
-        if (_context is not null)
+        // Each stage runs whatever the one before it did: a browser that crashed (the likeliest
+        // failure) must not leave a daemon running or the scratch directory behind.
+        try
         {
-            await _context.CloseAsync();
-        }
-
-        if (_station is not null)
-        {
-            await _station.DisposeAsync();
-            if (failed)
+            if (_context is not null)
             {
-                File.WriteAllText(Path.Combine(_scratch.FullName, "daemon.log"), _station.Log);
-                TestContext.Current.TestOutputHelper?.WriteLine(
-                    $"daemon log ({_scratch.FullName}):\n{_station.Log}");
+                await _context.CloseAsync();
             }
         }
-
-        _scratch.Dispose();
+        catch (PlaywrightException)
+        {
+            // Closed already, with the browser.
+        }
+        finally
+        {
+            try
+            {
+                if (_station is not null)
+                {
+                    await _station.DisposeAsync();
+                    if (failed)
+                    {
+                        File.WriteAllText(Path.Combine(_scratch.FullName, "daemon.log"), _station.Log);
+                        TestContext.Current.TestOutputHelper?.WriteLine(
+                            $"daemon log ({_scratch.FullName}):\n{_station.Log}");
+                    }
+                }
+            }
+            finally
+            {
+                _scratch.Dispose();
+            }
+        }
     }
 
     [Fact(Timeout = 600_000)]
@@ -141,7 +157,10 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         _station.Starts.Should().Be(2, "one save, one restart");
         File.Exists(_station.PendingPath).Should().BeFalse("a save writes the file, not a one-run change");
 
-        // The page is back on the restarted station, reading the file it just wrote.
+        // A fresh load reads the restarted station, so what it shows came from the daemon and not
+        // from what was typed. (The tab keeps the key for the session, so no login this time.)
+        await ReloadFormAsync(page);
+        await OpenSectionAsync(page, "waterfall");
         await Assertions.Expect(page.Locator("#f-waterfall_title")).ToHaveValueAsync("after", new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#source")).ToHaveTextAsync(_station.ConfigPath, new() { Timeout = StepMs });
     }
@@ -160,9 +179,14 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await Assertions.Expect(page.Locator("#result")).ToContainTextAsync(
             "The station is back", new() { Timeout = RestartMs });
 
+        await _station.WaitForStartsAsync(2);
         File.ReadAllText(_station.ConfigPath).Should().Be(before, "a one-run change never touches the file");
         _station.Starts.Should().Be(2);
         File.Exists(_station.PendingPath).Should().BeFalse("the restart took the one-run change and removed it");
+
+        // Read afresh from the restarted station: it is running the change, and says it is.
+        await ReloadFormAsync(page);
+        await OpenSectionAsync(page, "waterfall");
         await Assertions.Expect(page.Locator("#source")).ToContainTextAsync("one-run", new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#f-waterfall_title")).ToHaveValueAsync("just this once", new() { Timeout = StepMs });
     }
@@ -252,6 +276,14 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         return page;
     }
 
+    /// <summary>Loads the page again and waits for its form, with no load error showing.</summary>
+    private static async Task ReloadFormAsync(IPage page)
+    {
+        await page.ReloadAsync();
+        await Assertions.Expect(page.Locator("#form-view")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#loading")).ToBeHiddenAsync(new() { Timeout = StepMs });
+    }
+
     private static async Task OpenSectionAsync(IPage page, string name)
     {
         ILocator section = page.Locator($"details.section[data-path='{name}']");
@@ -298,7 +330,19 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
             try
             {
                 Playwright = await Microsoft.Playwright.Playwright.CreateAsync();
-                Instance = await Playwright.Chromium.LaunchAsync(new() { Headless = true });
+                // Libraries CI fetched for a runner that lacks some (scripts/browser-libs.sh), for
+                // the browser alone: the daemon and the rest of the suite never see them.
+                var launch = new BrowserTypeLaunchOptions { Headless = true };
+                if (Environment.GetEnvironmentVariable("PDN_BROWSER_LIBRARY_PATH") is { Length: > 0 } libs)
+                {
+                    string? existing = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
+                    launch.Env = new Dictionary<string, string>
+                    {
+                        ["LD_LIBRARY_PATH"] = string.IsNullOrEmpty(existing) ? libs : $"{libs}:{existing}",
+                    };
+                }
+
+                Instance = await Playwright.Chromium.LaunchAsync(launch);
             }
             catch (PlaywrightException e)
             {
@@ -306,8 +350,9 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                 if (Environment.GetEnvironmentVariable("CI") == "true")
                 {
                     throw new InvalidOperationException(
-                        $"CI must run the browser tests, and Chromium would not start ({e.Message.Split('\n')[0]}); "
-                        + "the workflow's install step should have put it in $PLAYWRIGHT_BROWSERS_PATH", e);
+                        "CI must run the browser tests, and Chromium would not start. The workflow's "
+                        + "install steps should have put it in $PLAYWRIGHT_BROWSERS_PATH and any libraries "
+                        + $"it lacks in $PDN_BROWSER_LIBRARY_PATH. Playwright said:\n{e.Message}", e);
                 }
 
                 Unavailable = $"no browser for Playwright here ({e.Message.Split('\n')[0]}); {how}";
@@ -397,7 +442,18 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
             var station = new Station(dir, port, configPath);
             Directory.CreateDirectory(station.StateDirectory);
             station._supervising = station.SuperviseAsync();
-            await station.WaitForStartsAsync(1);
+            try
+            {
+                await station.WaitForStartsAsync(1);
+            }
+            catch
+            {
+                // The test never gets the station to dispose, so it is stopped here: otherwise
+                // the supervisor would go on restarting it after the test had failed.
+                await station.DisposeAsync();
+                throw;
+            }
+
             return station;
         }
 
@@ -489,6 +545,9 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                 }
                 catch (OperationCanceledException)
                 {
+                    // Stopped, possibly after DisposeAsync looked at _process and before this one
+                    // was put there, so this daemon is killed here as well as there.
+                    Kill(process);
                     return;
                 }
 
@@ -520,20 +579,10 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         public async ValueTask DisposeAsync()
         {
             await _stop.CancelAsync();
-            try
+            if (_process is { } running)
             {
-                if (_process is { HasExited: false } running)
-                {
-                    running.Kill(entireProcessTree: true);
-                    await running.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
-                }
+                Kill(running);
             }
-            catch (Exception e) when (e is InvalidOperationException or TimeoutException or ObjectDisposedException)
-            {
-                // Already gone, or going.
-            }
-
-            _process?.Dispose();
 
             try
             {
@@ -541,9 +590,28 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
             }
             catch (TimeoutException)
             {
+                // Reported by the log the test prints; nothing more to do here.
             }
 
+            _process?.Dispose();
             _stop.Dispose();
+        }
+
+        private static void Kill(Process process)
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                    process.WaitForExit(30_000);
+                }
+            }
+            catch (Exception e) when (e is InvalidOperationException or ObjectDisposedException
+                                        or System.ComponentModel.Win32Exception)
+            {
+                // Already gone, or going.
+            }
         }
     }
 }
