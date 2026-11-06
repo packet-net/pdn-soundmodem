@@ -105,6 +105,22 @@ jobs:
           tests/Packet.SoundModem.Tests/bin/Release/net10.0/Packet.SoundModem.Tests \
             -class "Packet.SoundModem.Tests.SourceTextTests"
 
+      # ConfigPageBrowserTests drive the configuration page in a real Chromium against a real
+      # daemon. The browser goes into this job's temporary directory, so nothing on the runner
+      # changes, and its version follows the Playwright pin in Directory.Packages.props (the
+      # script takes it from there). The cache only saves the download; a miss installs it.
+      - name: Restore the browser for the configuration page tests
+        if: steps.scope.outputs.full == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Directory.Packages.props') }}
+      - name: Install the browser for the configuration page tests
+        if: steps.scope.outputs.full == 'true'
+        run: |
+          echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/ms-playwright" >> "$GITHUB_ENV"
+          PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/ms-playwright" dotnet run scripts/install-playwright-browser.cs
+
       # This is the step that wedged for 90 minutes on run 34061989287 with no output at all.
       # A step timeout tighter than the job's catches a repeat faster, and it also names
       # Test as the one that timed out in the run summary, rather than leaving the whole job

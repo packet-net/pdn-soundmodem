@@ -117,6 +117,20 @@ jobs:
       - name: Restore (bypassing the NuGet HTTP cache)
         run: dotnet restore --no-http-cache
 
+      # ConfigPageBrowserTests drive the configuration page in a real Chromium against a real
+      # daemon. The browser goes into this job's temporary directory, so nothing on the runner
+      # changes, and its version follows the Playwright pin in Directory.Packages.props (the
+      # script takes it from there). The cache only saves the download; a miss installs it.
+      - name: Restore the browser for the configuration page tests
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Directory.Packages.props') }}
+      - name: Install the browser for the configuration page tests
+        run: |
+          echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/ms-playwright" >> "$GITHUB_ENV"
+          PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/ms-playwright" dotnet run scripts/install-playwright-browser.cs
+
       # Same suite that wedged; same step-level timeout as ci.yml's Test step.
       - name: Test
         timeout-minutes: 30
