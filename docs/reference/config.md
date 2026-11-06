@@ -8,8 +8,8 @@ Every key the modem reads from its configuration file, with type, default and on
 |---|---|
 | Path | `/etc/pdn-soundmodem/soundmodem.json`; the systemd unit passes it as `--config`. There is no search path and no environment variable; without `--config` the modem runs from flags and defaults alone (see the [command-line reference](command-line.md)). |
 | Format | JSON. `//` and `/* */` comments and trailing commas are accepted. Keys match case-insensitively, so `kissPort`, `KissPort` and `kissport` are the same key. |
-| Applying a change | Restart the service. The file is read once at start-up. |
-| Written by the modem | Never, with one exception: `POST /api/config?persist=true` replaces it on an operator's explicit instruction. |
+| Applying a change | Restart the service, or use the configuration page at `/config` on the station page, which checks a change and restarts for you. The file is read once at start-up. |
+| Written by the modem | Never, with one exception: `POST /api/config?persist=true` replaces it on an operator's explicit instruction. The configuration page's Save to file is that call. It writes JSON without comments. |
 | Seeded from | `/usr/share/pdn-soundmodem/soundmodem.example.json`, copied in by the package on first install. |
 
 An empty object `{}` is a valid file. It gives a station on ALSA device `default` at 48000 Hz capture, one `afsk1200` modem on sub-channel 0 at 1700 Hz, KISS on `127.0.0.1:8105`, no PTT line (the radio's VOX or nothing), the transmitter test enabled, id-beacon listening and frequency matching on, and no browser page, frame log or other service.
@@ -64,6 +64,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | `mailcast` | object | absent | Retired. The built-in mailcast receiver was removed; a leftover section is ignored with one journal line. See [`mailcast`](#mailcast). |
 | `ubersdr` | object | absent: defaults | Stream parameters for a public UberSDR web receiver. |
 | `openwebrx` | object | absent: defaults | Stream parameters for a public OpenWebRX or OpenWebRX+ receiver. |
+| `iqCard` | object | absent: defaults | How an `iqcard:` device's IQ is tuned and corrected. See [`iqCard`](#iqcard). |
 | `rtltcp` | object | absent: defaults | Settings for an RTL-SDR behind rtl_tcp, or OpenWebRX's rtl_tcp-compatible port. |
 | `sdrconnect` | object | absent: defaults | Settings for an SDRplay radio through SDRconnect's WebSocket API. |
 | `iqpipe` | object | absent; required for `iqpipe:` | What the raw IQ of an `iqpipe:` device is, and the command that makes it. |
@@ -340,6 +341,7 @@ A test asked for through `POST /api/txtest` can follow its tone with a channel-s
 
 | Key | Type | Default | What it is |
 |---|---|---|---|
+| `mixer` | object | absent: levels left alone | The sound card's mixer, holding the keys below. |
 | `captureGainDb` | number | absent: left alone | Capture gain in dB, inside the card's own range. |
 | `playbackDb` | number | absent: left alone | Transmit-side playback level in dB, inside the card's range. |
 | `card` | string | derived from `device` | The mixer card when it is not the one the device string implies. With `captureDevice` or `playbackDevice`, it names one mixer for both directions. |
@@ -714,12 +716,12 @@ Rules and refusals:
 
 | Key | Type | Default | What it is |
 |---|---|---|---|
-| `key` | string | absent: no API | The shared secret every request must present, as `Authorization: Bearer KEY` or `X-API-Key: KEY`. |
+| `key` | string | absent: configuration open, no other API | The shared secret every request must present, as `Authorization: Bearer KEY` or `X-API-Key: KEY`. It is also the configuration page's password. |
 
-- Served under `/api/` on the page port. There is no unauthenticated mode: no key, no API, except `/api/mixer` alone when `waterfall.enableAudioControls` is true.
+- Served under `/api/` on the page port. Without a key, the configuration page and `/api/config` are open to anyone who can reach the port, and `/api/mixer` is open when `waterfall.enableAudioControls` is true. Everything else wants the key.
 - Refused: `api` without a `waterfall` section (`"api" is served on the waterfall's HTTP listener, and this station has no "waterfall" section - add one, or remove "api"`); `api` on a station run without `--config` (`"api" needs a --config file to read back and to write changes to`).
 - `POST /api/config` takes a whole document, validates it with the same checks as start-up, and restarts the process onto it for one run; `?persist=true` writes it to the config file, the only time the modem writes that file. The mechanics are under [the API](ports-and-endpoints.md#the-api-under-api).
-- The start-up journal names the endpoints: `api: configuration over http://.../api/config (key required)`, and `api: modem proposals over .../api/proposals` when `survey.propose` is on.
+- The start-up journal names the endpoints: `api: configuration page at http://.../config and http://.../api/config (key required)`, or `api: configuration page at http://.../config, open to anyone who can reach it (no "api"."key" set)`, and `api: modem proposals over .../api/proposals` when `survey.propose` is on.
 - `POST /api/txlease` gives one sub-channel the transmitter for up to five minutes at a time, renewable, and refuses every other sub-channel's transmissions until it is released or runs out. It is for a scheduled transmission that shares the radio with ordinary traffic; there is nothing to configure. A modem with `identify` sends a closing ident when its lease ends. With a `rig` section a take can add `"tune": true` to have the rig tuned for the holder's modem and put back afterwards; a modem with `transmitOnlyUnderLease` is the one that needs it. See [the transmit lease](ports-and-endpoints.md#the-transmit-lease).
 
 ## `frameLog`

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json.Nodes;
 using Packet.SoundModem.Daemon;
 
 namespace Packet.SoundModem.Tests.Daemon;
@@ -212,7 +213,8 @@ public class ConfigApiTests : IDisposable
     {
         const string json = """{"device": "null", "modems": []}""";
 
-        ConfigApi.Redact(json).Should().Be(json);
+        // The same content: what is served is re-serialised, so its whitespace is not the file's.
+        JsonNode.DeepEquals(JsonNode.Parse(ConfigApi.Redact(json)), JsonNode.Parse(json)).Should().BeTrue();
     }
 
     /// <summary>
@@ -247,7 +249,7 @@ public class ConfigApiTests : IDisposable
     {
         const string json = """{"device": "null", "publish": {"callsign": "GB7RDG-2"}}""";
 
-        ConfigApi.Redact(json).Should().Be(json);
+        JsonNode.DeepEquals(JsonNode.Parse(ConfigApi.Redact(json)), JsonNode.Parse(json)).Should().BeTrue();
     }
     /// <summary>
     /// A posted configuration whose <c>stateFile</c> names the station's real config file is

@@ -39,7 +39,7 @@ ardop host tcp: 127.0.0.1:8515 (data 8516, modem 2, ARQBW 500MAX, centre 950 Hz,
 paging tcp: 127.0.0.1:8106 (pocsag1200, DAPNET/POCSAG-compatible)
 waterfall: http://127.0.0.1:8107/
 metrics: http://127.0.0.1:8107/metrics (prometheus) and http://127.0.0.1:8107/metrics/frames (one point per frame, influx line protocol). No authentication.
-api: configuration over http://127.0.0.1:8107/api/config (key required). POST replaces it for one run; add ?persist=true to write /etc/pdn-soundmodem/soundmodem.json.
+api: configuration page at http://127.0.0.1:8107/config and http://127.0.0.1:8107/api/config (key required). POST replaces it for one run; add ?persist=true to write /etc/pdn-soundmodem/soundmodem.json.
 ```
 
 ## KISS over TCP
@@ -202,7 +202,8 @@ The `waterfall` section (or `--waterfall PORT`) serves these routes on `waterfal
 | any other path with a WebSocket upgrade | the live stream; the page itself opens `ws` |
 | `/survey/<file>` | one survey capture from `survey.path`, `audio/wav` or `application/json`; only with a `survey` section |
 | `/metrics`, `/metrics/frames` | see [Metrics](#metrics); only with a `metrics` section |
-| `/api/config`, `/api/proposals`, `/api/txtest`, `/api/txlease`, `/api/keepaudio`, `/api/mixer`, `/api/rig`, `/api/rig/tune` | see [The API](#the-api-under-api); 404 without an `api.key`, except the mixer exception |
+| `/config` | the [configuration page](../07-station-page.md#the-configuration-page); no key needed to load it, the page asks for one when `/api/config` does. Served whenever the station runs from a `--config` file and has a page |
+| `/api/config`, `/api/config/schema`, `/api/proposals`, `/api/txtest`, `/api/txlease`, `/api/keepaudio`, `/api/mixer`, `/api/rig`, `/api/rig/tune` | see [The API](#the-api-under-api); without an `api.key`, `/api/config` and `/api/config/schema` are open, `/api/mixer` follows `enableAudioControls`, and the rest are 404 |
 
 A capture name is served only when it is 1 to 128 characters of lower-case letters, digits, hyphens and dots, contains no `..`, ends in `.wav` or `.json`, and names a file inside the survey directory. Anything else is a 404.
 
@@ -280,15 +281,17 @@ A window here is refused while a [transmit lease](#the-transmit-lease) is held, 
 
 ### The API under /api
 
-An `api` section with a `key` installs the API on the page port. It needs a `waterfall` section and a `--config` file; without either the modem stops with exit 2. Without a key every `/api/` path is a 404, with two exceptions: `waterfall.enableAudioControls` true on a page that is not `public` serves `/api/mixer` with no key, and a [`mailcast`](config.md#mailcast) section serves the read-only `GET /api/mailcast` on a page that is not `public`.
+The API is on the page port of every station that runs from a `--config` file. An `api` section with a `key` needs a `waterfall` section and a `--config` file; without either the modem stops with exit 2. Without a key, `/api/config` and `/api/config/schema` answer with no key (a configuration `POST` from a browser still has to come from this station's own page, as below), `waterfall.enableAudioControls` true on a page that is not `public` serves `/api/mixer` with no key, and every other `/api/` path is a 404.
 
 The key is presented as `Authorization: Bearer KEY` or `X-API-Key: KEY`; `X-API-Key` is read first. The comparison is fixed-time. A wrong or missing key is a 401 with a plain-text reason and no `WWW-Authenticate` challenge.
 
 | Endpoint | Method | Key | Request | Response |
 |---|---|---|---|---|
-| `/api/config` | `GET` | required | none | `{"source": "file" or "ephemeral", "configPath": "...", "running": {...}}`; `api.key`, `publish.token`, `mailcast.bbs.password` and the `args` of each `mailcast.hooks` command read `(set, not shown)` |
-| `/api/config` | `POST` | required | a complete configuration document, the shape of `soundmodem.json` | 400 with the same message the journal would carry, station untouched; or 200 `{"applied": true, "persisted": false, "restarting": true, "note": "..."}` and the process exits 1 for systemd to restart it |
-| `/api/config?persist=true` | `POST` | required | as above | as above with `"persisted": true`, written to the config file; 500 if the file cannot be written |
+| `/api/config` | `GET` | required, or none without a key | none | `{"source": "file" or "ephemeral", "configPath": "...", "running": {...}}`, `running` as JSON without the file's comments; `api.key`, `publish.token`, `ubersdr.password`, `mailcast.bbs.password` and the `args` of each `mailcast.hooks` command read `(set, not shown)` when set |
+| `/api/config` | `POST` | required, or none without a key | a complete configuration document, the shape of `soundmodem.json`; comments allowed. A value of exactly `(set, not shown)` keeps the value the running configuration has at that place, and is a 400 where it has none | 400 with the same message the journal would carry, station untouched; or 200 `{"applied": true, "persisted": false, "restarting": true, "note": "..."}` and the process exits 1 for systemd to restart it |
+| `/api/config?persist=true` | `POST` | as above | as above | as above with `"persisted": true`, written to the config file; 500 if the file cannot be written |
+| `/api/config?check=true` | `POST` | as above | as above | 200 `{"valid": true, "applied": false, ...}` or the 400 above; nothing is written and nothing restarts |
+| `/api/config/schema` | `GET` | none | none | every key of the configuration file, read from the config classes: `{"root", "hidden", "types": {Class: {"keys": [{"name", "kind", "nullable", "default", "ref", "items", "choices", "secret", "aliasOf", "help", "docType", "docDefault"}]}}}`. What the configuration page draws its form from |
 | `/api/proposals` | `GET` | required | none | `{"proposing": false, "why": "...", "proposals": []}` without `survey.propose`; otherwise `{"proposing": true, "examined": N, "readable": N, "skippedForBacklog": N, "proposals": [...]}`, each proposal carrying a `config` to POST to `/api/config` |
 | `/api/txtest` | `POST` | required | `{"twoTone": true, "seconds": 5}`, `{"twoTone": false, "toneHz": 999, "seconds": 5}` or `{"stop": true}`, each optionally with `"subChannel": N` (needed while a lease is held; 400 if no modem is on it) and a tone optionally with `"probe": {"kind": "zc255", "gapSeconds": 1.5, "audioHz": 1800}` (see [the channel probe](config.md#the-channel-probe); 400 for an unknown or missing `kind`, a negative `gapSeconds`, an `audioHz` outside the channel, any other field in `probe`, or a `probe` that is not an object); a `"stop": true` wins whatever else the body carries | `{"transmitted": bool, "sent": ..., "refused": ..., "failed": ..., "probe": ..., "probeComplete": ...}` with the unused keys null, `probe` the id of the probe when all of it went out and `probeComplete` false when a stop cut it, answered once the test is over: 200 when it went out, 409 when the station would not run it, 500 when it broke; `{"stopped": true, "note": "..."}` for a stop; 404 with no transmitter or `txTest.enabled` false |
 | `/api/txlease` | `POST` | required | `{"subChannel": N, "seconds": 60}` to take or renew, optionally with `"maxCarrierWaitSeconds": 30` and `"tune": true`, which a transmit-only-under-lease modem requires (see [tuning the rig](#tuning-the-rig-for-the-lease)); `{"release": true, "subChannel": N}` to give it back; `"dropQueued": true` with a release, or alone while holding, to drop the holder's unsent frames | 200 with the lease's state (below) plus `"renewed"`, `"seconds"` and `"capped"` for a take, `"released"` for a release and `"dropped"` (a count) for a drop; 409 with `refused` when another sub-channel holds it, when a lease is closing, when a release or drop names a sub-channel that does not hold it, or for a drop with no lease; with `"tune": true` also 409 when the rig is busy, keyed or not connected, 500 when the rig refuses, and 400 when the modem has no `rfFrequency`, each with `"tuneFailed": true` (also a lease-only modem's take without `tune`); 400 for a missing `subChannel`, one with no modem, `seconds` of 0 or less, or `maxCarrierWaitSeconds` outside 1 to 300 |
@@ -303,7 +306,7 @@ The key is presented as `Authorization: Bearer KEY` or `X-API-Key: KEY`; `X-API-
 | `/api/rig/tune` | `GET` | required | none | the same as `GET /api/rig` |
 | any other method | | | | 405 with a one-line hint |
 
-A keyless `POST /api/mixer` from a browser is refused with 403 unless its `Origin` header names the host the request arrived on; a request with no `Origin`, or one presenting the key, is allowed.
+A keyless `POST /api/mixer`, or a `POST /api/config` on a station with no key, from a browser is refused with 403 unless its `Origin` header names the host the request arrived on; a request with no `Origin`, or one presenting the key, is allowed.
 
 What a change does to the running station:
 

@@ -52,6 +52,8 @@ TX test keys the radio and sends a test burst through the normal transmit path. 
 
 Level sets the two dBFS ends of the waterfall's colour scale, floor and top. Auto sets both from what is on screen now. These are per browser and are remembered.
 
+Settings opens [the configuration page](#the-configuration-page). It is there on your own page whenever the station was started from a config file, and never on a public page.
+
 At the right, the connection state reads `live` while the page's socket is up, and says so when it is reconnecting. Under it are the measured frame rate and the width of one spectrum bin, or `transmitting`, or `no audio` when nothing has arrived for a second and a half.
 
 ## The modem chips
@@ -113,6 +115,22 @@ Press `transcript` on a card to save its feed as a markdown file, oldest line fi
 
 A line of your own carries a `HELD` tag when that frame waited for the channel before it went out, with the same word for what took most of the wait. `HELD 8.3s busy ch2` is somebody else using the frequency; `HELD 8.3s our tx` is the same delay caused by your own window going out in front of the frame, which is your station working normally. It is worth looking for on a card full of `POLL` and `AGAIN`: the node that queued those frames cannot see the wait, because a KISS write returns as soon as the socket takes it, so it keeps its retry timers running and queues another poll. When the channel finally opens they all go out in one keyup, and the station is deaf for the length of it - so the earlier polls in the run could not have been answered whatever the far end did. A run of `HELD` tags on repeated polls is a channel-access problem at this end, not a link failing at the other.
 
+## The configuration page
+
+Settings in the header, or `/config` on the same port, opens a page that edits every setting in the config file. Each key has a field with the line from the [configuration reference](reference/config.md) beside it. Sections the file does not have are listed as not set, with a button to add one. Keys this version does not know are kept as they are.
+
+- **Check** asks the station whether it would start on what you have, and changes nothing.
+- **Try until next restart** restarts the station on it. The restart after that goes back to the file, so a bad experiment undoes itself.
+- **Save to file** writes the config file and restarts. Comments in the file are not kept.
+
+A setting the station refuses is never applied: you get the same message the journal would have shown, and the station carries on as it was.
+
+The JSON tab shows the whole configuration as text, for copying or for pasting a configuration in. Comments and trailing commas are fine in what you paste.
+
+With `api.key` set, the page asks for the key first. Without one, anyone who can reach the port can change the configuration. The modem only accepts a change from its own page, or from a program such as curl, so another website open in your browser cannot make one.
+
+Secrets (`api.key`, `publish.token`, `ubersdr.password`) are never shown. Leave the field empty to keep the one that is set, type a new one to replace it, or press Clear to remove it.
+
 ## A public page
 
 `"waterfall": { "public": true }` serves a page for visitors instead. It shows your `title` and `about` paragraph, credits the receiver the audio comes from, and takes away everything a visitor cannot usefully act on: the dial and sideband, the span, the display levels, the mixer, the KISS host badges, and the transmitter test. Listen and the links pane stay. [09-web-receivers.md](09-web-receivers.md) and [10-public-monitor.md](10-public-monitor.md) cover running one.
@@ -125,7 +143,7 @@ An `api` section with a `key` installs the modem's HTTP API on the same port. Th
 
 `waterfall.enableAudioControls` serves `/api/mixer` with no key at all and nothing else, so the mixer works from any browser that can reach the port.
 
-The same key also serves the configuration, proposal and transmit-test endpoints, which are not page controls. They are in [the API reference](reference/ports-and-endpoints.md#the-api-under-api).
+The same key also protects [the configuration page](#the-configuration-page), and serves the proposal and transmit-test endpoints, which are not page controls. They are in [the API reference](reference/ports-and-endpoints.md#the-api-under-api).
 
 ## Reaching it from another machine
 
@@ -135,7 +153,7 @@ Set the top-level `bind` to the address you want, or `"*"` for every interface, 
 waterfall: WARNING - listening beyond loopback, no authentication: anyone who can reach this port can key your transmitter
 ```
 
-The page has no login. Anyone who can reach the port can press Send on the TX test and put a signal on the air under your callsign, and with `enableAudioControls` set they can move your levels too. Put it behind your firewall, a VPN, or a reverse proxy that asks for a password, and read [Every listener](reference/ports-and-endpoints.md#every-listener) before you open anything else.
+The page has no login. Anyone who can reach the port can press Send on the TX test and put a signal on the air under your callsign, and with `enableAudioControls` set they can move your levels too. Without an `api.key` they can also change the station's configuration. Put it behind your firewall, a VPN, or a reverse proxy that asks for a password, and read [Every listener](reference/ports-and-endpoints.md#every-listener) before you open anything else.
 
 ## If it did not
 

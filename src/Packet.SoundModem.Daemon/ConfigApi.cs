@@ -413,11 +413,34 @@ internal sealed class ConfigApi
         return Path.Combine(directory, "pending-config.json");
     }
 
-    /// <summary>What a redacted secret reads as, so the answer still says one is set.</summary>
-    private const string Hidden = "(set, not shown)";
+    /// <summary>What a redacted secret reads as, so the answer still says one is set. Posted
+    /// back unchanged it keeps the stored value; see <see cref="RestoreHidden"/>.</summary>
+    internal const string Hidden = "(set, not shown)";
 
     /// <summary>
-    /// The configuration with <c>api.key</c>, <c>publish.token</c>,
+    /// The keys whose values are never served, as paths from the top of the file. The schema marks
+    /// the same ones, so the configuration page offers them as password fields.
+    /// </summary>
+    internal static readonly IReadOnlyList<string> SecretPaths =
+    [
+        "api.key",
+        "publish.token",
+        "ubersdr.password",
+    ];
+
+    /// <summary>Whether the key at <paramref name="keyPath"/> is one whose value is never served.</summary>
+    internal static bool IsSecret(string keyPath) =>
+        SecretPaths.Contains(keyPath, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>How a document posted here, or the running one, is read: as JSONC, as the file is.</summary>
+    private static readonly JsonDocumentOptions Jsonc = new()
+    {
+        CommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
+
+    /// <summary>
+    /// The configuration with each of <see cref="SecretPaths"/>,
     /// <c>mailcast.bbs.password</c> and the <c>args</c> of each <c>mailcast.hooks</c> command
     /// blanked (a retired <c>mailcast</c> section can still be in the file), for serving back to a caller.
     /// </summary>
@@ -434,8 +457,9 @@ internal sealed class ConfigApi
     {
         try
         {
-            JsonNode? root = JsonNode.Parse(json);
-            bool redacted = false;
+            // JSONC, as the file is read. A strict parse threw at the first "//" of a commented
+            // file and served "{}" for the whole configuration.
+            JsonNode? root = JsonNode.Parse(json, nodeOptions: null, Jsonc);
 
             // Keys are matched the way the file is read, which is without regard to case: a
             // "Mailcast": {"BBS": {"Password": ...}} is the same password and must not be served.
@@ -447,27 +471,30 @@ internal sealed class ConfigApi
                     node = Child(node, path[i]) as JsonObject;
                 }
 
-                if (node is not null && KeyOf(node, path[^1]) is string key)
+                // Only a value that is there: an absent or empty secret is served as what it is,
+                // so the page does not claim a key is set on a station that has none.
+                if (node is not null && KeyOf(node, path[^1]) is string key
+                    && node[key] is JsonNode value
+                    && !(value is JsonValue text && text.TryGetValue(out string? s) && s.Length == 0))
                 {
                     node[key] = Hidden;
-                    redacted = true;
                 }
             }
 
-            Hide("api", "key");
-            Hide("publish", "token");
+            foreach (string secret in SecretPaths)
+            {
+                Hide(secret.Split('.'));
+            }
+
             Hide("mailcast", "bbs", "password");
 
             // A hook's arguments may hold anything, a password for the program it runs included,
             // so they are treated as the BBS password is: never served. The program's path is not.
             Hide("mailcast", "hooks", "before", "args");
             Hide("mailcast", "hooks", "after", "args");
-            if (redacted)
-            {
-                return root!.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
-            }
-
-            return json;
+            // Always re-serialised, comments and all gone: what is served is the configuration's
+            // content, and a caller should not have to parse JSONC to read it.
+            return root?.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) ?? "{}";
         }
         catch (JsonException)
         {
@@ -481,6 +508,107 @@ internal sealed class ConfigApi
 
         static JsonNode? Child(JsonObject node, string name) =>
             KeyOf(node, name) is string key ? node[key] : null;
+    }
+
+    /// <summary>
+    /// <paramref name="posted"/> with every <see cref="Hidden"/> placeholder replaced by the value
+    /// at the same place in <paramref name="running"/>; null, with <paramref name="why"/> saying
+    /// so, when the running configuration has nothing there to keep.
+    /// </summary>
+    /// <remarks>
+    /// A secret is served as the placeholder, so a configuration read from here, edited and posted
+    /// back carries the placeholder where the key was. Written as it came, that replaced the
+    /// station's key with the text "(set, not shown)". Posted unchanged, a placeholder now means
+    /// "keep what is there"; any other value replaces it. A document with no placeholder is
+    /// returned exactly as posted, comments and all.
+    /// </remarks>
+    internal static string? RestoreHidden(string posted, string running, out string why)
+    {
+        why = "";
+        if (!posted.Contains(Hidden, StringComparison.Ordinal))
+        {
+            return posted;
+        }
+
+        JsonNode? root;
+        JsonNode? stored;
+        try
+        {
+            root = JsonNode.Parse(posted, nodeOptions: null, Jsonc);
+        }
+        catch (JsonException e)
+        {
+            why = $"not valid JSON: {e.Message}";
+            return null;
+        }
+
+        try
+        {
+            stored = JsonNode.Parse(running, nodeOptions: null, Jsonc);
+        }
+        catch (JsonException)
+        {
+            stored = null;
+        }
+
+        string? missing = null;
+        root = Walk(root, stored, "");
+        if (missing is not null)
+        {
+            why = $"\"{missing}\" is \"{Hidden}\", which keeps the value the station already has, "
+                + "and it has none there. Type the value in, or remove the key.";
+            return null;
+        }
+
+        return root?.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) ?? "null";
+
+        JsonNode? Walk(JsonNode? node, JsonNode? keep, string at)
+        {
+            switch (node)
+            {
+                case JsonObject obj:
+                    foreach (string name in obj.Select(p => p.Key).ToList())
+                    {
+                        JsonNode? match = keep is JsonObject k
+                            ? k.FirstOrDefault(p => string.Equals(p.Key, name, StringComparison.OrdinalIgnoreCase)).Value
+                            : null;
+                        JsonNode? child = obj[name];
+                        JsonNode? walked = Walk(child, match, at.Length == 0 ? name : $"{at}.{name}");
+                        if (!ReferenceEquals(walked, child))
+                        {
+                            obj[name] = walked;
+                        }
+                    }
+
+                    return obj;
+
+                case JsonArray array:
+                    for (int i = 0; i < array.Count; i++)
+                    {
+                        JsonNode? match = keep is JsonArray k && i < k.Count ? k[i] : null;
+                        JsonNode? child = array[i];
+                        JsonNode? walked = Walk(child, match, $"{at}[{i}]");
+                        if (!ReferenceEquals(walked, child))
+                        {
+                            array[i] = walked;
+                        }
+                    }
+
+                    return array;
+
+                case JsonValue value when value.TryGetValue(out string? text) && text == Hidden:
+                    if (keep is null || (keep is JsonValue v && v.TryGetValue(out string? old) && old == Hidden))
+                    {
+                        missing ??= at;
+                        return node;
+                    }
+
+                    return keep.DeepClone();
+
+                default:
+                    return node;
+            }
+        }
     }
 
     /// <summary>The waiting ephemeral configuration, or null if there is none.</summary>
@@ -610,9 +738,32 @@ internal sealed class ConfigApi
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
         if (path is not ("/api/config" or "/api/proposals" or "/api/txtest" or "/api/txlease" or "/api/mixer"
-            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio"))
+            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio" or "/api/config/schema" or ConfigPage.Path))
         {
             return false;
+        }
+
+        // The configuration page and the description it draws its form from hold no secret and
+        // change nothing, so they are served to anyone who can reach the listener. The page asks
+        // for the key itself, when /api/config turns out to want one.
+        if (path is ConfigPage.Path or "/api/config/schema")
+        {
+            if (context.Request.HttpMethod is not ("GET" or "HEAD"))
+            {
+                await RespondAsync(context, 405, "GET only").ConfigureAwait(false);
+                return true;
+            }
+
+            if (path is ConfigPage.Path)
+            {
+                await ConfigPage.ServeAsync(context).ConfigureAwait(false);
+            }
+            else
+            {
+                await RespondJsonAsync(context, 200, ConfigSchema.Json).ConfigureAwait(false);
+            }
+
+            return true;
         }
 
         // The one endpoint that can be open: "waterfall"."enableAudioControls" (Tom, 2026-09-06).
@@ -621,6 +772,27 @@ internal sealed class ConfigApi
         // key the transmitter, and still wants the key - including on a station that also has one,
         // where this flag decides the mixer and nothing more.
         bool open = _openAudioControls && path is "/api/mixer";
+
+        // The configuration itself is open on a station with no key (Tom, 2026-11-06: "fully
+        // open - these are private home networks"). Open to a person on the network, that is,
+        // not to any web page their browser happens to have open: a POST from a page this
+        // station did not serve is refused, as the open mixer's is.
+        bool openConfig = _key.Length == 0 && path is "/api/config";
+        if (openConfig)
+        {
+            if (context.Request.HttpMethod == "POST" && !SameSite(context.Request))
+            {
+                await RespondAsync(context, 403,
+                    "forbidden: this request came from a page this station did not serve, and "
+                    + "the station has no \"api\".\"key\". The station's own /config page, a "
+                    + "client that sends no Origin header (curl, a script), and a caller "
+                    + "presenting a key once one is set are all fine.")
+                    .ConfigureAwait(false);
+                return true;
+            }
+
+            open = true;
+        }
 
         if (!open && _key.Length == 0)
         {
@@ -907,6 +1079,34 @@ internal sealed class ConfigApi
         {
             await RespondAsync(context, 400, "the body must be a complete configuration document, "
                 + "the same shape as soundmodem.json").ConfigureAwait(false);
+            return;
+        }
+
+        if (RestoreHidden(body, _runningJson(), out string why) is not string restored)
+        {
+            await RespondAsync(context, 400, why).ConfigureAwait(false);
+            return;
+        }
+
+        body = restored;
+
+        // ?check=true validates and stops there: the configuration page's Check button, and a
+        // way for anything else to ask "would this start?" without the restart that answers it.
+        bool check = string.Equals(
+            context.Request.QueryString["check"], "true", StringComparison.OrdinalIgnoreCase);
+        if (check)
+        {
+            if (Validate(body, _configPath) is string problem)
+            {
+                await RespondAsync(context, 400, problem).ConfigureAwait(false);
+            }
+            else
+            {
+                await RespondJsonAsync(context, 200, """
+                    { "valid": true, "applied": false, "note": "the station would start on this; nothing was changed" }
+                    """).ConfigureAwait(false);
+            }
+
             return;
         }
 
