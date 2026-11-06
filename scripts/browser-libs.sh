@@ -93,12 +93,13 @@ fetch() {
   done
   [ "${#wanted[@]}" -eq 0 ] && return 1
   echo "browser-libs: fetching ${wanted[*]}" >&2
-  (cd "$apt/debs" && apt-get "${opts[@]}" -qq download "${wanted[@]}")
+  # Explicit, because callers use this in an || and bash then ignores set -e inside it.
+  (cd "$apt/debs" && apt-get "${opts[@]}" -qq download "${wanted[@]}") || return 1
   for pkg in "${wanted[@]}"; do
     fetched[$pkg]=1
   done
   for deb in "$apt/debs"/*.deb; do
-    dpkg-deb -x "$deb" "$root"
+    [ -e "$deb" ] && dpkg-deb -x "$deb" "$root"
   done
 }
 
@@ -133,7 +134,7 @@ if [ -n "$(missing)" ]; then
     ensure_apt
     # Each pass fetches the packages for what is still missing; the libraries those bring can
     # need more, which the next pass finds. Four passes is far more than any real chain.
-    for pass in 1 2 3 4; do
+    for _ in 1 2 3 4; do
       still="$(missing "$(libpath)")"
       [ -z "$still" ] && break
       named=()
@@ -162,9 +163,17 @@ fi
 # Any font file where fontconfig's default configuration looks. None at all, and Chromium dies the
 # moment a page lays out text, with nothing in its log.
 has_fonts() {
-  find /usr/share/fonts /usr/local/share/fonts "$HOME/.fonts" "$HOME/.local/share/fonts" \
-      -type f \( -name '*.ttf' -o -name '*.otf' -o -name '*.pfb' -o -name '*.ttc' \) \
-      -print -quit 2> /dev/null | grep -q .
+  local dir
+  for dir in /usr/share/fonts /usr/local/share/fonts "$HOME/.fonts" "$HOME/.local/share/fonts"; do
+    # One directory at a time: find exits 1 for a directory that is not there, and under
+    # pipefail that would hide a font found in the next one.
+    [ -d "$dir" ] || continue
+    if find "$dir" -type f \( -name '*.ttf' -o -name '*.otf' -o -name '*.pfb' -o -name '*.ttc' \) \
+        -print -quit 2> /dev/null | grep -q .; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 fetched_fonts() {

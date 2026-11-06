@@ -136,7 +136,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/browser-libs/root
-          key: browser-libs-${{ runner.name }}-${{ steps.playwright.outputs.version }}
+          key: browser-libs-${{ runner.name }}-${{ steps.playwright.outputs.version }}-${{ hashFiles('scripts/browser-libs.sh') }}
       - name: Install the browser for the configuration page tests
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
