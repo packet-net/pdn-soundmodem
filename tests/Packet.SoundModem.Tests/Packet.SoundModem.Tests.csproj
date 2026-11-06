@@ -24,6 +24,7 @@
     <PackageReference Include="M0LTE.HfChannel" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="Jint" />
+    <PackageReference Include="Microsoft.Playwright" />
   </ItemGroup>
 
   <ItemGroup>

@@ -117,6 +117,41 @@ jobs:
       - name: Restore (bypassing the NuGet HTTP cache)
         run: dotnet restore --no-http-cache
 
+      # ConfigPageBrowserTests drive the configuration page in a real Chromium against a real
+      # daemon. Everything these steps install goes under this job's temporary directory, so the
+      # runner itself is not changed: the browser, whose version follows the Playwright pin in
+      # Directory.Packages.props, and any shared libraries this runner lacks for it, which
+      # scripts/browser-libs.sh fetches without root and only the browser is given.
+      - name: Which browser the configuration page tests want
+        id: playwright
+        run: echo "version=$(grep -oP 'Include="Microsoft.Playwright" Version="\K[^"]+' Directory.Packages.props)" >> "$GITHUB_OUTPUT"
+      - name: Restore the browser for the configuration page tests
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+      # The libraries scripts/browser-libs.sh fetches, kept per runner: only a runner that
+      # lacks some ever fills this, and it then fetches them once, not in every job.
+      - name: Restore the browser's libraries for this runner
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/browser-libs/root
+          key: browser-libs-${{ runner.name }}-${{ steps.playwright.outputs.version }}
+      - name: Install the browser for the configuration page tests
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
+        run: |
+          # --artifacts-path: the script's build output goes here. dotnet still keeps a few small
+          # cache markers under the runner user's ~/.local/share/dotnet/runfile.
+          dotnet run --artifacts-path "$RUNNER_TEMP/install-playwright-browser" --file scripts/install-playwright-browser.cs
+          echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
+          # Made even where nothing is fetched, so the cache always has a directory to keep.
+          mkdir -p "$RUNNER_TEMP/browser-libs/root"
+          libs="$(scripts/browser-libs.sh "$RUNNER_TEMP/browser-libs")"
+          if [ -n "$libs" ]; then
+            echo "PDN_BROWSER_LIBRARY_PATH=$libs" >> "$GITHUB_ENV"
+          fi
+
       # Same suite that wedged; same step-level timeout as ci.yml's Test step.
       - name: Test
         timeout-minutes: 30
