@@ -1,0 +1,968 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pdn-soundmodem configuration</title>
+<style>
+  :root {
+    --bg: #0a0d11;
+    --panel: #11161d;
+    --edge: #1e2632;
+    --ink: #d9e2ea;
+    --muted: #7c8894;
+    --amber: #f5a83c;
+    --bad: #ff9a7a;
+    --good: #7fd18b;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
+    --sans: system-ui, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { color-scheme: dark; }
+  * { scrollbar-width: thin; scrollbar-color: #2a3441 #0d1117; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px; }
+  a { color: var(--amber); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: var(--mono); font-size: 12.5px; color: #e8c88f; }
+
+  header {
+    position: sticky; top: 0; z-index: 2;
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--edge);
+  }
+  .wordmark { font-family: var(--mono); font-size: 14px; white-space: nowrap; }
+  .wordmark b { color: var(--amber); font-weight: 600; }
+  .wordmark span { color: var(--muted); }
+  #source { color: var(--muted); font-size: 12.5px; }
+  .tabs { display: flex; gap: 4px; margin-left: auto; }
+  .tabs button { background: none; border: 1px solid var(--edge); color: var(--muted);
+                 padding: 4px 12px; border-radius: 4px; cursor: pointer; font: inherit; }
+  .tabs button.on { color: var(--ink); border-color: var(--amber); }
+
+  main { max-width: 980px; margin: 0 auto; padding: 14px 14px 120px; }
+  #login { max-width: 420px; margin: 60px auto; padding: 20px; background: var(--panel);
+           border: 1px solid var(--edge); border-radius: 6px; }
+  #login p { color: var(--muted); margin-bottom: 12px; line-height: 1.45; }
+  #login input { width: 100%; margin-bottom: 10px; }
+  #login .bad { color: var(--bad); }
+
+  input, select, textarea {
+    background: #0d1117; color: var(--ink); border: 1px solid var(--edge); border-radius: 4px;
+    padding: 5px 7px; font: inherit; font-family: var(--mono); font-size: 13px;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--amber); }
+  input.invalid, textarea.invalid { border-color: var(--bad); }
+  button.act { background: #1a2230; color: var(--ink); border: 1px solid var(--edge);
+               padding: 6px 14px; border-radius: 4px; cursor: pointer; font: inherit; }
+  button.act:hover:not(:disabled) { border-color: var(--amber); }
+  button.act:disabled { opacity: .45; cursor: default; }
+  button.act.primary { border-color: var(--amber); color: var(--amber); }
+  button.small { padding: 2px 8px; font-size: 12px; }
+
+  details.section { background: var(--panel); border: 1px solid var(--edge); border-radius: 6px;
+                    margin-bottom: 10px; }
+  details.section > summary { cursor: pointer; padding: 9px 12px; list-style: none;
+                              display: flex; align-items: baseline; gap: 10px; }
+  details.section > summary::-webkit-details-marker { display: none; }
+  details.section > summary::before { content: "+"; color: var(--muted); font-family: var(--mono); width: 10px; }
+  details.section[open] > summary::before { content: "-"; }
+  details.section > summary .name { font-family: var(--mono); font-weight: 600; }
+  details.section > summary .state { color: var(--muted); font-size: 12px; }
+  details.section > summary .state.set { color: var(--good); }
+  .body { padding: 4px 12px 12px 32px; }
+  .summary-help { color: var(--muted); font-size: 12.5px; line-height: 1.4; margin: 0 0 8px; }
+
+  .field { display: grid; grid-template-columns: 210px 1fr; gap: 4px 14px; padding: 7px 0;
+           border-top: 1px solid #161d27; }
+  .field:first-child { border-top: none; }
+  .field > label { font-family: var(--mono); font-size: 13px; padding-top: 6px; word-break: break-all; }
+  .field > label.changed::after { content: " *"; color: var(--amber); }
+  .field .control { display: flex; gap: 6px; align-items: flex-start; }
+  .field .control input, .field .control select { flex: 1; min-width: 0; }
+  .field .control textarea { flex: 1; min-height: 54px; resize: vertical; }
+  .field .help { grid-column: 2; color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+  .field .help .dflt { color: #9aa6b2; }
+  .field .err { grid-column: 2; color: var(--bad); font-size: 12.5px; }
+  @media (max-width: 640px) {
+    .field { grid-template-columns: 1fr; }
+    .field .help, .field .err { grid-column: 1; }
+  }
+
+  .card { border: 1px solid var(--edge); border-radius: 5px; margin: 8px 0; }
+  .card > .card-head { display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+                       background: #0e131a; border-bottom: 1px solid var(--edge); }
+  .card > .card-head .title { font-family: var(--mono); font-size: 13px; flex: 1; }
+  .card > .fields { padding: 2px 10px 6px; }
+  .nested { margin: 6px 0; }
+  .nested > .nested-head { font-family: var(--mono); font-size: 13px; padding: 6px 0 2px;
+                           display: flex; gap: 10px; align-items: center; }
+  .nested > .fields { border-left: 2px solid var(--edge); padding-left: 12px; }
+  .absent { color: var(--muted); font-size: 12.5px; padding: 4px 0; }
+  .unknown { color: var(--amber); font-size: 12.5px; padding: 6px 0; }
+
+  #json { width: 100%; min-height: 70vh; font-size: 13px; line-height: 1.45; }
+  #json-bar { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+  #json-bar .note { color: var(--muted); font-size: 12.5px; }
+
+  footer {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 2;
+    background: var(--panel); border-top: 1px solid var(--edge); padding: 9px 14px;
+  }
+  footer .row { max-width: 980px; margin: 0 auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #changes { color: var(--muted); font-size: 12.5px; flex: 1; min-width: 200px;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #result { max-width: 980px; margin: 6px auto 0; font-size: 13px; line-height: 1.4;
+            white-space: pre-wrap; font-family: var(--mono); }
+  #result:empty { display: none; }
+  #result.bad { color: var(--bad); }
+  #result.good { color: var(--good); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wordmark"><b>pdn-soundmodem</b> <span>configuration</span></div>
+  <a href="./">station page</a>
+  <span id="source"></span>
+  <div class="tabs" id="tabs" hidden>
+    <button type="button" id="tab-form" class="on">Form</button>
+    <button type="button" id="tab-json">JSON</button>
+  </div>
+</header>
+
+<main>
+  <div id="loading" class="absent">Loading the configuration...</div>
+
+  <form id="login" hidden>
+    <p>This station has an <code>api.key</code>. Enter it to read and change the configuration.</p>
+    <input type="password" id="key" autocomplete="current-password" placeholder="api key" autofocus>
+    <p id="login-error" class="bad" hidden></p>
+    <button class="act primary" type="submit">Unlock</button>
+  </form>
+
+  <div id="form-view" hidden></div>
+
+  <div id="json-view" hidden>
+    <div id="json-bar">
+      <button class="act small" type="button" id="json-copy">Copy</button>
+      <span class="note">Paste a whole configuration here; comments and trailing commas are fine. It replaces the form when you go back to it, or when you check or apply.</span>
+    </div>
+    <textarea id="json" spellcheck="false"></textarea>
+  </div>
+</main>
+
+<footer id="footer" hidden>
+  <div class="row">
+    <span id="changes">No changes</span>
+    <button class="act" type="button" id="revert">Revert</button>
+    <button class="act" type="button" id="check">Check</button>
+    <button class="act" type="button" id="try" title="Restarts the station on this configuration. The next restart after that goes back to the file.">Try until next restart</button>
+    <button class="act primary" type="button" id="save" title="Writes the config file and restarts the station.">Save to file</button>
+  </div>
+  <div id="result"></div>
+</footer>
+
+<!-- The form's model: everything about turning a configuration into fields and fields back into
+     a configuration, with no DOM in it. The tests run this block on its own (ConfigPageTests), so
+     anything that decides what a value becomes belongs here and not in the script below. -->
+<script id="config-model">
+var ConfigModel = (function () {
+  "use strict";
+
+  // Keys match without regard to case, as the daemon reads them. An existing key keeps the
+  // spelling the file already has.
+  function findKey(obj, name) {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+    var lower = name.toLowerCase();
+    for (var k in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, k) && k.toLowerCase() === lower) return k;
+    }
+    return null;
+  }
+
+  function get(obj, name) {
+    var k = findKey(obj, name);
+    return k === null ? undefined : obj[k];
+  }
+
+  function set(obj, name, value) {
+    var k = findKey(obj, name);
+    obj[k === null ? name : k] = value;
+  }
+
+  function remove(obj, name) {
+    var k = findKey(obj, name);
+    if (k !== null) delete obj[k];
+  }
+
+  function isScalarKind(kind) {
+    return kind === "string" || kind === "integer" || kind === "number" || kind === "boolean";
+  }
+
+  // What a field shows for a value. Absent and null both show as empty.
+  function toText(key, value) {
+    if (value === undefined || value === null) return "";
+    if (key.kind === "json") return JSON.stringify(value, null, 2);
+    if (key.kind === "array" && key.items && isScalarKind(key.items.kind)) {
+      if (!Array.isArray(value)) return JSON.stringify(value);
+      var lines = [];
+      for (var i = 0; i < value.length; i++) lines.push(scalarText(value[i]));
+      return lines.join("\n");
+    }
+    if (key.secret && value === HIDDEN) return "";
+    return scalarText(value);
+  }
+
+  function scalarText(v) {
+    if (v === null || v === undefined) return "";
+    if (typeof v === "string") return v;
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    return JSON.stringify(v);
+  }
+
+  // What a field's text means: { absent: true }, { value: ... } or { error: "..." }.
+  function fromText(key, text) {
+    if (key.kind === "json") {
+      if (text.trim() === "") return { absent: true };
+      try { return { value: JSON.parse(stripJsonc(text)) }; }
+      catch (e) { return { error: "not valid JSON: " + e.message }; }
+    }
+    if (key.kind === "array") {
+      var kind = key.items ? key.items.kind : "string";
+      var parts = text.split("\n");
+      var out = [];
+      for (var i = 0; i < parts.length; i++) {
+        var p = parts[i].trim();
+        if (p === "") continue;
+        var one = scalarFromText(kind, p);
+        if (one.error) return { error: "line " + (i + 1) + ": " + one.error };
+        out.push(one.value);
+      }
+      return out.length === 0 ? { absent: true } : { value: out };
+    }
+    if (text === "") return { absent: true };
+    return scalarFromText(key.kind, text);
+  }
+
+  function scalarFromText(kind, text) {
+    var t = text.trim();
+    switch (kind) {
+      case "integer":
+        if (!/^[+-]?\d+$/.test(t)) return { error: "a whole number" };
+        return { value: parseInt(t, 10) };
+      case "number":
+        if (t === "" || !isFinite(Number(t))) return { error: "a number" };
+        return { value: Number(t) };
+      case "boolean":
+        if (t === "true") return { value: true };
+        if (t === "false") return { value: false };
+        return { error: "true or false" };
+      default:
+        return { value: text };
+    }
+  }
+
+  // JSONC to JSON: comments and trailing commas removed, strings left alone.
+  function stripJsonc(text) {
+    var out = "", i = 0, n = text.length;
+    while (i < n) {
+      var c = text[i];
+      if (c === '"') {
+        var j = i + 1;
+        while (j < n && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+        out += text.slice(i, j + 1);
+        i = j + 1;
+      } else if (c === "/" && text[i + 1] === "/") {
+        while (i < n && text[i] !== "\n") i++;
+      } else if (c === "/" && text[i + 1] === "*") {
+        var end = text.indexOf("*/", i + 2);
+        i = end < 0 ? n : end + 2;
+      } else {
+        out += c;
+        i++;
+      }
+    }
+    return out.replace(/,(\s*[}\]])/g, "$1");
+  }
+
+  function parseDocument(text) {
+    var value = JSON.parse(stripJsonc(text));
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("a configuration is one JSON object, {...}");
+    }
+    return value;
+  }
+
+  // The fields for one object of type typeName: a tree the page draws as it is.
+  //   field:   a scalar, scalar array or raw JSON key, with its path and text
+  //   section: an object key; present says whether the document has it
+  //   list:    an array of objects, one entry per element
+  //   unknown: keys the document has that this daemon does not know; they are kept
+  function plan(schema, typeName, obj, path) {
+    var type = schema.types[typeName];
+    var nodes = [];
+    var known = {};
+    for (var i = 0; i < type.keys.length; i++) {
+      var key = type.keys[i];
+      known[key.name.toLowerCase()] = true;
+      var p = path === "" ? key.name : path + "." + key.name;
+      var value = get(obj, key.name);
+      // An old name of a key is drawn only where a file still uses it.
+      // So is raw JSON, which is a retired section ("mailcast") kept only so it is not lost.
+      if ((key.aliasOf || key.kind === "json") && value === undefined) continue;
+      if (key.kind === "object" && key.ref) {
+        var present = value !== undefined && value !== null && typeof value === "object";
+        nodes.push({ node: "section", path: p, key: key, present: present,
+                     children: plan(schema, key.ref, present ? value : {}, p) });
+      } else if (key.kind === "array" && key.items && key.items.ref) {
+        var items = [];
+        var arr = Array.isArray(value) ? value : [];
+        for (var j = 0; j < arr.length; j++) {
+          items.push({ path: p + "[" + j + "]",
+                       children: plan(schema, key.items.ref, arr[j] || {}, p + "[" + j + "]") });
+        }
+        nodes.push({ node: "list", path: p, key: key, items: items });
+      } else if (isScalarKind(key.kind) || key.kind === "json"
+                 || (key.kind === "array" && key.items && isScalarKind(key.items.kind))) {
+        nodes.push({ node: "field", path: p, key: key, text: toText(key, value),
+                     secretSet: !!key.secret && value === HIDDEN });
+      } else {
+        nodes.push({ node: "unsupported", path: p, key: key });
+      }
+    }
+    var extra = [];
+    if (obj && typeof obj === "object") {
+      for (var k in obj) {
+        if (Object.prototype.hasOwnProperty.call(obj, k) && !known[k.toLowerCase()]) extra.push(k);
+      }
+    }
+    if (extra.length > 0) nodes.push({ node: "unknown", path: path, names: extra });
+    return nodes;
+  }
+
+  // Walks a path such as "modems[1].identify.callsign" to the object holding its last key.
+  function parentOf(doc, path, create) {
+    var parts = splitPath(path);
+    var obj = doc;
+    for (var i = 0; i < parts.length - 1; i++) {
+      var part = parts[i];
+      var next = typeof part === "number" ? obj[part] : get(obj, part);
+      if (next === undefined || next === null) {
+        if (!create) return null;
+        next = typeof parts[i + 1] === "number" ? [] : {};
+        if (typeof part === "number") obj[part] = next; else set(obj, part, next);
+      }
+      obj = next;
+    }
+    return { obj: obj, last: parts[parts.length - 1] };
+  }
+
+  function splitPath(path) {
+    var out = [];
+    var re = /([^.[\]]+)|\[(\d+)\]/g, m;
+    while ((m = re.exec(path)) !== null) out.push(m[2] !== undefined ? parseInt(m[2], 10) : m[1]);
+    return out;
+  }
+
+  function valueAt(doc, path) {
+    var at = parentOf(doc, path, false);
+    if (!at) return undefined;
+    return typeof at.last === "number" ? at.obj[at.last] : get(at.obj, at.last);
+  }
+
+  // Writes one field's text back into doc. Returns null, or the reason the text is not a value.
+  // A secret left empty while one is set keeps it: the placeholder goes back, and the daemon
+  // puts the stored value in its place.
+  function writeField(doc, path, key, text) {
+    var parsed = fromText(key, text);
+    if (parsed.error) return parsed.error;
+    if (key.secret && parsed.absent && valueAt(doc, path) === HIDDEN) return null;
+    if (parsed.absent) {
+      var at = parentOf(doc, path, false);
+      if (at) remove(at.obj, at.last);
+      return null;
+    }
+    var target = parentOf(doc, path, true);
+    set(target.obj, target.last, parsed.value);
+    return null;
+  }
+
+  // The paths at which two documents differ, for "3 changes: ..." above the buttons.
+  function diff(a, b, path, out) {
+    out = out || [];
+    path = path || "";
+    if (JSON.stringify(a) === JSON.stringify(b)) return out;
+    var objA = a && typeof a === "object" && !Array.isArray(a);
+    var objB = b && typeof b === "object" && !Array.isArray(b);
+    if (objA && objB) {
+      var seen = {};
+      for (var k in a) {
+        seen[k.toLowerCase()] = true;
+        diff(a[k], get(b, k), path === "" ? k : path + "." + k, out);
+      }
+      for (var k2 in b) {
+        if (!seen[k2.toLowerCase()]) diff(undefined, b[k2], path === "" ? k2 : path + "." + k2, out);
+      }
+      return out;
+    }
+    if (Array.isArray(a) && Array.isArray(b) && a.length === b.length) {
+      for (var i = 0; i < a.length; i++) diff(a[i], b[i], path + "[" + i + "]", out);
+      return out;
+    }
+    out.push(path === "" ? "(whole file)" : path);
+    return out;
+  }
+
+  // A document with every section present and one entry in every list: the most a form can
+  // be asked to draw. The tests use it to look for a key the page cannot show.
+  function fullDocument(schema, typeName, depth) {
+    typeName = typeName || schema.root;
+    depth = depth || 0;
+    var obj = {};
+    if (depth > 8) return obj;
+    var keys = schema.types[typeName].keys;
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      if (key.kind === "json") obj[key.name] = {};
+      else if (key.aliasOf) obj[key.name] = key.kind === "boolean" ? true : key.kind === "string" ? "x" : 1;
+      else if (key.kind === "object" && key.ref) obj[key.name] = fullDocument(schema, key.ref, depth + 1);
+      else if (key.kind === "array" && key.items && key.items.ref) obj[key.name] = [fullDocument(schema, key.items.ref, depth + 1)];
+    }
+    return obj;
+  }
+
+  function newItem() { return {}; }
+
+  var HIDDEN = "(set, not shown)";
+
+  return {
+    findKey: findKey, get: get, set: set, remove: remove,
+    toText: toText, fromText: fromText, stripJsonc: stripJsonc, parseDocument: parseDocument,
+    plan: plan, writeField: writeField, valueAt: valueAt, splitPath: splitPath,
+    parentOf: parentOf, diff: diff, fullDocument: fullDocument, newItem: newItem,
+    setHidden: function (h) { HIDDEN = h; }
+  };
+})();
+</script>
+
+<script>
+(function () {
+  "use strict";
+  var M = ConfigModel;
+  var DOCS = "https://github.com/packet-net/pdn-soundmodem/blob/main/docs/reference/";
+  var KEY_STORE = "pdn-soundmodem-config-key";
+
+  var schema = null;     // what /api/config/schema served
+  var loaded = null;     // the configuration as the station served it
+  var doc = null;        // the configuration being edited
+  var errors = {};       // path -> reason, for fields whose text is not a value
+  var view = "form";
+  var instance = null;   // which daemon process answered the last read
+  var busy = false;
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function key() { return sessionStorage.getItem(KEY_STORE) || ""; }
+
+  function api(path, options) {
+    options = options || {};
+    var headers = options.headers || {};
+    if (key()) headers["Authorization"] = "Bearer " + key();
+    options.headers = headers;
+    return fetch(path, options);
+  }
+
+  function clone(v) { return v === undefined ? undefined : JSON.parse(JSON.stringify(v)); }
+
+  // ---------------------------------------------------------------- loading
+  function load() {
+    $("loading").hidden = false;
+    var schemaReady = schema ? Promise.resolve(schema)
+      : fetch("api/config/schema").then(function (r) {
+          if (!r.ok) throw new Error("the station did not serve its settings list (HTTP " + r.status + ")");
+          return r.json();
+        });
+    return schemaReady.then(function (s) {
+      schema = s;
+      M.setHidden(s.hidden);
+      return api("api/config");
+    }).then(function (r) {
+      if (r.status === 401) {
+        var had = !!key();
+        sessionStorage.removeItem(KEY_STORE);
+        showLogin(had ? "That is not this station's key." : "");
+        return null;
+      }
+      if (r.status === 404) throw new Error("this station has no configuration file to edit (it was started without --config)");
+      if (!r.ok) return r.text().then(function (t) { throw new Error(t); });
+      return r.json();
+    }).then(function (answer) {
+      if (!answer) return;
+      instance = answer.instance || null;
+      loaded = answer.running || {};
+      doc = clone(loaded);
+      errors = {};
+      $("source").textContent = answer.source === "ephemeral"
+        ? "running a one-run change; the next restart goes back to " + answer.configPath
+        : answer.configPath;
+      $("login").hidden = true;
+      $("loading").hidden = true;
+      $("tabs").hidden = false;
+      $("footer").hidden = false;
+      show(view);
+    }).catch(function (e) {
+      $("loading").hidden = false;
+      $("loading").textContent = "Could not load the configuration: " + e.message;
+    });
+  }
+
+  function showLogin(message) {
+    $("loading").hidden = true;
+    $("login").hidden = false;
+    $("login-error").hidden = !message;
+    $("login-error").textContent = message;
+    $("key").focus();
+  }
+
+  $("login").addEventListener("submit", function (e) {
+    e.preventDefault();
+    sessionStorage.setItem(KEY_STORE, $("key").value);
+    load();
+  });
+
+  // ---------------------------------------------------------------- views
+  function show(which) {
+    if (which === "form" && view === "json" && !takeJson()) return;
+    view = which;
+    $("tab-form").classList.toggle("on", which === "form");
+    $("tab-json").classList.toggle("on", which === "json");
+    $("form-view").hidden = which !== "form";
+    $("json-view").hidden = which !== "json";
+    if (which === "form") render();
+    else $("json").value = JSON.stringify(doc, null, 2);
+    updateChanges();
+  }
+
+  // The JSON tab's text becomes the document. False, with the reason shown, if it is not one.
+  function takeJson() {
+    if (view !== "json") return true;
+    try {
+      doc = M.parseDocument($("json").value);
+      errors = {};
+      $("json").classList.remove("invalid");
+      return true;
+    } catch (e) {
+      $("json").classList.add("invalid");
+      result("bad", "The JSON is not a configuration: " + e.message);
+      return false;
+    }
+  }
+
+  $("tab-form").addEventListener("click", function () { show("form"); });
+  $("tab-json").addEventListener("click", function () { show("json"); });
+  $("json").addEventListener("input", function () {
+    try { doc = M.parseDocument($("json").value); $("json").classList.remove("invalid"); updateChanges(); }
+    catch (e) { $("json").classList.add("invalid"); }
+  });
+  $("json-copy").addEventListener("click", function () {
+    var text = $("json").value;
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () { result("good", "Copied."); });
+    } else {
+      $("json").select();
+      document.execCommand("copy");
+      result("good", "Copied.");
+    }
+  });
+
+  // ---------------------------------------------------------------- the form
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  // The reference page's sentences are markdown: code spans and links, nothing else.
+  function markdown(target, text) {
+    var re = /`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)/g, last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) target.appendChild(document.createTextNode(text.slice(last, m.index)));
+      if (m[1] !== undefined) {
+        target.appendChild(el("code", null, m[1]));
+      } else {
+        var a = el("a");
+        markdown(a, m[2]);
+        var href = m[3];
+        a.href = /^https?:/.test(href) ? href : href.charAt(0) === "#" ? DOCS + "config.md" + href : new URL(href, DOCS).href;
+        a.target = "_blank";
+        a.rel = "noopener";
+        target.appendChild(a);
+      }
+      last = re.lastIndex;
+    }
+    if (last < text.length) target.appendChild(document.createTextNode(text.slice(last)));
+  }
+
+  function help(key) {
+    var h = el("div", "help");
+    if (key.help) markdown(h, key.help);
+    var d = key.docDefault !== undefined && key.docDefault !== "" ? key.docDefault
+      : key.default !== undefined && key.default !== null ? "`" + JSON.stringify(key.default) + "`" : "";
+    // The reference writes "absent: `device`" for "when the key is not there, device".
+    if (d && d !== "absent") {
+      var absent = /^absent(?:: |; )(.*)$/.exec(d);
+      var span = el("span", "dflt", (key.help ? " " : "") + (absent ? "If not set: " : "Default: "));
+      h.appendChild(span);
+      markdown(span, absent ? absent[1] : d);
+    }
+    return h;
+  }
+
+  function render() {
+    // Every field is drawn again from the document, so text that was not a value is gone and
+    // its complaint with it.
+    errors = {};
+    var root = $("form-view");
+    var open = {};
+    root.querySelectorAll("details[open]").forEach(function (d) { open[d.dataset.path] = true; });
+    root.textContent = "";
+    var nodes = M.plan(schema, schema.root, doc, "");
+
+    // Top-level settings that are plain values first, as one section: they are the station's
+    // basics (device, ports, bind), and a section each would bury them.
+    var basics = nodes.filter(function (n) { return n.node === "field" || n.node === "unknown"; });
+    var basicsBox = section("Station", "", basics.length + " settings", true, open[""] !== false);
+    basics.forEach(function (n) { basicsBox.body.appendChild(drawNode(n)); });
+    root.appendChild(basicsBox.box);
+
+    nodes.forEach(function (n) {
+      if (n.node === "field" || n.node === "unknown") return;
+      var state = n.node === "list" ? n.items.length + (n.items.length === 1 ? " entry" : " entries")
+        : n.present ? "set" : "not set";
+      var box = section(n.key.name, n.path, state, n.node === "list" ? n.items.length > 0 : n.present, open[n.path]);
+      if (n.key.help) {
+        var p = el("p", "summary-help");
+        markdown(p, n.key.help);
+        box.body.appendChild(p);
+      }
+      box.body.appendChild(drawNode(n, true));
+      root.appendChild(box.box);
+    });
+  }
+
+  function section(name, path, state, isSet, isOpen) {
+    var box = el("details", "section");
+    box.dataset.path = path;
+    if (isOpen) box.open = true;
+    var summary = el("summary");
+    summary.appendChild(el("span", "name", name));
+    summary.appendChild(el("span", "state" + (isSet ? " set" : ""), state));
+    box.appendChild(summary);
+    var body = el("div", "body");
+    box.appendChild(body);
+    return { box: box, body: body };
+  }
+
+  function drawNode(n, top) {
+    switch (n.node) {
+      case "field": return drawField(n);
+      case "section": return drawSection(n, top);
+      case "list": return drawList(n);
+      case "unknown": {
+        var u = el("div", "unknown");
+        u.textContent = "Not settings this version knows, kept as they are: " + n.names.join(", ")
+          + ". The JSON tab shows them.";
+        return u;
+      }
+      default: return el("div", "unknown", n.path + ": this page cannot draw a " + n.key.kind + "; use the JSON tab");
+    }
+  }
+
+  function fields(nodes) {
+    var box = el("div", "fields");
+    nodes.forEach(function (c) { box.appendChild(drawNode(c)); });
+    return box;
+  }
+
+  function drawSection(n, top) {
+    var wrap = el("div", top ? "" : "nested");
+    if (!top) {
+      var head = el("div", "nested-head");
+      head.appendChild(el("span", null, n.key.name));
+      wrap.appendChild(head);
+      if (n.key.help) { var h = el("div", "summary-help"); markdown(h, n.key.help); wrap.appendChild(h); }
+      var headButton = el("button", "act small", n.present ? "Remove" : "Add");
+      headButton.type = "button";
+      headButton.addEventListener("click", function () { toggleSection(n); });
+      head.appendChild(headButton);
+      if (n.present) wrap.appendChild(fields(n.children));
+      return wrap;
+    }
+    if (!n.present) {
+      var absent = el("div", "absent", "Not in the file, so this part of the station runs on its defaults or is off. ");
+      var add = el("button", "act small", "Add " + n.key.name);
+      add.type = "button";
+      add.addEventListener("click", function () { toggleSection(n); });
+      absent.appendChild(add);
+      wrap.appendChild(absent);
+      return wrap;
+    }
+    wrap.appendChild(fields(n.children));
+    var remove = el("button", "act small", "Remove " + n.key.name);
+    remove.type = "button";
+    remove.addEventListener("click", function () { toggleSection(n); });
+    wrap.appendChild(remove);
+    return wrap;
+  }
+
+  function toggleSection(n) {
+    var at = M.parentOf(doc, n.path, true);
+    var current = typeof at.last === "number" ? at.obj[at.last] : M.get(at.obj, at.last);
+    if (current !== undefined && current !== null) M.remove(at.obj, at.last);
+    else M.set(at.obj, at.last, {});
+    render();
+    updateChanges();
+  }
+
+  function drawList(n) {
+    var wrap = el("div");
+    n.items.forEach(function (item, i) {
+      var card = el("div", "card");
+      var head = el("div", "card-head");
+      var title = n.key.name + "[" + i + "]";
+      var entry = M.valueAt(doc, item.path) || {};
+      var mode = M.get(entry, "mode"), call = M.get(entry, "callsign"), sub = M.get(entry, "subChannel");
+      if (sub !== undefined) title += "  sub-channel " + sub;
+      if (mode !== undefined) title += "  " + mode;
+      if (call !== undefined) title += "  " + call;
+      head.appendChild(el("span", "title", title));
+      var del = el("button", "act small", "Remove");
+      del.type = "button";
+      del.addEventListener("click", function () {
+        var arr = M.valueAt(doc, n.path);
+        arr.splice(i, 1);
+        render();
+        updateChanges();
+      });
+      head.appendChild(del);
+      card.appendChild(head);
+      card.appendChild(fields(item.children));
+      wrap.appendChild(card);
+    });
+    var add = el("button", "act small", "Add an entry to " + n.key.name);
+    add.type = "button";
+    add.addEventListener("click", function () {
+      var at = M.parentOf(doc, n.path, true);
+      var arr = typeof at.last === "number" ? at.obj[at.last] : M.get(at.obj, at.last);
+      if (!Array.isArray(arr)) { arr = []; M.set(at.obj, at.last, arr); }
+      arr.push(M.newItem());
+      render();
+      updateChanges();
+    });
+    wrap.appendChild(add);
+    return wrap;
+  }
+
+  var listId = 0;
+
+  function drawField(n) {
+    var key = n.key;
+    var row = el("div", "field");
+    var label = el("label", null, key.name);
+    var id = "f-" + n.path.replace(/[^A-Za-z0-9]/g, "_");
+    label.htmlFor = id;
+    row.appendChild(label);
+    var control = el("div", "control");
+    var input;
+
+    if (key.kind === "boolean") {
+      input = el("select");
+      var dflt = key.default === true ? "true" : key.default === false ? "false" : "";
+      [["", "not set" + (dflt ? " (" + dflt + ")" : "")], ["true", "true"], ["false", "false"]].forEach(function (o) {
+        var opt = el("option", null, o[1]);
+        opt.value = o[0];
+        input.appendChild(opt);
+      });
+      input.value = n.text;
+    } else if (key.kind === "json" || key.kind === "array") {
+      input = el("textarea");
+      input.value = n.text;
+      input.spellcheck = false;
+      input.placeholder = key.kind === "array" ? "one per line" : "JSON";
+    } else {
+      input = el("input");
+      input.type = key.secret ? "password" : "text";
+      input.value = n.text;
+      input.spellcheck = false;
+      input.autocomplete = "off";
+      if (key.secret) {
+        input.autocomplete = "new-password";
+        input.placeholder = n.secretSet ? "set, not shown: type a new one to replace it" : "not set";
+      } else if (key.default !== undefined && key.default !== null && key.default !== "") {
+        input.placeholder = String(key.default);
+      }
+      if (key.kind === "integer" || key.kind === "number") input.inputMode = key.kind === "integer" ? "numeric" : "decimal";
+      if (key.choices) {
+        var list = el("datalist");
+        list.id = "choices-" + (listId++);
+        key.choices.forEach(function (c) { var o = el("option"); o.value = c; list.appendChild(o); });
+        control.appendChild(list);
+        input.setAttribute("list", list.id);
+      }
+    }
+    input.id = id;
+    control.appendChild(input);
+
+    if (key.secret && n.secretSet) {
+      var clear = el("button", "act small", "Clear");
+      clear.type = "button";
+      clear.title = "Remove this key from the file";
+      clear.addEventListener("click", function () {
+        var at = M.parentOf(doc, n.path, false);
+        if (at) M.remove(at.obj, at.last);
+        render();
+        updateChanges();
+      });
+      control.appendChild(clear);
+    }
+    row.appendChild(control);
+    row.appendChild(help(key));
+    var err = el("div", "err");
+    err.hidden = true;
+    row.appendChild(err);
+
+    var original = n.text;
+    if (JSON.stringify(M.valueAt(loaded, n.path)) !== JSON.stringify(M.valueAt(doc, n.path))) label.classList.add("changed");
+    var onEdit = function () {
+      // Text the field already showed is left alone: a value the operator did not touch keeps
+      // exactly the form the file had (a 7.0e6, an explicit null, an empty list).
+      var reason = input.value === original ? null : M.writeField(doc, n.path, key, input.value);
+      if (reason) { errors[n.path] = reason; } else { delete errors[n.path]; }
+      if (input.value === original && errors[n.path] === undefined) {
+        // Back to where it started: put the original value back too.
+        var at = M.parentOf(doc, n.path, true);
+        var was = M.valueAt(loaded, n.path);
+        if (was === undefined) M.remove(at.obj, at.last); else M.set(at.obj, at.last, clone(was));
+      }
+      input.classList.toggle("invalid", !!reason);
+      err.hidden = !reason;
+      err.textContent = reason ? "Should be " + reason + "." : "";
+      label.classList.toggle("changed", JSON.stringify(M.valueAt(loaded, n.path)) !== JSON.stringify(M.valueAt(doc, n.path)));
+      updateChanges();
+    };
+    input.addEventListener(key.kind === "boolean" ? "change" : "input", onEdit);
+    return row;
+  }
+
+  // ---------------------------------------------------------------- applying
+  function updateChanges() {
+    if (!doc || !loaded) return;
+    var changed = M.diff(loaded, doc);
+    var bad = Object.keys(errors);
+    $("changes").textContent = bad.length > 0
+      ? bad.length + (bad.length === 1 ? " field needs" : " fields need") + " fixing: " + bad.join(", ")
+      : changed.length === 0 ? "No changes"
+      : changed.length + (changed.length === 1 ? " change: " : " changes: ") + changed.join(", ");
+    $("changes").title = $("changes").textContent;
+    var blocked = busy || bad.length > 0;
+    $("check").disabled = blocked;
+    $("try").disabled = blocked || changed.length === 0;
+    $("save").disabled = blocked;
+    $("revert").disabled = busy || changed.length === 0;
+  }
+
+  function result(kind, text) {
+    $("result").className = kind;
+    $("result").textContent = text;
+  }
+
+  $("revert").addEventListener("click", function () {
+    doc = clone(loaded);
+    errors = {};
+    result("", "");
+    show(view);
+  });
+
+  function post(query) {
+    if (!takeJson()) return Promise.resolve(null);
+    busy = true;
+    updateChanges();
+    return api("api/config" + query, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(doc, null, 2)
+    }).then(function (r) {
+      return r.text().then(function (t) { return { status: r.status, text: t }; });
+    }).finally(function () {
+      busy = false;
+      updateChanges();
+    });
+  }
+
+  $("check").addEventListener("click", function () {
+    result("", "Checking...");
+    post("?check=true").then(function (r) {
+      if (!r) return;
+      if (r.status === 200) result("good", "The station would start on this. Nothing has been changed.");
+      else result("bad", r.text.trim());
+    });
+  });
+
+  function apply(persist) {
+    if (persist && !confirm("Write this to the config file and restart the station?\n\nComments in the file are not kept.")) return;
+    result("", persist ? "Saving..." : "Applying...");
+    post(persist ? "?persist=true" : "").then(function (r) {
+      if (!r) return;
+      if (r.status !== 200) { result("bad", r.text.trim()); return; }
+      result("good", (persist ? "Saved to the file. " : "In force until the next restart. ")
+        + "The station is restarting...");
+      busy = true;
+      updateChanges();
+      waitForRestart(Date.now(), persist);
+    });
+  }
+
+  // The station answers before it restarts, and goes on answering while it shuts down, so the
+  // page waits for a different process to answer. A 401 is a station that is back with a key
+  // this browser does not hold (one just set, or changed): back, and the login says the rest.
+  function waitForRestart(started, persist) {
+    var was = instance;
+    setTimeout(function () {
+      api("api/config").then(function (r) {
+        if (r.status === 401) return { back: true };
+        if (!r.ok) throw new Error();
+        return r.json().then(function (a) { return { back: !was || a.instance !== was }; });
+      }).then(function (state) {
+        if (!state.back) { tryAgain(); return; }
+        busy = false;
+        return load().then(function () {
+          result("good", "The station is back, running on the new configuration"
+            + (persist ? "." : " until its next restart."));
+        });
+      }).catch(tryAgain);
+    }, 1500);
+
+    function tryAgain() {
+      if (Date.now() - started > 120000) {
+        busy = false;
+        updateChanges();
+        result("bad", "The station has not come back after two minutes. Its journal says why: journalctl -u pdn-soundmodem");
+      } else {
+        waitForRestart(started, persist);
+      }
+    }
+  }
+
+  $("try").addEventListener("click", function () { apply(false); });
+  $("save").addEventListener("click", function () { apply(true); });
+
+  window.addEventListener("beforeunload", function (e) {
+    if (doc && loaded && M.diff(loaded, doc).length > 0 && !busy) { e.preventDefault(); e.returnValue = ""; }
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

@@ -20,6 +20,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The configuration page, and the reference page its help text is read from (ConfigHelp),
+         so the help beside each field is the sentence the reference already has for the key. -->
+    <EmbeddedResource Include="wwwroot/config.html" LogicalName="config.html" />
+    <EmbeddedResource Include="../../docs/reference/config.md" LogicalName="config-reference.md" Link="wwwroot/config-reference.md" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- DeviceDiagnostics' messages are the first thing an admin reads in journalctl on a
          fresh install, so they are pinned by tests. -->
     <InternalsVisibleTo Include="Packet.SoundModem.Tests" />

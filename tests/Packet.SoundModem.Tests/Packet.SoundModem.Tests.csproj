@@ -23,6 +23,7 @@
     <!-- Its HF counterpart: the Watterson channel and impulse noise, also used by the OTA tool. -->
     <PackageReference Include="M0LTE.HfChannel" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Jint" />
   </ItemGroup>
 
   <ItemGroup>

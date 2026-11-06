@@ -1715,17 +1715,22 @@ using var cancellation = new CancellationTokenSource();
 // a waterfall page exists at all - its journal line is worth having on a headless station too.
 updateCheck.Start(cancellation.Token);
 
-// Runtime configuration, on the waterfall's listener. Off unless a key is set, and refused
-// outright if there is no listener to hang it on - an "api" section on a station with no
-// waterfall is a setting that would silently do nothing.
-// One other thing installs it: "waterfall"."enableAudioControls", which serves /api/mixer, and
-// only /api/mixer, with no key. That flag can only come from a config file and only where the
-// waterfall is running, so the two refusals below stay the "api" section's own.
+// Runtime configuration, on the waterfall's listener, wherever there is a listener and a config
+// file: the /config page and /api/config behind it. With "api"."key" set both want the key; with
+// none the configuration is open (Tom, 2026-11-06: these are private home networks), and
+// everything else here - the transmitter test, the rig, the lease - is still served only with a
+// key. An "api" section on a station with no waterfall or no file is refused outright, as a
+// setting that would silently do nothing.
+// "waterfall"."enableAudioControls" serves /api/mixer, and only /api/mixer, with no key.
 // Held beyond the block below because the sound card's mixer is opened much later, with the
 // audio device, and has to be handed to the API once it exists.
 ConfigApi? runtimeApi = null;
 string apiKey = apiConfig?.Key ?? "";
-if (benchTxTest is null && (apiKey.Length > 0 || openAudioControls))
+// A station run from flags alone, with no file for a page to edit and nothing asking for the
+// API, has no page.
+if (benchTxTest is null
+    && (apiKey.Length > 0 || openAudioControls
+        || (waterfallServer is not null && configPath is not null && waterfallConfig?.Public != true)))
 {
     if (waterfallServer is null)
     {
@@ -1757,8 +1762,12 @@ if (benchTxTest is null && (apiKey.Length > 0 || openAudioControls))
             restartRequested = true;
             cancellation.Cancel();
         },
-        openAudioControls: openAudioControls);
+        openAudioControls: openAudioControls,
+        // A public page is for visitors on the open internet, not a private home network: there
+        // the configuration wants a key like everything else.
+        openConfiguration: waterfallConfig?.Public != true);
     waterfallServer.ApiHandler = configApi.HandleAsync;
+    waterfallServer.ServesConfigPage = apiKey.Length > 0 || waterfallConfig?.Public != true;
 
     // One line, because this is the station's sound card in reach of whoever can reach the page,
     // and an operator who has forgotten the flag is set should be told at every start-up.
@@ -1779,17 +1788,22 @@ if (benchTxTest is null && (apiKey.Length > 0 || openAudioControls))
         }
 
         Console.WriteLine(
-            $"api: configuration over {waterfallServer.Url}api/config (key required). "
+            $"api: configuration page at {waterfallServer.Url}config and {waterfallServer.Url}api/config (key required). "
             + $"POST replaces it for one run; add ?persist=true to write {configPath}.");
+    }
+    else if (waterfallConfig?.Public != true)
+    {
+        Console.WriteLine(
+            $"api: configuration page at {waterfallServer.Url}config, open to anyone who can reach it (no \"api\".\"key\" set)");
+    }
 
-        // Said out loud because the whole apply path assumes something will restart the process.
-        // Run by hand, nothing will, and "it applied and then the station stopped" is a bad
-        // surprise.
-        if (Environment.GetEnvironmentVariable("INVOCATION_ID") is null)
-        {
-            Console.Error.WriteLine(
-                "api: WARNING - not running under systemd, so an applied change will stop the daemon, not restart it");
-        }
+    // Said out loud because the whole apply path assumes something will restart the process.
+    // Run by hand, nothing will, and "it applied and then the station stopped" is a bad
+    // surprise.
+    if (Environment.GetEnvironmentVariable("INVOCATION_ID") is null)
+    {
+        Console.Error.WriteLine(
+            "api: WARNING - not running under systemd, so an applied change will stop the daemon, not restart it");
     }
 }
 
@@ -2607,6 +2621,10 @@ using var keepAudioLifetime = new Disposer(() => keepAudio?.Dispose());
 if (rig is not null && runtimeApi is not null && waterfallServer is not null)
 {
     runtimeApi.ServeRig(rig);
+}
+
+if (rig is not null && runtimeApi is not null && waterfallServer is not null && apiKey.Length > 0)
+{
     Console.WriteLine(
         $"api: rig control over {waterfallServer.Url}api/rig and api/rig/tune (key required)");
 }

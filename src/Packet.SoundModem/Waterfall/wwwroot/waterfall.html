@@ -197,6 +197,8 @@
   input[type=range] { width: 84px; accent-color: var(--amber-dim); }
 
   .spacer { flex: 1; }
+  #configLink { color: var(--amber); text-decoration: none; font-size: 12px; white-space: nowrap; }
+  #configLink:hover { text-decoration: underline; }
   #meta { font-family: var(--mono); font-size: 10px; color: var(--muted); text-align: right; line-height: 1.5; }
   /* Its own line rather than a <br> before it, so that the public flavour hiding it takes the
      line away as well instead of leaving an empty one under the connection state. The second
@@ -619,6 +621,9 @@
   </div>
 
   <div class="spacer"></div>
+  <!-- The configuration page, when the daemon serves one. Relative, so it is right under a
+       site that serves this page at /r/<slug>/ as well as at the root. -->
+  <a id="configLink" href="config" hidden>settings</a>
   <div id="meta"><span id="conn" class="dead">connecting…</span><span id="stats"></span></div>
 </header>
 
@@ -2599,6 +2604,7 @@ function connect() {
         // for ever. checkPageVersion reloads once per version and no more.
         checkPageVersion(msg.page);
         applyPublicFlavour();
+        $("configLink").hidden = !cfg.configPage;
         applyDaemonVersion();
         applyUpdate(cfg.update);
         setRadioStatus(cfg.radioStatus);

@@ -978,6 +978,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     public Func<HttpListenerContext, string, Task<bool>>? ApiHandler { get; set; }
 
     /// <summary>
+    /// Whether <see cref="ApiHandler"/> serves the configuration page at <c>/config</c>, so the
+    /// operator's page links to it. Never linked from a public page.
+    /// </summary>
+    public bool ServesConfigPage { get; set; }
+
+    /// <summary>
     /// Called with the union of every channel-audio-stream client's requested band (issue #584)
     /// whenever it changes; null once no connected client has asked for one. Only the caller
     /// knows what a requested band should do, such as widening a headless Flex's slice filter
@@ -1335,6 +1341,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // page and the server ship in the same binary" - so nothing there needed touching.
             daemonVersion = BuildDaemonVersionField(),
             publicMonitor = _options.Public,
+            configPage = !_options.Public && ServesConfigPage,
             title = _options.Title,
             about = _options.About,
             receiver = _receiverDescription,
@@ -3121,8 +3128,10 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // requests is the daemon's - configuration, validation, the station's own restart -
             // and this library knows nothing about any of that. Unhandled falls through to 404,
             // so a station with no handler installed serves exactly what it always did.
+            // "/config" is the daemon's too: the configuration page, a page about the daemon's
+            // file that this library has no view of.
             if (ApiHandler is { } api
-                && requestPath.StartsWith("/api/", StringComparison.Ordinal)
+                && (requestPath.StartsWith("/api/", StringComparison.Ordinal) || requestPath == "/config")
                 && await api(context, requestPath).ConfigureAwait(false))
             {
                 return true;

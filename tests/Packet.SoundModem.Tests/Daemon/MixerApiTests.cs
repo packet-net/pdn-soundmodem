@@ -81,11 +81,13 @@ public class MixerApiTests : IDisposable
             _dir, FakeMixer.Cm108(), openAudioControls: true, configuredKey: "",
             presentTheKey: false);
 
+        // The configuration is open on a keyless station too (Tom, 2026-11-06), so the probe is
+        // the rig: a retune is one of the things that goes on wanting a key that is not there.
         HttpResponseMessage answer = await station.Client.GetAsync(
-            new Uri(station.ConfigUrl, UriKind.Absolute));
+            new Uri(station.ConfigUrl.Replace("/api/config", "/api/rig", StringComparison.Ordinal), UriKind.Absolute));
 
         answer.StatusCode.Should().Be(
-            HttpStatusCode.NotFound, "a station with no api.key has no configuration API");
+            HttpStatusCode.NotFound, "a station with no api.key serves nothing that keys or retunes the radio");
     }
 
     /// <summary>
