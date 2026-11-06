@@ -433,10 +433,13 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
             int kiss = FreePorts.Next();
             string configPath = Path.Combine(dir, "soundmodem.json");
             string api = key is null ? "" : $",\n  \"api\": {{ \"key\": \"{key}\" }}";
+            // A pipe that loops back to itself, not ALSA's "null": the daemon makes the FIFO and
+            // paces it to the clock, and nothing needs libasound, which a bare CI runner may not
+            // have (proxmox0's did not, 2026-11-06, and every start aborted).
             File.WriteAllText(configPath, $$"""
                 {
                   // the station's own file, comments and all, as an operator keeps it
-                  "device": "null",
+                  "device": "pipe:{{Path.Combine(dir, "air")}},{{Path.Combine(dir, "air")}}",
                   "bind": "127.0.0.1",
                   "kissPort": {{kiss}},
                   "waterfall": { "port": {{port}}, "title": "before" },
@@ -476,7 +479,8 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                 if (_supervising.IsCompleted)
                 {
                     throw new InvalidOperationException(
-                        $"the daemon stopped for good (exit {_lastExit}) instead of coming back:\n{Log}");
+                        $"the daemon stopped for good (exit {_lastExit}) instead of coming back. "
+                        + $"Its last lines:\n{Tail()}\nThe whole log:\n{Log}");
                 }
 
                 if (Starts >= count)
@@ -498,8 +502,13 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                 await Task.Delay(200);
             }
 
-            throw new TimeoutException($"the daemon was not answering after {count} start(s):\n{Log}");
+            throw new TimeoutException(
+                $"the daemon was not answering after {count} start(s). Its last lines:\n{Tail()}\nThe whole log:\n{Log}");
         }
+
+        /// <summary>The last lines of the log, first in a failure message: CI's summary of a
+        /// failure shows its first few lines and no more.</summary>
+        private string Tail() => string.Join('\n', Log.Split('\n', StringSplitOptions.RemoveEmptyEntries).TakeLast(8));
 
         /// <summary>Waits for a line in the daemon's output; fails, with the log, if it never comes.</summary>
         public async Task WaitForLogAsync(string text)
