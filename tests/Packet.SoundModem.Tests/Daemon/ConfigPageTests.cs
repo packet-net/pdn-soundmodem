@@ -398,13 +398,28 @@ public partial class ConfigPageTests : IDisposable
     [InlineData("radio1", true)]
     [InlineData("RADIO1.lan", true)]
     [InlineData("radio1.local.", true)]
+    [InlineData("radio1.home.arpa", true)]
+    [InlineData("radio1.shack.example.org", true)]
     [InlineData("evil.example", false)]
     [InlineData("radio10", false)]
+    [InlineData("radio1.evil.example", false)]
     public void Open_Configuration_Answers_Only_To_This_Machines_Own_Names(string host, bool answered)
     {
         // DNS rebinding (#423) gets past the same-site check, since the hostile page's Origin and
-        // Host are both its own name. That name is never this machine's.
-        ConfigApi.IsOwnName(host, "radio1").Should().Be(answered);
+        // Host are both its own name. That name is never this machine's, and a name that merely
+        // starts with this machine's is not either: anyone can point radio1.evil.example here.
+        ConfigApi.IsOwnName(host, "radio1", "shack.example.org").Should().Be(answered);
+    }
+
+    [Fact]
+    public void A_Secret_Spelled_Twice_Keeps_Each_Spelling_Its_Own_Value()
+    {
+        // The station runs on the last spelling. A round trip must not copy the first one over it.
+        const string running = """{"api": {"key": "a", "Key": "REALKEY"}}""";
+
+        string restored = ConfigApi.RestoreHidden(ConfigApi.Redact(running), running, out _)!;
+
+        JsonNode.Parse(restored)!["api"]!["Key"]!.GetValue<string>().Should().Be("REALKEY");
     }
 
     [Fact]
@@ -696,7 +711,7 @@ public partial class ConfigPageTests : IDisposable
     [GeneratedRegex("```json\\n(.*?)```", RegexOptions.Singleline)]
     private static partial Regex JsonBlock();
 
-    [GeneratedRegex("password|token|secret|^key$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex("password|passphrase|passwd|token|secret|credential|apikey|privatekey|^key$", RegexOptions.IgnoreCase)]
     private static partial Regex SecretLike();
 
     /// <summary>A station's config API on a loopback port, with a config file of its own.</summary>

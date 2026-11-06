@@ -604,8 +604,12 @@ internal sealed class ConfigApi
                 case JsonObject obj:
                     foreach (string name in obj.Select(p => p.Key).ToList())
                     {
+                        // The same spelling if the stored document has it, else the last spelling,
+                        // which is the one the file is read as.
                         JsonNode? match = keep is JsonObject k
-                            ? k.FirstOrDefault(p => string.Equals(p.Key, name, StringComparison.OrdinalIgnoreCase)).Value
+                            ? k.ContainsKey(name)
+                                ? k[name]
+                                : k.LastOrDefault(p => string.Equals(p.Key, name, StringComparison.OrdinalIgnoreCase)).Value
                             : null;
                         JsonNode? child = obj[name];
                         JsonNode? walked = Walk(child, match, at.Length == 0 ? name : $"{at}.{name}");
@@ -1300,12 +1304,28 @@ internal sealed class ConfigApi
     /// </remarks>
     /// <summary>
     /// Whether the request named this machine by an address, <c>localhost</c>, or the machine's
-    /// own host name (with any domain after it: <c>radio1.lan</c>, <c>radio1.local</c>).
+    /// own host name, bare or in a home network's usual domains (<c>radio1.lan</c>,
+    /// <c>radio1.local</c>) or the machine's own. Not any domain: <c>radio1.evil.example</c> is a
+    /// name anyone can point at this station.
     /// </summary>
     internal static bool ByOwnName(HttpListenerRequest request) =>
-        IsOwnName(request.Url?.Host ?? "", Dns.GetHostName());
+        IsOwnName(request.Url?.Host ?? "", Dns.GetHostName(), OwnDomain.Value);
 
-    internal static bool IsOwnName(string host, string machine)
+    private static readonly Lazy<string> OwnDomain = new(() =>
+    {
+        try
+        {
+            return System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().DomainName;
+        }
+        catch (System.Net.NetworkInformation.NetworkInformationException)
+        {
+            return "";
+        }
+    });
+
+    private static readonly string[] HomeDomains = ["local", "lan", "home", "home.arpa", "localdomain"];
+
+    internal static bool IsOwnName(string host, string machine, string domain = "")
     {
         host = host.Trim('[', ']').TrimEnd('.');
         if (IPAddress.TryParse(host, out _)
@@ -1315,9 +1335,16 @@ internal sealed class ConfigApi
         }
 
         string self = machine.Split('.')[0];
-        return self.Length > 0
-            && (string.Equals(host, self, StringComparison.OrdinalIgnoreCase)
-                || host.StartsWith(self + ".", StringComparison.OrdinalIgnoreCase));
+        if (self.Length == 0)
+        {
+            return false;
+        }
+
+        IEnumerable<string> domains = domain.Trim('.').Length > 0
+            ? HomeDomains.Append(domain.Trim('.'))
+            : HomeDomains;
+        return string.Equals(host, self, StringComparison.OrdinalIgnoreCase)
+            || domains.Any(d => string.Equals(host, $"{self}.{d}", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool SameSite(HttpListenerRequest request) =>
