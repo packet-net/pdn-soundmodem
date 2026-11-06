@@ -335,11 +335,17 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                 var launch = new BrowserTypeLaunchOptions { Headless = true };
                 if (Environment.GetEnvironmentVariable("PDN_BROWSER_LIBRARY_PATH") is { Length: > 0 } libs)
                 {
-                    string? existing = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
-                    launch.Env = new Dictionary<string, string>
+                    // Env replaces the browser's whole environment, so it is this process's
+                    // environment with the one variable added, not that variable alone.
+                    var env = new Dictionary<string, string>();
+                    foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
                     {
-                        ["LD_LIBRARY_PATH"] = string.IsNullOrEmpty(existing) ? libs : $"{libs}:{existing}",
-                    };
+                        env[(string)entry.Key] = (string?)entry.Value ?? "";
+                    }
+
+                    string? existing = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
+                    env["LD_LIBRARY_PATH"] = string.IsNullOrEmpty(existing) ? libs : $"{libs}:{existing}";
+                    launch.Env = env;
                 }
 
                 Instance = await Playwright.Chromium.LaunchAsync(launch);
@@ -588,9 +594,11 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
             {
                 await _supervising.WaitAsync(TimeSpan.FromSeconds(30));
             }
-            catch (TimeoutException)
+            catch (Exception e)
             {
-                // Reported by the log the test prints; nothing more to do here.
+                // Never thrown from here: this runs while some other failure is being reported,
+                // and that one, with the daemon's log, is the one worth reading.
+                Append($"--- supervisor: {e.GetType().Name}: {e.Message}");
             }
 
             _process?.Dispose();

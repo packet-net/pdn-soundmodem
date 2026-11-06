@@ -141,7 +141,8 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
         run: |
-          # --artifacts-path: the script is built here, not under the runner's home directory.
+          # --artifacts-path: the script's build output goes here. dotnet still keeps a few small
+          # cache markers under the runner user's ~/.local/share/dotnet/runfile.
           dotnet run --artifacts-path "$RUNNER_TEMP/install-playwright-browser" --file scripts/install-playwright-browser.cs
           echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
           # Made even where nothing is fetched, so the cache always has a directory to keep.

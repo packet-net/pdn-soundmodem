@@ -51,7 +51,9 @@ opts=(
   -o "Debug::NoLocking=1"
   -o "APT::Sandbox::User=$(id -un)"
 )
-apt-get "${opts[@]}" -qq update
+# A source that fails to update (a third-party repository that is down, a mirror hiccup) is not
+# fatal: the packages wanted may still be listed, and the check at the end decides.
+apt-get "${opts[@]}" -qq update || echo "browser-libs: apt-get update reported errors; carrying on" >&2
 
 # A real package that apt can download, by exactly that name: not a virtual name such as
 # libasound2, which on a t64 distribution only points at libasound2t64, and not a name apt would
