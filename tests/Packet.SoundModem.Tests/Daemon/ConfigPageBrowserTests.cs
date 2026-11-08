@@ -39,9 +39,10 @@ namespace Packet.SoundModem.Tests.Daemon;
 [Trait("Category", "Browser")]
 public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTests.Browser>, IAsyncLifetime
 {
-    /// <summary>How long a restart may take on a loaded runner before it is a failure. The page
-    /// itself gives up at two minutes, so this is a little over that.</summary>
-    private const float RestartMs = 150_000;
+    /// <summary>How long a restart may take on a loaded runner before it is a failure: the page
+    /// itself gives up at two minutes (120 s, and says so in its result), so this is five seconds
+    /// over that and no more. Waiting longer would only be waiting for a message that has come.</summary>
+    private const float RestartMs = 125_000;
 
     /// <summary>The wait for anything else: a field, a message, a page load.</summary>
     private const float StepMs = 30_000;
@@ -286,9 +287,12 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
             "The station is back", new() { Timeout = RestartMs });
         await _station.WaitForStartsAsync(3);
 
-        // Newest first: the one tried, then the one saved. Looking shows what it holds.
+        // Newest first: the one tried, the one saved, then the original the station started on.
+        // The one tried is what is running, and says so.
         await page.Locator("#nav-history").ClickAsync();
-        await Assertions.Expect(page.Locator("button[id^='restore-']")).ToHaveCountAsync(2, new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("button[id^='restore-']")).ToHaveCountAsync(3, new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("[id^='inuse-']")).ToHaveCountAsync(1, new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator(".version").First.Locator("[id^='inuse-']")).ToBeVisibleAsync(new() { Timeout = StepMs });
         await page.Locator("button[id^='look-']").Nth(1).ClickAsync();
         await Assertions.Expect(page.Locator("[id^='look-body-']").Nth(1)).ToContainTextAsync("\"title\": \"second\"", new() { Timeout = StepMs });
 
@@ -300,6 +304,25 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await SaveAsync(page, starts: 4);
 
         _station.ReadConfig()["waterfall"]!["title"]!.GetValue<string>().Should().Be("second");
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task Moving_Or_Removing_The_Station_Page_Is_Said_Before_It_Is_Applied()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null);
+        IPage page = await OpenConfigAsync();
+        await GoToAsync(page, "sharing");
+        int moved = FreePorts.Next();
+
+        await ReplaceAsync(page, "#f-waterfall_port", moved.ToString());
+        await Assertions.Expect(page.Locator("#page-notice")).ToContainTextAsync("moves the station page", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#page-notice")).ToContainTextAsync($":{moved}/config", new() { Timeout = StepMs });
+
+        await page.Locator("#revert").ClickAsync();
+        await GoToAsync(page, "sharing");
+        await page.Locator("#remove-f-waterfall").ClickAsync();
+        await Assertions.Expect(page.Locator("#page-notice")).ToContainTextAsync("removes the station page", new() { Timeout = StepMs });
     }
 
     // ---------------------------------------------------------------- steps

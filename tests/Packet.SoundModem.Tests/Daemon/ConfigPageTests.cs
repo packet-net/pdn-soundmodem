@@ -765,7 +765,7 @@ public partial class ConfigPageTests : IDisposable
     [Theory]
     [InlineData("plughw:CARD=Device,DEV=0", "alsa")]
     [InlineData("default", "alsa")]
-    [InlineData("null", "null")]
+    [InlineData("null", "alsa")]
     [InlineData("pipe:/tmp/in,/tmp/out", "pipe")]
     [InlineData("FLEX:10.0.0.4", "flex")]
     [InlineData("ubersdr:m9psy-1.instance.ubersdr.org", "ubersdr")]
@@ -933,7 +933,7 @@ public partial class ConfigPageTests : IDisposable
             """).AsString();
 
         JsonNode.Parse(answer)!.AsArray().Select(n => n!.GetValue<string>())
-            .Should().Equal("KISS port", "Modem 1: Audio frequency", "Page title (Station page)");
+            .Should().Equal("KISS port", "Sub-channel 0: Audio frequency", "Page title (Station page)");
     }
 
     // ---------------------------------------------------------------- earlier versions
@@ -958,9 +958,14 @@ public partial class ConfigPageTests : IDisposable
         refused.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         JsonNode list = JsonNode.Parse(await station.Client.GetStringAsync(station.Url("api/config/history")))!;
         JsonArray versions = list["versions"]!.AsArray();
-        versions.Select(v => v!["kind"]!.GetValue<string>()).Should().Equal("saved", "one-run");
+        versions.Select(v => v!["kind"]!.GetValue<string>()).Should().Equal(
+            ["saved", "one-run", "original"], "the first apply keeps where the station started");
         versions[0]!["time"]!.GetValue<string>().Should().StartWith("2026-11-08T10:05:00");
         versions[1]!["time"]!.GetValue<string>().Should().StartWith("2026-11-08T10:00:00");
+        JsonNode original = JsonNode.Parse(await station.Client.GetStringAsync(
+            station.Url($"api/config/history/{versions[2]!["id"]!.GetValue<string>()}")))!;
+        original["config"]!["modems"]![0]!["mode"]!.GetValue<string>().Should().Be("bpsk300");
+        versions[2]!["inUse"]!.GetValue<bool>().Should().BeFalse();
 
         JsonNode newest = JsonNode.Parse(await station.Client.GetStringAsync(
             station.Url($"api/config/history/{versions[0]!["id"]!.GetValue<string>()}")))!;
@@ -1029,14 +1034,311 @@ public partial class ConfigPageTests : IDisposable
 
         for (int i = 0; i < 25; i++)
         {
-            history.Record($$"""{"kissPort": {{8000 + i}}}""", persisted: i % 2 == 0);
+            history.Record($$"""{"kissPort": {{8000 + i}}}""", persisted: i % 2 == 0, running: "// the start\n{}");
             clock.Advance(TimeSpan.FromSeconds(1));
         }
 
         IReadOnlyList<ConfigHistory.Version> kept = history.List();
-        kept.Should().HaveCount(ConfigHistory.Keep);
+        kept.Should().HaveCount(ConfigHistory.Keep + 1, "the last twenty and the original");
         history.Read(kept[0].Id).Should().Contain("8024", "the newest is first");
-        history.Read(kept[^1].Id).Should().Contain("8005", "the five oldest went");
+        history.Read(kept[^2].Id).Should().Contain("8005", "the five oldest went");
+        kept[^1].Kind.Should().Be("original");
+        history.Read(kept[^1].Id).Should().Be("// the start\n{}", "the original is the file's own text, comments and all");
+    }
+
+    [Fact]
+    public void A_Clock_That_Jumps_Back_Or_Stands_Still_Does_Not_Lose_Or_Overwrite_A_Version()
+    {
+        var clock = new SteppedClock { Now = new DateTimeOffset(2026, 11, 8, 10, 0, 0, TimeSpan.Zero) };
+        var history = new ConfigHistory(Path.Combine(_dir, "state2", "pending-config.json"), clock);
+
+        for (int i = 0; i < ConfigHistory.Keep; i++)
+        {
+            history.Record($$"""{"n": {{i}}}""", persisted: true);
+            clock.Now += TimeSpan.FromSeconds(1);
+        }
+
+        clock.Now = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        history.Record("""{"n": 100}""", persisted: false);
+        history.Record("""{"n": 101}""", persisted: false);
+
+        IReadOnlyList<ConfigHistory.Version> kept = history.List();
+        kept.Should().HaveCount(ConfigHistory.Keep);
+        history.Read(kept[0].Id).Should().Contain("101", "two applies in one instant are two versions, newest first");
+        history.Read(kept[1].Id).Should().Contain("100", "a clock gone back did not make the new one look old");
+        kept.Select(v => v.Id).Distinct().Should().HaveCount(ConfigHistory.Keep);
+    }
+
+    [Theory]
+    [InlineData("000001-saved-20261108T101500123Z", true)]
+    [InlineData("000001-saved-20261108T101500123Z\n", false)]
+    [InlineData("1-saved-20261108T101500123Z", false)]
+    [InlineData("000001-other-20261108T101500123Z", false)]
+    public void A_Version_Id_Must_Be_Exactly_One_The_History_Made(string id, bool found)
+    {
+        var history = new ConfigHistory(Path.Combine(_dir, "state3", "pending-config.json"), TimeProvider.System);
+        Directory.CreateDirectory(Path.Combine(_dir, "state3", "config-history"));
+        File.WriteAllText(Path.Combine(_dir, "state3", "config-history", id.TrimEnd('\n') + ".json"), "{}");
+
+        (history.Read(id) is not null).Should().Be(found);
+    }
+
+    [Fact]
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    public void The_History_Is_Private_To_The_Service_From_The_Moment_It_Exists()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Unix permissions");
+        var history = new ConfigHistory(Path.Combine(_dir, "state4", "pending-config.json"), TimeProvider.System);
+
+        history.Record("""{"api": {"key": "x"}}""", persisted: true, running: "{}");
+
+        string directory = Path.Combine(_dir, "state4", "config-history");
+        File.GetUnixFileMode(directory).Should().Be(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        foreach (string file in Directory.GetFiles(directory))
+        {
+            File.GetUnixFileMode(file).Should().Be(UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+    }
+
+    // ---------------------------------------------------------------- device kinds and rules
+
+    [Fact]
+    public void The_Kinds_The_Page_Knows_Are_The_Daemons_Own_Device_Kinds_And_The_Monitor()
+    {
+        ConfigKeys.DeviceKinds.Should().BeEquivalentTo(
+            [.. Packet.SoundModem.Daemon.DeviceKinds.All.Select(k => k.Name), "monitor"]);
+    }
+
+    [Fact]
+    public void Every_Rule_Names_Only_Kinds_Keys_And_Siblings_That_Exist()
+    {
+        JsonObject types = ConfigSchema.Build()["types"]!.AsObject();
+        JsonNode? KeyAt(string path)
+        {
+            string type = nameof(DaemonConfig);
+            JsonNode? key = null;
+            foreach (string part in path.Split('.'))
+            {
+                key = types[type]!["keys"]!.AsArray()
+                    .SingleOrDefault(k => string.Equals(k!["name"]!.GetValue<string>(), part, StringComparison.OrdinalIgnoreCase));
+                if (key is null)
+                {
+                    return null;
+                }
+
+                type = key["ref"]?.GetValue<string>() ?? "";
+            }
+
+            return key;
+        }
+
+        int rules = 0;
+        foreach ((string name, ConfigKeys.Entry entry) in ConfigKeys.Table)
+        {
+            if (entry.When is not { } when)
+            {
+                continue;
+            }
+
+            rules++;
+            foreach (string kind in when.DeviceKinds ?? [])
+            {
+                ConfigKeys.DeviceKinds.Should().Contain(kind, $"{name}'s rule names a kind of device");
+            }
+
+            foreach (string path in when.Set ?? [])
+            {
+                KeyAt(path).Should().NotBeNull($"{name}'s rule says \"{path}\" is set, and no such key exists");
+            }
+
+            if (when.SiblingKey is not null)
+            {
+                string type = name[..name.IndexOf('.')];
+                types[type]!["keys"]!.AsArray().Select(k => k!["name"]!.GetValue<string>())
+                    .Should().Contain(when.SiblingKey, $"{name}'s rule reads a sibling that is not there");
+            }
+        }
+
+        rules.Should().BeGreaterThan(15);
+    }
+
+    [Fact]
+    public void Every_Key_That_Offers_A_Few_Values_Names_Each_Of_Them_Except_A_Modems_Mode()
+    {
+        foreach ((string type, JsonNode? body) in ConfigSchema.Build()["types"]!.AsObject())
+        {
+            foreach (JsonNode? key in body!["keys"]!.AsArray())
+            {
+                string name = $"{type}.{key!["name"]}";
+                string[] choices = key["choices"] is JsonArray c ? [.. c.Select(x => x!.GetValue<string>())] : [];
+                string[] labelled = key["choiceLabels"] is JsonObject l ? [.. l.Select(x => x.Key)] : [];
+                if (name == "ModemConfig.mode")
+                {
+                    labelled.Should().BeEmpty("the catalogue is long and has its own list");
+                    continue;
+                }
+
+                labelled.Should().BeEquivalentTo(choices, $"{name}: a drop-down shows a plain name for every value it stores");
+            }
+        }
+    }
+
+    [Fact]
+    public void A_Monitor_File_Shows_What_A_Monitor_Reads_And_Hides_The_Station_Keys()
+    {
+        Engine js = Model();
+        js.SetValue("schemaJson", ConfigSchema.Json);
+
+        string answer = js.Evaluate("""
+            (function () {
+              var schema = JSON.parse(schemaJson);
+              var shown = [];
+              ConfigModel.plan(schema, schema.root, { monitor: { modems: [] }, waterfall: { port: 8099 } }, "")
+                .forEach(function (n) { if (n.shown) shown.push(n.key.name); });
+              return JSON.stringify(shown);
+            })()
+            """).AsString();
+
+        string[] names = [.. JsonNode.Parse(answer)!.AsArray().Select(n => n!.GetValue<string>())];
+        names.Should().Contain(["monitor", "waterfall", "ubersdr", "frameLog", "bind", "sideband", "dialFrequency", "idBeacons", "deadFeed", "modemPlugins"]);
+        names.Should().NotContain(["device", "captureDevice", "playbackDevice", "captureRate", "alsa", "ptt", "rig", "publish",
+            "kissPort", "modems", "api", "survey", "metrics", "rawCapture", "frequencyMatching", "paging", "txTest", "carrierSense"]);
+    }
+
+    [Theory]
+    [InlineData("plughw:1,0", "device,captureDevice,playbackDevice,captureRate,ptt,rig,carrierSense,txTest,alsa,publish")]
+    [InlineData("pipe:/a,/b", "device,captureRate,ptt,rig,carrierSense,txTest,publish")]
+    [InlineData("flex:10.0.0.4", "device,carrierSense,txTest,flex,publish")]
+    [InlineData("ubersdr:x.example", "device,ubersdr")]
+    [InlineData("rtltcp:pi.lan", "device,publish,rtltcp")]
+    [InlineData("iqcard:hw:1,0", "device,rig,publish,iqCard")]
+    public void Each_Kind_Of_Device_Shows_The_Keys_The_Daemon_Takes_For_It(string device, string expected)
+    {
+        Engine js = Model();
+        js.SetValue("schemaJson", ConfigSchema.Json);
+        js.SetValue("device", device);
+
+        string answer = js.Evaluate("""
+            (function () {
+              var schema = JSON.parse(schemaJson);
+              var of = ["device","captureDevice","playbackDevice","captureRate","ptt","rig","carrierSense","txTest","alsa","publish",
+                        "flex","ubersdr","iqCard","rtltcp"];
+              var shown = [];
+              ConfigModel.plan(schema, schema.root, { device: device }, "")
+                .forEach(function (n) { if (n.shown && of.indexOf(n.key.name) >= 0) shown.push(n.key.name); });
+              return JSON.stringify(shown);
+            })()
+            """).AsString();
+
+        JsonNode.Parse(answer)!.AsArray().Select(n => n!.GetValue<string>())
+            .Should().BeEquivalentTo(expected.Split(','));
+    }
+
+    [Fact]
+    public void Removing_Or_Moving_The_Station_Page_Is_Told_Apart_From_An_Ordinary_Change()
+    {
+        Engine js = Model();
+
+        string answer = js.Evaluate("""
+            (function () {
+              var M = ConfigModel;
+              var base = { waterfall: { port: 8107 }, bind: "*" };
+              return JSON.stringify([
+                M.pageMove(base, { waterfall: { port: 8107 }, bind: "*" }, "radio1.lan", "http:"),
+                M.pageMove(base, { bind: "*" }, "radio1.lan", "http:"),
+                M.pageMove(base, { waterfall: { port: 8200 }, bind: "*" }, "radio1.lan", "http:"),
+                M.pageMove(base, { waterfall: { port: 8107 }, bind: "192.168.1.5" }, "radio1.lan", "http:"),
+                M.pageMove({ waterfall: { port: 8107 }, bind: "*" }, { waterfall: { port: 8107 }, bind: "127.0.0.1" }, "radio1.lan", "http:"),
+                M.pageMove({ waterfall: { port: 8107 }, bind: "*" }, { waterfall: { port: 8107 }, bind: "127.0.0.1" }, "localhost", "http:")
+              ]);
+            })()
+            """).AsString();
+
+        JsonArray result = JsonNode.Parse(answer)!.AsArray();
+        result[0].Should().BeNull("nothing about the page changed");
+        result[1]!["kind"]!.GetValue<string>().Should().Be("removed");
+        result[2]!["url"]!.GetValue<string>().Should().Be("http://radio1.lan:8200/config");
+        result[3]!["url"]!.GetValue<string>().Should().Be("http://192.168.1.5:8107/config");
+        result[4]!["url"].Should().BeNull("loopback only cannot be reached from another machine");
+        result[5]!["url"]!.GetValue<string>().Should().Be("http://localhost:8107/config");
+    }
+
+    // ---------------------------------------------------------------- roll-back and secrets
+
+    [Fact]
+    public async Task A_Version_Restored_From_History_Gets_Its_Own_Secrets_Back()
+    {
+        // The station has since rotated its key and lost its publish section; the placeholders in
+        // a document loaded from the old version mean that version's values, not the running ones.
+        using var station = new Station(_dir, key: "");
+        const string old = """{"device": "null", "kissPort": 8101, "api": {"key": "old-key"}, "publish": {"url": "wss://m.example/uplink", "token": "old-token-old-token-old-token-old-0000", "callsign": "GB7RDG-2"}, "waterfall": {"port": 8107}, "modems": [{"subChannel": 0, "mode": "bpsk300"}]}""";
+        (await station.Client.PostAsync(station.Url("api/config"), new StringContent(old, Encoding.UTF8))).StatusCode.Should().Be(HttpStatusCode.OK);
+        File.WriteAllText(station.ConfigPath, """{"device": "null", "api": {"key": "rotated"}, "modems": [{"subChannel": 0, "mode": "bpsk300"}]}""");
+        string id = JsonNode.Parse(await station.Client.GetStringAsync(station.Url("api/config/history")))!["versions"]![0]!["id"]!.GetValue<string>();
+        station.Client.DefaultRequestHeaders.Add("X-API-Key", "rotated");
+        string loaded = (await station.Client.GetStringAsync(station.Url($"api/config/history/{id}")));
+        string document = JsonNode.Parse(loaded)!["config"]!.ToJsonString();
+        document.Should().NotContain("old-key");
+
+        HttpResponseMessage without = await station.Client.PostAsync(station.Url("api/config?check=true"), new StringContent(document, Encoding.UTF8));
+        HttpResponseMessage with = await station.Client.PostAsync(station.Url($"api/config?check=true&restoreFrom={id}"), new StringContent(document, Encoding.UTF8));
+        HttpResponseMessage applied = await station.Client.PostAsync(station.Url($"api/config?persist=true&restoreFrom={id}"), new StringContent(document, Encoding.UTF8));
+
+        without.StatusCode.Should().Be(HttpStatusCode.BadRequest, "the running configuration has no publish token to put there");
+        with.StatusCode.Should().Be(HttpStatusCode.OK, await with.Content.ReadAsStringAsync());
+        applied.StatusCode.Should().Be(HttpStatusCode.OK);
+        JsonNode file = JsonNode.Parse(File.ReadAllText(station.ConfigPath))!;
+        file["api"]!["key"]!.GetValue<string>().Should().Be("old-key", "the key as it was in that version");
+        file["publish"]!["token"]!.GetValue<string>().Should().StartWith("old-token");
+    }
+
+    [Fact]
+    public async Task A_Restored_Secret_Still_Does_Not_Follow_Its_Address_To_Somewhere_New()
+    {
+        using var station = new Station(_dir, key: "");
+        const string old = """{"device": "null", "publish": {"url": "wss://m.example/uplink", "token": "old-token-old-token-old-token-old-0000", "callsign": "GB7RDG-2"}, "waterfall": {"port": 8107}, "modems": [{"subChannel": 0, "mode": "bpsk300"}]}""";
+        (await station.Client.PostAsync(station.Url("api/config"), new StringContent(old, Encoding.UTF8))).StatusCode.Should().Be(HttpStatusCode.OK);
+        string id = JsonNode.Parse(await station.Client.GetStringAsync(station.Url("api/config/history")))!["versions"]![0]!["id"]!.GetValue<string>();
+        JsonNode document = JsonNode.Parse(await station.Client.GetStringAsync(station.Url($"api/config/history/{id}")))!["config"]!;
+        document["publish"]!["url"] = "wss://evil.example/uplink";
+
+        HttpResponseMessage moved = await station.Client.PostAsync(
+            station.Url($"api/config?check=true&restoreFrom={id}"), new StringContent(document.ToJsonString(), Encoding.UTF8));
+
+        moved.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await moved.Content.ReadAsStringAsync()).Should().Contain("publish.url");
+    }
+
+    [Fact]
+    public async Task A_Restore_From_A_Version_That_Is_Not_There_Is_Refused()
+    {
+        using var station = new Station(_dir, key: "");
+
+        HttpResponseMessage answer = await station.Client.PostAsync(
+            station.Url("api/config?check=true&restoreFrom=000009-saved-20260101T000000000Z"),
+            new StringContent(WorkableConfig(8101), Encoding.UTF8));
+
+        answer.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task The_Version_In_Use_Is_Marked()
+    {
+        using var station = new Station(_dir, key: "");
+        (await station.Client.PostAsync(station.Url("api/config?persist=true"), new StringContent(WorkableConfig(8301), Encoding.UTF8)))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        JsonArray versions = JsonNode.Parse(await station.Client.GetStringAsync(station.Url("api/config/history")))!["versions"]!.AsArray();
+
+        versions.Select(v => v!["inUse"]!.GetValue<bool>()).Should().Equal(true, false);
+    }
+
+    /// <summary>A clock the test sets, which can go backwards as a real one can.</summary>
+    private sealed class SteppedClock : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; }
+
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 
     private static string WorkableConfig(int kissPort) =>

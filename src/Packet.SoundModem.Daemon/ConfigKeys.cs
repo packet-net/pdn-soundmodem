@@ -38,10 +38,27 @@ internal static class ConfigKeys
         ("monitor", "Monitor site"),
     ];
 
-    /// <summary>The kinds of audio device, as <c>device</c> spells them: the part before the
-    /// colon of a prefix the daemon knows. Anything else is a sound card, as ALSA names it.</summary>
-    internal static readonly string[] DeviceKinds =
-        ["alsa", "null", "pipe", "flex", "ubersdr", "openwebrx", "iqcard", "rtltcp", "sdrconnect", "iqpipe"];
+    /// <summary>The kind a file with a <c>monitor</c> section is: a site, with no audio device.</summary>
+    internal const string MonitorKind = "monitor";
+
+    /// <summary>What the daemon knows about one kind of audio device, read from
+    /// <see cref="Daemon.DeviceKinds"/> and not copied: whether it has a mixer, can transmit, takes a
+    /// rig and may publish.</summary>
+    internal sealed record KindFacts(string Name, bool HasMixer, bool Transmits, bool TakesRig, bool MayPublish);
+
+    /// <summary>The kinds of audio device, as <c>device</c> spells them (the part before the colon;
+    /// the sound card, which claims everything else, is <c>alsa</c>), each with the facts the rules
+    /// need, and then the monitor, which has no device at all.</summary>
+    internal static IReadOnlyList<KindFacts> Kinds { get; } =
+    [
+        .. Daemon.DeviceKinds.All.Select(k => new KindFacts(
+            k.Name, k.HasMixer, k.TransmitTestRefusal is null,
+            k.RigRefusal(k.Name) is null, k.PublishRefusal(k.Name) is null)),
+        new KindFacts(MonitorKind, false, false, false, false),
+    ];
+
+    /// <summary>The names in <see cref="Kinds"/>, as the schema serves them.</summary>
+    internal static string[] DeviceKinds => [.. Kinds.Select(k => k.Name)];
 
     /// <summary>When a key or section is worth drawing without the file having set it.</summary>
     /// <param name="DeviceKinds">Any of these kinds of audio device.</param>
@@ -60,8 +77,11 @@ internal static class ConfigKeys
     /// <param name="Advanced">Whether it sits behind "More" in its area.</param>
     /// <param name="When">When it is drawn if the file does not set it; null is always.</param>
     /// <param name="Item">What one entry of a list is called, singular.</param>
+    /// <param name="ChoiceLabels">For a key that takes one of a few values, what each is called in
+    /// a drop-down; the stored value is still the key's own.</param>
     internal sealed record Entry(
-        string Label, string? Unit, string? Area, bool Advanced, ShownWhen? When, string? Item);
+        string Label, string? Unit, string? Area, bool Advanced, ShownWhen? When, string? Item,
+        (string Value, string Label)[]? ChoiceLabels = null);
 
     /// <summary>Every entry, by <c>ClassName.keyName</c>.</summary>
     internal static IReadOnlyDictionary<string, Entry> Table => Cached.Value;
@@ -94,6 +114,17 @@ internal static class ConfigKeys
         if (entry.Item is not null)
         {
             key["item"] = entry.Item;
+        }
+
+        if (entry.ChoiceLabels is { } labels)
+        {
+            var map = new JsonObject();
+            foreach ((string value, string label) in labels)
+            {
+                map[value] = label;
+            }
+
+            key["choiceLabels"] = map;
         }
 
         if (entry.When is { } when)
@@ -129,6 +160,28 @@ internal static class ConfigKeys
 
     private static ShownWhen OnDevice(params string[] kinds) => new(DeviceKinds: kinds);
 
+    /// <summary>The rule "on any kind of device the daemon says this about": a station's key that
+    /// a monitor never reads is hidden on a monitor because no <see cref="Kinds"/> entry of its
+    /// is among the kinds listed. Null, no rule, when every kind qualifies.</summary>
+    private static ShownWhen? OnKinds(Func<KindFacts, bool> applies, params string[] also)
+    {
+        string[] kinds = [.. Kinds.Where(applies).Select(k => k.Name).Concat(also).Distinct()];
+        return kinds.Length == Kinds.Count ? null : new ShownWhen(DeviceKinds: kinds);
+    }
+
+    /// <summary>As <see cref="OnKinds"/>, or the file setting one of <paramref name="set"/>.</summary>
+    private static ShownWhen? OnKindsOrSet(Func<KindFacts, bool> applies, params string[] set)
+    {
+        ShownWhen? kinds = OnKinds(applies);
+        return new ShownWhen(DeviceKinds: kinds?.DeviceKinds, Set: set);
+    }
+
+    /// <summary>A station key: shown on every kind of device but not on a monitor.</summary>
+    private static readonly Func<KindFacts, bool> Station = k => k.Name != MonitorKind;
+
+    private static readonly (string, string)[] Sidebands =
+        [("usb", "Upper sideband (usb)"), ("lsb", "Lower sideband (lsb)"), ("fm", "FM")];
+
     private static Dictionary<string, Entry> Build()
     {
         var table = new Dictionary<string, Entry>(StringComparer.Ordinal);
@@ -138,34 +191,35 @@ internal static class ConfigKeys
 
         // K(key, label, unit, advanced, area, when, item): the arguments that matter by name.
         void K(string key, string label, string? unit = null, bool advanced = false,
-               string? area = null, ShownWhen? when = null, string? item = null) =>
-            table.Add($"{type}.{key}", new Entry(label, unit, area, advanced, when, item));
+               string? area = null, ShownWhen? when = null, string? item = null,
+               (string, string)[]? choices = null) =>
+            table.Add($"{type}.{key}", new Entry(label, unit, area, advanced, when, item, choices));
 
         // ------------------------------------------------------------ the file's top level
         T("DaemonConfig");
-        K("device", "Audio device", area: "radio");
-        K("captureDevice", "Receive sound card", advanced: true, area: "radio");
-        K("playbackDevice", "Transmit sound card", advanced: true, area: "radio");
-        K("captureRate", "Sound card sample rate", "Hz", advanced: true, area: "radio", when: OnDevice("alsa"));
-        K("kissPort", "KISS port", area: "software");
-        K("kissMaxFrameBytes", "Longest KISS frame", "bytes", advanced: true, area: "software");
+        K("device", "Audio device", area: "radio", when: OnKinds(Station));
+        K("captureDevice", "Receive sound card", advanced: true, area: "radio", when: OnKinds(k => k.HasMixer));
+        K("playbackDevice", "Transmit sound card", advanced: true, area: "radio", when: OnKinds(k => k.HasMixer));
+        K("captureRate", "Sound card sample rate", "Hz", advanced: true, area: "radio", when: OnKinds(k => k.Name is "alsa" or "pipe"));
+        K("kissPort", "KISS port", area: "software", when: OnKinds(Station));
+        K("kissMaxFrameBytes", "Longest KISS frame", "bytes", advanced: true, area: "software", when: OnKinds(Station));
         K("bind", "Listen on address", area: "software");
-        K("sideband", "Sideband", area: "radio");
+        K("sideband", "Kind of radio", area: "radio", choices: Sidebands);
         K("dialFrequency", "Dial frequency", "Hz", area: "radio");
-        K("modems", "Modems", area: "modes", item: "modem");
+        K("modems", "Modems", area: "modes", item: "modem", when: OnKinds(Station));
         K("modemPlugins", "Extra modem assemblies", area: "advanced", item: "assembly");
-        K("polyglot", "Polyglot KISS ports", advanced: true, area: "software", item: "port");
-        K("polyglotPort", "Polyglot KISS port, shorthand", advanced: true, area: "software");
-        K("ptt", "Push to talk", area: "keying");
-        K("rig", "Rig control through rigctld", area: "radio");
+        K("polyglot", "Polyglot KISS ports", advanced: true, area: "software", item: "port", when: OnKinds(Station));
+        K("polyglotPort", "Polyglot KISS port, shorthand", advanced: true, area: "software", when: OnKinds(Station));
+        K("ptt", "Push to talk", area: "keying", when: OnKinds(k => k.Transmits && k.TakesRig));
+        K("rig", "Rig control through rigctld", area: "radio", when: OnKinds(k => k.TakesRig));
         K("mailcast", "Mailcast, retired", area: "advanced");
-        K("carrierSense", "Carrier sense from the radio", area: "keying");
-        K("txTest", "Transmitter test", area: "advanced");
-        K("alsa", "Sound card mixer", area: "radio", when: new ShownWhen(DeviceKinds: ["alsa"], Set: ["alsa"]));
-        K("paging", "Paging, POCSAG", area: "software");
+        K("carrierSense", "Carrier sense from the radio", area: "keying", when: OnKinds(k => k.Transmits));
+        K("txTest", "Transmitter test", area: "advanced", when: OnKinds(k => k.Transmits));
+        K("alsa", "Sound card mixer", area: "radio", when: OnKindsOrSet(k => k.HasMixer, "alsa"));
+        K("paging", "Paging, POCSAG", area: "software", when: OnKinds(Station));
         K("ardop", "ARDOP, old style", advanced: true, area: "software", when: new ShownWhen(Set: ["ardop"]));
         K("flex", "FlexRadio", area: "radio", when: OnDevice("flex"));
-        K("ubersdr", "UberSDR receiver", area: "radio", when: OnDevice("ubersdr"));
+        K("ubersdr", "UberSDR receiver", area: "radio", when: OnDevice("ubersdr", MonitorKind));
         K("openwebrx", "OpenWebRX receiver", area: "radio", when: OnDevice("openwebrx"));
         K("iqCard", "IQ sound card", area: "radio", when: OnDevice("iqcard"));
         K("iqpipe", "IQ from a command", area: "radio", when: OnDevice("iqpipe"));
@@ -173,13 +227,13 @@ internal static class ConfigKeys
         K("sdrconnect", "SDRplay through SDRconnect", area: "radio", when: OnDevice("sdrconnect"));
         K("waterfall", "Station page", area: "sharing");
         K("monitor", "Monitor site", area: "monitor");
-        K("publish", "Publish to a monitor site", area: "sharing");
-        K("api", "Access key", area: "sharing");
+        K("publish", "Publish to a monitor site", area: "sharing", when: OnKinds(k => k.MayPublish));
+        K("api", "Access key", area: "sharing", when: OnKinds(Station));
         K("frameLog", "Log of heard frames", area: "sharing");
-        K("survey", "Survey of unreadable bursts", area: "advanced");
-        K("metrics", "Metrics for Prometheus and Grafana", area: "sharing");
-        K("frequencyMatching", "Frequency matching", area: "advanced");
-        K("rawCapture", "Raw audio recording", area: "advanced");
+        K("survey", "Survey of unreadable bursts", area: "advanced", when: OnKinds(Station));
+        K("metrics", "Metrics for Prometheus and Grafana", area: "sharing", when: OnKinds(Station));
+        K("frequencyMatching", "Frequency matching", area: "advanced", when: OnKinds(Station));
+        K("rawCapture", "Raw audio recording", area: "advanced", when: OnKinds(Station));
         K("deadFeed", "Dead audio watch", area: "advanced");
         K("idBeacons", "Hear NinoTNC idents", advanced: true, area: "modes");
 
@@ -191,15 +245,15 @@ internal static class ConfigKeys
         K("offsetPairs", "Decoder branches either side of the centre", advanced: true);
         K("offsetStepHz", "Gap between decoder branches", "Hz", advanced: true);
         K("acceptPlainIl2p", "Also pass IL2P frames with no CRC", advanced: true);
-        K("port", "KISS port for this modem alone", advanced: true);
+        K("port", "Own TCP port (on ARDOP, its command port)", advanced: true);
         K("rfFrequency", "Radio frequency", "Hz");
         K("transmitOnlyUnderLease", "Transmit only under a lease", advanced: true);
         K("bandwidth", "Bandwidth", "Hz", advanced: true);
         K("busyDetect", "Tell ARDOP when the channel is busy", advanced: true);
         K("identify", "Morse ident", advanced: true);
-        K("maxBurstSeconds", "Longest burst", "s", advanced: true);
-        K("burstGatherSeconds", "Wait to fill a burst", "s", advanced: true);
-        K("txAmplitude", "Transmit level", advanced: true);
+        K("maxBurstSeconds", "Longest MS110D burst", "s", advanced: true);
+        K("burstGatherSeconds", "Wait to fill an MS110D burst", "s", advanced: true);
+        K("txAmplitude", "MS110D transmit level", advanced: true);
 
         T("ModemPluginConfig");
         K("path", "Assembly file");
@@ -221,9 +275,10 @@ internal static class ConfigKeys
 
         // ------------------------------------------------------------ keying and the rig
         T("PttConfig");
-        K("type", "How the radio is keyed");
+        K("type", "How the radio is keyed", choices:
+        [("serial", "A serial port"), ("cm108", "The sound card's PTT pin (CM108)"), ("rigctld", "Hamlib's rigctld")]);
         K("device", "Device", when: new ShownWhen(SiblingKey: "type", SiblingIn: ["serial", "cm108"], SiblingDefault: "serial"));
-        K("line", "Serial line", when: new ShownWhen(SiblingKey: "type", SiblingIn: ["serial"], SiblingDefault: "serial"));
+        K("line", "Serial line", choices: [("rts", "RTS"), ("dtr", "DTR")], when: new ShownWhen(SiblingKey: "type", SiblingIn: ["serial"], SiblingDefault: "serial"));
         K("gpio", "CM108 pin", when: new ShownWhen(SiblingKey: "type", SiblingIn: ["cm108"], SiblingDefault: "serial"));
 
         T("RigConfig");
@@ -313,7 +368,7 @@ internal static class ConfigKeys
 
         T("IqPipeConfig");
         K("command", "Command that makes the IQ");
-        K("format", "Sample format");
+        K("format", "Sample format", choices: [("cu8", "Unsigned 8-bit (rtl_sdr)"), ("cs8", "Signed 8-bit"), ("cs16", "Signed 16-bit"), ("cf32", "32-bit float")]);
         K("rate", "Sample rate", "samples/s");
         K("centreFrequency", "Centre frequency", "Hz");
         K("swapIq", "Swap I and Q");
@@ -355,7 +410,7 @@ internal static class ConfigKeys
         T("WaterfallConfig");
         K("port", "Station page port");
         K("dialFrequencyHz", "Dial the page opens on", "Hz", advanced: true);
-        K("sideband", "Sideband the page draws for", advanced: true);
+        K("sideband", "Sideband the page draws for", advanced: true, choices: Sidebands);
         K("linesPerSecond", "Waterfall speed", "lines/s", advanced: true);
         K("fftSize", "Spectrum detail", "points", advanced: true);
         K("public", "Public page for visitors");
@@ -372,13 +427,13 @@ internal static class ConfigKeys
         K("radio", "Radio and antenna");
         K("site", "Your own web page");
         K("audioRate", "Published audio rate", "Hz", advanced: true);
-        K("frames", "Send heard frames", advanced: true);
+        K("frames", "When to send heard frames", advanced: true, choices: [("always", "Always"), ("watched", "Only while someone is watching")]);
 
         T("ApiConfig");
         K("key", "Access key");
 
         T("FrameLogConfig");
-        K("path", "Log file");
+        K("path", "Log file, or folder on a monitor");
 
         T("MetricsConfig");
         K("enabled", "Serve metrics");
@@ -433,7 +488,7 @@ internal static class ConfigKeys
 
         T("UplinkConfig");
         K("callsign", "Callsign");
-        K("slug", "Page name");
+        K("slug", "Page name in the address, /r/NAME/");
         K("tokenSha256", "Token fingerprint, SHA-256");
 
         return table;

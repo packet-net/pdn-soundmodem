@@ -999,13 +999,39 @@ internal sealed class ConfigApi
         if (rest.Length == 0)
         {
             var versions = new JsonArray();
+            // The newest version that is what the station is running now, if any: the page says
+            // "in use now" on it. Compared as the page would see them, redacted.
+            JsonNode? running = null;
+            try
+            {
+                running = JsonNode.Parse(Redact(_runningJson()));
+            }
+            catch (JsonException)
+            {
+            }
+
+            bool marked = false;
             foreach (ConfigHistory.Version v in _history.List())
             {
+                bool inUse = false;
+                if (!marked && running is not null && _history.Read(v.Id) is { } text)
+                {
+                    try
+                    {
+                        inUse = JsonNode.DeepEquals(running, JsonNode.Parse(Redact(text)));
+                    }
+                    catch (JsonException)
+                    {
+                    }
+                }
+
+                marked |= inUse;
                 versions.Add(new JsonObject
                 {
                     ["id"] = v.Id,
                     ["time"] = v.Time.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
-                    ["kind"] = v.Persisted ? "saved" : "one-run",
+                    ["kind"] = v.Kind,
+                    ["inUse"] = inUse,
                 });
             }
 
@@ -1026,7 +1052,7 @@ internal sealed class ConfigApi
             {
               "id": {{JsonSerializer.Serialize(version.Id)}},
               "time": {{JsonSerializer.Serialize(version.Time.ToString("O", System.Globalization.CultureInfo.InvariantCulture))}},
-              "kind": {{JsonSerializer.Serialize(version.Persisted ? "saved" : "one-run")}},
+              "kind": {{JsonSerializer.Serialize(version.Kind)}},
               "config": {{Redact(document)}}
             }
             """).ConfigureAwait(false);
@@ -1216,7 +1242,23 @@ internal sealed class ConfigApi
             return;
         }
 
-        if (RestoreHidden(body, _runningJson(), out string why) is not string restored)
+        // A document loaded from an earlier version has that version's secrets as placeholders:
+        // they are filled from the version, and the where-it-is-sent checks are made against it.
+        string stored = _runningJson();
+        string? restoreFrom = context.Request.QueryString["restoreFrom"];
+        if (!string.IsNullOrEmpty(restoreFrom))
+        {
+            if (_history.Read(restoreFrom) is not string version)
+            {
+                await RespondAsync(context, 400, $"\"restoreFrom\" names no earlier version: \"{restoreFrom}\"")
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            stored = version;
+        }
+
+        if (RestoreHidden(body, stored, out string why) is not string restored)
         {
             await RespondAsync(context, 400, why).ConfigureAwait(false);
             return;
@@ -1264,7 +1306,15 @@ internal sealed class ConfigApi
         try
         {
             EnsureDirectoryOf(target);
-            File.WriteAllText(target, body);
+            if (persist)
+            {
+                File.WriteAllText(target, body);
+            }
+            else
+            {
+                // The one-run file can hold the key too: private from the moment it exists.
+                ConfigHistory.WritePrivate(target, body);
+            }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException
                                     or ArgumentException or NotSupportedException)
@@ -1281,7 +1331,7 @@ internal sealed class ConfigApi
 
         try
         {
-            _history.Record(body, persist);
+            _history.Record(body, persist, _runningJson());
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

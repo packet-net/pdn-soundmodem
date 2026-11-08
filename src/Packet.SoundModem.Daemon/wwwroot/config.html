@@ -152,6 +152,7 @@
              padding: 12px 18px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
   #pending .what { flex: 1; min-width: 240px; font-size: 14px; overflow-wrap: anywhere; }
   #pending .what small { display: block; color: var(--muted); font-size: 13px; }
+  #page-notice { color: var(--warn) !important; margin-top: 4px; }
   #changes.bad { color: var(--bad); }
   #result { font-size: 14px; }
   #result.bad { color: var(--bad); }
@@ -199,6 +200,7 @@
   <div class="what">
     <div id="changes"></div>
     <small id="changes-note"></small>
+    <small id="page-notice"></small>
     <div id="result"></div>
   </div>
   <button type="button" class="btn" id="revert">Discard</button>
@@ -346,18 +348,18 @@ var ConfigModel = (function () {
     return true;
   }
 
-  // The kind of audio device a document names: the part of "device" before the colon when the
-  // daemon knows it as a prefix, "null" for the null device, else a sound card ("alsa").
+  // The kind of audio device a document names: "monitor" for a file with a monitor section (a
+  // site has no device), else the part of "device" before the colon when the daemon knows it as a
+  // prefix, else a sound card ("alsa"), which is what claims every other name.
   function deviceKind(schema, doc) {
+    if (isSet(get(doc, "monitor"))) return "monitor";
     var d = get(doc, "device");
     if (typeof d !== "string" || d === "") return "alsa";
-    var lower = d.toLowerCase();
-    if (lower === "null") return "null";
-    var at = lower.indexOf(":");
+    var at = d.toLowerCase().indexOf(":");
     if (at > 0) {
-      var prefix = lower.slice(0, at);
+      var prefix = d.toLowerCase().slice(0, at);
       var kinds = schema.deviceKinds || [];
-      if (prefix !== "alsa" && kinds.indexOf(prefix) >= 0) return prefix;
+      if (prefix !== "alsa" && prefix !== "monitor" && kinds.indexOf(prefix) >= 0) return prefix;
     }
     return "alsa";
   }
@@ -563,9 +565,11 @@ var ConfigModel = (function () {
   // The key's name as the reference page spells it, without list positions: modems[].identify.
   function docPath(path) { return path.replace(/\[\d+\]/g, "[]"); }
 
-  // What to call the setting at a path, in words: its label, "Modem 2: Frequency" for a list
-  // entry's, "Filter lower edge (UberSDR receiver)" for one in a section that makes it clearer.
-  function describePath(schema, path) {
+  // What to call the setting at a path, in words: its label, "Sub-channel 2: Audio frequency" for
+  // a modem's (the daemon's own refusals say "modem 2" for the sub-channel, so the page does too),
+  // "Filter lower edge (UberSDR receiver)" for one in a section that makes it clearer. docs are
+  // the documents to look a list entry up in, in order.
+  function describePath(schema, path, docs) {
     if (path === "(whole file)") return "the whole file";
     var parts = splitPath(path);
     var typeName = schema.root;
@@ -573,13 +577,16 @@ var ConfigModel = (function () {
     var top = null;
     var label = path;
     var depth = 0;
+    var prefix = "";
     for (var i = 0; i < parts.length; i++) {
       var part = parts[i];
       if (typeof part === "number") {
-        list = capital(itemOf(top)) + " " + (part + 1);
+        prefix += "[" + part + "]";
+        list = entryName(schema, top, typeName, part, prefix, docs || []);
         label = list;
         continue;
       }
+      prefix = prefix === "" ? part : prefix + "." + part;
       var keys = schema.types[typeName] ? schema.types[typeName].keys : [];
       var key = null;
       for (var j = 0; j < keys.length; j++) {
@@ -598,6 +605,23 @@ var ConfigModel = (function () {
       return label + " (" + labelOf(top) + ")";
     }
     return label;
+  }
+
+  // What to call one entry of a list: "Sub-channel 2" where entries have one (modems do), else
+  // "Modem 3" from its position.
+  function entryName(schema, listKey, itemType, index, prefix, docs) {
+    var keys = schema.types[itemType] ? schema.types[itemType].keys : [];
+    var hasSub = keys.some(function (k) { return k.name === "subChannel"; });
+    if (hasSub) {
+      for (var d = 0; d < docs.length; d++) {
+        var entry = valueAt(docs[d], prefix);
+        if (entry !== undefined && entry !== null) {
+          var sub = get(entry, "subChannel");
+          return "Sub-channel " + (sub === undefined || sub === null ? 0 : sub);
+        }
+      }
+    }
+    return capital(itemOf(listKey)) + " " + (index + 1);
   }
 
   // The part of a refusal worth showing. The daemon words its refusals for a journal: a first line
@@ -695,7 +719,7 @@ var ConfigModel = (function () {
     var seen = {};
     var out = [];
     diff(a, b).forEach(function (path) {
-      var label = describePath(schema, path);
+      var label = describePath(schema, path, [b, a]);
       if (!seen[label]) { seen[label] = true; out.push(label); }
     });
     return out;
@@ -746,6 +770,33 @@ var ConfigModel = (function () {
     return out;
   }
 
+  // What a change does to the station page this page is served from, if anything: it goes away
+  // (the waterfall section removed), or it moves (its port, or the address it listens on, changed).
+  // For a move, the address it will answer at after the restart, when this browser can reach it.
+  function pageMove(loaded, doc, hostname, protocol) {
+    var before = get(loaded, "waterfall"), after = get(doc, "waterfall");
+    if (isSet(before) && !isSet(after)) return { kind: "removed" };
+    if (!isSet(before) || !isSet(after)) return null;
+    function port(d) {
+      var p = get(get(d, "waterfall"), "port");
+      return p === undefined || p === null ? 8107 : p;
+    }
+    function bind(d) {
+      var b = get(d, "bind");
+      return typeof b === "string" && b !== "" ? b : "127.0.0.1";
+    }
+    if (port(loaded) === port(doc) && bind(loaded) === bind(doc)) return null;
+    var b = bind(doc);
+    var loopback = b === "127.0.0.1" || b === "::1" || b === "localhost";
+    var viewerLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+    var host = hostname;
+    if (!loopback && b !== "*" && b !== "0.0.0.0" && b !== "::") host = b.indexOf(":") >= 0 ? "[" + b + "]" : b;
+    var reachable = !loopback || viewerLocal;
+    return { kind: "moved", port: port(doc), bind: b, loopback: loopback,
+             url: reachable ? protocol + "//" + host + ":" + port(doc) + "/config" : null,
+             local: "http://127.0.0.1:" + port(doc) + "/config" };
+  }
+
   function newItem() { return {}; }
 
   var HIDDEN = "(set, not shown)";
@@ -757,7 +808,7 @@ var ConfigModel = (function () {
     parentOf: parentOf, diff: diff, fullDocument: fullDocument, newItem: newItem,
     isSet: isSet, deviceKind: deviceKind, areas: areas, labelOf: labelOf, itemOf: itemOf,
     docPath: docPath, describePath: describePath, problemText: problemText,
-    locateIssue: locateIssue, areaOf: areaOf, changedLabels: changedLabels, summary: summary,
+    locateIssue: locateIssue, areaOf: areaOf, pageMove: pageMove, changedLabels: changedLabels, summary: summary,
     setHidden: function (h) { HIDDEN = h; }
   };
 })();
@@ -792,6 +843,7 @@ var ConfigModel = (function () {
   var moreOpen = {};     // details that were open, by path
   var history = { list: null, stale: true, docs: {} };
   var lastArea = "overview";
+  var restoredFrom = null; // the earlier version the document was loaded from, if it was
 
   var $ = function (id) { return document.getElementById(id); };
 
@@ -843,6 +895,7 @@ var ConfigModel = (function () {
       instance = answer.instance || null;
       loaded = answer.running || {};
       doc = clone(loaded);
+      restoredFrom = null;
       errors = {};
       textInvalid = false;
       check = { state: "idle", seq: check.seq + 1, problem: "", path: null };
@@ -1193,12 +1246,12 @@ var ConfigModel = (function () {
     n.items.forEach(function (item, i) {
       var card = el("div", "card");
       var entry = M.valueAt(doc, item.path) || {};
-      var title = noun.charAt(0).toUpperCase() + noun.slice(1) + " " + (i + 1);
-      var mode = M.get(entry, "mode"), call = M.get(entry, "callsign"), sub = M.get(entry, "subChannel");
+      // Titled the way the station's own refusals name an entry: a modem by its sub-channel.
+      var title = M.describePath(schema, item.path, [doc]);
+      var mode = M.get(entry, "mode"), call = M.get(entry, "callsign");
       var bits = [];
       if (mode !== undefined) bits.push(mode);
       if (call !== undefined) bits.push(call);
-      if (sub !== undefined) bits.push("sub-channel " + sub);
       if (bits.length > 0) title += ": " + bits.join(", ");
       var del = smallButton("remove-" + idFor(item.path), "Remove", function () {
         var arr = M.valueAt(doc, n.path);
@@ -1243,7 +1296,26 @@ var ConfigModel = (function () {
     var box = el("div", "input");
     var input;
 
-    if (k.kind === "boolean") {
+    var choiceLabels = k.choiceLabels || null;
+    if (choiceLabels) {
+      input = el("select");
+      var chosen = k.default !== undefined && k.default !== null ? String(k.default) : "";
+      var first = el("option", null, "Default" + (chosen && choiceLabels[chosen] ? " (" + choiceLabels[chosen] + ")" : ""));
+      first.value = "";
+      input.appendChild(first);
+      Object.keys(choiceLabels).forEach(function (value) {
+        var opt = el("option", null, choiceLabels[value]);
+        opt.value = value;
+        input.appendChild(opt);
+      });
+      if (n.text !== "" && !choiceLabels.hasOwnProperty(n.text)) {
+        // A value the file has that this page does not know the name of is kept, as it is.
+        var odd = el("option", null, n.text);
+        odd.value = n.text;
+        input.appendChild(odd);
+      }
+      input.value = n.text;
+    } else if (k.kind === "boolean") {
       input = el("select");
       var dflt = k.default === true ? "yes" : k.default === false ? "no" : "";
       [["", "Default" + (dflt ? " (" + dflt + ")" : "")], ["true", "Yes"], ["false", "No"]].forEach(function (o) {
@@ -1325,7 +1397,7 @@ var ConfigModel = (function () {
       label.classList.toggle("changed", differs());
       edited(false);
     };
-    input.addEventListener(k.kind === "boolean" ? "change" : "input", onEdit);
+    input.addEventListener(input.tagName === "SELECT" ? "change" : "input", onEdit);
     // A change to what applies (the audio device, the keying method) changes what is drawn; that
     // waits for the field to be left, so typing is never interrupted.
     input.addEventListener("change", function () {
@@ -1449,7 +1521,7 @@ var ConfigModel = (function () {
     if (!doc || !loaded) return;
     var count = changedCount();
     var labels = M.changedLabels(schema, loaded, doc);
-    var bad = Object.keys(errors).map(function (p) { return M.describePath(schema, p); });
+    var bad = Object.keys(errors).map(function (p) { return M.describePath(schema, p, [doc]); });
     if (textInvalid) bad.push("the text");
     var res = $("result").textContent;
     var text = "", note = "", cls = "";
@@ -1480,14 +1552,45 @@ var ConfigModel = (function () {
     $("changes").className = cls;
     $("changes-note").textContent = note;
     $("changes-note").hidden = note === "";
+    var notice = count > 0 && bad.length === 0 && !busy ? pageNotice() : null;
+    var box = $("page-notice");
+    box.textContent = "";
+    box.hidden = !notice;
+    if (notice) box.appendChild(notice);
     $("pending").hidden = !(count > 0 || res !== "" || busy);
     $("revert").disabled = busy || count === 0;
     $("try").disabled = !canApply || busy;
     $("save").disabled = !canApply || busy;
   }
 
+  // What applying does to the page the person is looking at, if it is not just a restart: it goes
+  // away, or it moves (a restart cannot be waited for at an address that is about to change).
+  function pageNotice() {
+    var move = M.pageMove(loaded, doc, location.hostname, location.protocol);
+    if (!move) return null;
+    var out = document.createElement("span");
+    if (move.kind === "removed") {
+      out.textContent = "This removes the station page: after the restart this page and the station page will not answer. "
+        + "To get them back, add a \"waterfall\" section to the config file on the station, such as "
+        + "{\"waterfall\": {\"port\": 8107}}, and restart it.";
+      return out;
+    }
+    out.appendChild(document.createTextNode("This moves the station page: after the restart it answers "));
+    if (move.url) {
+      out.appendChild(document.createTextNode("at "));
+      var a = el("a", null, move.url);
+      a.href = move.url;
+      out.appendChild(a);
+      out.appendChild(document.createTextNode(", not here."));
+    } else {
+      out.appendChild(document.createTextNode("only on the station itself, at " + move.local + ", not here."));
+    }
+    return out;
+  }
+
   // ---------------------------------------------------------------- applying
   function post(query) {
+    if (restoredFrom) query += (query === "" ? "?" : "&") + "restoreFrom=" + encodeURIComponent(restoredFrom);
     return api("api/config" + query, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1499,6 +1602,7 @@ var ConfigModel = (function () {
 
   $("revert").addEventListener("click", function () {
     doc = clone(loaded);
+    restoredFrom = null;
     textInvalid = false;
     result("", "");
     drawnShape = shape();
@@ -1507,6 +1611,7 @@ var ConfigModel = (function () {
   });
 
   function apply(persist) {
+    var notice = pageNotice();
     busy = true;
     result("", persist ? "Saving..." : "Applying...");
     post(persist ? "?persist=true" : "").then(function (r) {
@@ -1517,6 +1622,12 @@ var ConfigModel = (function () {
       }
       result("good", (persist ? "Saved to the file. " : "In force until the next restart. ")
         + "The station is restarting...");
+      if (notice) {
+        // The page it would wait on is about to be somewhere else, or nowhere: say so instead.
+        $("result").appendChild(document.createTextNode(" "));
+        $("result").appendChild(notice);
+        return;
+      }
       waitForRestart(Date.now(), persist);
     }).catch(function (e) {
       busy = false;
@@ -1605,7 +1716,9 @@ var ConfigModel = (function () {
 
   // ---------------------------------------------------------------- earlier versions
   function kindWords(v) {
-    return v.kind === "saved" ? "Saved to the config file" : "Tried until the next restart";
+    return v.kind === "saved" ? "Saved to the config file"
+      : v.kind === "original" ? "How the station was before the first change made here"
+      : "Tried until the next restart";
   }
 
   function getVersion(id) {
@@ -1635,6 +1748,7 @@ var ConfigModel = (function () {
       var when = el("div", "when");
       when.appendChild(el("span", null, new Date(v.time).toLocaleString()));
       when.appendChild(el("small", null, kindWords(v)));
+      if (v.inUse) { var now = el("small", null, "In use now"); now.style.color = "var(--good)"; now.id = "inuse-" + v.id; when.appendChild(now); }
       row.appendChild(when);
       var look = el("div", "look");
       look.hidden = true;
@@ -1645,16 +1759,18 @@ var ConfigModel = (function () {
         look.textContent = "Loading...";
         getVersion(v.id).then(function (full) {
           look.textContent = "";
-          var diffs = M.changedLabels(schema, doc, full.config);
+          var diffs = M.changedLabels(schema, loaded, full.config);
           look.appendChild(el("p", null, diffs.length === 0
-            ? "The same as the configuration now."
-            : "Differs from the configuration now in " + diffs.length + (diffs.length === 1 ? " setting: " : " settings: ") + diffs.join(", ") + "."));
+            ? "The same as the running configuration."
+            : "Differs from the running configuration in " + diffs.length + (diffs.length === 1 ? " setting: " : " settings: ") + diffs.join(", ") + "."));
           look.appendChild(el("pre", null, JSON.stringify(full.config, null, 2)));
         }).catch(function (e) { look.textContent = "Could not read this version: " + e.message; });
       }));
       row.appendChild(smallButton("restore-" + v.id, "Go back to this", function () {
+        if (changedCount() > 0 && !confirm("You have changes that are not applied yet. Going back to this version replaces them. Go ahead?")) return;
         getVersion(v.id).then(function (full) {
           doc = clone(full.config);
+          restoredFrom = v.id;
           textInvalid = false;
           location.hash = "#overview";
           drawnShape = shape();

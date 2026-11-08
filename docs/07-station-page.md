@@ -122,7 +122,7 @@ Settings in the header, or `/config` on the same port, opens a page for changing
 - **Overview** says what each area is set up to do, with a Change button for each.
 - **Radio and audio**, **Keying**, **Modes and frequencies**, **Connect your software** and **Sharing and logging** hold the settings. Each has a plain label, its unit, the key name in small print for matching up with the [configuration reference](reference/config.md), and the reference's line beside it. Settings that most stations leave alone are behind **More**.
 - **Advanced** holds the specialist sections. A section that cannot apply to your station, such as the Flex settings on a sound card, is not listed until the file has it.
-- **Earlier versions** keeps the last 20 configurations the station was applied on, and whether each was saved or tried. **Look** shows one; **Go back to this** loads it as a pending change, which you check and apply like any other. A secret in an old version is not brought back: the one the station has now is kept.
+- **Earlier versions** keeps the last 20 configurations the station was applied on, whether each was saved or tried, and the one the station started on, and marks the one in use now. **Look** shows one; **Go back to this** loads it as a pending change, which you check and apply like any other. Its secrets come back too, as they were in that version.
 - **Edit as text** shows the whole configuration as JSON, for copying or for pasting a configuration in; it is also how you read your settings out to someone helping you remotely. Comments and trailing commas are fine in what you paste. Keys this version does not know are kept as they are.
 
 Every change is checked with the station as you make it, a moment after you stop typing. If the station would refuse it, you get the same message the journal would have shown, under the setting it is about, and nothing can be applied until it is fixed. The bar at the bottom lists what has changed and what applying will do:
@@ -131,7 +131,7 @@ Every change is checked with the station as you make it, a moment after you stop
 - **Try until next restart** restarts the station on them. The restart after that goes back to the file, so a bad experiment undoes itself.
 - **Save and restart** writes the config file and restarts. Comments in the file are not kept.
 
-The station carries on as it was until you apply.
+If a change would remove the station page or move it to another port or address, the bar says so and, for a move, gives the new address. The station carries on as it was until you apply.
 
 With `api.key` set, the page asks for the key first. Without one, anyone who can reach the port can change the configuration. The modem only accepts a change from its own page, or from a program such as curl, so another website open in your browser cannot make one. Without a key, open the page by the station's address or its own host name (`http://192.168.1.20:8107/config`, `http://radio1.local:8107/config`); under any other name, such as a reverse proxy's, set a key. A public page never offers the configuration without a key.
 
