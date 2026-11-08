@@ -246,6 +246,8 @@
   .setup .modemrow .swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
   .setup .modemrow .who { flex: 1; min-width: 0; }
   .setup .modemrow .who small { display: block; color: var(--muted); font-size: 13px; }
+  .setup .stepnote.warn { color: var(--warn); }
+  .setup small.muted { color: var(--muted); font-size: 12.5px; }
   .setup .stepnote { color: var(--muted); font-size: 13.5px; margin: 6px 0 14px; max-width: 62ch; }
   .meter { position: relative; height: 18px; background: #0c1016; border: 1px solid var(--edge); border-radius: 3px; overflow: hidden; margin: 8px 0 6px; }
   .meter .zone { position: absolute; top: 0; bottom: 0; background: rgba(90,200,120,.30); }
@@ -1390,6 +1392,8 @@ var ConfigModel = (function () {
       var l = d.toLowerCase();
       if (l.indexOf("flex:") === 0) return "flex";
       if (l.indexOf("ubersdr:") === 0) return "ubersdr";
+      // Receivers setup does not build: it leaves the device as it is.
+      if (/^(openwebrx|rtltcp|sdrconnect|iqcard|iqpipe):/.test(l)) return "other";
     }
     return "card";
   }
@@ -1408,8 +1412,8 @@ var ConfigModel = (function () {
   // skips nothing.
   function setupSteps(kind) {
     return SETUP_STEPS.map(function (s) {
-      var skipped = (s.id === "card" && (kind === "flex" || kind === "ubersdr"))
-        || (s.id === "keying" && kind === "ubersdr");
+      var skipped = (s.id === "card" && (kind === "flex" || kind === "ubersdr" || kind === "other"))
+        || (s.id === "keying" && (kind === "ubersdr" || kind === "other"));
       return { id: s.id, title: s.title, skipped: skipped };
     });
   }
@@ -1462,7 +1466,7 @@ var ConfigModel = (function () {
     }
     if (id === "card") return deviceFamily(doc) === "card" && isSet(get(doc, "device"));
     if (id === "keying") return flags.keying === true;
-    if (id === "modes") return Array.isArray(modems) && modems.length > 0;
+    if (id === "modes") return (Array.isArray(modems) && modems.length > 0) || isSet(get(doc, "ardop"));
     if (id === "software") return setupKissProblem(doc) === "";
     return true;
   }
@@ -1507,8 +1511,16 @@ var ConfigModel = (function () {
     var host = network ? (hostname && hostname !== "localhost" ? hostname : "this machine's address") : "127.0.0.1";
     return { host: host, port: port, network: network,
       text: "Point LinBPQ, a Dire Wolf client or any other KISS over TCP software at " + host + " port " + port
-        + (network ? ". Anyone who can reach this machine on that port can use your radio, so keep it on a network you trust."
-                   : ". Only programs on this machine can reach it.") };
+        + (network ? "." : ". Only programs on this machine can reach it.") };
+  }
+
+  // What opening the KISS port to the network really opens: every listener, not just KISS.
+  function setupNetworkWarning(doc) {
+    var api = get(doc, "api");
+    var keyed = isSet(api) && isSet(get(api, "key"));
+    return "This opens every listener on this machine to your network: the KISS port, the station page with its transmit test, and this settings page. "
+      + (keyed ? "Anyone on the network who has the access key can change settings and key the radio."
+               : "This station has no access key, so anyone on the network can change its settings and key the radio. Set an access key first.");
   }
 
   // The kinds of mode the "what do you want to talk to?" step suggests first for a kind of radio.
@@ -1529,7 +1541,8 @@ var ConfigModel = (function () {
   // the station as it is running, so it can only test settings the station already has: what the
   // person has chosen in setup but not saved is not what would be keyed.
   function keyTestState(loaded, doc, tx) {
-    if (!tx || tx.available !== true) {
+    if (!tx) return { ok: false, why: "Asking the station whether it can key the radio..." };
+    if (tx.available !== true) {
       var why = tx && tx.refusal ? " The station says: " + tx.refusal + "." : "";
       return { ok: false, why: "The station cannot key the radio yet." + why
         + " Once setup is saved the test is on the last screen." };
@@ -1542,16 +1555,19 @@ var ConfigModel = (function () {
   }
 
   // The lines of the summary on the last step: [label, words].
-  function setupSummary(schema, doc, kind) {
+  function setupSummary(schema, doc, kind, found) {
     var rows = [];
     var kinds = { fm: "A sound card into an FM radio", ssb: "A sound card into an SSB radio",
-      flex: "A FlexRadio", ubersdr: "A web receiver (UberSDR)" };
+      flex: "A FlexRadio", ubersdr: "A web receiver (UberSDR)", other: "A receiver set up in the settings" };
     rows.push(["Radio", kinds[kind] || "Not chosen"]);
     var dev = get(doc, "device");
-    rows.push([kind === "flex" ? "FlexRadio" : kind === "ubersdr" ? "Receiver" : "Sound card", isSet(dev) ? String(dev) : "Not chosen"]);
+    var card = kind === "fm" || kind === "ssb" ? cardOfDevice(dev, section(found, "soundCards")) : null;
+    // A card is named, with its device string as the small print; anything else is its string.
+    rows.push([kind === "flex" ? "FlexRadio" : kind === "ubersdr" || kind === "other" ? "Receiver" : "Sound card",
+      card ? card.name : isSet(dev) ? String(dev) : "Not chosen", card ? String(dev) : ""]);
     var ptt = get(doc, "ptt");
     var keying;
-    if (kind === "ubersdr") keying = "Receive only, nothing is transmitted";
+    if (kind === "ubersdr" || kind === "other") keying = "Receive only, nothing is transmitted";
     else if (kind === "flex") keying = "The FlexRadio keys itself";
     else if (!ptt || typeof ptt !== "object") keying = "The radio's VOX, or nothing";
     else {
@@ -1590,7 +1606,7 @@ var ConfigModel = (function () {
     setupSteps: setupSteps, setupNext: setupNext, setupPrev: setupPrev, setupKindOf: setupKindOf, setupClearChoices: setupClearChoices,
     setupPickKind: setupPickKind, setupComplete: setupComplete, setupWriteSoftware: setupWriteSoftware, setupKissPort: setupKissPort,
     setupNetwork: setupNetwork, setupSoftwareWords: setupSoftwareWords, setupGroupOrder: setupGroupOrder, keyTestState: keyTestState,
-    setupSummary: setupSummary, setupDeviceKind: deviceFamily,
+    setupSummary: setupSummary, setupNetworkWarning: setupNetworkWarning, setupDeviceKind: deviceFamily,
     setHidden: function (h) { HIDDEN = h; }
   };
 })();
@@ -1602,7 +1618,7 @@ var ConfigModel = (function () {
   var M = ConfigModel;
   var DOCS = "https://github.com/packet-net/pdn-soundmodem/blob/main/docs/reference/";
   var KEY_STORE = "pdn-soundmodem-config-key";
-  var SKIP_STORE = "pdn-soundmodem-skip-setup";
+  var SKIP_STORE = "pdn-soundmodem-skip-setup:" + location.host;   // per station, and kept
 
   var BLURB = {
     radio: "The radio or receiver this station listens through, and the sound card or stream that carries its audio.",
@@ -1678,7 +1694,6 @@ var ConfigModel = (function () {
       if (!answer) return;
       instance = answer.instance || null;
       neverConfigured = !!(answer.setup && answer.setup.neverConfigured);
-      blankDoc = false;
       txInfo = answer.txTest || null;
       loaded = answer.running || {};
       doc = clone(loaded);
@@ -1701,7 +1716,7 @@ var ConfigModel = (function () {
       history.stale = true;
       found = { state: "idle", data: null, error: "", seq: found.seq + 1 };
       pickRemoved = [];
-      if (neverConfigured && !location.hash && !sessionStorage.getItem(SKIP_STORE) && !setup.active) location.hash = "#setup";
+      if (neverConfigured && !location.hash && !localStorage.getItem(SKIP_STORE) && !setup.active) location.hash = "#setup";
       render();
       fetchHistory().then(function () { renderNav(); });
     }).catch(function (e) {
@@ -1947,12 +1962,13 @@ var ConfigModel = (function () {
     lastArea = at;
     var inSetup = at === "setup";
     if (inSetup && !setup.active) enterSetup();
-    if (!inSetup && setup.active && setup.phase === "steps") setup.active = false;
+    if (!inSetup && setup.active && setup.phase === "steps") leaveSetup();
     document.body.classList.toggle("setup-mode", inSetup);
     $("mode-word").textContent = inSetup ? "setup" : "settings";
     $("skip-setup").hidden = !(inSetup && setup.phase === "steps");
     $("edit-text").hidden = inSetup;
-    if (!(inSetup && setup.phase === "done")) stopMeter();
+    if (!(inSetup && (setup.phase === "done" || (setup.phase === "steps" && setup.step === "keying")))) closeStation();
+    else openStation();
     $("edit-text").textContent = at === "text" ? "Back to the settings" : "Edit as text";
     $("edit-text").classList.toggle("on", at === "text");
     renderNav();
@@ -3458,7 +3474,11 @@ var ConfigModel = (function () {
   $("save").addEventListener("click", function () { apply(true); });
 
   window.addEventListener("beforeunload", function (e) {
-    if (doc && loaded && changedCount() > 0 && !busy) { e.preventDefault(); e.returnValue = ""; }
+    // Inside setup, only what the person has chosen since it opened is worth a warning: the
+    // emptied placeholders of a new station are not a change they made.
+    var changed = setup.active && setup.phase === "steps" && setup.start
+      ? JSON.stringify(doc) !== JSON.stringify(setup.start) : changedCount() > 0;
+    if (doc && loaded && changed && !busy) { e.preventDefault(); e.returnValue = ""; }
   });
 
   // ---------------------------------------------------------------- guided setup
@@ -3468,33 +3488,40 @@ var ConfigModel = (function () {
   var neverConfigured = false;   // what the station said at the last read
   var txInfo = null;             // whether the running station could key the radio for a test
   var setup = null;
-  var meter = { ws: null, stale: 0 };
   var keyTest = { state: "idle", text: "" };
-  var blankDoc = false;          // the document was emptied of the example's placeholder choices
 
   function newSetup() {
     return { active: false, step: "radio", kind: null, keying: false, phase: "steps", error: "", moved: null, showAll: false };
   }
   setup = newSetup();
 
-  // A fresh station starts from nothing, because the shipped example's choices are placeholders;
-  // a configured one starts from what it has.
+  // A station that has never been configured (its file is the shipped example or empty) starts
+  // from nothing, because the example's choices are placeholders; anything else starts from what
+  // it has, and nothing a running station has is ever cleared.
   function enterSetup() {
     setup = newSetup();
     setup.active = true;
+    setup.before = clone(doc);
     keyTest = { state: "idle", text: "" };
-    if (neverConfigured && (blankDoc || M.diff(loaded, doc).length === 0)) {
-      if (!blankDoc) M.setupClearChoices(doc);
-      blankDoc = true;
-      // Back in after leaving half way: what was chosen stays chosen.
-      setup.kind = M.isSet(M.get(doc, "device")) || M.get(doc, "sideband") ? M.setupKindOf(doc) : null;
-      setup.keying = M.isSet(M.get(doc, "ptt"));
+    station.levelSeen = false;
+    if (neverConfigured && M.diff(loaded, doc).length === 0) {
+      M.setupClearChoices(doc);
     } else {
       setup.kind = M.setupKindOf(doc);
       setup.keying = true;
     }
+    setup.start = clone(doc);
     pickRemoved = [];
     if (found.state === "idle") look(false);
+    scheduleCheck();
+  }
+
+  // Leaving setup any way but saving puts the document back as it was when setup opened, so a
+  // half-made choice is never a pending change.
+  function leaveSetup() {
+    doc = clone(setup.before);
+    setup.active = false;
+    pickRemoved = [];
     scheduleCheck();
   }
 
@@ -3579,6 +3606,14 @@ var ConfigModel = (function () {
   // ---- 1. Your radio
   function drawStepRadio(wrap) {
     wrap.appendChild(el("h1", null, "What kind of radio is this station?"));
+    if (setup.kind === "other") {
+      wrap.appendChild(el("p", "lede", "This station listens through " + String(M.get(doc, "device")) + "; change it in settings."));
+      var go = el("a", "btn", "Open the radio settings");
+      go.href = "#radio";
+      go.id = "setup-other-settings";
+      wrap.appendChild(go);
+      return;
+    }
     wrap.appendChild(el("p", "lede", "This decides which of the next steps are needed."));
     var kinds = [
       ["fm", "A sound card into an FM radio", "Most VHF and UHF packet and APRS: a radio on 144 or 430 MHz with a data or microphone lead to a USB sound card or a CM108 interface."],
@@ -3596,6 +3631,28 @@ var ConfigModel = (function () {
     });
     if (setup.kind === "flex" || setup.kind === "ubersdr") {
       foundBox(wrap);
+      if (setup.kind === "ubersdr") {
+        var urow = el("div", "field");
+        var ulab = el("label", null, "Or type a receiver, a host or an ubersdr: device");
+        ulab.htmlFor = "setup-uber-device";
+        urow.appendChild(ulab);
+        var uwrap = el("div", "input");
+        var uin = el("input");
+        uin.id = "setup-uber-device";
+        uin.placeholder = "ubersdr:m9psy-1.instance.ubersdr.org";
+        var ucur = String(M.get(doc, "device") || "");
+        uin.value = ucur.toLowerCase().indexOf("ubersdr:") === 0 ? ucur : "";
+        uin.addEventListener("change", function () {
+          var v = uin.value.trim();
+          if (v === "") return;
+          if (v.toLowerCase().indexOf("ubersdr:") !== 0) v = "ubersdr:" + v;
+          M.pickRadio(doc, { device: v, section: { name: "ubersdr", value: { mode: "iq48" } }, ownKeying: true, kind: "ubersdr" });
+          edited(true, "setup-uber-device");
+        });
+        uwrap.appendChild(uin);
+        urow.appendChild(uwrap);
+        wrap.appendChild(urow);
+      }
       if (setup.kind === "flex") {
         var row = el("div", "field");
         var lab = el("label", null, "Or type the radio's address");
@@ -3661,12 +3718,14 @@ var ConfigModel = (function () {
     paintKeyTest();
   }
 
-  // The "Key the radio for 2 seconds" box. It keys the station as it is running, behind a confirm.
+  // The "Key the radio for 2 seconds" box. It keys the station as it is running, behind a confirm,
+  // by the station page's own route: the txtest message over the page socket, which is open to
+  // the same pages as the station page's own button and opens nothing new.
   function paintKeyTest() {
     var box = $("keytest");
     if (!box) return;
     box.textContent = "";
-    var st = M.keyTestState(loaded, doc, txInfo);
+    var st = M.keyTestState(loaded, doc, station.tx);
     if (!st.ok) {
       var why = el("span", "warn", st.why);
       why.id = "keytest-why";
@@ -3699,30 +3758,93 @@ var ConfigModel = (function () {
       var r = el("span", keyTest.state === "bad" ? "bad" : "good", keyTest.text);
       r.id = "keytest-result";
       box.appendChild(r);
+      if (keyTest.detail) {
+        var d = el("small", "muted", keyTest.detail);
+        d.id = "keytest-detail";
+        box.appendChild(d);
+      }
     }
   }
 
   function runKeyTest() {
+    clearTimeout(keyTest.timer);
+    if (!station.ws || station.ws.readyState !== 1) {
+      keyTest = { state: "bad", text: "Not connected to the station yet. Try again in a moment." };
+      paintKeyTest();
+      return;
+    }
     keyTest = { state: "running", text: "Keying the radio..." };
+    keyTest.timer = setTimeout(function () {
+      if (keyTest.state !== "running") return;
+      keyTest = { state: "bad", text: "The station did not answer. Its journal says what it did: journalctl -u pdn-soundmodem" };
+      paintKeyTest();
+    }, 60000);
+    station.ws.send(JSON.stringify({ type: "txtest", twoTone: false, toneHz: 1000, seconds: 2 }));
     paintKeyTest();
-    api("api/txtest", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ twoTone: false, toneHz: 1000, seconds: 2 })
-    }).then(function (r) {
-      if (r.status === 401) { load(); return null; }
-      return r.text().then(function (t) { return { status: r.status, text: t }; });
-    }).then(function (a) {
-      if (!a) return;
-      var body = null;
-      try { body = JSON.parse(a.text); } catch (e) { body = null; }
-      if (a.status === 200) keyTest = { state: "good", text: "Keyed and released. Did the radio's TX light come on?" };
-      else keyTest = { state: "bad", text: "The station did not key the radio: " + ((body && (body.refused || body.failed)) || a.text) };
+  }
+
+  // What the station says became of a test (the page socket's txtest message).
+  function onKeyStatus(msg) {
+    if (keyTest.state !== "running" && keyTest.state !== "confirm" && keyTest.state !== "idle") return;
+    if (msg.state === "running") { keyTest = { state: "running", text: "Keying the radio...", timer: keyTest.timer }; }
+    else if (msg.state === "done") {
+      clearTimeout(keyTest.timer);
+      keyTest = { state: "good", text: "Keyed and released. Did the radio's TX light come on?", detail: "The station says: " + msg.text };
+    } else if (msg.state === "refused" || msg.state === "failed") {
+      clearTimeout(keyTest.timer);
+      keyTest = { state: "bad", text: "The station did not key the radio: " + (msg.text || "it gave no reason; its journal says why: journalctl -u pdn-soundmodem") };
+    } else return;
+    paintKeyTest();
+  }
+
+  // ---- the station page's socket, for the key test and the level meter
+  // Opened only while setup needs it (the keying step and the screen after the restart). The
+  // first message is the station's config, which says whether a test can run at all.
+  var station = { ws: null, tx: null, levelSeen: false, stale: 0, retry: 0 };
+
+  function stationNeeded() {
+    return route() === "setup" && setup.active && (setup.phase === "done" || (setup.phase === "steps" && setup.step === "keying"));
+  }
+
+  function openStation() {
+    if (station.ws) return;
+    var scheme = location.protocol === "https:" ? "wss" : "ws";
+    var base = location.pathname.replace(/[^\/]*$/, "");
+    var ws;
+    try { ws = new WebSocket(scheme + "://" + location.host + base + "ws"); } catch (e) { return; }
+    station.ws = ws;
+    ws.onmessage = function (e) {
+      if (typeof e.data !== "string") return;
+      var m;
+      try { m = JSON.parse(e.data); } catch (x) { return; }
+      if (!m) return;
+      if (m.type === "config") {
+        station.tx = !m.txTest ? { available: false, refusal: "this page has no transmit test here" }
+          : { available: !m.txTest.refusal, refusal: m.txTest.refusal || "" };
+        paintKeyTest();
+      } else if (m.type === "txtest") onKeyStatus(m);
+      else if (m.type === "level") paintLevel(m);
+    };
+    ws.onclose = function () {
+      if (station.ws !== ws) return;
+      station.ws = null;
+      station.tx = null;
       paintKeyTest();
-    }).catch(function (e) {
-      keyTest = { state: "bad", text: "Could not reach the station: " + e.message };
-      paintKeyTest();
-    });
+      clearTimeout(station.retry);
+      station.retry = setTimeout(function () { if (stationNeeded()) openStation(); }, 2000);
+    };
+  }
+
+  function closeStation() {
+    clearTimeout(station.stale);
+    clearTimeout(station.retry);
+    if (station.ws) {
+      var ws = station.ws;
+      station.ws = null;
+      ws.onclose = null;
+      try { ws.close(); } catch (e) { /* already closed */ }
+    }
+    station.tx = null;
   }
 
   // ---- 4. Modes
@@ -3832,12 +3954,23 @@ var ConfigModel = (function () {
       M.setupWriteSoftware(doc, inp.value, false);
       edited(true, "pick-bind-local");
     }, "", "setup-bind"));
-    wrap.appendChild(option("bind-network", network, "Other computers on my network too", "Choose this if your software runs on another machine. KISS has no password, so anyone who can reach the port can use your radio; keep it on a network you trust.", function () {
+    wrap.appendChild(option("bind-network", network, "Other computers on my network too", "Choose this if your software runs on another machine.", function () {
       M.setupWriteSoftware(doc, inp.value, true);
       edited(true, "pick-bind-network");
     }, "", "setup-bind"));
     say();
     wrap.appendChild(words);
+    if (network) {
+      var warn = el("p", "stepnote warn");
+      warn.id = "setup-network-warning";
+      warn.appendChild(document.createTextNode(M.setupNetworkWarning(doc) + " "));
+      var how = el("a", null, "How to set an access key");
+      how.href = DOCS + "config.md#api";
+      how.target = "_blank";
+      how.rel = "noopener";
+      warn.appendChild(how);
+      wrap.appendChild(warn);
+    }
     wrap.appendChild(el("p", "stepnote", "Every modem you chose shares this one port."));
   }
 
@@ -3847,9 +3980,11 @@ var ConfigModel = (function () {
     wrap.appendChild(el("p", "lede", "This is what will be set up. Nothing has been changed yet."));
     var dl = el("dl", "summary");
     dl.id = "setup-summary";
-    M.setupSummary(schema, doc, setup.kind).forEach(function (r) {
+    M.setupSummary(schema, doc, setup.kind, found.data).forEach(function (r) {
       dl.appendChild(el("dt", null, r[0]));
-      dl.appendChild(el("dd", null, r[1]));
+      var dd = el("dd", null, r[1]);
+      if (r[2]) { dd.appendChild(document.createElement("br")); dd.appendChild(el("small", "muted", r[2])); }
+      dl.appendChild(dd);
     });
     wrap.appendChild(dl);
     if (pickRemoved.length > 0) {
@@ -3937,6 +4072,9 @@ var ConfigModel = (function () {
   }
 
   function saveSetup() {
+    // A finished setup always has its KISS port written, even left at the default: that is
+    // also what tells it apart from the shipped example, which has none.
+    M.setupWriteSoftware(doc, String(M.setupKissPort(doc)), M.setupNetwork(doc));
     var notice = setupNotice();
     busy = true;
     setup.phase = "saving";
@@ -3978,50 +4116,60 @@ var ConfigModel = (function () {
   // ---- after the restart: the level meter, the key test and the station page
   function drawSetupDone(wrap) {
     wrap.appendChild(el("h1", null, "The station is running"));
-    var lede = el("p", "lede", "It is up on your settings and saved to the file. Next, check the level of the audio coming in.");
+    var lede = el("p", "lede", "It is up on your settings and saved to the file.");
     lede.id = "setup-done";
     wrap.appendChild(lede);
-    {
-      var card = el("div", "card");
-      var body = el("div", "body");
-      var inner = el("div");
-      inner.appendChild(el("b", null, "Input level"));
-      var m = el("div", "meter");
-      m.id = "setup-meter";
-      var zone = el("div", "zone"), hot = el("div", "hot");
-      zone.style.left = pct(-18) + "%";
-      zone.style.width = (pct(-9) - pct(-18)) + "%";
-      hot.style.width = (100 - pct(-6)) + "%";
-      var bar = el("div", "bar"), rms = el("div", "rms");
-      bar.id = "setup-bar";
-      rms.id = "setup-rms";
-      [zone, hot, bar, rms].forEach(function (x) { m.appendChild(x); });
-      inner.appendChild(m);
-      var read = el("div", "levelread", "Waiting for a reading...");
-      read.id = "setup-level";
-      inner.appendChild(read);
-      inner.appendChild(el("p", "stepnote", "Aim for received signals to peak in the green band, -18 to -9 dBFS, and never into the red. With nothing on the channel the bar should sit low."));
-      var gain = el("div", "field");
-      gain.id = "setup-gain-row";
-      gain.hidden = true;
-      var gl = el("label", null, "Sound card input gain");
-      gl.htmlFor = "setup-gain";
-      gain.appendChild(gl);
-      var slider = el("input");
-      slider.type = "range";
-      slider.id = "setup-gain";
-      gain.appendChild(slider);
-      var gr = el("div", "levelread");
-      gr.id = "setup-gain-read";
-      gain.appendChild(gr);
-      inner.appendChild(gain);
-      body.appendChild(inner);
-      card.appendChild(body);
-      wrap.appendChild(card);
-      startMeter();
-      loadGain(slider, gr, gain);
-    }
-    if (setup.kind !== "ubersdr") {
+
+    // The meter appears when the station sends a reading, as the station page's does: only a
+    // station with a sound card and a way to set levels (an access key, or
+    // waterfall.enableAudioControls) sends any, and a Flex or a web receiver never does.
+    var card = el("div", "card");
+    card.id = "setup-levelbox";
+    card.hidden = !station.levelSeen;
+    var body = el("div", "body");
+    var inner = el("div");
+    inner.appendChild(el("b", null, "Input level"));
+    var m = el("div", "meter");
+    m.id = "setup-meter";
+    var zone = el("div", "zone"), hot = el("div", "hot");
+    zone.style.left = pct(-18) + "%";
+    zone.style.width = (pct(-9) - pct(-18)) + "%";
+    hot.style.width = (100 - pct(-6)) + "%";
+    var bar = el("div", "bar"), rms = el("div", "rms");
+    bar.id = "setup-bar";
+    rms.id = "setup-rms";
+    [zone, hot, bar, rms].forEach(function (x) { m.appendChild(x); });
+    inner.appendChild(m);
+    var read = el("div", "levelread", "");
+    read.id = "setup-level";
+    inner.appendChild(read);
+    inner.appendChild(el("p", "stepnote", "Aim for received signals to peak in the green band, -18 to -9 dBFS, and never into the red. With nothing on the channel the bar should sit low."));
+    body.appendChild(inner);
+    card.appendChild(body);
+    wrap.appendChild(card);
+
+    var none = el("p", "stepnote", "No level readings have arrived from this station. Levels are set on the station page, once an access key is set or \"waterfall\".\"enableAudioControls\" is on.");
+    none.id = "setup-nolevel";
+    none.hidden = station.levelSeen;
+    wrap.appendChild(none);
+
+    var gain = el("div", "field");
+    gain.id = "setup-gain-row";
+    gain.hidden = true;
+    var gl = el("label", null, "Sound card input gain");
+    gl.htmlFor = "setup-gain";
+    gain.appendChild(gl);
+    var slider = el("input");
+    slider.type = "range";
+    slider.id = "setup-gain";
+    gain.appendChild(slider);
+    var gr = el("div", "levelread");
+    gr.id = "setup-gain-read";
+    gain.appendChild(gr);
+    wrap.appendChild(gain);
+    loadGain(slider, gr, gain);
+
+    if (setup.kind !== "ubersdr" && setup.kind !== "other") {
       var box = el("div", "tryit");
       box.id = "keytest";
       wrap.appendChild(box);
@@ -4041,47 +4189,27 @@ var ConfigModel = (function () {
 
   function pct(db) { return Math.max(0, Math.min(100, (db + 60) * 100 / 60)); }
 
-  function startMeter() {
-    if (meter.ws) return;
-    var scheme = location.protocol === "https:" ? "wss" : "ws";
-    var base = location.pathname.replace(/[^\/]*$/, "");
-    var ws;
-    try { ws = new WebSocket(scheme + "://" + location.host + base + "ws"); } catch (e) { return; }
-    meter.ws = ws;
-    ws.onmessage = function (e) {
-      if (typeof e.data !== "string") return;
-      var m;
-      try { m = JSON.parse(e.data); } catch (x) { return; }
-      if (m && m.type === "level") paintLevel(m);
-    };
-    ws.onclose = function () { if (meter.ws === ws) meter.ws = null; };
-  }
-
-  function stopMeter() {
-    clearTimeout(meter.stale);
-    if (meter.ws) {
-      var ws = meter.ws;
-      meter.ws = null;
-      ws.onclose = null;
-      try { ws.close(); } catch (e) { /* already closed */ }
-    }
-  }
-
-  // The station page's reading, on the station page's scale: green -18 to -9, red from -6.
+  // One reading, on the station page's scale: green -18 to -9, red from -6. The first one shows
+  // the meter. A bar is trusted for a second after its last reading, as on the station page
+  // (MIX_STALE_MS), and emptied when none comes.
   function paintLevel(m) {
+    station.levelSeen = true;
+    var box = $("setup-levelbox");
+    if (!box) return;
+    box.hidden = false;
+    $("setup-nolevel").hidden = true;
     var bar = $("setup-bar");
-    if (!bar) return;
     bar.style.width = pct(m.peak) + "%";
     bar.classList.toggle("loud", !!m.clip || m.peak >= -6);
     bar.classList.toggle("quiet", !m.clip && m.peak < -30);
     $("setup-rms").style.left = pct(m.rms) + "%";
     $("setup-level").textContent = m.peak.toFixed(1) + " dBFS"
       + (m.clip ? ", clipping: turn the input gain down" : m.peak >= -6 ? ", too loud" : m.peak < -30 ? ", quiet" : "");
-    clearTimeout(meter.stale);
-    meter.stale = setTimeout(function () {
+    clearTimeout(station.stale);
+    station.stale = setTimeout(function () {
       var b = $("setup-bar");
-      if (b) { b.style.width = "0%"; $("setup-level").textContent = "No reading"; }
-    }, 1500);
+      if (b) { b.style.width = "0%"; b.classList.remove("loud", "quiet"); $("setup-level").textContent = "no reading"; }
+    }, 1000);
   }
 
   // The sound card's input gain, from /api/mixer, hidden where the station has no card to mix.
@@ -4105,13 +4233,9 @@ var ConfigModel = (function () {
   }
 
   $("skip-setup").addEventListener("click", function () {
-    sessionStorage.setItem(SKIP_STORE, "1");
-    blankDoc = false;
-    doc = clone(loaded);
-    pickRemoved = [];
-    setup.active = false;
-    scheduleCheck();
-    setTimeout(render, 0);
+    // Remembered for this station. The link itself changes the hash, and leaving setup puts the
+    // document back as it was (see leaveSetup).
+    try { localStorage.setItem(SKIP_STORE, "1"); } catch (e) { /* private mode: asked again next time */ }
   });
 
   // ---------------------------------------------------------------- edit as text

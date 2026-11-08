@@ -32,40 +32,47 @@ public partial class ConfigPageTests
         ConfigSetup.NeverConfigured(RepoFile("soundmodem.example.json")).Should().BeTrue();
     }
 
+    private const string FmDone = "{ \"device\": \"default\", \"sideband\": \"fm\", \"kissPort\": 8105, \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\" } ], \"ptt\": { \"type\": \"cm108\", \"device\": \"/dev/hidraw0\" }, \"waterfall\": { \"port\": 8107 } }";
+
     [Theory]
     [InlineData("", true)]
     [InlineData("{}", true)]
     [InlineData("// only a comment\n{ }", true)]
-    [InlineData("{ \"waterfall\": { \"port\": 8107 }, \"kissPort\": 9000, \"bind\": \"*\" }", true)]
-    [InlineData("{ \"device\": \"pipe:/tmp/a,/tmp/a\", \"waterfall\": { \"port\": 8107 } }", true)]
-    [InlineData("{ \"modems\": [] }", true)]
-    [InlineData("{ \"device\": \"default\", \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\" } ], \"ptt\": { \"type\": \"cm108\", \"device\": \"/dev/hidraw0\" } }", true)]
-    [InlineData("{ \"Device\": \"default\", \"Modems\": [ { \"mode\": \"AFSK1200\" } ], \"PTT\": { \"type\": \"CM108\", \"device\": \"/dev/hidraw0\" }, \"waterfall\": { \"port\": 8108 } }", true)]
-    [InlineData("{ \"device\": \"plughw:CARD=Device,DEV=0\", \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\" } ], \"ptt\": { \"type\": \"cm108\", \"device\": \"/dev/hidraw0\" } }", false)]
-    [InlineData("{ \"modems\": [ { \"subChannel\": 0, \"mode\": \"bpsk300\" } ], \"ptt\": { \"type\": \"cm108\", \"device\": \"/dev/hidraw0\" } }", false)]
-    [InlineData("{ \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\" } ], \"ptt\": { \"type\": \"cm108\", \"device\": \"/dev/hidraw1\" } }", false)]
-    [InlineData("{ \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\" }, { \"subChannel\": 1, \"mode\": \"afsk1200\" } ], \"ptt\": { \"type\": \"cm108\", \"device\": \"/dev/hidraw0\" } }", false)]
-    [InlineData("{ \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\", \"frequency\": 1700 } ], \"ptt\": { \"type\": \"cm108\", \"device\": \"/dev/hidraw0\" } }", false)]
-    [InlineData("{ \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\" } ] }", false)]
+    // The shipped example, whatever its spacing, comments and the case of its keys.
+    [InlineData("{ \"Device\": \"default\", \"MODEMS\": [ { \"mode\": \"afsk1200\", \"subChannel\": 0 } ], \"ptt\": { \"device\": \"/dev/hidraw0\", \"type\": \"cm108\" }, \"waterfall\": { \"port\": 8107 } /* x */ }", true)]
+    // Nothing else counts: not plumbing alone, not a device alone, not a station that runs.
+    [InlineData("{ \"waterfall\": { \"port\": 8107 }, \"kissPort\": 9000, \"bind\": \"*\" }", false)]
+    [InlineData("{ \"device\": \"plughw:CARD=Device,DEV=0\" }", false)]
+    [InlineData("{ \"device\": \"ubersdr:m9psy-1.instance.ubersdr.org\", \"ubersdr\": { \"mode\": \"iq48\" }, \"publish\": { \"url\": \"wss://monitor.example/\" } }", false)]
+    [InlineData("{ \"device\": \"flex:10.0.0.9\", \"flex\": { } }", false)]
+    [InlineData("{ \"device\": \"flex:10.0.0.9\", \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\" } ] }", false)]
+    [InlineData("{ \"sideband\": \"fm\", \"device\": \"default\", \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\" } ], \"ptt\": { \"type\": \"cm108\", \"device\": \"/dev/hidraw0\" }, \"waterfall\": { \"port\": 8107 } }", false)]
+    [InlineData(FmDone, false)]
+    [InlineData("{ \"modems\": [] }", false)]
     [InlineData("{ \"ptt\": { \"type\": \"serial\", \"device\": \"/dev/ttyUSB0\" } }", false)]
-    [InlineData("{ \"rig\": { \"rigctld\": \"localhost:4532\" } }", false)]
     [InlineData("{ \"monitor\": { } }", false)]
     [InlineData("not json", false)]
-    public void Never_Configured_Is_Decided_By_The_Choices_And_Nothing_Else(string file, bool expected)
+    public void Never_Configured_Is_The_Shipped_Example_Or_Empty_And_Nothing_Else(string file, bool expected)
     {
         ConfigSetup.NeverConfigured(file).Should().Be(expected);
     }
 
     [Fact]
-    public async Task The_Station_Says_Whether_It_Was_Never_Configured_And_Whether_It_Could_Key()
+    public void The_Example_Built_Into_The_Station_Is_The_Shipped_File()
+    {
+        ConfigSetup.NeverConfigured(RepoFile("soundmodem.example.json"), ConfigSetup.ExampleText()).Should().BeTrue();
+        ConfigSetup.NeverConfigured(ConfigSetup.ExampleText(), RepoFile("soundmodem.example.json")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task The_Station_Says_Whether_It_Was_Never_Configured()
     {
         using var configured = new Station(_dir, key: "");
         JsonNode a = JsonNode.Parse(await configured.Client.GetStringAsync(configured.Url("api/config")))!;
         a["setup"]!["neverConfigured"]!.GetValue<bool>().Should().BeFalse("it has a modem");
-        a["txTest"]!["available"]!.GetValue<bool>().Should().BeFalse("no transmitter test is served here");
-        a["txTest"]!["refusal"]!.GetValue<string>().Should().Contain("no transmitter");
+        a.AsObject().ContainsKey("txTest").Should().BeFalse("the page asks the station page's socket whether a test can run");
 
-        using var fresh = new Station(_dir, key: "", configText: "{ \"device\": \"null\" }");
+        using var fresh = new Station(_dir, key: "", configText: "{ }");
         JsonNode b = JsonNode.Parse(await fresh.Client.GetStringAsync(fresh.Url("api/config")))!;
         b["setup"]!["neverConfigured"]!.GetValue<bool>().Should().BeTrue();
     }
@@ -90,6 +97,7 @@ public partial class ConfigPageTests
     [InlineData("ssb", "radio,card,keying,modes,software,try")]
     [InlineData("flex", "radio,keying,modes,software,try")]
     [InlineData("ubersdr", "radio,modes,software,try")]
+    [InlineData("other", "radio,modes,software,try")]
     public void The_Steps_Skip_What_The_Kind_Of_Radio_Does_Not_Need(string kind, string expected)
     {
         string walked = Evaluate("{}", $$"""
@@ -145,6 +153,10 @@ public partial class ConfigPageTests
         Evaluate("""{"sideband":"fm"}""", """return M.setupKindOf(doc);""").Should().Be("fm");
         Evaluate("""{"sideband":"lsb"}""", """return M.setupKindOf(doc);""").Should().Be("ssb");
         Evaluate("{}", """return M.setupKindOf(doc);""").Should().Be("ssb");
+        foreach (string device in new[] { "openwebrx:http://x", "rtltcp:host", "sdrconnect:host", "iqcard:hw:1", "iqpipe:-" })
+        {
+            Evaluate($$"""{"device":"{{device}}"}""", """return M.setupKindOf(doc);""").Should().Be("other", device);
+        }
     }
 
     [Fact]
@@ -165,6 +177,8 @@ public partial class ConfigPageTests
         Complete("""{"modems":[{"mode":"afsk1200"}]}""", "\"fm\"", "modes").Should().Be("true");
         Complete("""{"kissPort":0}""", "\"fm\"", "software").Should().Be("false");
         Complete("{}", "\"fm\"", "software").Should().Be("true", "the default port is fine");
+        Complete("""{"ardop":{}}""", "\"ssb\"", "modes").Should().Be("true", "an ARDOP-only station has nothing to add");
+        Complete("""{"device":"rtltcp:host"}""", "\"other\"", "radio").Should().Be("true", "its device is left as it is");
     }
 
     [Fact]
@@ -184,7 +198,11 @@ public partial class ConfigPageTests
         Evaluate("{}", """return M.setupSoftwareWords(doc, "shack").text;""")
             .Should().Contain("127.0.0.1 port 8105").And.Contain("Only programs on this machine");
         Evaluate("""{"bind":"*","kissPort":9105}""", """return M.setupSoftwareWords(doc, "shack").text;""")
-            .Should().Contain("shack port 9105").And.Contain("keep it on a network you trust");
+            .Should().Contain("shack port 9105");
+        string keyless = Evaluate("{}", """return M.setupNetworkWarning(doc);""");
+        keyless.Should().Contain("KISS port").And.Contain("station page").And.Contain("transmit test").And.Contain("settings page")
+            .And.Contain("no access key").And.Contain("key the radio").And.Contain("Set an access key");
+        Evaluate("""{"api":{"key":"k"}}""", """return M.setupNetworkWarning(doc);""").Should().NotContain("no access key");
     }
 
     [Fact]
@@ -198,8 +216,24 @@ public partial class ConfigPageTests
         string ptt = """{"ptt":{"type":"cm108","device":"/dev/hidraw0"}}""";
         State(ptt, ptt, "{available: true}").Should().Be("true|");
         State(ptt, ptt, "{available: false, refusal: 'no PTT'}").Should().StartWith("false|The station cannot key the radio yet. The station says: no PTT.");
-        State(ptt, ptt, "null").Should().StartWith("false|The station cannot key the radio yet.");
+        State(ptt, ptt, "null").Should().StartWith("false|Asking the station", "no answer from the page socket yet");
         State("{}", ptt, "{available: true}").Should().Contain("you have changed that").And.Contain("Save and start first");
+    }
+
+    [Fact]
+    public void The_Summary_Names_The_Card_And_Keeps_The_Device_As_Small_Print()
+    {
+        Engine js = Model();
+        js.SetValue("schemaJson", ConfigSchema.Build().ToJsonString());
+        string row = js.Evaluate("""
+            (function () {
+              var found = { soundCards: { items: [ { id: "Device", number: 1, name: "USB PnP Sound Device", device: "plughw:CARD=Device,DEV=0" } ] } };
+              var doc = {device: "plughw:CARD=Device,DEV=0", modems: [{mode: "afsk1200"}]};
+              return JSON.stringify(ConfigModel.setupSummary(JSON.parse(schemaJson), doc, "fm", found)[1]);
+            })()
+            """).AsString();
+
+        row.Should().Be("""["Sound card","USB PnP Sound Device","plughw:CARD=Device,DEV=0"]""");
     }
 
     [Fact]

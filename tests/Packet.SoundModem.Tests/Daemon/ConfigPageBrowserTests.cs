@@ -785,10 +785,15 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await ReplaceAsync(page, "#setup-kiss-port", port.ToString());
         await page.Locator("#pick-bind-network").CheckAsync();
         await Assertions.Expect(page.Locator("#setup-kiss-words")).ToContainTextAsync($"port {port}", new() { Timeout = StepMs });
+        // The network option says what it really opens.
+        await Assertions.Expect(page.Locator("#setup-network-warning")).ToContainTextAsync("settings page", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#setup-network-warning")).ToContainTextAsync("no access key", new() { Timeout = StepMs });
         await NextAsync(page, "try");
 
         // Try it.
         await Assertions.Expect(page.Locator("#setup-summary")).ToContainTextAsync("KISS port " + port, new() { Timeout = StepMs });
+        // The card by its name, with the device string as small print.
+        await Assertions.Expect(page.Locator("#setup-summary dd small")).ToContainTextAsync("plughw:CARD=Device,DEV=0", new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#setup-save")).ToBeDisabledAsync(new() { Timeout = StepMs });
         await page.Locator("#setup-check").ClickAsync();
         await Assertions.Expect(page.Locator("#setup-check-status")).ToContainTextAsync("Looks good", new() { Timeout = StepMs });
@@ -811,7 +816,8 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
 
     /// <summary>
     /// A receive-only setup that the station can really restart on: after the restart the page
-    /// shows the input level meter and the station page link, and the key test is offered (never pressed).
+    /// shows the station page link and says honestly that it has no level readings, and the key test
+    /// really runs (on a pipe, which keys nothing).
     /// </summary>
     [Fact(Timeout = 600_000)]
     public async Task After_Save_And_Start_Setup_Shows_The_Level_Meter_And_A_Link_To_The_Station_Page()
@@ -838,9 +844,23 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
 
         await Assertions.Expect(page.Locator("#setup-done")).ToBeVisibleAsync(new() { Timeout = RestartMs });
         await _station.WaitForStartsAsync(2);
-        await Assertions.Expect(page.Locator("#setup-meter")).ToBeVisibleAsync(new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#setup-station-link")).ToHaveAttributeAsync("href", "./", new() { Timeout = StepMs });
+
+        // This station has no way to set levels, so it sends no readings: no meter is promised,
+        // and the page says where levels are set.
+        await Assertions.Expect(page.Locator("#setup-levelbox")).ToBeHiddenAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#setup-nolevel")).ToContainTextAsync("enableAudioControls", new() { Timeout = StepMs });
+
+        // The key test, for real: a pipe station keys nothing, it only writes audio into the pipe,
+        // so it is safe to run. The station page's own route is used (the page socket), and the
+        // station itself says it ran, in its journal.
         await Assertions.Expect(page.Locator("#keytest-go")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await page.Locator("#keytest-go").ClickAsync();
+        await Assertions.Expect(page.Locator("#keytest-ask")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await page.Locator("#keytest-yes").ClickAsync();
+        await Assertions.Expect(page.Locator("#keytest-result")).ToContainTextAsync("Keyed and released", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#keytest-detail")).ToContainTextAsync("The station says", new() { Timeout = StepMs });
+        await _station.WaitForLogAsync("tx test: done");
 
         JsonNode file = _station.ReadConfig();
         file["modems"]![0]!["mode"]!.GetValue<string>().Should().Be("bpsk300");
@@ -881,6 +901,45 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await Assertions.Expect(page.Locator("#overview-radio")).ToBeVisibleAsync(new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#pending")).ToBeHiddenAsync(new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#setup")).ToHaveCountAsync(0, new() { Timeout = StepMs });
+
+        // Remembered for this station: a reload does not open setup again.
+        await page.ReloadAsync();
+        await Assertions.Expect(page.Locator("#overview-radio")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#setup")).ToHaveCountAsync(0, new() { Timeout = StepMs });
+    }
+
+    /// <summary>Leaving setup any way but Skip puts the document back: nothing is pending.</summary>
+    [Fact(Timeout = 600_000)]
+    public async Task Leaving_Setup_Half_Way_Leaves_No_Pending_Changes()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null, fresh: true);
+        IPage page = await OpenSetupAsync();
+        await page.Locator("#pick-kind-fm").CheckAsync();
+        await NextAsync(page, "card");
+
+        await page.GotoAsync(_station.Url("config#overview"));
+        await Assertions.Expect(page.Locator("#overview-radio")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#pending")).ToBeHiddenAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#overview-radio")).ToContainTextAsync("pipe:", new() { Timeout = StepMs });
+    }
+
+    /// <summary>A web receiver skips the sound card and keying steps, and can be typed in when no
+    /// list was fetched.</summary>
+    [Fact(Timeout = 600_000)]
+    public async Task A_Web_Receiver_Skips_Sound_Card_And_Keying_And_Can_Be_Typed()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null, machine: "", fresh: true);
+        IPage page = await OpenSetupAsync();
+        await page.Locator("#pick-kind-ubersdr").CheckAsync();
+        await Assertions.Expect(page.Locator("#setup-next")).ToBeDisabledAsync(new() { Timeout = StepMs });
+        await ReplaceAsync(page, "#setup-uber-device", "m9psy-1.instance.ubersdr.org");
+        await page.Locator("#setup-uber-device").PressAsync("Tab");
+        await Assertions.Expect(page.Locator("#setup-next")).ToBeEnabledAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#setup-next")).ToContainTextAsync("choose modes", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#step-item-card")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex("\\bskip\\b"), new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#step-item-keying")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex("\\bskip\\b"), new() { Timeout = StepMs });
     }
 
     // ---------------------------------------------------------------- the browser
@@ -977,6 +1036,7 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         private Task _supervising = Task.CompletedTask;
 
         private string? _machine;
+        private string? _example;
 
         private Station(string dir, int port, string configPath)
         {
@@ -1014,8 +1074,9 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
 
         /// <param name="machine">A machine for /api/config/discover to find, in the daemon's fixture
         /// format (HardwareFixture), or null for the machine the test runs on.</param>
-        /// <param name="fresh">A station that has never been configured: no modems and no PTT, so the
-        /// page opens its setup by itself.</param>
+        /// <param name="fresh">A station that has never been configured: its file is the same as the
+        /// example the daemon is told to compare with (ConfigSetup.ExampleVariable), so the page
+        /// opens its setup by itself. The shipped example cannot start on a test machine.</param>
         public static async Task<Station> StartAsync(string dir, string? key, string? modems = null, string? machine = null, bool fresh = false)
         {
             int port = FreePorts.Next();
@@ -1043,6 +1104,12 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
             {
                 station._machine = Path.Combine(dir, "machine.txt");
                 File.WriteAllText(station._machine, machine);
+            }
+
+            if (fresh)
+            {
+                station._example = Path.Combine(dir, "example.json");
+                File.Copy(configPath, station._example);
             }
 
             Directory.CreateDirectory(station.StateDirectory);
@@ -1142,6 +1209,11 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                 if (_machine is not null)
                 {
                     info.Environment[HardwareFixture.Variable] = _machine;
+                }
+
+                if (_example is not null)
+                {
+                    info.Environment[ConfigSetup.ExampleVariable] = _example;
                 }
 
                 var process = new Process { StartInfo = info };

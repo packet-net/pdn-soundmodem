@@ -127,9 +127,6 @@ internal sealed class TxTestRunner
         }
     }
 
-    /// <summary>Why a test cannot run on this station at all, or null when it can.</summary>
-    internal string? Refusal => _options.Refusal;
-
     /// <summary>What the operator's page is offered.</summary>
     internal TxTestControl Control => new()
     {

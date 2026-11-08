@@ -1060,8 +1060,7 @@ internal sealed class ConfigApi
                       "instance": "{{Instance}}",
                       "configPath": {{JsonSerializer.Serialize(_configPath)}},
                       "running": {{Redact(_runningJson())}},
-                      "setup": { "neverConfigured": {{(ConfigSetup.NeverConfigured(_runningJson()) ? "true" : "false")}} },
-                      "txTest": {{TxTestSummary().ToJsonString()}}
+                      "setup": { "neverConfigured": {{(ConfigSetup.NeverConfigured(_runningJson()) ? "true" : "false")}} }
                     }
                     """).ConfigureAwait(false);
                 return true;
@@ -1335,20 +1334,6 @@ internal sealed class ConfigApi
             _mixerGate.Release();
         }
     }
-
-    /// <summary>
-    /// Whether the running station could key the radio for a test, and if not why not, in the
-    /// station's own words. The setup flow asks before it offers the button, because a refusal
-    /// after a click on a button that was never going to work reads as a fault.
-    /// </summary>
-    private JsonObject TxTestSummary() => new()
-    {
-        ["available"] = _txTest is { Refusal: null },
-        ["refusal"] = _txTest is null
-            ? "this station has no transmitter set up"
-            : _txTest.Refusal,
-        ["maxSeconds"] = _txTest?.Control.MaxSeconds,
-    };
 
     /// <summary>Indented, because these answers are read by people as often as by scripts.</summary>
     private static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true };
