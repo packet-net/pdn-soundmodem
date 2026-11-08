@@ -191,6 +191,30 @@
   .choice b { display: block; font-weight: 600; font-size: 14px; }
   .choice span { color: var(--muted); font-size: 12.5px; }
 
+
+  /* ---------------------------------------------------------- found on this machine */
+  .found { margin-bottom: 18px; }
+  .found .lead { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; font-size: 13.5px; color: var(--muted); margin-bottom: 10px; }
+  .found .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }
+  .found .lead .btn { margin-left: auto; }
+  .found .none { color: var(--muted); font-size: 13.5px; padding: 4px 0 8px; }
+  .found .problem { color: var(--warn); font-size: 13px; margin-bottom: 8px; }
+  .option { display: grid; grid-template-columns: 22px 1fr; gap: 4px 12px; padding: 12px 14px; border: 1px solid var(--edge);
+            border-radius: 7px; margin-bottom: 8px; background: var(--panel); cursor: pointer; }
+  .option:hover { border-color: var(--muted); }
+  .option.picked { border-color: var(--amber); background: #17130c; }
+  .option input[type=radio] { margin-top: 4px; accent-color: var(--amber); }
+  .option b { font-weight: 600; }
+  .option .detail { grid-column: 2; color: var(--muted); font-size: 13.5px; overflow-wrap: anywhere; }
+  .option .detail .mono { color: var(--ink); font-family: var(--mono); font-size: 12.5px; }
+  .option .extra { grid-column: 2; margin-top: 6px; display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+  .option .extra .field { min-width: 150px; }
+  .found .group { color: var(--muted); font-size: 12.5px; margin: 12px 0 6px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .found .pulse.working { animation: pulse 1.2s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity: .35; } }
+  }
+
   @media (max-width: 760px) {
     .strip { padding: 12px 12px 8px; }
     .layout { grid-template-columns: 1fr; }
@@ -1026,6 +1050,150 @@ var ConfigModel = (function () {
   }
 
 
+  // ---------------------------------------------------------------- what this machine has
+  // Turning what /api/config/discover found into choices, and a chosen choice into settings.
+  // The page draws the choices; what picking one writes is decided here, so the tests can run it.
+
+  function section(found, name) {
+    var s = found && found[name];
+    return s && Array.isArray(s.items) ? s.items : [];
+  }
+
+  // The sound card a "device" string names, or null: plughw:CARD=Device,DEV=0 by id, hw:1 by number.
+  function cardOfDevice(device, cards) {
+    if (typeof device !== "string") return null;
+    var byId = /CARD=([^,:]+)/i.exec(device);
+    var byNumber = /^(?:plug)?hw:(\d+)/i.exec(device);
+    for (var i = 0; i < cards.length; i++) {
+      if (byId && cards[i].id === byId[1]) return cards[i];
+      if (byNumber && cards[i].number === parseInt(byNumber[1], 10)) return cards[i];
+    }
+    return null;
+  }
+
+  function listWords(names) { return names.join(", "); }
+
+  // What the Radio and audio area offers: the sound cards, and the FlexRadios on the LAN. (UberSDR
+  // receivers are offered from a list of their own, see uberChoices.)
+  function radioChoices(found) {
+    var out = [];
+    section(found, "soundCards").forEach(function (c) {
+      var bits = [c.device];
+      if (c.cm108) bits.push(c.kind === "aioc" ? "an AIOC, which can key the radio too" : "a CM108 interface, which can key the radio too");
+      if (!c.capture) bits.push("playback only");
+      if (!c.playback) bits.push("record only");
+      var detail = bits.join(", ") + ".";
+      var rec = c.captureControls || [];
+      var play = c.playbackControls || [];
+      if (rec.length > 0 || play.length > 0) {
+        detail += " Mixer: " + (rec.length ? "record " + listWords(rec) : "") + (rec.length && play.length ? "; " : "")
+          + (play.length ? "play " + listWords(play) : "") + ".";
+      }
+      out.push({ id: "card-" + c.id, kind: "soundcard", title: c.name, detail: detail, device: c.device,
+        section: null, ownKeying: false });
+    });
+    section(found, "flexRadios").forEach(function (f) {
+      var name = f.name || f.model || "FlexRadio";
+      out.push({ id: "flex-" + (f.serial || f.ip), kind: "flex", title: "FlexRadio " + name,
+        detail: (f.model ? f.model + " at " : "") + f.ip + ". It keys itself, so no PTT is needed.",
+        device: f.device, section: { name: "flex", value: {} }, ownKeying: true });
+    });
+    return out;
+  }
+
+  function uberChoices(found) {
+    return section(found, "uberSdr").map(function (u) {
+      var where = u.location ? ", " + u.location : "";
+      return { id: "ubersdr-" + u.host, kind: "ubersdr", title: (u.name || u.host) + where + (u.free ? "" : " (full)"),
+        detail: u.device, device: u.device, section: { name: "ubersdr", value: { mode: "iq48" } }, ownKeying: true };
+    });
+  }
+
+  // A receiver on the public list, or a Flex, has no transmitter this station keys: the settings
+  // that name one are refused beside it, so picking it takes them out.
+  function pickRadio(doc, choice) {
+    set(doc, "device", choice.device);
+    if (choice.section && !isSet(get(doc, choice.section.name))) {
+      set(doc, choice.section.name, JSON.parse(JSON.stringify(choice.section.value)));
+    }
+    if (choice.ownKeying) {
+      remove(doc, "ptt");
+      remove(doc, "rig");
+      var alsa = get(doc, "alsa");
+      if (alsa && typeof alsa === "object") {
+        remove(alsa, "mixer");
+        if (Object.keys(alsa).length === 0) remove(doc, "alsa");
+      }
+    }
+  }
+
+  function baseName(path) { return path.replace(/^.*\//, ""); }
+
+  // What the Keying area offers. gpio and line are the extra choices a pin or a serial port has.
+  function keyingChoices(found, doc) {
+    var cards = section(found, "soundCards");
+    var current = cardOfDevice(get(doc, "device"), cards);
+    var out = [];
+    section(found, "hidDevices").forEach(function (h) {
+      if (!h.cm108) return;
+      var same = current && h.soundCard === current.id;
+      out.push({ id: "ptt-cm108-" + baseName(h.path), type: "cm108", device: h.path,
+        title: h.soundCard ? "The sound card's own PTT pin" : "A CM108 PTT pin",
+        detail: h.name + (same ? ", the same card you picked for audio," : "") + " at " + h.path
+          + ". Most CM108 interfaces key on GPIO 3." + (h.canOpen ? "" : " This service cannot open it yet; see the udev note in the reference."),
+        extra: "gpio" });
+    });
+    section(found, "serialPorts").forEach(function (p) {
+      out.push({ id: "ptt-serial-" + baseName(p.node || p.path), type: "serial", device: p.path,
+        title: "A serial port (" + baseName(p.node || p.path) + ")",
+        detail: p.name + " at " + p.path + ", keying on RTS or DTR." + (p.canOpen ? "" : " This service cannot open it yet; it needs the dialout group."),
+        extra: "line" });
+    });
+    var rig = found && found.rigctld;
+    out.push({ id: "ptt-rigctld", type: "rigctld", device: "",
+      title: "Hamlib's rigctld",
+      detail: rig && rig.answering
+        ? "Answering on " + rig.address + " now."
+        : "Nothing is answering on " + ((rig && rig.address) || "localhost:4532") + " now. Choose this if you start rigctld yourself.",
+      extra: null });
+    out.push({ id: "ptt-vox", type: "vox", device: "", title: "The radio's VOX, or not at all",
+      detail: "Nothing is keyed. Fine for receive-only, risky for transmitting: VOX clips the start of every packet.",
+      extra: null });
+    return out;
+  }
+
+  // Which choice the document's ptt section is, by id; null when it is none of them (typed by hand).
+  function keyingPicked(choices, doc) {
+    var ptt = get(doc, "ptt");
+    if (!ptt || typeof ptt !== "object") return "ptt-vox";
+    var type = String(get(ptt, "type") || "serial").toLowerCase();
+    var device = get(ptt, "device") || "";
+    for (var i = 0; i < choices.length; i++) {
+      var c = choices[i];
+      if (c.type === type && (type === "rigctld" || c.device === device)) return c.id;
+    }
+    return null;
+  }
+
+  // Writes the ptt section a choice stands for, as the reference spells it. gpio 3 and line rts
+  // are the defaults, so they are left out; rigctld needs a rig section, which gets the usual address.
+  function pickKeying(doc, choice, opts) {
+    opts = opts || {};
+    if (choice.type === "vox") { remove(doc, "ptt"); return; }
+    var ptt = { type: choice.type };
+    if (choice.type === "cm108") {
+      ptt.device = choice.device;
+      var gpio = opts.gpio === undefined ? 3 : opts.gpio;
+      if (gpio !== 3) ptt.gpio = gpio;
+    } else if (choice.type === "serial") {
+      ptt.device = choice.device;
+      if (opts.line === "dtr") ptt.line = "dtr";
+    } else if (choice.type === "rigctld" && !isSet(get(doc, "rig"))) {
+      set(doc, "rig", { rigctld: "localhost:4532" });
+    }
+    set(doc, "ptt", ptt);
+  }
+
   var HIDDEN = "(set, not shown)";
 
   return {
@@ -1040,6 +1208,8 @@ var ConfigModel = (function () {
     keyDelta: keyDelta, nudged: nudged, freeCentre: freeCentre, nextSubChannel: nextSubChannel,
     newModem: newModem, modeInfo: modeInfo, modesOfGroup: modesOfGroup, stripLayout: stripLayout,
     stripCaption: stripCaption, colourOf: colourOf,
+    cardOfDevice: cardOfDevice, radioChoices: radioChoices, uberChoices: uberChoices, pickRadio: pickRadio,
+    keyingChoices: keyingChoices, keyingPicked: keyingPicked, pickKeying: pickKeying,
     setHidden: function (h) { HIDDEN = h; }
   };
 })();
@@ -1144,6 +1314,7 @@ var ConfigModel = (function () {
       $("shell").hidden = false;
       $("edit-text").hidden = false;
       history.stale = true;
+      found = { state: "idle", data: null, error: "", seq: found.seq + 1 };
       render();
       fetchHistory().then(function () { renderNav(); });
     }).catch(function (e) {
@@ -1203,6 +1374,158 @@ var ConfigModel = (function () {
   $("edit-text").addEventListener("click", function () {
     location.hash = route() === "text" ? "#overview" : "#text";
   });
+
+  // ---------------------------------------------------------------- found on this machine
+  // What /api/config/discover says the machine has, offered as choices above the fields. A choice
+  // only fills the fields in; they stay as they were to type into.
+  var found = { state: "idle", data: null, error: "", seq: 0 };
+
+  function look(fresh) {
+    var seq = ++found.seq;
+    found.state = "loading";
+    paintFound();
+    return api("api/config/discover" + (fresh ? "?fresh=1" : "")).then(function (r) {
+      if (r.status === 401) { load(); return null; }
+      if (!r.ok) return r.text().then(function (t) { throw new Error(t); });
+      return r.json();
+    }).then(function (d) {
+      if (seq !== found.seq || !d) return;
+      found.data = d;
+      found.state = "done";
+      paintFound();
+    }).catch(function (e) {
+      if (seq !== found.seq) return;
+      found.state = "failed";
+      found.error = e.message;
+      paintFound();
+    });
+  }
+
+  function option(id, picked, title, detail, onPick) {
+    var label = el("label", "option" + (picked ? " picked" : ""));
+    label.id = "option-" + id;
+    var radio = el("input");
+    radio.type = "radio";
+    radio.name = "found-choice";
+    radio.id = "pick-" + id;
+    radio.checked = picked;
+    radio.addEventListener("change", function () { if (radio.checked) onPick(); });
+    label.appendChild(radio);
+    label.appendChild(el("b", null, title));
+    label.appendChild(el("span", "detail", detail));
+    return label;
+  }
+
+  function paintFound() {
+    var box = $("found");
+    if (!box || !doc) return;
+    var keying = route() === "keying";
+    box.textContent = "";
+    var lead = el("div", "lead");
+    lead.appendChild(el("span", "pulse" + (found.state === "loading" ? " working" : "")));
+    lead.appendChild(el("span", null, found.state === "loading" ? "Looking at this machine..."
+      : found.state === "failed" ? "Could not look at this machine: " + found.error
+      : "Found on this machine just now"));
+    var again = el("button", "btn small", "Look again");
+    again.type = "button";
+    again.id = "look-again";
+    again.disabled = found.state === "loading";
+    again.addEventListener("click", function () { look(true); });
+    lead.appendChild(again);
+    box.appendChild(lead);
+    if (found.state !== "done") return;
+    var d = found.data;
+    (keying ? ["hidDevices", "serialPorts"] : ["soundCards", "flexRadios", "uberSdr"]).forEach(function (name) {
+      if (d[name] && d[name].problem) {
+        var p = el("div", "problem", { soundCards: "Sound cards", hidDevices: "PTT pins", serialPorts: "Serial ports",
+          flexRadios: "FlexRadios", uberSdr: "UberSDR receivers" }[name] + ": " + d[name].problem + ".");
+        box.appendChild(p);
+      }
+    });
+    if (keying) paintKeying(box, d); else paintRadio(box, d);
+  }
+
+  function paintRadio(box, d) {
+    var device = M.get(doc, "device");
+    var choices = M.radioChoices(d);
+    if (choices.length === 0) {
+      box.appendChild(el("div", "none", "No sound cards or FlexRadios were found. Type the device below."));
+    }
+    choices.forEach(function (c) {
+      box.appendChild(option(c.id, device === c.device, c.title, c.detail, function () {
+        M.pickRadio(doc, c);
+        edited(true, "pick-" + c.id);
+      }));
+    });
+    var ubers = M.uberChoices(d);
+    if (ubers.length > 0) {
+      var row = el("div", "field");
+      row.appendChild(el("div", "group", "Or listen to a web receiver from the public UberSDR list"));
+      var wrap = el("div", "input");
+      var pick = el("select");
+      pick.id = "uber-pick";
+      var none = el("option", null, "Choose a receiver...");
+      none.value = "";
+      pick.appendChild(none);
+      ubers.forEach(function (u) {
+        var o = el("option", null, u.title);
+        o.value = u.id;
+        pick.appendChild(o);
+        if (device === u.device) pick.value = u.id;
+      });
+      pick.addEventListener("change", function () {
+        var c = ubers.filter(function (u) { return u.id === pick.value; })[0];
+        if (!c) return;
+        M.pickRadio(doc, c);
+        edited(true, "uber-pick");
+      });
+      wrap.appendChild(pick);
+      row.appendChild(wrap);
+      box.appendChild(row);
+    }
+  }
+
+  function paintKeying(box, d) {
+    var choices = M.keyingChoices(d, doc);
+    var picked = M.keyingPicked(choices, doc);
+    var ptt = M.get(doc, "ptt") || {};
+    choices.forEach(function (c) {
+      var opt = option(c.id, picked === c.id, c.title, c.detail, function () {
+        M.pickKeying(doc, c, {});
+        edited(true, "pick-" + c.id);
+      });
+      if (picked === c.id && c.extra) {
+        var extra = el("span", "extra");
+        var field = el("span", "field");
+        var id = "extra-" + c.id;
+        var lab = el("label", null, c.extra === "gpio" ? "GPIO pin" : "Line");
+        lab.htmlFor = id;
+        field.appendChild(lab);
+        var box2 = el("span", "input");
+        var sel = el("select");
+        sel.id = id;
+        var options = c.extra === "gpio"
+          ? [["3", "3 (usual)"], ["1", "1"], ["2", "2"], ["4", "4"]]
+          : [["rts", "RTS"], ["dtr", "DTR"]];
+        options.forEach(function (o) {
+          var e = el("option", null, o[1]);
+          e.value = o[0];
+          sel.appendChild(e);
+        });
+        var now = c.extra === "gpio" ? String(M.get(ptt, "gpio") || 3) : String(M.get(ptt, "line") || "rts").toLowerCase();
+        sel.value = now;
+        sel.addEventListener("change", function () {
+          M.pickKeying(doc, c, c.extra === "gpio" ? { gpio: parseInt(sel.value, 10) } : { line: sel.value });
+          edited(true, id);
+        });
+        box2.appendChild(sel);
+        field.appendChild(box2);
+        extra.appendChild(field);
+        opt.appendChild(extra);
+      }
+      box.appendChild(opt);
+    });
+  }
 
   // ---------------------------------------------------------------- the shell
   function render() {
@@ -1309,6 +1632,16 @@ var ConfigModel = (function () {
         && moreSections.length === 0 && group.unknown.length === 0) {
       root.appendChild(el("p", "muted", "Nothing here applies to this station."));
       return;
+    }
+    var wantsFound = areaId === "radio"
+      ? fields.some(function (n) { return n.path === "device"; })
+      : areaId === "keying" && sections.some(function (n) { return n.path === "ptt"; });
+    if (wantsFound) {
+      var box = el("div", "found");
+      box.id = "found";
+      root.appendChild(box);
+      paintFound();
+      if (found.state === "idle") look(false);
     }
     if (basicFields.length > 0) root.appendChild(fieldsCard(basicFields));
     basicSections.forEach(function (n) { root.appendChild(drawNode(n)); });

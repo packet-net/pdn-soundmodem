@@ -44,6 +44,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The Linux library's written device trees, for the discovery probes (HardwareDiscoveryTests). -->
+    <Compile Include="../Packet.SoundModem.Linux.Tests/FakeDeviceTree.cs" Link="Daemon/Linux/FakeDeviceTree.cs" />
+    <Compile Include="../Packet.SoundModem.Linux.Tests/Trees.cs" Link="Daemon/Linux/Trees.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The page probes are run by Node from the test output directory. -->
     <None Include="Waterfall/browser/page-probe.mjs" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Monitor/browser/monitor-probe.mjs" CopyToOutputDirectory="PreserveNewest" />

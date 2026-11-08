@@ -53,6 +53,7 @@ internal sealed class ConfigApi
     private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
     private MixerRuntime? _mixer;
     private RigControl? _rig;
+    private HardwareDiscovery? _discovery;
     private KeepAudio.KeepAudioRecorder? _keepAudio;
     private string _mixerWhyNot = "this station has no sound-card mixer";
 
@@ -116,6 +117,14 @@ internal sealed class ConfigApi
         _proposals = proposals;
         _prospectorCounts = counts;
     }
+
+    // ---------------------------------------------------------------- discovery
+    /// <summary>
+    /// Replaces what <c>/api/config/discover</c> looks at, which is this machine and its network
+    /// unless this says otherwise. The seam the tests use to give the page a machine with a
+    /// CM108 interface, serial adapters and a Flex without owning any.
+    /// </summary>
+    internal void ServeDiscovery(HardwareDiscovery discovery) => _discovery = discovery;
 
     // ---------------------------------------------------------------- TX test
     /// <summary>
@@ -861,13 +870,13 @@ internal sealed class ConfigApi
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
         if (path is not ("/api/config" or "/api/proposals" or "/api/txtest" or "/api/txlease" or "/api/mixer"
-            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio" or "/api/config/schema" or "/api/config/plan" or ConfigPage.Path)
+            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio" or "/api/config/schema" or "/api/config/plan" or "/api/config/discover" or ConfigPage.Path)
             && !path.StartsWith("/api/config/history", StringComparison.Ordinal))
         {
             return false;
         }
 
-        bool isConfig = path is "/api/config" or "/api/config/plan" || path.StartsWith("/api/config/history", StringComparison.Ordinal);
+        bool isConfig = path is "/api/config" or "/api/config/plan" or "/api/config/discover" || path.StartsWith("/api/config/history", StringComparison.Ordinal);
 
         // The configuration page and the description it draws its form from hold no secret and
         // change nothing, so they are served to anyone who can reach the listener. The page asks
@@ -962,6 +971,12 @@ internal sealed class ConfigApi
         if (path is "/api/config/plan")
         {
             await GuardedAsync(context, () => PlanAsync(context)).ConfigureAwait(false);
+            return true;
+        }
+
+        if (path is "/api/config/discover")
+        {
+            await GuardedAsync(context, () => DiscoverAsync(context)).ConfigureAwait(false);
             return true;
         }
 
@@ -1318,6 +1333,25 @@ internal sealed class ConfigApi
     /// <c>POST /api/config/plan</c>: where each modem of a proposed configuration would sit,
     /// worked out by the band planning start-up uses, and nothing applied.
     /// </summary>
+    /// <summary>
+    /// <c>GET /api/config/discover</c>: what this machine has that a setting could name. Read-only;
+    /// <c>?fresh=1</c> skips the 30 second memory of the slow lookups.
+    /// </summary>
+    private async Task DiscoverAsync(HttpListenerContext context)
+    {
+        if (context.Request.HttpMethod != "GET")
+        {
+            await RespondAsync(context, 405, "GET to see the sound cards, PTT devices and radios this "
+                + "machine has; nothing is changed").ConfigureAwait(false);
+            return;
+        }
+
+        HardwareDiscovery discovery = _discovery ??= HardwareDiscovery.ForThisMachine();
+        bool fresh = context.Request.QueryString["fresh"] is "1" or "true";
+        JsonObject found = await discovery.DescribeAsync(fresh, CancellationToken.None).ConfigureAwait(false);
+        await RespondJsonAsync(context, 200, found.ToJsonString(Pretty)).ConfigureAwait(false);
+    }
+
     private async Task PlanAsync(HttpListenerContext context)
     {
         if (context.Request.HttpMethod != "POST")

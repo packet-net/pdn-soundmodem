@@ -28,6 +28,10 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Packet.SoundModem.Linux.Tests" />
+    <!-- The daemon's discovery endpoint reads the same device tree through the same seam, and
+         its tests write trees with the Linux tests' fakes. -->
+    <InternalsVisibleTo Include="pdn-soundmodem" />
+    <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
   </ItemGroup>
 
 </Project>

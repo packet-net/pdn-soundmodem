@@ -11,6 +11,9 @@
 
   <ItemGroup>
     <ProjectReference Include="../Packet.SoundModem/Packet.SoundModem.csproj" />
+    <!-- Finding the machine's radio interfaces for the configuration page's "found on this
+         machine" choices: the same sysfs reading the Linux library does for its apps. -->
+    <ProjectReference Include="../Packet.SoundModem.Linux/Packet.SoundModem.Linux.csproj" />
   </ItemGroup>
 
   <ItemGroup>

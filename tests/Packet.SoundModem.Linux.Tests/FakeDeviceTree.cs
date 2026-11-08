@@ -34,6 +34,30 @@ internal sealed class FakeDeviceTree : IDeviceTree
     /// <summary>A node that exists and may be opened.</summary>
     public FakeDeviceTree Node(string path) => File(path, string.Empty);
 
+    /// <summary>The tree as the daemon's discovery fixture file writes it, one entry per line.</summary>
+    public string Describe()
+    {
+        var text = new System.Text.StringBuilder();
+        foreach ((string path, string content) in _files)
+        {
+            text.Append("file\t").Append(path).Append('\t')
+                .Append(content.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal))
+                .Append('\n');
+        }
+
+        foreach ((string path, string target) in _links)
+        {
+            text.Append("link\t").Append(path).Append('\t').Append(target).Append('\n');
+        }
+
+        foreach (string path in _refused)
+        {
+            text.Append("refuse\t").Append(path).Append('\n');
+        }
+
+        return text.ToString();
+    }
+
     public IReadOnlyList<string> List(string directory)
     {
         string prefix = directory.TrimEnd('/') + "/";
