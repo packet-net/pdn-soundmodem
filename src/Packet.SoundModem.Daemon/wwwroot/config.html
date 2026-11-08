@@ -4628,10 +4628,12 @@ var ReportModel = (function () {
     return Promise.resolve(ok);
   }
 
-  // The copy for a link that is too long is made when the button is pressed down, not when the
-  // click lands: it has to happen before the new tab takes the focus, or the browser refuses it.
-  // A keyboard press has no pointer-down, so it does the same on key-down; the click does it
-  // only if neither did.
+  // The copy for a link that is too long is made when the mouse or pen is released over the
+  // button, before the click opens the new tab, which would take the focus and make the browser
+  // refuse the copy. Never on touch: a touch press is not a user activation in Chrome on phones,
+  // so there the click is the trigger. A keyboard press does it on key-down. Releasing off the
+  // button does nothing, so the clipboard is not overwritten by a press that was not a click. If
+  // the early copy did not work, the click tries again.
   var prepared = null;
 
   function prepare() {
@@ -4652,20 +4654,19 @@ var ReportModel = (function () {
     }
     var first = built.left[0];
     p.copied.then(function (ok) {
-      var words = built.left.map(function (x) { return x.name; }).join(" and ");
-      var msg = "The " + words + (built.left.length > 1 ? " were" : " was") + " too long for a link, so "
-        + (built.left.length > 1 ? "they are" : "it is") + " not in the GitHub form. ";
-      msg += ok ? "The " + first.name + " is on your clipboard: paste it into the \"" + first.label + "\" box."
+      var words = built.left.map(function (x) { return x.name; }).join(", ");
+      var msg = "Left out of the link because it was too long: " + words + ". ";
+      msg += ok ? "Copied the " + first.name + " to your clipboard: paste it into the \"" + first.label + "\" box."
         : "Press Copy report instead, and paste what you need into the form.";
       note(ok ? "warn" : "bad", msg);
       Array.prototype.slice.call($("report-note").querySelectorAll("button")).forEach(function (old) { old.remove(); });
-      built.left.slice(1).forEach(function (part, i) {
+      built.left.slice(1).forEach(function (part) {
         var b = document.createElement("button");
-        b.type = "button"; b.className = "btn small"; b.id = "report-extra" + (i === 0 ? "" : "-" + i);
+        b.type = "button"; b.className = "btn small";
         b.textContent = "Copy the " + part.name;
         b.addEventListener("click", function () {
           copyText(part.text).then(function (done) {
-            note(done ? "good" : "bad", done ? "The " + part.name + " is on your clipboard: paste it into the \"" + part.label + "\" box." : "Could not copy. Use Copy report.");
+            note(done ? "good" : "bad", done ? "Copied the " + part.name + " to your clipboard: paste it into the \"" + part.label + "\" box." : "Could not copy. Use Copy report.");
           });
         });
         $("report-note").appendChild(document.createTextNode(" "));
@@ -4674,7 +4675,10 @@ var ReportModel = (function () {
     });
   }
 
-  $("report-open").addEventListener("pointerdown", function () { prepare(); });
+  $("report-open").addEventListener("pointerup", function (ev) {
+    if (ev.pointerType === "touch" || ev.button !== 0) return;
+    prepare();
+  });
   $("report-open").addEventListener("keydown", function (ev) {
     if (ev.key === "Enter" || ev.key === " ") prepare();
   });
@@ -4682,6 +4686,10 @@ var ReportModel = (function () {
     if (report === null || $("report-what").value.trim().length === 0) { ev.preventDefault(); return; }
     var p = prepared || prepare();
     prepared = null;
+    if (p.built.left.length > 0) {
+      var first = p.built.left[0];
+      p.copied = p.copied.then(function (ok) { return ok ? true : copyText(first.text); });
+    }
     announce(p);
   });
 

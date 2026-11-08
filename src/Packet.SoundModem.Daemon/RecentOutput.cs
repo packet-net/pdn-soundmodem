@@ -157,7 +157,7 @@ internal sealed partial class RecentOutput
     internal static string Scrub(string line)
     {
         line = UrlCredentials().Replace(line, "$1" + Hidden + "@");
-        line = QuotedValue().Replace(line, "$1" + Hidden + "$2");
+        line = QuotedValue().Replace(line, "$1$2" + Hidden + "$2");
         line = NamedValue().Replace(line, "$1" + Hidden);
         line = SchemeValue().Replace(line, "$1" + Hidden);
         line = BareBasic().Replace(line, "$1" + Hidden);
@@ -229,8 +229,9 @@ internal sealed partial class RecentOutput
     private const string Names =
         @"(?:[\w.-]*(?:password|passwd|passphrase|secret|token|key)|api[-_ ]key|x-password|authorization)";
 
-    // "password": "two words", password='two words': a quoted value may hold spaces.
-    [GeneratedRegex(@"(\b" + Names + @"[""']?\s*[:=]\s*[""'])[^""'\r\n]*([""'])", RegexOptions.IgnoreCase)]
+    // "password": "two words", password='two words': a quoted value may hold spaces, and ends
+    // only at the kind of quote it began with ("key": "it's value" is hidden whole).
+    [GeneratedRegex(@"(\b" + Names + @"[""']?\s*[:=]\s*)([""'])(?:(?!\2)[^\r\n])*\2", RegexOptions.IgnoreCase)]
     private static partial Regex QuotedValue();
 
     // password=..., token=..., secret_key=..., X-Password: ..., Authorization: ... up to the next

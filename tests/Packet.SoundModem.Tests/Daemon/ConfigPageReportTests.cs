@@ -105,6 +105,8 @@ public partial class ConfigPageTests
     [InlineData("sent header Authorization: Basic Zm9vOmJhcmJheg", "Zm9vOmJhcmJheg")]
     [InlineData("{\"password\": \"two words\"}", "two words")]
     [InlineData("config password='two words' loaded", "two words")]
+    [InlineData("{\"key\": \"it's value\"}", "value")]
+    [InlineData("password='say \"hi\" now' loaded", "now")]
     [InlineData("secret_key=abc123xyz789 in use", "abc123xyz789")]
     [InlineData("client.secret: s3cr3tvalue1", "s3cr3tvalue1")]
     [InlineData("aws_access_key=AKIAEXAMPLE12345", "AKIAEXAMPLE12345")]
