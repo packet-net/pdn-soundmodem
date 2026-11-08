@@ -90,7 +90,8 @@ internal sealed class ConfigApi
         Func<string> runningJson, bool ephemeralInForce, Action requestRestart,
         bool openAudioControls = false, bool openConfiguration = true, TimeProvider? time = null)
     {
-        _history = new ConfigHistory(ephemeralPath, time ?? TimeProvider.System);
+        _time = time ?? TimeProvider.System;
+        _history = new ConfigHistory(ephemeralPath, _time);
         _openAudioControls = openAudioControls;
         _openConfiguration = openConfiguration;
         _key = key;
@@ -760,12 +761,39 @@ internal sealed class ConfigApi
     /// </param>
     public static string? Validate(string json, string? asPath = null)
     {
+        if (LoadProposed(json, asPath, out DaemonConfig? proposed) is string error)
+        {
+            return error;
+        }
+
+        try
+        {
+            // Plan mutates the entries it is given, which is why this runs against the
+            // throwaway parse and never against anything the station is using.
+            PlanFor(proposed!);
+        }
+        catch (Exception plan) when (plan is InvalidDataException or ArgumentException)
+        {
+            return plan.Message;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Parses <paramref name="json"/> as the daemon would at start-up and refuses a mode the
+    /// catalogue has never heard of: null and a configuration, or the message an operator should
+    /// read. The first half of <see cref="Validate"/>, and what the plan endpoint starts from.
+    /// </summary>
+    internal static string? LoadProposed(string json, string? asPath, out DaemonConfig? proposed)
+    {
+        proposed = null;
         string temp = Path.Combine(
             Path.GetTempPath(), $"pdn-soundmodem-proposed-{Guid.NewGuid():N}.json");
         try
         {
             File.WriteAllText(temp, json);
-            DaemonConfig? proposed = DaemonConfig.TryLoad(temp, out string error, asPath);
+            proposed = DaemonConfig.TryLoad(temp, out string error, asPath);
             if (proposed is null)
             {
                 return error;
@@ -777,34 +805,17 @@ internal sealed class ConfigApi
                 {
                     // Named plainly, because this is the one that took the node down: a mode
                     // string with a stray character parses as perfectly good JSON.
+                    proposed = null;
                     return $"modem {modem.SubChannel}: unknown mode '{modem.Mode}'. "
                         + "Check the spelling against docs/05-modes.md.";
                 }
-            }
-
-            try
-            {
-                // Plan mutates the entries it is given, which is why this runs against the
-                // throwaway parse above and never against anything the station is using.
-                bool flex = proposed.Device.StartsWith("flex:", StringComparison.OrdinalIgnoreCase);
-                // A leftover mailcast section still counts as an MS110D modem, as start-up has it.
-                int dspRate = proposed.Mailcast is not null || proposed.Modems.Any(
-                    m => !DaemonConfig.IsArdop(m.Mode) && ModemCatalog.DspRateFor(m.Mode) == 48000)
-                    ? 48000
-                    : 12000;
-                RfPlan.Result? plan = BandPlanner.Plan(
-                    proposed.Modems, proposed.Sideband, proposed.DialFrequency, dspRate,
-                    flex ? Passband.WideCeilingHz : null);
-            }
-            catch (Exception plan) when (plan is InvalidDataException or ArgumentException)
-            {
-                return plan.Message;
             }
 
             return null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            proposed = null;
             return $"could not check the proposed configuration: {e.Message}";
         }
         finally
@@ -820,6 +831,34 @@ internal sealed class ConfigApi
         }
     }
 
+    /// <summary>
+    /// The band plan the station would start on for <paramref name="proposed"/>, or null when no
+    /// modem is RF-addressed; it throws what start-up would refuse with. The one place the plan
+    /// is made for a proposal, so the check and the plan endpoint cannot disagree.
+    /// </summary>
+    internal static RfPlan.Result? PlanFor(DaemonConfig proposed)
+    {
+        return BandPlanner.Plan(
+            proposed.Modems, proposed.Sideband, proposed.DialFrequency, DspRateFor(proposed),
+            CeilingFor(proposed));
+    }
+
+    /// <summary>
+    /// How far up the audio band the radio can be opened: the wide ceiling where the daemon owns
+    /// the radio's filters (a headless Flex, not one in attach mode), else null for the nominal
+    /// SSB window - the same answer start-up works from.
+    /// </summary>
+    internal static double? CeilingFor(DaemonConfig proposed) =>
+        DeviceKinds.Of(proposed.Device).OwnsTheRadio(proposed.Device) ? Passband.WideCeilingHz : null;
+
+    /// <summary>The channel rate a proposal runs at: 48 kHz if any mode wants it, as start-up has it.</summary>
+    internal static int DspRateFor(DaemonConfig proposed) =>
+        // A leftover mailcast section still counts as an MS110D modem, as start-up has it.
+        proposed.Mailcast is not null || proposed.Modems.Any(
+            m => !DaemonConfig.IsArdop(m.Mode) && ModemCatalog.DspRateFor(m.Mode) == 48000)
+            ? 48000
+            : 12000;
+
     /// <summary>Handles one request under <c>/api/</c>; false leaves it a 404.</summary>
     /// <param name="context">The request.</param>
     /// <param name="path">
@@ -830,13 +869,13 @@ internal sealed class ConfigApi
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
         if (path is not ("/api/config" or "/api/proposals" or "/api/txtest" or "/api/txlease" or "/api/mixer"
-            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio" or "/api/config/schema" or ConfigPage.Path)
+            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio" or "/api/config/schema" or "/api/config/plan" or ConfigPage.Path)
             && !path.StartsWith("/api/config/history", StringComparison.Ordinal))
         {
             return false;
         }
 
-        bool isConfig = path is "/api/config" || path.StartsWith("/api/config/history", StringComparison.Ordinal);
+        bool isConfig = path is "/api/config" or "/api/config/plan" || path.StartsWith("/api/config/history", StringComparison.Ordinal);
 
         // The configuration page and the description it draws its form from hold no secret and
         // change nothing, so they are served to anyone who can reach the listener. The page asks
@@ -925,6 +964,12 @@ internal sealed class ConfigApi
         if (path.StartsWith("/api/config/history", StringComparison.Ordinal))
         {
             await GuardedAsync(context, () => HistoryAsync(context, path)).ConfigureAwait(false);
+            return true;
+        }
+
+        if (path is "/api/config/plan")
+        {
+            await GuardedAsync(context, () => PlanAsync(context)).ConfigureAwait(false);
             return true;
         }
 
@@ -1277,7 +1322,104 @@ internal sealed class ConfigApi
     /// <summary>Indented, because these answers are read by people as often as by scripts.</summary>
     private static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true };
 
-    private async Task ApplyAsync(HttpListenerContext context)
+    /// <summary>
+    /// <c>POST /api/config/plan</c>: where each modem of a proposed configuration would sit,
+    /// worked out by the band planning start-up uses, and nothing applied.
+    /// </summary>
+    private readonly TimeProvider _time;
+
+    /// <summary>Recent plan answers by the document they were for: the page asks again after every
+    /// keystroke, and a plan renders a probe frame per mode, which a small machine feels.</summary>
+    private readonly Dictionary<string, (long At, string Json)> _planCache = [];
+
+    private static readonly TimeSpan PlanCacheFor = TimeSpan.FromSeconds(5);
+
+    private const int PlanCacheMax = 16;
+
+    private async Task PlanAsync(HttpListenerContext context)
+    {
+        if (context.Request.HttpMethod != "POST")
+        {
+            await RespondAsync(context, 405, "POST a configuration to see where its modems would sit; "
+                + "nothing is applied").ConfigureAwait(false);
+            return;
+        }
+
+        if (await ReadProposalAsync(context).ConfigureAwait(false) is not string body)
+        {
+            return;
+        }
+
+        string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body)));
+        long now = _time.GetTimestamp();
+        string? cached = null;
+        lock (_planCache)
+        {
+            if (_planCache.TryGetValue(hash, out var hit) && _time.GetElapsedTime(hit.At, now) < PlanCacheFor)
+            {
+                cached = hit.Json;
+            }
+        }
+
+        if (cached is not null)
+        {
+            await RespondJsonAsync(context, 200, cached).ConfigureAwait(false);
+            return;
+        }
+
+        if (LoadProposed(body, _configPath, out DaemonConfig? proposed) is string problem)
+        {
+            await RespondAsync(context, 400, ProblemOf(problem)).ConfigureAwait(false);
+            return;
+        }
+
+        string json = ConfigPlan.Describe(proposed!).ToJsonString(Pretty);
+        lock (_planCache)
+        {
+            if (_planCache.Count >= PlanCacheMax)
+            {
+                _planCache.Clear();
+            }
+
+            _planCache[hash] = (now, json);
+        }
+
+        await RespondJsonAsync(context, 200, json).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The part of a refusal worth showing: the loader words its refusals for a journal, with a
+    /// first line naming the file and a closing paragraph on recovering a file that will not start.
+    /// </summary>
+    internal static string ProblemOf(string refusal)
+    {
+        string[] lines = refusal.Replace("\r", "").Split('\n');
+        if (!lines[0].StartsWith("configuration error in ", StringComparison.Ordinal))
+        {
+            return refusal;
+        }
+
+        var problem = new List<string>();
+        for (int i = 1; i < lines.Length; i++)
+        {
+            string line = lines[i].Trim();
+            if (line.Length == 0)
+            {
+                break;
+            }
+
+            problem.Add(line);
+        }
+
+        return problem.Count > 0 ? string.Join(' ', problem) : refusal;
+    }
+
+    /// <summary>
+    /// Reads a proposed configuration from a request body, with any placeholder for a secret
+    /// filled in as <c>?restoreFrom=</c> and the running file say. Null once it has answered the
+    /// request with why not.
+    /// </summary>
+    private async Task<string?> ReadProposalAsync(HttpListenerContext context)
     {
         string body;
         using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
@@ -1289,7 +1431,7 @@ internal sealed class ConfigApi
         {
             await RespondAsync(context, 400, "the body must be a complete configuration document, "
                 + "the same shape as soundmodem.json").ConfigureAwait(false);
-            return;
+            return null;
         }
 
         // A document loaded from an earlier version has that version's secrets as placeholders:
@@ -1302,7 +1444,7 @@ internal sealed class ConfigApi
             {
                 await RespondAsync(context, 400, $"\"restoreFrom\" names no earlier version: \"{restoreFrom}\"")
                     .ConfigureAwait(false);
-                return;
+                return null;
             }
 
             stored = version;
@@ -1311,10 +1453,18 @@ internal sealed class ConfigApi
         if (RestoreHidden(body, stored, out string why) is not string restored)
         {
             await RespondAsync(context, 400, why).ConfigureAwait(false);
-            return;
+            return null;
         }
 
-        body = restored;
+        return restored;
+    }
+
+    private async Task ApplyAsync(HttpListenerContext context)
+    {
+        if (await ReadProposalAsync(context).ConfigureAwait(false) is not string body)
+        {
+            return;
+        }
 
         // ?check=true validates and stops there: the configuration page's Check button, and a
         // way for anything else to ask "would this start?" without the restart that answers it.

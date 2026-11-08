@@ -155,7 +155,7 @@ internal static class BandPlanner
     /// How wide to plan for a modem: what it says, else what it measures, else a nominal figure
     /// when it will not tell us. ARDOP is asked for nothing - it has no fixed answer to give.
     /// </summary>
-    private static double WidthOf(ModemConfig modem, int dspRate)
+    internal static double WidthOf(ModemConfig modem, int dspRate)
     {
         if (modem.Bandwidth is double stated)
         {

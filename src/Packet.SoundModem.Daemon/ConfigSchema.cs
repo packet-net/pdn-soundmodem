@@ -87,6 +87,7 @@ internal static class ConfigSchema
             ["hidden"] = ConfigApi.Hidden,
             ["areas"] = ConfigKeys.AreasJson(),
             ["deviceKinds"] = new JsonArray([.. ConfigKeys.DeviceKinds.Select(k => (JsonNode)k)]),
+            ["modes"] = ModeLabels.Json(),
             ["types"] = types,
         };
     }

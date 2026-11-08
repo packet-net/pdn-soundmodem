@@ -159,7 +159,40 @@
   #result.good { color: var(--good); }
   #result:empty { display: none; }
 
+  /* ---------------------------------------------------------- modems and the band strip */
+  .strip { background: var(--panel); border: 1px solid var(--edge); border-radius: 6px; padding: 16px 18px 10px; margin-bottom: 20px; }
+  .strip .caption { display: flex; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; font-size: 13.5px; color: var(--muted); margin-bottom: 8px; }
+  .strip .caption b { color: var(--ink); font-weight: 600; }
+  .strip .view { min-height: 150px; }
+  .strip svg { display: block; width: 100%; height: auto; touch-action: pan-y; user-select: none; -webkit-user-select: none; font-family: var(--sans); }
+  .strip.stale svg { opacity: .6; }
+  .strip .blk { cursor: grab; outline: none; }
+  .strip .blk.fixed { cursor: default; }
+  .strip .blk.dragging { cursor: grabbing; }
+  .strip .blk:focus-visible rect.body { stroke: var(--amber); stroke-width: 2.5; stroke-dasharray: none; }
+  .strip .key { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .strip .key i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+  .strip .problem { margin-top: 8px; color: var(--warn); font-size: 13px; }
+  .modem > .head { flex-wrap: nowrap; align-items: flex-start; }
+  .modem > .head .who { flex: 1; min-width: 0; }
+  .modem > .head .line { display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap; }
+  .modem > .head .swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .modem > .head .sub { color: var(--muted); font-size: 13px; }
+  .modem > .head .talks { color: var(--muted); font-size: 13.5px; margin-top: 2px; }
+  .modem > .head .btn { flex: none; }
+  .modem .field .hint { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+  .modem .field .hint:empty { display: none; }
+  .modem .field .warntext { color: var(--warn); font-size: 12.5px; margin-top: 4px; }
+  .input.warned { border-color: var(--warn); }
+  .input.mono input { font-size: 14px; }
+  .choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; grid-column: 1 / -1; }
+  .choice { text-align: left; background: #0d1117; border: 1px solid var(--edge); border-radius: 6px; padding: 9px 12px; }
+  .choice:hover { border-color: var(--muted); }
+  .choice b { display: block; font-weight: 600; font-size: 14px; }
+  .choice span { color: var(--muted); font-size: 12.5px; }
+
   @media (max-width: 760px) {
+    .strip { padding: 12px 12px 8px; }
     .layout { grid-template-columns: 1fr; }
     nav.areas { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--edge); padding: 8px; }
     nav.areas a { white-space: nowrap; }
@@ -817,6 +850,247 @@ var ConfigModel = (function () {
 
   function newItem() { return {}; }
 
+  // ---------------------------------------------------------------- frequencies and the band strip
+  // All of this is arithmetic on numbers the plan endpoint returned (or the operator typed), with
+  // no DOM, so the tests can run it. "Position" is a place on the strip's axis: a radio frequency
+  // in Hz where the station has a dial, an audio frequency in Hz where it has none (FM).
+
+  var SNAP_HZ = 100;
+
+  var COLOURS = ["#f5a83c", "#56c8dd", "#b79bff", "#7fd18b", "#ff9a7a", "#e0d36a", "#6fa8ff", "#e58fd0"];
+
+  function colourOf(index) { return COLOURS[index % COLOURS.length]; }
+
+  // 7050800 -> "7.050800": MHz to the Hz, as a frequency is dialled.
+  function mhzText(hz) { return (Math.round(hz) / 1e6).toFixed(6); }
+
+  // "7.0508" -> { value: 7050800 }, or { error, hint } for text that is not a frequency in MHz.
+  // Anything outside 0.1 to 1300 MHz (the top of the 23 cm band) is refused: 3580 typed in kHz, or
+  // 7050800 in Hz, would otherwise be taken as that many MHz.
+  function mhzFromText(text) {
+    var t = String(text).trim();
+    if (!/^\d+(\.\d+)?$/.test(t)) return { error: "a frequency in MHz", hint: "Should be a frequency in MHz, for example 7.0508." };
+    var n = Number(t);
+    if (!isFinite(n) || n < 0.1 || n > 1300) {
+      var hint = "That is too low; type MHz, for example 7.0508.";
+      if (n > 30000) hint = "That looks like Hz; type MHz, for example 7.0508.";
+      else if (n > 1300) hint = "That looks like kHz; type MHz, for example 3.580.";
+      return { error: "a frequency between 0.1 and 1300 MHz", hint: hint };
+    }
+    return { value: Math.round(n * 1e6) };
+  }
+
+  function snap(hz, step) {
+    step = step || SNAP_HZ;
+    return Math.round(hz / step) * step;
+  }
+
+  // The audio tone a radio frequency becomes at a dial: above it on upper sideband, below it on lower.
+  function toneHz(rfHz, dialHz, radio) {
+    return radio === "lsb" ? dialHz - rfHz : rfHz - dialHz;
+  }
+
+  // A pointer that has moved less than this has not dragged: a click or a finger's jitter.
+  var DRAG_THRESHOLD_PX = 4;
+  function dragMoved(dxPx) { return Math.abs(dxPx) >= DRAG_THRESHOLD_PX; }
+
+  // Where a block lands when the pointer has moved dxPx from where it was picked up, on an axis
+  // where one pixel is hzPerPx: where it started, moved by the distance snapped to step, so a
+  // frequency off the grid is never changed by anything smaller than a step. Kept between min and
+  // max when given.
+  function dragTo(startPos, dxPx, hzPerPx, step, min, max) {
+    step = step || SNAP_HZ;
+    var pos = startPos + snap(dxPx * hzPerPx, step);
+    if (typeof min === "number" && pos < min) pos = Math.ceil(min / step) * step;
+    if (typeof max === "number" && pos > max) pos = Math.floor(max / step) * step;
+    return pos;
+  }
+
+  // The range a block's centre may be moved over: the strip's own, and on an audio strip also
+  // above zero (the whole block) and under the channel's Nyquist limit.
+  function blockLimits(axis, lo, hi, width, nyquist) {
+    var min = lo + width / 2, max = hi - width / 2;
+    if (axis !== "rf") {
+      min = Math.max(min, width / 2);
+      if (typeof nyquist === "number") max = Math.min(max, nyquist - width / 2);
+    }
+    if (min > max) { min = max = (lo + hi) / 2; }
+    return { min: min, max: max };
+  }
+
+  // The same, for a strip layout: from its limits, not from where its blocks happen to be.
+  function layoutLimits(layout, width, nyquist) {
+    var lo = typeof layout.limLo === "number" ? layout.limLo : layout.lo;
+    var hi = typeof layout.limHi === "number" ? layout.limHi : layout.hi;
+    return blockLimits(layout.axis, lo, hi, width, nyquist);
+  }
+
+  // Where a key puts a slider block, or null for a key that is not one of its keys. Arrows move
+  // 100 Hz (1 kHz with Shift), Page Up and Down 1 kHz, Home and End go to the ends of its range.
+  function keyMove(keyName, shift, pos, min, max) {
+    var next = null;
+    if (keyName === "Home") next = Math.ceil(min / SNAP_HZ) * SNAP_HZ;
+    else if (keyName === "End") next = Math.floor(max / SNAP_HZ) * SNAP_HZ;
+    else if (keyName === "PageUp") next = nudged(pos, 1000, SNAP_HZ);
+    else if (keyName === "PageDown") next = nudged(pos, -1000, SNAP_HZ);
+    else {
+      var d = keyDelta(keyName, shift);
+      if (d === 0) return null;
+      next = nudged(pos, d, SNAP_HZ);
+    }
+    if (next > max) next = Math.floor(max / SNAP_HZ) * SNAP_HZ;
+    if (next < min) next = Math.ceil(min / SNAP_HZ) * SNAP_HZ;
+    return next;
+  }
+
+  // What an arrow key moves a block by: 100 Hz, or 1 kHz with Shift; 0 for any other key.
+  function keyDelta(keyName, shift) {
+    var size = shift ? 1000 : SNAP_HZ;
+    if (keyName === "ArrowLeft" || keyName === "ArrowDown") return -size;
+    if (keyName === "ArrowRight" || keyName === "ArrowUp") return size;
+    return 0;
+  }
+
+  // A position moved by delta, ending on a multiple of step: a block that is between two steps
+  // goes to the next one in the direction of the key rather than back to where it was.
+  function nudged(pos, delta, step) {
+    step = step || SNAP_HZ;
+    if (delta > 0) return Math.floor(pos / step + 1e-9) * step + delta;
+    if (delta < 0) return Math.ceil(pos / step - 1e-9) * step + delta;
+    return pos;
+  }
+
+  // The lowest centre, on a multiple of step, where a block width wide fits between low and high
+  // clear of the blocks already there ({lo, hi} each); null when there is no room.
+  function freeCentre(width, taken, low, high, step) {
+    step = step || SNAP_HZ;
+    var half = width / 2;
+    var c = Math.ceil((low + half) / step - 1e-9) * step;
+    while (c + half <= high + 0.5) {
+      var clash = false;
+      for (var i = 0; i < taken.length; i++) {
+        if (c - half < taken[i].hi - 0.5 && c + half > taken[i].lo + 0.5) { clash = true; break; }
+      }
+      if (!clash) return c;
+      c += step;
+    }
+    return null;
+  }
+
+  // The lowest KISS sub-channel (0 to 15) no modem has, or null when all sixteen are used.
+  function nextSubChannel(modems) {
+    var used = {};
+    (modems || []).forEach(function (m) {
+      var v = get(m, "subChannel");
+      used[v === undefined || v === null ? 0 : v] = true;
+    });
+    for (var i = 0; i < 16; i++) if (!used[i]) return i;
+    return null;
+  }
+
+  // A modem entry for a mode. place is { key, value }, or a list of them, for what it starts with, or null.
+  function newModem(mode, subChannel, place) {
+    var m = { subChannel: subChannel, mode: mode };
+    var places = !place ? [] : Array.isArray(place) ? place : [place];
+    places.forEach(function (p) { m[p.key] = p.value; });
+    return m;
+  }
+
+  // The catalogue entry (name, what it talks to, group, width) for a mode, or null.
+  function modeInfo(schema, mode) {
+    var list = schema && schema.modes ? schema.modes.list : [];
+    for (var i = 0; i < list.length; i++) if (list[i].mode === mode) return list[i];
+    return null;
+  }
+
+  // The modes of a picker group, in the order the picker lists them. The NinoTNC group is the
+  // modes that carry a NinoTNC mode number, lowest first.
+  // With tunableOnly, only those that have an audio tone to place (not the baseband modes).
+  function modesOfGroup(schema, groupId, tunableOnly) {
+    var list = schema && schema.modes ? schema.modes.list : [];
+    var out = list.filter(function (m) {
+      if (tunableOnly && !m.tunable) return false;
+      return groupId === "nino" ? typeof m.ninoMode === "number" : m.group === groupId;
+    });
+    if (groupId === "nino") out.sort(function (a, b) { return a.ninoMode - b.ninoMode; });
+    return out;
+  }
+
+  // The strip, as numbers: the axis, its ticks, the passband, the dial and a block for each
+  // modem, from the plan endpoint's answer. overrides maps a sub-channel to the centre a block
+  // is being dragged to, ahead of the next answer.
+  function stripLayout(plan, overrides, maxTicks) {
+    overrides = overrides || {};
+    maxTicks = maxTicks || 7;
+    var rf = plan.axis === "rf";
+    var blocks = [];
+    var lo = Infinity, hi = -Infinity;
+    function take(a, b) { if (a < lo) lo = a; if (b > hi) hi = b; }
+    (plan.modems || []).forEach(function (m) {
+      if (m.leaseOnly) return;
+      var w = m.widthHz;
+      var centre = rf ? m.rfHz : (m.audioCentreHz !== null && m.audioCentreHz !== undefined ? m.audioCentreHz : w / 2);
+      if (centre === null || centre === undefined) return;
+      if (overrides[m.subChannel] !== undefined) centre = overrides[m.subChannel];
+      var kinds = [];
+      (plan.warnings || []).forEach(function (x) { if (x.subChannel === m.subChannel) kinds.push(x.kind); });
+      blocks.push({ subChannel: m.subChannel, mode: m.mode, centre: centre, width: w,
+                    lo: centre - w / 2, hi: centre + w / 2, movable: rf || !!m.tunable, kinds: kinds });
+      take(centre - w / 2, centre + w / 2);
+    });
+    var pass = null;
+    if (plan.passband) {
+      pass = rf
+        ? { lo: plan.passband.rfLowHz, hi: plan.passband.rfHighHz }
+        : { lo: plan.passband.audioLowHz, hi: plan.passband.audioHighHz };
+      if (typeof pass.lo !== "number" || typeof pass.hi !== "number") pass = null;
+    }
+    if (pass) take(pass.lo, pass.hi);
+    var dial = rf && typeof plan.dialHz === "number" ? plan.dialHz : null;
+    if (dial !== null) take(dial, dial);
+    // A channel radio's audio path is not the daemon's to state; show the voice band at least.
+    if (!rf && !pass) take(0, 3000);
+    // Where a block may be moved to: the passband and the dial with a margin, or the voice band,
+    // and never from where the blocks are, so a block moved to one end does not move the end.
+    var limLo = null, limHi = null;
+    if (pass) {
+      var margin = Math.max(50, (pass.hi - pass.lo) * 0.05);
+      limLo = pass.lo - margin; limHi = pass.hi + margin;
+      if (dial !== null) { limLo = Math.min(limLo, dial); limHi = Math.max(limHi, dial); }
+    } else if (!rf) {
+      limLo = 0; limHi = typeof plan.nyquistHz === "number" ? Math.min(3000, plan.nyquistHz) : 3000;
+    }
+    if (limLo !== null) take(limLo, limHi);
+    if (lo === Infinity) { lo = 0; hi = 3000; }
+    var pad = Math.max(50, (hi - lo) * 0.05);
+    lo -= pad; hi += pad;
+    var steps = [50, 100, 200, 500, 1000, 2000, 5000, 10000];
+    var step = steps[steps.length - 1];
+    for (var s = 0; s < steps.length; s++) { if ((hi - lo) / steps[s] <= maxTicks) { step = steps[s]; break; } }
+    var ticks = [];
+    for (var t = Math.ceil(lo / step) * step; t <= hi; t += step) {
+      ticks.push({ pos: t, label: rf ? (t / 1e6).toFixed(step >= 1000 ? 3 : step >= 100 ? 4 : 5) : String(Math.round(t)) });
+    }
+    return { axis: plan.axis, lo: lo, hi: hi, limLo: limLo, limHi: limHi, ticks: ticks, passband: pass, dial: dial, blocks: blocks };
+  }
+
+  // The line over the strip, in words: what the radio hears, and from what dial.
+  function stripCaption(plan) {
+    if (!plan.ok) return { head: "The station could not place these modems on one dial", tail: "so move them closer together or change the dial; the bar at the bottom says what it objected to" };
+    var pb = plan.passband;
+    if (plan.axis === "rf" && pb && typeof pb.rfLowHz === "number") {
+      var kind = plan.radio === "lsb" ? "lower sideband" : "upper sideband";
+      return { head: "The radio hears " + mhzText(pb.rfLowHz) + " to " + mhzText(pb.rfHighHz) + " MHz",
+               tail: kind + " from a dial of " + mhzText(plan.dialHz) + " MHz" };
+    }
+    if (pb) {
+      return { head: "The radio hears " + Math.round(pb.audioLowHz) + " to " + Math.round(pb.audioHighHz) + " Hz of audio",
+               tail: "Positions are audio frequencies in Hz" };
+    }
+    return { head: "The audio band of the radio", tail: "Positions are audio frequencies in Hz" };
+  }
+
+
   var HIDDEN = "(set, not shown)";
 
   return {
@@ -827,6 +1101,10 @@ var ConfigModel = (function () {
     isSet: isSet, deviceKind: deviceKind, areas: areas, labelOf: labelOf, itemOf: itemOf,
     docPath: docPath, describePath: describePath, problemText: problemText,
     locateIssue: locateIssue, areaOf: areaOf, pageMove: pageMove, becomesMonitor: becomesMonitor, secretWords: secretWords, changedLabels: changedLabels, summary: summary,
+    mhzText: mhzText, mhzFromText: mhzFromText, snap: snap, toneHz: toneHz, dragTo: dragTo,
+    keyDelta: keyDelta, keyMove: keyMove, dragMoved: dragMoved, blockLimits: blockLimits, layoutLimits: layoutLimits, nudged: nudged, freeCentre: freeCentre, nextSubChannel: nextSubChannel,
+    newModem: newModem, modeInfo: modeInfo, modesOfGroup: modesOfGroup, stripLayout: stripLayout,
+    stripCaption: stripCaption, colourOf: colourOf,
     setHidden: function (h) { HIDDEN = h; }
   };
 })();
@@ -842,7 +1120,7 @@ var ConfigModel = (function () {
   var BLURB = {
     radio: "The radio or receiver this station listens through, and the sound card or stream that carries its audio.",
     keying: "How the station keys the radio, and how it knows the channel is busy.",
-    modes: "Each modem listens and transmits on its own frequency inside what the radio can hear.",
+    modes: "Each modem listens and transmits on its own frequency inside what the radio can hear. Drag a block on the band, or type the frequency.",
     software: "The ports your node and BBS software connect to.",
     sharing: "The station page, who may change settings, what is kept, and whether this station is shown on a public monitor.",
     advanced: "Settings most stations never touch.",
@@ -914,6 +1192,10 @@ var ConfigModel = (function () {
       instance = answer.instance || null;
       loaded = answer.running || {};
       doc = clone(loaded);
+      plan.data = null;
+      plan.error = "";
+      plan.overrides = {};
+      autoChosen = {};
       restoredFrom = null;
       restoredSecrets = [];
       errors = {};
@@ -1049,6 +1331,7 @@ var ConfigModel = (function () {
     else if (at === "history") drawHistory(root);
     else if (at === "text") drawText(root);
     else drawArea(root, at);
+    if (at === "modes") { paintPlan(); schedulePlan(true); }
   }
 
   // ---------------------------------------------------------------- overview
@@ -1160,7 +1443,7 @@ var ConfigModel = (function () {
     switch (n.node) {
       case "field": return drawField(n);
       case "section": return drawSection(n);
-      case "list": return drawList(n);
+      case "list": return n.path === "modems" ? drawModems(n) : drawList(n);
       case "unknown": {
         var u = el("div", "unknown");
         u.textContent = "Not settings this version knows, kept as they are: " + n.names.join(", ")
@@ -1301,6 +1584,758 @@ var ConfigModel = (function () {
     });
     wrap.appendChild(add);
     return wrap;
+  }
+
+  // ---------------------------------------------------------------- modems, and the band strip
+  var SVGNS = "http://www.w3.org/2000/svg";
+  var plan = { data: null, seq: 0, shown: 0, timer: null, overrides: {}, error: "", layout: null, geom: null, drag: null };
+  var picker = { open: false, group: null };
+  var autoChosen = {};   // sub-channels the page picked for a modem it added
+  var PLAN_DELAY = 250;
+
+  function svg(tag, attrs, text) {
+    var e = document.createElementNS(SVGNS, tag);
+    for (var a in attrs) if (Object.prototype.hasOwnProperty.call(attrs, a)) e.setAttribute(a, attrs[a]);
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function radioKind() {
+    var s = M.get(doc, "sideband");
+    return typeof s === "string" && s !== "" ? s.toLowerCase() : "usb";
+  }
+
+  function modemList() {
+    var list = M.get(doc, "modems");
+    return Array.isArray(list) ? list : [];
+  }
+
+  // Whether the modems are placed by radio frequency: a dial, so MHz, and not on an FM set.
+  function placedByDial() {
+    return radioKind() !== "fm" && modemList().some(function (m) { return M.isSet(M.get(m, "rfFrequency")); });
+  }
+
+  function modemKey(name) {
+    var keys = schema.types.ModemConfig.keys;
+    for (var i = 0; i < keys.length; i++) if (keys[i].name === name) return keys[i];
+    return null;
+  }
+
+  function subOf(entry) {
+    var v = M.get(entry, "subChannel");
+    return v === undefined || v === null ? 0 : v;
+  }
+
+  function planFor(sub) {
+    var list = plan.data ? plan.data.modems : [];
+    for (var i = 0; i < list.length; i++) if (list[i].subChannel === sub) return list[i];
+    return null;
+  }
+
+  function warningsFor(sub) {
+    return plan.data ? plan.data.warnings.filter(function (w) { return w.subChannel === sub; }) : [];
+  }
+
+  // Asks the station where the modems would sit, a moment after the last change.
+  function schedulePlan(now) {
+    if (!schema || !doc || route() !== "modes") return;
+    clearTimeout(plan.timer);
+    var seq = ++plan.seq;
+    var strip = $("strip");
+    if (strip) strip.classList.add("stale");
+    plan.timer = setTimeout(function () { runPlan(seq); }, now ? 0 : PLAN_DELAY);
+  }
+
+  function planNow() {
+    if (modemList().length === 0) return Promise.resolve(null);
+    var query = restoredFrom ? "?restoreFrom=" + encodeURIComponent(restoredFrom) : "";
+    return api("api/config/plan" + query, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(doc)
+    }).then(function (r) {
+      if (r.status === 401) { load(); return null; }
+      return r.text().then(function (t) {
+        if (r.status !== 200) return { failed: M.problemText(t) };
+        return JSON.parse(t);
+      });
+    });
+  }
+
+  function runPlan(seq) {
+    if (modemList().length === 0) { plan.data = null; plan.error = ""; paintPlan(); return; }
+    planNow().then(function (answer) {
+      if (seq !== plan.seq || answer === null) return;
+      if (answer.failed !== undefined) {
+        plan.error = answer.failed;
+      } else {
+        plan.data = answer;
+        plan.error = "";
+      }
+      plan.shown = seq;
+      // A block still being dragged keeps the place the pointer gave it; the rest are the station's.
+      var held = {};
+      if (plan.drag && plan.overrides[plan.drag.sub] !== undefined) held[plan.drag.sub] = plan.overrides[plan.drag.sub];
+      plan.overrides = held;
+      paintPlan();
+    }).catch(function () {
+      if (seq === plan.seq) { plan.error = "Could not reach the station to place these modems."; paintPlan(); }
+    });
+  }
+
+  // Everything that shows the plan: the strip, each modem's hint and its warning.
+  function paintPlan() {
+    // A block being dragged is never rebuilt under the pointer: the drawing is brought up to date
+    // when it is let go.
+    if (plan.drag) plan.dirty = true; else paintStrip();
+    document.querySelectorAll("[data-hint-for]").forEach(function (h) {
+      var sub = Number(h.dataset.hintFor);
+      var m = planFor(sub);
+      var entry = findModem(sub);
+      var text = "";
+      if (m && m.leaseOnly) {
+        text = "Tuned by its lease" + (typeof m.leaseDialHz === "number" && m.audioCentreHz !== null
+          ? ": dial " + M.mhzText(m.leaseDialHz) + " MHz, audio tone " + Math.round(m.audioCentreHz) + " Hz" : "");
+      } else if (placedByDial()) {
+        var rf = entry ? M.get(entry, "rfFrequency") : undefined;
+        if (typeof rf === "number" && plan.data && typeof plan.data.dialHz === "number") {
+          text = "Audio tone " + Math.round(M.toneHz(rf, plan.data.dialHz, plan.data.radio)) + " Hz at this dial";
+        }
+      } else if (m && m.audioCentreHz !== null) {
+        text = entry && M.isSet(M.get(entry, "frequency")) ? "" : "The mode's own tone, " + Math.round(m.audioCentreHz) + " Hz";
+      }
+      h.textContent = text;
+    });
+    document.querySelectorAll("[data-warn-for]").forEach(function (w) {
+      var list = warningsFor(Number(w.dataset.warnFor));
+      w.textContent = list.map(function (x) { return x.text; }).join(" ");
+      w.hidden = list.length === 0;
+      var box = w.parentElement.querySelector(".input");
+      if (box) box.classList.toggle("warned", list.length > 0);
+    });
+  }
+
+  function findModem(sub) {
+    var list = modemList();
+    for (var i = 0; i < list.length; i++) if (subOf(list[i]) === sub) return list[i];
+    return null;
+  }
+
+  function indexOfModem(sub) {
+    var list = modemList();
+    for (var i = 0; i < list.length; i++) if (subOf(list[i]) === sub) return i;
+    return -1;
+  }
+
+  function modemTitle(entry) {
+    var info = M.modeInfo(schema, M.get(entry, "mode"));
+    return info ? info.name : (M.get(entry, "mode") || "Modem");
+  }
+
+  // ---- the strip
+  function drawStrip() {
+    var wrap = el("div", "strip");
+    wrap.id = "strip";
+    var caption = el("div", "caption");
+    caption.appendChild(el("span"));
+    caption.appendChild(el("span", null, "Width shown is each mode's occupied bandwidth"));
+    caption.id = "strip-caption";
+    wrap.appendChild(caption);
+    var view = el("div", "view");
+    view.id = "strip-view";
+    wrap.appendChild(view);
+    var keys = el("div", "key");
+    keys.id = "strip-key";
+    wrap.appendChild(keys);
+    wrap.appendChild(el("div", "problem"));
+    wrap.lastChild.id = "strip-problem";
+    wrap.lastChild.hidden = true;
+    return wrap;
+  }
+
+  function paintStrip() {
+    var wrap = $("strip");
+    if (!wrap) return;
+    var view = $("strip-view"), caption = $("strip-caption"), keys = $("strip-key"), problem = $("strip-problem");
+    wrap.classList.toggle("stale", plan.shown !== plan.seq);
+    problem.hidden = plan.error === "";
+    problem.textContent = plan.error;
+    if (!plan.data) {
+      caption.firstChild.textContent = plan.error === "" ? "Working out where the modems sit..." : "";
+      view.textContent = "";
+      keys.textContent = "";
+      plan.layout = null;
+      return;
+    }
+    var focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.sub : null;
+    var words = M.stripCaption(plan.data);
+    caption.firstChild.textContent = "";
+    caption.firstChild.appendChild(el("b", null, words.head));
+    caption.firstChild.appendChild(document.createTextNode(words.tail ? ", " + words.tail : ""));
+    var W = Math.max(280, Math.floor(view.clientWidth || 600));
+    var PAD = 14;
+    var narrow = W < 500;
+    // Tick labels are never closer than their own width and a gap: fewer, shorter ones on a phone.
+    var usable = W - 2 * PAD;
+    var layout = M.stripLayout(plan.data, plan.overrides, 1);
+    var charsPer = plan.data.axis === "rf" ? 7 : 5;
+    var maxTicks = Math.max(2, Math.floor(usable / (charsPer * 6.8 + 18)));
+    layout = M.stripLayout(plan.data, plan.overrides, maxTicks);
+    plan.layout = layout;
+    function x(pos) { return PAD + (pos - layout.lo) / (layout.hi - layout.lo) * (W - 2 * PAD); }
+    // Labels: one row above the blocks, and a second (third) row for a label that would touch one
+    // already placed, so none overlap.
+    var placed = [];
+    layout.blocks.slice().sort(function (p, q) { return p.centre - q.centre; }).forEach(function (b) {
+      var entry = findModem(b.subChannel);
+      var name = entry ? modemTitle(entry) : b.mode;
+      var max = narrow ? 18 : 28;
+      b.text = name.length > max ? name.slice(0, max - 1) + "." : name;
+      b.labelW = b.text.length * 6.8;
+      var mid = x(b.centre);
+      b.labelLeft = Math.max(2, Math.min(W - 2 - b.labelW, mid - b.labelW / 2));
+      var row = 0;
+      for (;;) {
+        var clash = placed.some(function (o) { return o.row === row && b.labelLeft < o.labelLeft + o.labelW + 8 && b.labelLeft + b.labelW + 8 > o.labelLeft; });
+        if (!clash) break;
+        row++;
+      }
+      b.row = row;
+      placed.push(b);
+    });
+    var rows = placed.reduce(function (m, b) { return Math.max(m, b.row + 1); }, 1);
+    var TOP = 30 + rows * 15, BOTTOM = TOP + (narrow ? 42 : 52), H = BOTTOM + 44;
+    plan.geom = { W: W, pad: PAD, x: x, top: TOP };
+    var s = svg("svg", { viewBox: "0 0 " + W + " " + H, width: W, height: H, role: "group", id: "strip-svg",
+                         "aria-label": words.head + (words.tail ? ", " + words.tail : "") });
+    if (layout.passband) {
+      s.appendChild(svg("rect", { x: x(layout.passband.lo), y: 22, width: Math.max(1, x(layout.passband.hi) - x(layout.passband.lo)),
+                                  height: BOTTOM - 22, fill: "#56c8dd", "fill-opacity": ".06", stroke: "#56c8dd", "stroke-opacity": ".35" }));
+      s.appendChild(svg("text", { x: x(layout.passband.lo) + 4, y: 16, fill: "#8793a0", "font-size": 11 }, "what the radio hears"));
+    }
+    if (layout.dial !== null) {
+      s.appendChild(svg("line", { x1: x(layout.dial), y1: 10, x2: x(layout.dial), y2: BOTTOM + 6, stroke: "#f5a83c", "stroke-width": 1.5 }));
+      s.appendChild(svg("text", { x: x(layout.dial) + 4, y: BOTTOM + 16, fill: "#f5a83c", "font-size": 11 }, "dial"));
+    }
+    s.appendChild(svg("line", { x1: 0, y1: BOTTOM + 4, x2: W, y2: BOTTOM + 4, stroke: "#1e2632" }));
+    layout.ticks.forEach(function (t) {
+      var tx = x(t.pos);
+      var anchor = tx < 24 ? "start" : tx > W - 24 ? "end" : "middle";
+      s.appendChild(svg("line", { x1: tx, y1: BOTTOM + 4, x2: tx, y2: BOTTOM + 10, stroke: "#2a3441" }));
+      s.appendChild(svg("text", { x: tx, y: H - 6, fill: "#8793a0", "font-size": 11, "text-anchor": anchor,
+                                  "font-family": "ui-monospace, monospace" }, t.label));
+    });
+    // The edge a block sticks out past, drawn under the blocks so no label or number is struck through.
+    layout.blocks.forEach(function (b) {
+      if (!layout.passband || b.kinds.indexOf("outside") < 0) return;
+      var edge = b.hi > layout.passband.hi + 0.5 ? layout.passband.hi : layout.passband.lo;
+      s.appendChild(svg("line", { x1: x(edge), y1: 22, x2: x(edge), y2: BOTTOM, stroke: "#ffb86b", "stroke-width": 1.5 }));
+    });
+    layout.blocks.forEach(function (b) { s.appendChild(drawBlock(b, layout, x, TOP, BOTTOM)); });
+    view.textContent = "";
+    view.appendChild(s);
+    keys.textContent = "";
+    layout.blocks.forEach(function (b) {
+      var item = el("span");
+      var sw = el("i");
+      sw.style.background = M.colourOf(indexOfModem(b.subChannel));
+      item.appendChild(sw);
+      var entry = findModem(b.subChannel);
+      var text = entry ? modemTitle(entry) : b.mode;
+      if (b.kinds.indexOf("outside") >= 0) text += ", sticks out past the edge";
+      else if (b.kinds.indexOf("overlap") >= 0) text += ", overlaps another";
+      item.appendChild(document.createTextNode(text));
+      keys.appendChild(item);
+    });
+    if (focused !== null && focused !== undefined) {
+      var back = s.querySelector('[data-sub="' + focused + '"]');
+      if (back) back.focus();
+    }
+  }
+
+  function blockGeometry(b, layout, x) {
+    var left = x(b.lo), right = x(b.hi);
+    return { left: left, width: Math.max(6, right - left) };
+  }
+
+  function drawBlock(b, layout, x, top, bottom) {
+    var colour = M.colourOf(indexOfModem(b.subChannel));
+    var g = svg("g", { "class": "blk" + (b.movable ? "" : " fixed"), "data-sub": b.subChannel, "data-centre": b.centre });
+    var entry = findModem(b.subChannel);
+    var name = entry ? modemTitle(entry) : b.mode;
+    var rf = layout.axis === "rf";
+    g.setAttribute("aria-label", name + ", sub-channel " + b.subChannel);
+    if (b.movable) {
+      g.setAttribute("tabindex", "0");
+      g.setAttribute("role", "slider");
+      g.setAttribute("aria-orientation", "horizontal");
+      var lim = M.layoutLimits(layout, b.width, plan.data ? plan.data.nyquistHz : undefined);
+      g.setAttribute("aria-valuemin", String(Math.ceil(lim.min / 100) * 100));
+      g.setAttribute("aria-valuemax", String(Math.floor(lim.max / 100) * 100));
+      g.setAttribute("aria-valuenow", String(Math.round(b.centre)));
+      g.setAttribute("aria-valuetext", rf ? M.mhzText(b.centre) + " MHz" : Math.round(b.centre) + " Hz");
+    }
+    var geo = blockGeometry(b, layout, x);
+    var flagged = b.kinds.length > 0;
+    // A solid underlay, so whatever is drawn behind a block (the edge of the passband) does not show through it.
+    g.appendChild(svg("rect", { "class": "under", x: geo.left, y: top, width: geo.width, height: bottom - top, rx: 3, fill: "#11161d" }));
+    var rect = svg("rect", { "class": "body", x: geo.left, y: top, width: geo.width, height: bottom - top, rx: 3,
+                             fill: colour, "fill-opacity": flagged ? ".6" : ".85" });
+    if (flagged) { rect.setAttribute("stroke", "#ffb86b"); rect.setAttribute("stroke-width", "1.5"); rect.setAttribute("stroke-dasharray", "4 3"); }
+    g.appendChild(rect);
+    g.appendChild(svg("text", { "class": "lbl", x: b.labelLeft, y: top - 8 - b.row * 15, fill: "#d9e2ea", "font-size": 12,
+                                stroke: "#11161d", "stroke-width": 6, "paint-order": "stroke", "stroke-linejoin": "round" }, b.text));
+    g.appendChild(svg("text", { "class": "num", x: geo.left + geo.width / 2, y: (top + bottom) / 2 + 4, fill: "#10151b", "font-size": 13,
+                                "font-weight": 600, "text-anchor": "middle" }, String(b.subChannel)));
+    if (b.movable) wireBlock(g, b);
+    return g;
+  }
+
+  // Moves a drawn block to a new centre without redrawing the strip, so a pointer that has hold
+  // of it keeps hold.
+  function placeBlock(g, b, centre) {
+    var layout = plan.layout, x = plan.geom.x;
+    var moved = { lo: centre - b.width / 2, hi: centre + b.width / 2 };
+    var geo = blockGeometry(moved, layout, x);
+    g.querySelectorAll("rect").forEach(function (r) { r.setAttribute("x", geo.left); r.setAttribute("width", geo.width); });
+    var lbl = g.querySelector("text.lbl");
+    lbl.setAttribute("x", Math.max(2, Math.min(plan.geom.W - 2 - b.labelW, geo.left + geo.width / 2 - b.labelW / 2)));
+    g.querySelector("text.num").setAttribute("x", geo.left + geo.width / 2);
+    g.dataset.centre = centre;
+    var rf = layout.axis === "rf";
+    g.setAttribute("aria-valuenow", String(Math.round(centre)));
+    g.setAttribute("aria-valuetext", rf ? M.mhzText(centre) + " MHz" : Math.round(centre) + " Hz");
+  }
+
+  // Writes a modem's new place into the document and into its field, and lets the station
+  // know a change was made. On the radio axis that is its radio frequency; on the audio axis its audio frequency.
+  function setPosition(sub, pos) {
+    var entry = findModem(sub);
+    if (!entry) return;
+    // Written where the card writes: by the same rule that decides which field the card shows.
+    var rf = placedByDial();
+    var name = rf ? "rfFrequency" : "frequency";
+    M.set(entry, name, pos);
+    if (rf) M.remove(entry, "frequency");
+    var input = $("f-modems_" + indexOfModem(sub) + "__" + name);
+    if (input) {
+      input.value = rf ? M.mhzText(pos) : String(pos);
+      delete errors["modems[" + indexOfModem(sub) + "]." + name];
+      var box = input.parentElement;
+      box.classList.remove("invalid");
+      var label = input.closest(".field").querySelector("label");
+      var at = "modems[" + indexOfModem(sub) + "]." + name;
+      label.classList.toggle("changed", JSON.stringify(M.valueAt(loaded, at)) !== JSON.stringify(pos));
+    }
+    var hint = document.querySelector('[data-hint-for="' + sub + '"]');
+    var lease = planFor(sub);
+    if (hint && rf && !(lease && lease.leaseOnly) && plan.data && typeof plan.data.dialHz === "number") {
+      hint.textContent = "Audio tone " + Math.round(M.toneHz(pos, plan.data.dialHz, plan.data.radio)) + " Hz at this dial";
+    }
+    edited(false);
+  }
+
+  // Whether the strip on screen is drawn in the units the cards write, so a move of a block
+  // means what its field means.
+  function stripAgrees() {
+    return !!plan.layout && (plan.layout.axis === "rf") === placedByDial();
+  }
+
+  function limitsOf(b) {
+    return M.layoutLimits(plan.layout, b.width, plan.data ? plan.data.nyquistHz : undefined);
+  }
+
+  function endDrag(g) {
+    if (!plan.drag) return;
+    plan.drag = null;
+    g.classList.remove("dragging");
+    if (plan.dirty) { plan.dirty = false; paintStrip(); }
+    schedulePlan(true);
+  }
+
+  function wireBlock(g, b) {
+    var sub = b.subChannel;
+    function move(pos) {
+      var lim = limitsOf(b);
+      pos = Math.max(Math.ceil(lim.min / 100) * 100, Math.min(Math.floor(lim.max / 100) * 100, pos));
+      if (pos === Number(g.dataset.centre)) return;
+      plan.overrides[sub] = pos;
+      placeBlock(g, b, pos);
+      setPosition(sub, pos);
+    }
+    g.addEventListener("pointerdown", function (e) {
+      if (e.button !== undefined && e.button > 0) return;
+      if (!stripAgrees()) return;
+      var s = $("strip-svg");
+      var width = s.getBoundingClientRect().width || plan.geom.W;
+      // One pixel of the page is the axis span over the usable width of the drawing, in pixels.
+      var usable = (plan.geom.W - 2 * plan.geom.pad) * (width / plan.geom.W);
+      plan.drag = { sub: sub, pointer: e.pointerId, startX: e.clientX, start: Number(g.dataset.centre),
+                    hzPerPx: (plan.layout.hi - plan.layout.lo) / usable, moved: false };
+      try { g.setPointerCapture(e.pointerId); } catch (err) { /* a synthetic pointer has nothing to capture */ }
+      g.classList.add("dragging");
+      g.focus();
+      e.preventDefault();
+    });
+    g.addEventListener("pointermove", function (e) {
+      var d = plan.drag;
+      if (!d || d.pointer !== e.pointerId) return;
+      // A button let go somewhere the block never heard of ends the drag rather than leaving it stuck.
+      if (e.pointerType === "mouse" && e.buttons === 0) { endDrag(g); return; }
+      // A click, or a finger's jitter, is not a drag.
+      if (!d.moved) { if (!M.dragMoved(e.clientX - d.startX)) return; d.moved = true; }
+      var lim = limitsOf(b);
+      move(M.dragTo(d.start, e.clientX - d.startX, d.hzPerPx, 100, lim.min, lim.max));
+    });
+    function end(e) { if (plan.drag && plan.drag.pointer === e.pointerId) endDrag(g); }
+    g.addEventListener("pointerup", end);
+    g.addEventListener("pointercancel", end);
+    g.addEventListener("lostpointercapture", end);
+    g.addEventListener("keydown", function (e) {
+      if (!stripAgrees()) return;
+      var lim = limitsOf(b);
+      var pos = M.keyMove(e.key, e.shiftKey, Number(g.dataset.centre), lim.min, lim.max);
+      if (pos === null) return;
+      e.preventDefault();
+      move(pos);
+    });
+  }
+
+  var resizeTimer = null;
+  window.addEventListener("resize", function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () { if ($("strip") && !plan.drag) paintStrip(); }, 120);
+  });
+
+  // ---- the cards
+  function drawModems(n) {
+    var wrap = el("div");
+    wrap.id = "modems";
+    var list = modemList();
+    if (list.length > 0) wrap.appendChild(drawStrip());
+    else wrap.appendChild(el("p", "muted", "No modems yet. Add one to start listening."));
+    var byDial = placedByDial();
+    n.items.forEach(function (item, i) { wrap.appendChild(drawModem(n, item, i, byDial)); });
+    var add = el("button", "add", "Add a modem");
+    add.type = "button";
+    add.id = "add-" + idFor(n.path);
+    add.addEventListener("click", function () {
+      picker = { open: !picker.open, group: null };
+      render();
+      if (picker.open && $("picker")) $("picker").scrollIntoView({ block: "nearest" });
+    });
+    wrap.appendChild(add);
+    if (picker.open) wrap.appendChild(drawPicker(n));
+    return wrap;
+  }
+
+  function drawModem(n, item, i, byDial) {
+    var entry = M.valueAt(doc, item.path) || {};
+    var sub = subOf(entry);
+    var info = M.modeInfo(schema, M.get(entry, "mode"));
+    var tunable = info ? info.tunable : true;
+    var card = el("div", "card modem");
+    card.id = "modem-" + idFor(item.path);
+    card.dataset.sub = sub;
+    var head = el("div", "head");
+    var who = el("div", "who");
+    var line = el("div", "line");
+    var sw = el("span", "swatch");
+    sw.style.background = M.colourOf(i);
+    line.appendChild(sw);
+    line.appendChild(el("span", "name", modemTitle(entry)));
+    line.appendChild(el("span", "sub", "Sub-channel " + sub));
+    who.appendChild(line);
+    if (info) who.appendChild(el("div", "talks", "Talks to " + info.talksTo));
+    head.appendChild(who);
+    head.appendChild(smallButton("remove-" + idFor(item.path), "Remove", function () {
+      var arr = M.valueAt(doc, n.path);
+      arr.splice(i, 1);
+      edited(true);
+    }));
+    card.appendChild(head);
+    var err = el("div", "err");
+    err.id = "e-" + idFor(item.path);
+    err.hidden = true;
+    err.style.padding = "6px 16px 0";
+    card.appendChild(err);
+
+    var body = el("div", "body");
+    var node = function (name) {
+      for (var k = 0; k < item.children.length; k++) {
+        if (item.children[k].key && item.children[k].key.name === name) return item.children[k];
+      }
+      return null;
+    };
+    if (tunable) body.appendChild(drawFrequency(item, sub, byDial, info));
+    var subNode = node("subChannel");
+    if (subNode && subNode.shown) body.appendChild(drawSubChannel(subNode, sub));
+
+    // Everything else a modem has: the mode, then the specialist keys, behind More.
+    var more = [];
+    var modeNode = node("mode");
+    if (modeNode) more.push(modeNode);
+    item.children.forEach(function (c) {
+      if (!c.key || !c.shown || c === modeNode || c === subNode) return;
+      if (c.key.name === "frequency") {
+        // The card's own field has it, unless the mode takes no audio frequency or the station
+        // has a dial (the daemon refuses the two together): then only a file that sets it shows it.
+        if (tunable && !byDial) return;
+        if (c.set) more.push(c);
+        return;
+      }
+      if (c.key.name === "rfFrequency") {
+        if (!byDial) more.push(c);
+        return;
+      }
+      more.push(c);
+    });
+    if (more.length > 0) {
+      var d = el("details", "more");
+      d.id = "more-" + idFor(item.path);
+      d.dataset.path = "more:" + item.path;
+      if (moreOpen["more:" + item.path]) d.open = true;
+      d.appendChild(el("summary", null, "More for this modem"));
+      var inner = el("div", "inner");
+      more.forEach(function (c) { inner.appendChild(drawNode(c)); });
+      d.appendChild(inner);
+      body.appendChild(d);
+    }
+    card.appendChild(body);
+    return card;
+  }
+
+  // The KISS sub-channel as a compact choice of 0 to 15, with one line on what it is for. The
+  // reference's own help and the key path are with the other keys under More.
+  function drawSubChannel(n, sub) {
+    var id = idFor(n.path);
+    var row = el("div", "field");
+    var label = el("label", null, "KISS sub-channel");
+    label.htmlFor = id;
+    row.appendChild(label);
+    var box = el("div", "input");
+    var select = el("select");
+    select.id = id;
+    var seen = false;
+    for (var v = 0; v < 16; v++) {
+      var opt = el("option", null, v + (v === sub && autoChosen[sub] ? " (chosen for you)" : ""));
+      opt.value = String(v);
+      select.appendChild(opt);
+      if (v === sub) seen = true;
+    }
+    if (!seen) { var odd = el("option", null, String(sub)); odd.value = String(sub); select.appendChild(odd); }
+    select.value = String(sub);
+    box.appendChild(select);
+    row.appendChild(box);
+    row.appendChild(el("div", "hint", "What your node software calls this port"));
+    var err = el("div", "err");
+    err.id = "e-" + id;
+    err.hidden = true;
+    row.appendChild(err);
+    var key = modemKey("subChannel");
+    if (JSON.stringify(M.valueAt(loaded, n.path)) !== JSON.stringify(M.valueAt(doc, n.path))) label.classList.add("changed");
+    select.addEventListener("change", function () {
+      M.writeField(doc, n.path, key, select.value);
+      edited(true, id);
+    });
+    return row;
+  }
+
+  // The frequency of a modem: MHz when the station has a dial, audio Hz when it has not.
+  function drawFrequency(item, sub, byDial, info) {
+    var name = byDial ? "rfFrequency" : "frequency";
+    var path = item.path + "." + name;
+    var id = idFor(path);
+    var key = modemKey(name);
+    var row = el("div", "field");
+    var label = el("label", null, byDial ? "Frequency" : "Audio frequency");
+    label.htmlFor = id;
+    row.appendChild(label);
+    var box = el("div", "input mono");
+    var input = el("input");
+    input.id = id;
+    input.type = "text";
+    input.spellcheck = false;
+    input.autocomplete = "off";
+    input.inputMode = "decimal";
+    var value = M.valueAt(doc, path);
+    var original = byDial ? (typeof value === "number" ? M.mhzText(value) : "") : M.toText(key, value);
+    input.value = original;
+    if (!byDial && info && typeof info.defaultCentreHz === "number") input.placeholder = String(info.defaultCentreHz);
+    box.appendChild(input);
+    box.appendChild(el("span", "unit", byDial ? "MHz" : "Hz"));
+    row.appendChild(box);
+    var hint = el("div", "hint");
+    hint.dataset.hintFor = sub;
+    row.appendChild(hint);
+    var warn = el("div", "warntext");
+    warn.dataset.warnFor = sub;
+    warn.hidden = true;
+    row.appendChild(warn);
+    var err = el("div", "err");
+    err.id = "e-" + id;
+    err.hidden = true;
+    row.appendChild(err);
+
+    var differs = function () {
+      return JSON.stringify(M.valueAt(loaded, path)) !== JSON.stringify(M.valueAt(doc, path));
+    };
+    if (differs()) label.classList.add("changed");
+    input.addEventListener("input", function () {
+      var reason = null, message = null;
+      if (input.value !== original || errors[path] !== undefined) {
+        if (byDial) {
+          var parsed = M.mhzFromText(input.value);
+          if (parsed.error) { reason = parsed.error; message = parsed.hint; }
+          else reason = M.writeField(doc, path, key, String(parsed.value));
+        } else {
+          reason = M.writeField(doc, path, key, input.value);
+        }
+      }
+      if (reason) { errors[path] = reason; } else { delete errors[path]; }
+      if (input.value === original && !reason) {
+        var at = M.parentOf(doc, path, true);
+        var was = M.valueAt(loaded, path);
+        if (was === undefined) M.remove(at.obj, at.last); else M.set(at.obj, at.last, clone(was));
+      }
+      box.classList.toggle("invalid", !!reason);
+      err.hidden = !reason;
+      err.textContent = reason ? (message || "Should be " + reason + ".") : "";
+      label.classList.toggle("changed", differs());
+      if (!reason) {
+        var shown = M.valueAt(doc, path);
+        if (typeof shown === "number") plan.overrides[sub] = shown;
+        paintPlan();
+      }
+      edited(false);
+    });
+    return row;
+  }
+
+  // ---- the picker
+  function drawPicker(n) {
+    var card = el("div", "card");
+    card.id = "picker";
+    var head = el("div", "head");
+    head.appendChild(el("span", "name", picker.group ? "Which one?" : "Add a modem: what do you want to talk to?"));
+    head.appendChild(el("span", "spacer"));
+    head.appendChild(smallButton("picker-close", "Cancel", function () { picker = { open: false, group: null }; render(); }));
+    card.appendChild(head);
+    var body = el("div", "body");
+    var choices = el("div", "choices");
+    var groups = schema.modes.groups;
+    // Modes with no audio tone (the 9600 baud and OFDM-FM families) cannot be placed at a radio
+    // frequency on a sideband radio, so a station placed that way is not offered them.
+    var tunableOnly = placedByDial();
+    var hidden = false;
+    groups.forEach(function (g) {
+      if (M.modesOfGroup(schema, g.id, tunableOnly).length !== M.modesOfGroup(schema, g.id).length) hidden = true;
+    });
+    if (!picker.group) {
+      groups.forEach(function (g) {
+        if (M.modesOfGroup(schema, g.id, tunableOnly).length === 0) return;
+        choices.appendChild(choice("group-" + g.id, g.title, g.blurb, function () {
+          var modes = M.modesOfGroup(schema, g.id, tunableOnly);
+          if (modes.length === 1) { addModem(n, modes[0].mode); return; }
+          picker.group = g.id;
+          render();
+        }));
+      });
+    } else {
+      var nino = picker.group === "nino";
+      M.modesOfGroup(schema, picker.group, tunableOnly).forEach(function (m) {
+        var title = nino ? "NinoTNC mode " + m.ninoMode : m.name;
+        var text = nino ? m.name : "Talks to " + m.talksTo;
+        choices.appendChild(choice("mode-" + m.mode, title, text, function () { addModem(n, m.mode); }));
+      });
+      choices.appendChild(choice("back", "Back", "Choose something else to talk to", function () { picker.group = null; render(); }));
+    }
+    body.appendChild(choices);
+    if (hidden) {
+      var why = el("p", "muted", "Modes with no audio tone to place, such as 9600 baud packet and the OFDM modes, are not listed: "
+        + "this station places its modems by radio frequency. Put them on a station that places them by audio frequency or on FM.");
+      why.id = "picker-note";
+      why.style.gridColumn = "1 / -1";
+      why.style.fontSize = "13px";
+      body.appendChild(why);
+    }
+    card.appendChild(body);
+    return card;
+  }
+
+  function choice(id, title, text, onClick) {
+    var b = el("button", "choice");
+    b.type = "button";
+    b.id = "choice-" + id;
+    b.appendChild(el("b", null, title));
+    b.appendChild(el("span", null, text));
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  // Adds a modem of a mode on the next free sub-channel, in a free part of the passband.
+  function addModem(n, mode) {
+    var list = modemList();
+    var sub = M.nextSubChannel(list);
+    if (sub !== null) autoChosen[sub] = true;
+    if (sub === null) {
+      picker = { open: false, group: null };
+      render();
+      result("bad", "All 16 sub-channels have a modem. Remove one to add another.");
+      return;
+    }
+    var info = M.modeInfo(schema, mode);
+    var byDial = placedByDial();
+    // The station is asked where things are now, so the free part found is free in its own plan.
+    // On FM the modems share a channel; a file that gives one modem its channel (rfFrequency) must
+    // give every modem one, so a new modem is put on the same channel.
+    var channel = null;
+    if (radioKind() === "fm") {
+      list.forEach(function (m) {
+        var v = M.get(m, "rfFrequency");
+        if (channel === null && typeof v === "number") channel = v;
+      });
+    }
+    planNow().then(function (data) {
+      var place = [];
+      if (list.length > 0 && (!info || info.tunable)) {
+        var width = info ? info.widthHz : 500;
+        var layout = data && data.ok ? M.stripLayout(data) : null;
+        var taken = layout ? layout.blocks.map(function (b) { return { lo: b.lo, hi: b.hi }; }) : [];
+        if (byDial) {
+          var pb = layout ? layout.passband : null;
+          if (pb) {
+            var c = M.freeCentre(width, taken, pb.lo, pb.hi, 100);
+            place.push({ key: "rfFrequency", value: c === null ? M.snap(pb.lo + width / 2, 100) : c });
+          } else {
+            // No plan to place in (it was refused): beside the highest modem the file has, in the
+            // radio frequencies the cards use, so the new one has one like all the others.
+            var top = null;
+            list.forEach(function (m) {
+              var v = M.get(m, "rfFrequency");
+              if (typeof v !== "number") return;
+              var mi = M.modeInfo(schema, M.get(m, "mode"));
+              var edge = v + (mi ? mi.widthHz : 500) / 2;
+              if (top === null || edge > top) top = edge;
+            });
+            if (top !== null) place.push({ key: "rfFrequency", value: M.snap(top + width / 2 + 100, 100) });
+          }
+        } else {
+          var audio = data && data.passband && typeof data.passband.audioLowHz === "number"
+            ? { lo: data.passband.audioLowHz, hi: data.passband.audioHighHz } : { lo: 300, hi: 3000 };
+          var a = M.freeCentre(width, taken, audio.lo, audio.hi, 100);
+          place.push({ key: "frequency", value: a === null ? M.snap(audio.lo + width / 2, 100) : a });
+        }
+      }
+      if (channel !== null) place.push({ key: "rfFrequency", value: channel });
+      var arr = M.valueAt(doc, n.path);
+      if (!Array.isArray(arr)) { var s = atPath(n.path); arr = []; M.set(s.at.obj, s.at.last, arr); }
+      arr.push(M.newModem(mode, sub, place));
+      picker = { open: false, group: null };
+      edited(true);
+      var field = $("f-modems_" + (arr.length - 1) + "__" + (place.length > 0 ? place[0].key : "subChannel"));
+      if (field) field.focus();
+    });
   }
 
   var listId = 0;
@@ -1454,6 +2489,7 @@ var ConfigModel = (function () {
       if (keep && $(keep)) $(keep).focus();
     }
     scheduleCheck();
+    schedulePlan(false);
   }
 
   // A secret that differs in a restored version is a change too, though both documents show it

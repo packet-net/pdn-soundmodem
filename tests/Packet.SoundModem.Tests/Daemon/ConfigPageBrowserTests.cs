@@ -207,6 +207,7 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         // The 2026-08-15 outage: a trailing space in a mode name. The station's own refusal comes
         // back under the field it is about, and in the bar, with nothing to apply while it stands.
         await GoToAsync(page, "modes");
+        await OpenMoreAsync(page, "#more-f-modems_0_");
         await ReplaceAsync(page, "#f-modems_0__mode", "bpsk300 ");
         await Assertions.Expect(page.Locator("#e-f-modems_0__mode")).ToContainTextAsync("unknown mode", new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#changes")).ToContainTextAsync("1 problem to fix", new() { Timeout = StepMs });
@@ -230,6 +231,241 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await ReplaceAsync(page, "#f-kissPort", "eighty");
         await Assertions.Expect(page.Locator("#changes")).ToContainTextAsync("needs fixing", new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#save")).ToBeDisabledAsync(new() { Timeout = StepMs });
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task A_Block_Dragged_On_The_Band_Strip_Changes_The_Modems_Frequency_In_The_File()
+    {
+        RequireBrowser();
+        // A pinned dial keeps the strip still while a block moves; two modems, so the dragged one
+        // has company on the strip.
+        _station = await Station.StartAsync(_scratch.FullName, key: null, modems: """
+            [ { "subChannel": 0, "mode": "bpsk300", "rfFrequency": 7050800 },
+              { "subChannel": 1, "mode": "qpsk600", "rfFrequency": 7051900 } ],
+              "sideband": "usb", "dialFrequency": 7050000
+            """);
+        IPage page = await OpenConfigAsync();
+
+        await GoToAsync(page, "modes");
+        ILocator block = page.Locator("#strip-svg .blk[data-sub='0']");
+        await Assertions.Expect(block).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#strip.stale")).ToHaveCountAsync(0, new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#f-modems_0__rfFrequency")).ToHaveValueAsync("7.050800", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("[data-hint-for='0']")).ToContainTextAsync("Audio tone 800 Hz", new() { Timeout = StepMs });
+
+        // Drag it right by roughly 300 Hz. How far that is in pixels depends on the width of the
+        // strip, which is read from the page, and the answer is a multiple of 100 Hz.
+        string before = (await block.GetAttributeAsync("data-centre"))!;
+        var box = (await block.Locator("rect.body").BoundingBoxAsync())!;
+        double startX = box.X + (box.Width / 2);
+        double startY = box.Y + (box.Height / 2);
+        double blockPxPer300 = box.Width;
+        await page.Mouse.MoveAsync((float)startX, (float)startY);
+        await page.Mouse.DownAsync();
+        // Hold the block part-way until the station has answered a plan for the move so far (the
+        // page asks 250 ms after the last move): the answer must not take the block from the pointer.
+        Task<IResponse> planned = page.WaitForResponseAsync(r => r.Url.EndsWith("/api/config/plan", StringComparison.Ordinal),
+            new() { Timeout = StepMs });
+        await page.Mouse.MoveAsync((float)(startX + (blockPxPer300 / 2)), (float)startY, new() { Steps = 8 });
+        await planned;
+        await page.EvaluateAsync("() => new Promise(r => requestAnimationFrame(() => r(true)))");
+        (await block.EvaluateAsync<bool>("e => e.isConnected")).Should().BeTrue("the strip is not rebuilt under a held block");
+        await page.Mouse.MoveAsync((float)(startX + blockPxPer300), (float)startY, new() { Steps = 8 });
+        await page.Mouse.UpAsync();
+
+        // The field follows the block and the change is pending; wait on those, not on time.
+        ILocator field = page.Locator("#f-modems_0__rfFrequency");
+        await Assertions.Expect(field).Not.ToHaveValueAsync("7.050800", new() { Timeout = StepMs });
+        string moved = await field.InputValueAsync();
+        double movedHz = Math.Round(double.Parse(moved, System.Globalization.CultureInfo.InvariantCulture) * 1e6);
+        (movedHz % 100).Should().Be(0, "a drag lands on a step of 100 Hz");
+        movedHz.Should().BeGreaterThan(7050800, "dragged to the right");
+        await Assertions.Expect(page.Locator("#changes")).ToContainTextAsync("Radio frequency", new() { Timeout = StepMs });
+        before.Should().NotBe(await block.GetAttributeAsync("data-centre"));
+
+        await SaveAsync(page);
+
+        JsonNode file = _station.ReadConfig();
+        file["modems"]![0]!["rfFrequency"]!.GetValue<double>().Should().Be(movedHz);
+        file["modems"]![1]!["rfFrequency"]!.GetValue<double>().Should().Be(7051900, "the other modem was not touched");
+        file["modems"]![0]!["frequency"].Should().BeNull("a modem has one or the other");
+
+        // The arrow keys move the same block, a hundred Hz at a time, a kilohertz with Shift.
+        await ReloadSettingsAsync(page);
+        await GoToAsync(page, "modes");
+        block = page.Locator("#strip-svg .blk[data-sub='0']");
+        await Assertions.Expect(block).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#f-modems_0__rfFrequency")).ToHaveValueAsync(moved, new() { Timeout = StepMs });
+        await block.FocusAsync();
+        await page.Keyboard.PressAsync("ArrowLeft");
+        await Assertions.Expect(page.Locator("#f-modems_0__rfFrequency")).ToHaveValueAsync(
+            ((movedHz - 100) / 1e6).ToString("F6", System.Globalization.CultureInfo.InvariantCulture), new() { Timeout = StepMs });
+        await page.Keyboard.PressAsync("Shift+ArrowRight");
+        await Assertions.Expect(page.Locator("#f-modems_0__rfFrequency")).ToHaveValueAsync(
+            ((movedHz + 900) / 1e6).ToString("F6", System.Globalization.CultureInfo.InvariantCulture), new() { Timeout = StepMs });
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task A_Modem_Added_From_The_Picker_Takes_A_Free_Sub_Channel_And_A_Free_Part_Of_The_Band()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null, modems: """
+            [ { "subChannel": 0, "mode": "bpsk300", "rfFrequency": 7050800 } ],
+              "sideband": "usb", "dialFrequency": 7050000
+            """);
+        IPage page = await OpenConfigAsync();
+
+        await GoToAsync(page, "modes");
+        await Assertions.Expect(page.Locator("#strip-svg .blk[data-sub='0']")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await page.Locator("#add-f-modems").ClickAsync();
+        await page.Locator("#choice-group-nino").ClickAsync();
+        await page.Locator("#choice-mode-qpsk600").ClickAsync();
+
+        await Assertions.Expect(page.Locator("#modem-f-modems_1_")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#modem-f-modems_1_ .head .who .line .name")).ToHaveTextAsync("600 baud QPSK", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#modem-f-modems_1_ .sub")).ToHaveTextAsync("Sub-channel 1", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#modem-f-modems_1_ .talks")).ToContainTextAsync("NinoTNC mode 9", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#strip-svg .blk[data-sub='1']")).ToBeVisibleAsync(new() { Timeout = StepMs });
+
+        // The station's own plan, fetched after the add, finds no overlap and nothing past an edge.
+        await Assertions.Expect(page.Locator("#strip.stale")).ToHaveCountAsync(0, new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#strip-svg .blk[data-sub='1']")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("[data-warn-for='1']")).ToBeHiddenAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("[data-warn-for='0']")).ToBeHiddenAsync(new() { Timeout = StepMs });
+
+        await SaveAsync(page);
+        JsonNode file = _station.ReadConfig();
+        file["modems"]!.AsArray().Should().HaveCount(2);
+        file["modems"]![1]!["subChannel"]!.GetValue<int>().Should().Be(1);
+        file["modems"]![1]!["mode"]!.GetValue<string>().Should().Be("qpsk600");
+        double rf = file["modems"]![1]!["rfFrequency"]!.GetValue<double>();
+        (rf % 100).Should().Be(0);
+        Math.Abs(rf - 7050800).Should().BeGreaterThanOrEqualTo(300, "beside the first modem, not on it");
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task A_Click_On_A_Block_Does_Not_Move_The_Modem_And_Mhz_Typed_As_Hz_Is_Refused()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null, modems: """
+            [ { "subChannel": 0, "mode": "bpsk300", "rfFrequency": 7050830 } ],
+              "sideband": "usb", "dialFrequency": 7050000
+            """);
+        IPage page = await OpenConfigAsync();
+        await GoToAsync(page, "modes");
+        ILocator block = page.Locator("#strip-svg .blk[data-sub='0']");
+        await Assertions.Expect(block).ToBeVisibleAsync(new() { Timeout = StepMs });
+        var box = (await block.Locator("rect.body").BoundingBoxAsync())!;
+
+        // A press and release with a couple of pixels of jitter, on a frequency off the grid.
+        await page.Mouse.MoveAsync((float)(box.X + (box.Width / 2)), (float)(box.Y + (box.Height / 2)));
+        await page.Mouse.DownAsync();
+        await page.Mouse.MoveAsync((float)(box.X + (box.Width / 2) + 2), (float)(box.Y + (box.Height / 2)));
+        await page.Mouse.UpAsync();
+        await Assertions.Expect(page.Locator("#f-modems_0__rfFrequency")).ToHaveValueAsync("7.050830", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#pending")).ToBeHiddenAsync(new() { Timeout = StepMs });
+
+        // Hz where MHz belongs is not written.
+        await ReplaceAsync(page, "#f-modems_0__rfFrequency", "7050800");
+        await Assertions.Expect(page.Locator("#e-f-modems_0__rfFrequency")).ToContainTextAsync("looks like Hz", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#changes")).ToContainTextAsync("needs fixing", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#save")).ToBeDisabledAsync(new() { Timeout = StepMs });
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task A_Dial_Left_Beside_Audio_Modems_Leaves_The_Strip_In_Audio_And_The_Arrow_Keys_Write_The_Audio_Frequency()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null, modems: """
+            [ { "subChannel": 0, "mode": "bpsk300", "frequency": 1000 },
+              { "subChannel": 1, "mode": "qpsk600", "frequency": 2000 } ],
+              "sideband": "usb", "dialFrequency": 7050000
+            """);
+        IPage page = await OpenConfigAsync();
+        await GoToAsync(page, "modes");
+        ILocator block = page.Locator("#strip-svg .blk[data-sub='0']");
+        await Assertions.Expect(block).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#f-modems_0__frequency")).ToHaveValueAsync("1000", new() { Timeout = StepMs });
+
+        await block.FocusAsync();
+        await page.Keyboard.PressAsync("ArrowRight");
+        await Assertions.Expect(page.Locator("#f-modems_0__frequency")).ToHaveValueAsync("1100", new() { Timeout = StepMs });
+        await SaveAsync(page);
+
+        JsonNode file = _station.ReadConfig();
+        file["modems"]![0]!["frequency"]!.GetValue<double>().Should().Be(1100);
+        file["modems"]![0]!["rfFrequency"].Should().BeNull();
+        file["modems"]![1]!["rfFrequency"].Should().BeNull();
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task On_FM_A_New_Modem_Joins_The_Channel_The_Others_Are_On_And_The_File_Still_Starts()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null, modems: """
+            [ { "subChannel": 0, "mode": "afsk1200", "frequency": 1700, "rfFrequency": 144800000 } ],
+              "sideband": "fm"
+            """);
+        IPage page = await OpenConfigAsync();
+        await GoToAsync(page, "modes");
+        await Assertions.Expect(page.Locator("#modem-f-modems_0_")).ToBeVisibleAsync(new() { Timeout = StepMs });
+
+        await page.Locator("#add-f-modems").ClickAsync();
+        await page.Locator("#choice-group-nino").ClickAsync();
+        await page.Locator("#choice-mode-afsk1200-il2p").ClickAsync();
+        await Assertions.Expect(page.Locator("#modem-f-modems_1_")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await SaveAsync(page);
+
+        JsonNode file = _station.ReadConfig();
+        file["modems"]!.AsArray().Should().HaveCount(2);
+        file["modems"]![1]!["rfFrequency"]!.GetValue<double>().Should().Be(144800000, "all or none of the modems carry a channel");
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task A_Station_Placed_By_Radio_Frequency_Is_Not_Offered_Modes_With_No_Tone_To_Place()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null, modems: """
+            [ { "subChannel": 0, "mode": "bpsk300", "rfFrequency": 7050800 } ],
+              "sideband": "usb", "dialFrequency": 7050000
+            """);
+        IPage page = await OpenConfigAsync();
+        await GoToAsync(page, "modes");
+        await page.Locator("#add-f-modems").ClickAsync();
+
+        await Assertions.Expect(page.Locator("#choice-group-p1200")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#choice-group-ofdmfm")).ToHaveCountAsync(0, new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#picker-note")).ToContainTextAsync("radio frequency", new() { Timeout = StepMs });
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task A_Modem_Added_When_The_Plan_Is_Refused_Still_Gets_A_Radio_Frequency()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null, modems: """
+            [ { "subChannel": 0, "mode": "bpsk300", "rfFrequency": 7050800 } ],
+              "sideband": "usb"
+            """);
+        IPage page = await OpenConfigAsync();
+        await GoToAsync(page, "modes");
+        await Assertions.Expect(page.Locator("#strip-svg .blk[data-sub='0']")).ToBeVisibleAsync(new() { Timeout = StepMs });
+
+        await page.Locator("#add-f-modems").ClickAsync();
+        await page.Locator("#choice-group-nino").ClickAsync();
+        await page.Locator("#choice-mode-qpsk600").ClickAsync();
+        await Assertions.Expect(page.Locator("#f-modems_1__rfFrequency")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        // Twenty kHz apart: more than one dial can cover.
+        await ReplaceAsync(page, "#f-modems_1__rfFrequency", "7.0708");
+        await Assertions.Expect(page.Locator("#strip.stale")).ToHaveCountAsync(0, new() { Timeout = StepMs });
+
+        await page.Locator("#add-f-modems").ClickAsync();
+        await page.Locator("#choice-group-nino").ClickAsync();
+        await page.Locator("#choice-mode-bpsk1200").ClickAsync();
+
+        ILocator added = page.Locator("#f-modems_2__rfFrequency");
+        await Assertions.Expect(added).ToBeVisibleAsync(new() { Timeout = StepMs });
+        string value = await added.InputValueAsync();
+        value.Should().MatchRegex(@"^\d+\.\d{6}$", "the new modem has a radio frequency like the others");
     }
 
     [Fact(Timeout = 600_000)]
@@ -359,6 +595,13 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await page.Locator($"#nav-{area}").ClickAsync();
         await Assertions.Expect(page.Locator($"#nav-{area}")).ToHaveClassAsync(
             new System.Text.RegularExpressions.Regex("\\bon\\b"), new() { Timeout = StepMs });
+    }
+
+    /// <summary>Opens a modem's More section and waits until it is open.</summary>
+    private static async Task OpenMoreAsync(IPage page, string selector)
+    {
+        await page.Locator($"{selector} > summary").ClickAsync();
+        await Assertions.Expect(page.Locator(selector)).ToHaveAttributeAsync("open", "", new() { Timeout = StepMs });
     }
 
     /// <summary>Types a field's new text and waits until the page has taken it.</summary>
@@ -507,12 +750,13 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         public JsonNode ReadConfig() => JsonNode.Parse(File.ReadAllText(ConfigPath), null,
             new System.Text.Json.JsonDocumentOptions { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true })!;
 
-        public static async Task<Station> StartAsync(string dir, string? key)
+        public static async Task<Station> StartAsync(string dir, string? key, string? modems = null)
         {
             int port = FreePorts.Next();
             int kiss = FreePorts.Next();
             string configPath = Path.Combine(dir, "soundmodem.json");
             string api = key is null ? "" : $",\n  \"api\": {{ \"key\": \"{key}\" }}";
+            string modemList = modems ?? "[ { \"subChannel\": 0, \"mode\": \"bpsk300\", \"frequency\": 1500 } ]";
             // A pipe that loops back to itself, not ALSA's "null": the daemon makes the FIFO and
             // paces it to the clock, and nothing needs libasound, which a bare CI runner may not
             // have (proxmox0's did not, 2026-11-06, and every start aborted).
@@ -523,7 +767,7 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                   "bind": "127.0.0.1",
                   "kissPort": {{kiss}},
                   "waterfall": { "port": {{port}}, "title": "before" },
-                  "modems": [ { "subChannel": 0, "mode": "bpsk300", "frequency": 1500 } ],
+                  "modems": {{modemList}},
                   "notASettingYet": 7{{api}}
                 }
                 """);
