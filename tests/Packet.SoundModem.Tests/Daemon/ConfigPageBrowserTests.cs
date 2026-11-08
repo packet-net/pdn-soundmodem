@@ -708,6 +708,181 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await _station!.WaitForStartsAsync(starts);
     }
 
+
+    // ---------------------------------------------------------------- guided setup
+
+    /// <summary>The one FM, CM108 and serial machine the setup tests find.</summary>
+    private static string SetupMachine() =>
+        new FakeDeviceTree()
+            .Cm108(card: 1, hidraw: 1)
+            .UsbSerial(0, "/sys/devices/pci0000:00/0000:00:14.0/usb3/3-3", "0403", "6001", "FTDI", "FT232R USB UART", byId: null)
+            .Describe()
+        + "mixer\tDevice\tMic\tSpeaker\n";
+
+    private async Task<IPage> OpenSetupAsync(string relative = "config")
+    {
+        IPage page = await NewPageAsync();
+        await page.GotoAsync(_station!.Url(relative));
+        await Assertions.Expect(page.Locator("#setup")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        return page;
+    }
+
+    private static async Task NextAsync(IPage page, string toStep)
+    {
+        await Assertions.Expect(page.Locator("#setup-next")).ToBeEnabledAsync(new() { Timeout = StepMs });
+        await page.Locator("#setup-next").ClickAsync();
+        await Assertions.Expect(page.Locator($"#step-item-{toStep}")).ToHaveAttributeAsync("aria-current", "step", new() { Timeout = StepMs });
+    }
+
+    /// <summary>
+    /// A station that has never been configured opens setup by itself, and the whole flow, on what
+    /// the machine has, ends in a file with a sound card, a CM108 PTT, one modem and the KISS
+    /// settings. Nothing is keyed: the key test is only looked at, and it explains itself.
+    /// </summary>
+    [Fact(Timeout = 600_000)]
+    public async Task A_New_Station_Opens_Setup_By_Itself_And_The_Whole_Flow_Writes_The_File()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null, machine: SetupMachine(), fresh: true);
+        IPage page = await OpenSetupAsync();
+        await Assertions.Expect(page).ToHaveURLAsync(new System.Text.RegularExpressions.Regex("#setup$"), new() { Timeout = StepMs });
+
+        // Your radio: nothing is chosen for you.
+        await Assertions.Expect(page.Locator("#setup-next")).ToBeDisabledAsync(new() { Timeout = StepMs });
+        await page.Locator("#pick-kind-fm").CheckAsync();
+        await NextAsync(page, "card");
+
+        // Sound card.
+        await Assertions.Expect(page.Locator("#option-card-Device")).ToContainTextAsync("plughw:CARD=Device,DEV=0", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#setup-next")).ToBeDisabledAsync(new() { Timeout = StepMs });
+        await page.Locator("#pick-card-Device").CheckAsync();
+        await NextAsync(page, "keying");
+
+        // Keying: the choices are the machine's, and VOX is not assumed.
+        await Assertions.Expect(page.Locator("#option-ptt-serial-ttyUSB0")).ToContainTextAsync("FTDI FT232R USB UART", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#setup-next")).ToBeDisabledAsync(new() { Timeout = StepMs });
+        await page.Locator("#pick-ptt-cm108-hidraw1").CheckAsync();
+        // The station could key, but not the way just chosen, and it says so instead of keying
+        // something else.
+        await Assertions.Expect(page.Locator("#keytest-why")).ToContainTextAsync("you have changed that", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#keytest-go")).ToHaveCountAsync(0, new() { Timeout = StepMs });
+
+        // Going back keeps what was chosen.
+        await page.Locator("#step-card").ClickAsync();
+        await Assertions.Expect(page.Locator("#pick-card-Device")).ToBeCheckedAsync(new() { Timeout = StepMs });
+        await NextAsync(page, "keying");
+        await Assertions.Expect(page.Locator("#pick-ptt-cm108-hidraw1")).ToBeCheckedAsync(new() { Timeout = StepMs });
+        await NextAsync(page, "modes");
+
+        // Modes: from what to talk to.
+        await page.Locator("#choice-group-p1200").ClickAsync();
+        await page.Locator("#choice-mode-afsk1200").ClickAsync();
+        await Assertions.Expect(page.Locator("#setup-modem-0")).ToContainTextAsync("Talks to", new() { Timeout = StepMs });
+        await NextAsync(page, "software");
+
+        // Your software.
+        int port = FreePorts.Next();
+        await ReplaceAsync(page, "#setup-kiss-port", port.ToString());
+        await page.Locator("#pick-bind-network").CheckAsync();
+        await Assertions.Expect(page.Locator("#setup-kiss-words")).ToContainTextAsync($"port {port}", new() { Timeout = StepMs });
+        await NextAsync(page, "try");
+
+        // Try it.
+        await Assertions.Expect(page.Locator("#setup-summary")).ToContainTextAsync("KISS port " + port, new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#setup-save")).ToBeDisabledAsync(new() { Timeout = StepMs });
+        await page.Locator("#setup-check").ClickAsync();
+        await Assertions.Expect(page.Locator("#setup-check-status")).ToContainTextAsync("Looks good", new() { Timeout = StepMs });
+        await page.Locator("#setup-save").ClickAsync();
+
+        // The restart onto a sound card this machine does not have cannot finish, so the test
+        // waits for the file, which is written before the restart.
+        await _station.WaitForLogAsync("configuration written");
+        JsonNode file = _station.ReadConfig();
+        file["device"]!.GetValue<string>().Should().Be("plughw:CARD=Device,DEV=0");
+        file["sideband"]!.GetValue<string>().Should().Be("fm");
+        file["ptt"]!["type"]!.GetValue<string>().Should().Be("cm108");
+        file["ptt"]!["device"]!.GetValue<string>().Should().Be("/dev/hidraw1");
+        file["modems"]!.AsArray().Should().HaveCount(1);
+        file["modems"]![0]!["mode"]!.GetValue<string>().Should().Be("afsk1200");
+        file["kissPort"]!.GetValue<int>().Should().Be(port);
+        file["bind"]!.GetValue<string>().Should().Be("*");
+        file["notASettingYet"]!.GetValue<int>().Should().Be(7, "what setup never showed is kept");
+    }
+
+    /// <summary>
+    /// A receive-only setup that the station can really restart on: after the restart the page
+    /// shows the input level meter and the station page link, and the key test is offered (never pressed).
+    /// </summary>
+    [Fact(Timeout = 600_000)]
+    public async Task After_Save_And_Start_Setup_Shows_The_Level_Meter_And_A_Link_To_The_Station_Page()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null, machine: SetupMachine(), fresh: true);
+        IPage page = await OpenSetupAsync();
+
+        await page.Locator("#pick-kind-ssb").CheckAsync();
+        await NextAsync(page, "card");
+        await ReplaceAsync(page, "#setup-device", $"pipe:{Path.Combine(_scratch.FullName, "air")},{Path.Combine(_scratch.FullName, "air")}");
+        await page.Locator("#setup-device").PressAsync("Tab");
+        await NextAsync(page, "keying");
+        await page.Locator("#pick-ptt-vox").CheckAsync();
+        await NextAsync(page, "modes");
+        await page.Locator("#choice-group-hf300").ClickAsync();
+        await page.Locator("#choice-mode-bpsk300").ClickAsync();
+        await Assertions.Expect(page.Locator("#setup-modem-0")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await NextAsync(page, "software");
+        await NextAsync(page, "try");
+        await page.Locator("#setup-check").ClickAsync();
+        await Assertions.Expect(page.Locator("#setup-check-status")).ToContainTextAsync("Looks good", new() { Timeout = StepMs });
+        await page.Locator("#setup-save").ClickAsync();
+
+        await Assertions.Expect(page.Locator("#setup-done")).ToBeVisibleAsync(new() { Timeout = RestartMs });
+        await _station.WaitForStartsAsync(2);
+        await Assertions.Expect(page.Locator("#setup-meter")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#setup-station-link")).ToHaveAttributeAsync("href", "./", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#keytest-go")).ToBeVisibleAsync(new() { Timeout = StepMs });
+
+        JsonNode file = _station.ReadConfig();
+        file["modems"]![0]!["mode"]!.GetValue<string>().Should().Be("bpsk300");
+        file["ptt"].Should().BeNull("VOX was chosen, so there is no PTT section");
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task A_Configured_Station_Does_Not_Open_Setup_By_Itself_But_Can_Run_It_Again_From_What_It_Has()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null);
+        IPage page = await OpenConfigAsync();
+        await Assertions.Expect(page.Locator("#setup")).ToHaveCountAsync(0, new() { Timeout = StepMs });
+        page.Url.Should().NotContain("#setup");
+
+        // Run setup again starts from the configuration, not from a blank page.
+        await page.Locator("#nav-setup").ClickAsync();
+        await Assertions.Expect(page.Locator("#setup")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#pick-kind-ssb")).ToBeCheckedAsync(new() { Timeout = StepMs });
+        await NextAsync(page, "card");
+        await Assertions.Expect(page.Locator("#setup-device")).ToHaveValueAsync(
+            new System.Text.RegularExpressions.Regex("^pipe:"), new() { Timeout = StepMs });
+
+        // Skipping leaves the settings, with nothing changed.
+        await page.Locator("#skip-setup").ClickAsync();
+        await Assertions.Expect(page.Locator("#overview-radio")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#pending")).ToBeHiddenAsync(new() { Timeout = StepMs });
+    }
+
+    /// <summary>A station that was never configured and then skips setup is not sent back to it.</summary>
+    [Fact(Timeout = 600_000)]
+    public async Task Skipping_Setup_On_A_New_Station_Goes_To_The_Settings_And_Changes_Nothing()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null, fresh: true);
+        IPage page = await OpenSetupAsync();
+        await page.Locator("#skip-setup").ClickAsync();
+        await Assertions.Expect(page.Locator("#overview-radio")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#pending")).ToBeHiddenAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#setup")).ToHaveCountAsync(0, new() { Timeout = StepMs });
+    }
+
     // ---------------------------------------------------------------- the browser
 
     /// <summary>One headless Chromium for the class; each test has a context of its own.</summary>
@@ -839,7 +1014,9 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
 
         /// <param name="machine">A machine for /api/config/discover to find, in the daemon's fixture
         /// format (HardwareFixture), or null for the machine the test runs on.</param>
-        public static async Task<Station> StartAsync(string dir, string? key, string? modems = null, string? machine = null)
+        /// <param name="fresh">A station that has never been configured: no modems and no PTT, so the
+        /// page opens its setup by itself.</param>
+        public static async Task<Station> StartAsync(string dir, string? key, string? modems = null, string? machine = null, bool fresh = false)
         {
             int port = FreePorts.Next();
             int kiss = FreePorts.Next();
@@ -856,7 +1033,7 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                   "bind": "127.0.0.1",
                   "kissPort": {{kiss}},
                   "waterfall": { "port": {{port}}, "title": "before" },
-                  "modems": {{modemList}},
+                  {{(fresh ? "" : $"\"modems\": {modemList},")}}
                   "notASettingYet": 7{{api}}
                 }
                 """);

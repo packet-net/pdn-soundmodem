@@ -11,6 +11,12 @@ At the end of this page one AFSK 1200 modem is decoding packet off air, the fram
 
 If you have no radio to hand, skip to [No radio to hand](#no-radio-to-hand) and replay a recording instead.
 
+## The easy way: the setup page
+
+If the station is running, open `http://localhost:8107/config` in a browser on the same machine. A station that has never been set up goes straight to a short guided setup: what kind of radio you have, which sound card, how to key it, what you want to talk to, and how your software connects. It lists the sound cards and PTT pins it finds on the machine, so you pick instead of typing, and nothing is changed until you press **Save and start** on the last screen. When it restarts it shows a level meter so you can set the input level. Later, **Run setup again** in the settings menu starts the same guide from your current settings.
+
+A fresh install may not be running yet, because the seeded config names a device it cannot open until you edit it, and then the page has nothing to show. In that case, or if you prefer to see the file, follow the rest of this page, which does the same job by editing the config by hand.
+
 ## Find the sound card
 
 List what the machine can record from:
