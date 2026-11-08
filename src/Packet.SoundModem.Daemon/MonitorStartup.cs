@@ -259,6 +259,52 @@ internal static class MonitorStartup
     }
 
     /// <summary>
+    /// Whether a site could keep its frame logs at <paramref name="path"/>, asked without making
+    /// anything the site would make: null when it could, else the sentence to show. The same
+    /// refusals as <see cref="TryPrepareFrameLogDirectory"/>, and for a directory that does not
+    /// exist yet, whether its nearest existing parent can be written to, which is what creating
+    /// it needs. Writability is tried with one empty file that is deleted at once, in a
+    /// directory that is already there; no directory is created.
+    /// </summary>
+    internal static string? FrameLogProblem(string path)
+    {
+        var said = new List<string>();
+        if (File.Exists(path)
+            || (!Directory.Exists(path)
+                && Path.GetExtension(path).Equals(".db", StringComparison.OrdinalIgnoreCase)))
+        {
+            TryPrepareFrameLogDirectory(path, new StationJournal("", _ => { }, said.Add), out _, create: false);
+            return said.Count > 0 ? said[0] : null;
+        }
+
+        string? probe = Path.GetFullPath(path);
+        while (probe is not null && !Directory.Exists(probe))
+        {
+            probe = Path.GetDirectoryName(probe);
+        }
+
+        if (probe is null)
+        {
+            return $"The site cannot keep its frame logs at {path}: no part of that path exists.";
+        }
+
+        try
+        {
+            string trial = Path.Combine(probe, $".pdn-write-check-{Guid.NewGuid():N}");
+            using (new FileStream(trial, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose))
+            {
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return $"The site cannot keep its frame logs at {path}: {probe} is not writable by the service "
+                + $"({e.Message}). Pick a directory it can write to, or remove \"frameLog\".";
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// The directory each station's frame log goes in, created if it is missing.
     /// </summary>
     /// <remarks>
@@ -268,7 +314,7 @@ internal static class MonitorStartup
     /// SQLite error from somewhere inside the first station that happened to be picked.
     /// </remarks>
     internal static bool TryPrepareFrameLogDirectory(
-        string path, StationJournal journal, out string directory)
+        string path, StationJournal journal, out string directory, bool create = true)
     {
         directory = "";
 
@@ -294,6 +340,11 @@ internal static class MonitorStartup
                 + "frames-<slug>.db inside it. Drop the file name, e.g. "
                 + "\"/var/lib/pdn-soundmodem\".");
             return false;
+        }
+
+        if (!create)
+        {
+            return true;
         }
 
         try

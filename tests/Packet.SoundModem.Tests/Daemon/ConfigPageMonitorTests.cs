@@ -230,6 +230,164 @@ public partial class ConfigPageTests
         }
     }
 
+    // ---------------------------------------------------------------- what would stop a site for good
+
+    private static string SiteWith(string replace, string with) => SiteFile.Replace(replace, with);
+
+    [Fact]
+    public void A_Document_Without_The_Monitor_Section_Is_Declined_For_A_Site_Whatever_Else_It_Says()
+    {
+        string? refusal = ConfigApi.Validate("""{"device": "null"}""", null, SiteFile);
+
+        refusal.Should().Be(
+            "This is a monitor site; removing the monitor section would turn it into a station. "
+            + "Do that by editing the file on the machine.");
+        ConfigApi.Validate("{ broken", null, SiteFile).Should().Contain("monitor site", "said before the rest is read");
+        ConfigApi.Validate("""{"device": "null"}""", null, """{"device": "null"}""").Should().BeNull("a station is free to stay one");
+        ConfigApi.Validate(SiteFile, null, SiteFile).Should().BeNull();
+    }
+
+    [Fact]
+    public void Taking_The_Key_Out_Of_A_Site_Is_Allowed()
+    {
+        string keyed = SiteWith("\"waterfall\"", "\"api\": { \"key\": \"k\" }, \"waterfall\"");
+
+        ConfigApi.Validate(SiteFile, null, keyed).Should().BeNull("the page warns, and it is the operator's call");
+    }
+
+    [Fact]
+    public void A_Frame_Log_Directory_The_Service_Cannot_Write_Is_Declined_Without_Making_Anything()
+    {
+        // Nothing under /proc can be written, by anybody, so its nearest existing parent is not writable.
+        string? refusal = ConfigApi.Validate(
+            SiteWith("\"waterfall\"", "\"frameLog\": { \"path\": \"/proc/pdn-frames\" }, \"waterfall\""), null, SiteFile);
+        refusal.Should().Contain("cannot keep its frame logs").And.Contain("/proc");
+
+        // One that does not exist yet but could be made is fine, and a check does not make it.
+        string wanted = Path.Combine(_dir, "not", "made", "by", "a", "check");
+        ConfigApi.Validate(
+            SiteWith("\"waterfall\"", $"\"frameLog\": {{ \"path\": \"{wanted}\" }}, \"waterfall\""), null, SiteFile)
+            .Should().BeNull();
+        Directory.Exists(Path.Combine(_dir, "not")).Should().BeFalse("a check creates no directory");
+        Directory.EnumerateFileSystemEntries(_dir).Should().NotContain(e => e.Contains(".pdn-write-check", StringComparison.Ordinal));
+
+        // The refusals start-up has for a file where a directory belongs.
+        string file = Path.Combine(_dir, "a-file");
+        File.WriteAllText(file, "");
+        ConfigApi.Validate(
+            SiteWith("\"waterfall\"", $"\"frameLog\": {{ \"path\": \"{file}\" }}, \"waterfall\""), null, SiteFile)
+            .Should().Contain("which is a file");
+    }
+
+    [Fact]
+    public void A_New_Port_Or_Address_The_Site_Cannot_Open_Is_Declined_And_The_Running_One_Is_Left_Alone()
+    {
+        using var taken = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        taken.Start();
+        int busy = ((IPEndPoint)taken.LocalEndpoint).Port;
+        string running = SiteFile.Replace("8099", "18099");
+
+        // In use.
+        ConfigApi.Validate(running.Replace("18099", busy.ToString()), null, running)
+            .Should().Contain("another program is using that port");
+
+        // An address this machine does not have.
+        ConfigApi.Validate(running.Replace("127.0.0.1", "203.0.113.9"), null, running)
+            .Should().Contain("has no address");
+
+        // Not moved: the running site holds the port, so it is not tried at all.
+        ConfigApi.Validate(running.Replace("18099", busy.ToString()), null, running.Replace("18099", busy.ToString()))
+            .Should().BeNull();
+
+        // A privileged port, for a service without the capability.
+        if (!Environment.IsPrivilegedProcess)
+        {
+            ConfigApi.Validate(running.Replace("18099", "81"), null, running)
+                .Should().Contain("below 1024");
+        }
+
+        // A free one is fine.
+        int free = FreePorts.Next();
+        ConfigApi.Validate(running.Replace("18099", free.ToString()), null, running).Should().BeNull();
+    }
+
+    [Fact]
+    public void A_Site_Works_Its_Band_Plan_Rate_From_Its_Modems_As_Its_Start_Up_Does()
+    {
+        ConfigApi.LoadProposed(SiteFile, null, out DaemonConfig? slow).Should().BeNull();
+        ConfigApi.DspRateFor(slow!).Should().Be(12000);
+
+        ConfigApi.LoadProposed(SiteWith("afsk300-il2pc", "fsk9600"), null, out DaemonConfig? fast).Should().BeNull();
+        ConfigApi.DspRateFor(fast!).Should().Be(StationFactory.DspRateOf(fast!.Monitor!.Modems));
+    }
+
+    [Fact]
+    public async Task A_Refusal_Over_The_Api_Is_The_Problem_Alone_Without_The_Loaders_Boilerplate()
+    {
+        await using var site = await SiteHost.StartAsync(_dir, SiteKey);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, site.Url("api/config?check=true"))
+        {
+            Content = new StringContent(SiteFile.Replace(
+                "[ { \"subChannel\": 0, \"mode\": \"afsk300-il2pc\", \"rfFrequency\": 7050300 } ]", "[]")),
+        };
+        request.Headers.Add("X-API-Key", SiteKey);
+        HttpResponseMessage answer = await site.Client.SendAsync(request);
+
+        answer.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        string body = await answer.Content.ReadAsStringAsync();
+        body.Should().Contain("\"monitor\".\"modems\" is empty")
+            .And.NotContain("pdnsm-proposed").And.NotContain("copy the example");
+    }
+
+    // ---------------------------------------------------------------- wrong keys
+
+    [Fact]
+    public async Task Each_Wrong_Key_From_One_Address_Waits_Longer_And_Holds_Nothing_Else_Up()
+    {
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        using var station = new Station(_dir, key: "right", time: time);
+
+        Task<HttpResponseMessage> Get(string? key)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, station.Url("api/config"));
+            if (key is not null)
+            {
+                request.Headers.Add("X-API-Key", key);
+            }
+
+            return station.Client.SendAsync(request);
+        }
+
+        // A request with no key is the page asking whether one is wanted: not a guess, not slowed.
+        (await Get(null)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        Task<HttpResponseMessage> first = Get("wrong");
+        await Task.Delay(300);
+        first.IsCompleted.Should().BeFalse("a wrong key waits a second");
+
+        // Nothing else waits with it: the right key, from the same address, is answered at once.
+        (await Get("right")).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // ... which also clears the count, so this wrong key is the first again.
+        time.Advance(TimeSpan.FromSeconds(1));
+        (await first).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        Task<HttpResponseMessage> second = Get("wrong");
+        await Task.Delay(300);
+        time.Advance(TimeSpan.FromSeconds(1));
+        (await second).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        // Two in a row without a success between: the next waits two seconds.
+        Task<HttpResponseMessage> third = Get("wrong");
+        await Task.Delay(300);
+        time.Advance(TimeSpan.FromSeconds(1));
+        await Task.Delay(300);
+        third.IsCompleted.Should().BeFalse("the second wrong key in a row waits two seconds");
+        time.Advance(TimeSpan.FromSeconds(1));
+        (await third).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
     // ---------------------------------------------------------------- the page's own model
 
     [Fact]

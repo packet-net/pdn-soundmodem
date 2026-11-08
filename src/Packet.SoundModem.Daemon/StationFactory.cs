@@ -38,6 +38,11 @@ internal static class StationFactory
     /// </remarks>
     /// <returns>False when a mode is unknown or cannot share the channel; the reason has been
     /// journalled and the caller should exit 2.</returns>
+    /// <summary>The rate a set of modems shares a channel at: 48000 if any of them needs it, else
+    /// 12000. The one rule, for a site's start-up and for the page's check of a site.</summary>
+    internal static int DspRateOf(IReadOnlyList<ModemConfig> modems) =>
+        modems.Any(m => !DaemonConfig.IsArdop(m.Mode) && ModemCatalog.DspRateFor(m.Mode) == 48000) ? 48000 : 12000;
+
     internal static bool TryResolveDspRate(
         IReadOnlyList<ModemConfig> modems, StationJournal journal, out int dspRate)
     {
@@ -74,7 +79,7 @@ internal static class StationFactory
         // ARDOP's engine is native 12 kHz; on a 48 kHz channel (any fsk9600/c4fsk/freedv/ms110d
         // modem present) ArdopChannelBridge decimates its receive audio down and upsamples its
         // bursts back up, so it shares the channel either way.
-        int rate = modems.Any(m => ModemCatalog.DspRateFor(m.Mode) == 48000) ? 48000 : 12000;
+        int rate = DspRateOf(modems);
         dspRate = rate;
 
         // PLUGIN MODES ONLY, and the distinction is the whole point. Every built-in mode's DSP is

@@ -97,6 +97,7 @@ internal sealed class ConfigApi
         bool openAudioControls = false, bool openConfiguration = true, TimeProvider? time = null)
     {
         _time = time ?? TimeProvider.System;
+        _guesses = new KeyGuesses(_time);
         _started = _time.GetUtcNow();
         _history = new ConfigHistory(ephemeralPath, _time);
         _openAudioControls = openAudioControls;
@@ -781,8 +782,16 @@ internal sealed class ConfigApi
     /// at the restart, which takes the station down until somebody reads the journal. Null keeps
     /// the old behaviour for a caller with no such path, which is what the tests use.
     /// </param>
-    public static string? Validate(string json, string? asPath = null)
+    public static string? Validate(string json, string? asPath = null, string? runningJson = null)
     {
+        // A site stays a site. Said before anything else is read, so it is the answer even for a
+        // document with other trouble: dropping "monitor" would restart it as a station.
+        if (runningJson is not null && HasMonitorSection(runningJson) && !HasMonitorSection(json))
+        {
+            return "This is a monitor site; removing the monitor section would turn it into a station. "
+                + "Do that by editing the file on the machine.";
+        }
+
         if (LoadProposed(json, asPath, out DaemonConfig? proposed) is string error)
         {
             return error;
@@ -793,7 +802,7 @@ internal sealed class ConfigApi
             // Plan mutates the entries it is given, which is why this runs against the
             // throwaway parse and never against anything the station is using.
             RfPlan.Result? plan = PlanFor(proposed!);
-            if (proposed!.Monitor is not null && MonitorRefusal(proposed, plan) is string site)
+            if (proposed!.Monitor is not null && MonitorRefusal(proposed, plan, runningJson) is string site)
             {
                 return site;
             }
@@ -812,7 +821,7 @@ internal sealed class ConfigApi
     /// declined while the running site is still up. The same three refusals as
     /// <see cref="MonitorStartup"/>, in the same words.
     /// </summary>
-    private static string? MonitorRefusal(DaemonConfig proposed, RfPlan.Result? plan)
+    private static string? MonitorRefusal(DaemonConfig proposed, RfPlan.Result? plan, string? runningJson)
     {
         if (plan is null)
         {
@@ -837,7 +846,68 @@ internal sealed class ConfigApi
             return refused ?? "a modem in \"monitor\".\"modems\" cannot be built";
         }
 
+        // What start-up would exit 2 on without the modems being at fault: a frame log it cannot
+        // write, and an address or port it cannot open. Exit 2 is final under the shipped unit,
+        // so these are declined here.
+        if (proposed.FrameLog is { } frameLog && MonitorStartup.FrameLogProblem(frameLog.Path) is string log)
+        {
+            return log;
+        }
+
+        return runningJson is null ? null : ListenProblem(proposed, runningJson);
+    }
+
+    /// <summary>
+    /// Whether the site could open the address and port a proposal names, when they are not the
+    /// ones it is running on (the running ones are in use by it, by definition). The address has
+    /// to be one this machine has, and the port free and permitted. Tried by binding and letting go
+    /// at once; the site's own listener is not touched. Null when it would, or when nothing moved.
+    /// </summary>
+    private static string? ListenProblem(DaemonConfig proposed, string runningJson)
+    {
+        DaemonConfig? running = LoadProposed(runningJson, null, out DaemonConfig? parsed) is null ? parsed : null;
+        int port = proposed.Waterfall!.Port;
+        if (running is not null && running.Bind == proposed.Bind && running.Waterfall?.Port == port)
+        {
+            return null;
+        }
+
+        System.Net.IPAddress address = DaemonConfig.ParseBind(proposed.Bind) ?? System.Net.IPAddress.Loopback;
+        try
+        {
+            var probe = new System.Net.Sockets.TcpListener(address, port);
+            probe.Start();
+            probe.Stop();
+        }
+        catch (System.Net.Sockets.SocketException e)
+        {
+            string where = $"{proposed.Bind}:{port}";
+            return e.SocketErrorCode switch
+            {
+                System.Net.Sockets.SocketError.AddressAlreadyInUse =>
+                    $"The site could not listen on {where}: another program is using that port. Pick another \"waterfall\".\"port\".",
+                System.Net.Sockets.SocketError.AccessDenied =>
+                    $"The site could not listen on {where}: this service may not use that port (ports below 1024 need extra permission). Pick another \"waterfall\".\"port\".",
+                System.Net.Sockets.SocketError.AddressNotAvailable =>
+                    $"The site could not listen on {where}: this machine has no address \"{proposed.Bind}\". Change \"bind\" to one it has, or \"*\" for all of them.",
+                _ => $"The site could not listen on {where}: {e.Message}",
+            };
+        }
+
         return null;
+    }
+
+    private static bool HasMonitorSection(string json)
+    {
+        try
+        {
+            return JsonNode.Parse(json, nodeOptions: null, Jsonc) is JsonObject root
+                && root.Any(p => string.Equals(p.Key, "monitor", StringComparison.OrdinalIgnoreCase) && p.Value is not null);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -922,6 +992,8 @@ internal sealed class ConfigApi
 
     /// <summary>The channel rate a proposal runs at: 48 kHz if any mode wants it, as start-up has it.</summary>
     internal static int DspRateFor(DaemonConfig proposed) =>
+        // A site works its rate out from its modems alone, as its start-up does.
+        proposed.Monitor is not null ? StationFactory.DspRateOf(proposed.Monitor.Modems) :
         // A leftover mailcast section still counts as an MS110D modem, as start-up has it.
         proposed.Mailcast is not null || ModemsOf(proposed).Any(
             m => !DaemonConfig.IsArdop(m.Mode) && ModemCatalog.DspRateFor(m.Mode) == 48000)
@@ -1022,6 +1094,15 @@ internal sealed class ConfigApi
 
         if (!open && !Authorised(context.Request))
         {
+            // A key that was presented and is wrong is a guess, and the next one from the same
+            // address waits longer. A request with no key at all is the page asking whether one is
+            // wanted, and is not a guess.
+            if (PresentedKey(context.Request) is not null)
+            {
+                await _guesses.FailedAsync(context.Request.RemoteEndPoint?.Address?.ToString() ?? "unknown")
+                    .ConfigureAwait(false);
+            }
+
             // 401 without a WWW-Authenticate challenge on purpose: this is a machine interface
             // with a shared secret, and inviting a browser to pop a password box would suggest
             // an interactive login that does not exist.
@@ -1501,6 +1582,7 @@ internal sealed class ConfigApi
     /// worked out by the band planning start-up uses, and nothing applied.
     /// </summary>
     private readonly TimeProvider _time;
+    private readonly KeyGuesses _guesses;
 
     /// <summary>Recent plan answers by the document they were for: the page asks again after every
     /// keystroke, and a plan renders a probe frame per mode, which a small machine feels.</summary>
@@ -1646,9 +1728,9 @@ internal sealed class ConfigApi
             context.Request.QueryString["check"], "true", StringComparison.OrdinalIgnoreCase);
         if (check)
         {
-            if (Validate(body, _configPath) is string problem)
+            if (Validate(body, _configPath, _runningJson()) is string problem)
             {
-                await RespondAsync(context, 400, problem).ConfigureAwait(false);
+                await RespondAsync(context, 400, ProblemOf(problem)).ConfigureAwait(false);
             }
             else
             {
@@ -1660,7 +1742,7 @@ internal sealed class ConfigApi
             return;
         }
 
-        if (Validate(body, _configPath) is string refusal)
+        if (Validate(body, _configPath, _runningJson()) is string refusal)
         {
             // The station is untouched. This is the whole reason the API exists rather than an
             // operator editing the file: a refusal here costs nothing that was working.
@@ -1670,7 +1752,7 @@ internal sealed class ConfigApi
                 Console.Error.WriteLine($"api:   {line}");
             }
 
-            await RespondAsync(context, 400, refusal).ConfigureAwait(false);
+            await RespondAsync(context, 400, ProblemOf(refusal)).ConfigureAwait(false);
             return;
         }
 
@@ -1849,7 +1931,7 @@ internal sealed class ConfigApi
         Waterfall.WaterfallWebServer.OriginMayKey(
             new Waterfall.PageOrigin(request.Headers["Origin"] ?? "", request.UserHostName ?? ""));
 
-    private bool Authorised(HttpListenerRequest request)
+    private static string? PresentedKey(HttpListenerRequest request)
     {
         string? presented = request.Headers["X-API-Key"];
         if (presented is null
@@ -1859,11 +1941,24 @@ internal sealed class ConfigApi
             presented = header["Bearer ".Length..].Trim();
         }
 
+        return presented;
+    }
+
+    private bool Authorised(HttpListenerRequest request)
+    {
+        string? presented = PresentedKey(request);
+
         // Fixed-time compare: the key is a shared secret over a socket that may be reachable from
         // the LAN, and a byte-at-a-time comparison leaks it one byte at a time.
-        return presented is not null
+        bool right = presented is not null
             && CryptographicOperations.FixedTimeEquals(
                 Encoding.UTF8.GetBytes(presented), Encoding.UTF8.GetBytes(_key));
+        if (right)
+        {
+            _guesses.Succeeded(request.RemoteEndPoint?.Address?.ToString() ?? "unknown");
+        }
+
+        return right;
     }
 
     private static Task RespondAsync(HttpListenerContext context, int status, string text) =>
@@ -1881,5 +1976,84 @@ internal sealed class ConfigApi
         context.Response.ContentLength64 = bytes.Length;
         await context.Response.OutputStream.WriteAsync(bytes).ConfigureAwait(false);
         context.Response.Close();
+    }
+
+    /// <summary>
+    /// Wrong keys, by the address they came from: each one from an address that has just been
+    /// wrong waits longer for its answer, 1 s doubling to 30 s, and one right key clears it.
+    /// </summary>
+    /// <remarks>
+    /// The wait is an async delay on the request's own task, so it holds nothing but that one
+    /// connection: every other request, from this address or any other, is answered at once. A
+    /// legitimate user who mistypes once waits a second. A burst is journalled, once at the third
+    /// wrong key within a minute and then at every tenth, as the site's uplink does for tokens.
+    /// Behind a tunnel every visitor shares one address, so a guesser can slow the operator down
+    /// to the cap; it still cannot get in, and the cap is what bounds that.
+    /// </remarks>
+    private sealed class KeyGuesses(TimeProvider time)
+    {
+        internal static readonly TimeSpan First = TimeSpan.FromSeconds(1);
+        internal static readonly TimeSpan Cap = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan Burst = TimeSpan.FromMinutes(1);
+        private const int Remembered = 512;
+
+        private readonly Dictionary<string, (int Failures, DateTimeOffset First, DateTimeOffset Last, int InWindow)> _by = [];
+
+        internal async Task FailedAsync(string from)
+        {
+            TimeSpan wait;
+            int inWindow;
+            lock (_by)
+            {
+                DateTimeOffset now = time.GetUtcNow();
+                if (_by.Count >= Remembered)
+                {
+                    foreach (string old in _by.Where(p => now - p.Value.Last > Burst).Select(p => p.Key).ToList())
+                    {
+                        _by.Remove(old);
+                    }
+
+                    if (_by.Count >= Remembered)
+                    {
+                        _by.Clear();
+                    }
+                }
+
+                (int failures, DateTimeOffset firstAt, DateTimeOffset last, int windowCount) =
+                    _by.TryGetValue(from, out var known) ? known : (0, now, now, 0);
+                if (now - firstAt > Burst)
+                {
+                    firstAt = now;
+                    windowCount = 0;
+                }
+
+                // Failures reset by quiet too: an address silent for a minute starts again at a second.
+                if (now - last > Burst)
+                {
+                    failures = 0;
+                }
+
+                failures++;
+                windowCount++;
+                inWindow = windowCount;
+                _by[from] = (failures, firstAt, now, windowCount);
+                wait = TimeSpan.FromSeconds(Math.Min(Cap.TotalSeconds, First.TotalSeconds * Math.Pow(2, Math.Min(failures - 1, 10))));
+            }
+
+            if (inWindow == 3 || (inWindow > 3 && inWindow % 10 == 0))
+            {
+                Console.Error.WriteLine($"api: {inWindow} wrong keys from {from} in the last minute");
+            }
+
+            await Task.Delay(wait, time).ConfigureAwait(false);
+        }
+
+        internal void Succeeded(string from)
+        {
+            lock (_by)
+            {
+                _by.Remove(from);
+            }
+        }
     }
 }

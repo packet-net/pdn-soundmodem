@@ -221,6 +221,23 @@ if (configPath is not null)
     string? pendingPath = ConfigApi.PendingPath(configPath);
     string loadPath = pendingPath ?? configPath;
     apiEphemeralInForce = pendingPath is not null;
+    if (apiEphemeralInForce)
+    {
+        // The safety net for every flavour. A one-run change was validated before it was written,
+        // but validation cannot see everything (a port taken meanwhile, a card unplugged), and exit
+        // 2 means "your configuration is wrong" and is final under the shipped unit. The one-run
+        // file is consumed below, so exiting 1 here makes systemd start the daemon again on the
+        // saved file instead of leaving the station or site down until somebody reads the journal.
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            if (Environment.ExitCode == 2)
+            {
+                Console.Error.WriteLine(
+                    "api: the one-run change did not start; going back to the saved file");
+                Environment.ExitCode = 1;
+            }
+        };
+    }
 
     // A bad config is an operator typo, not a bug: explain it and exit 2. The unit's
     // RestartPreventExitStatus=2 stops systemd retrying, so the journal carries one

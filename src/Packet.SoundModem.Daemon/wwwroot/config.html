@@ -2845,7 +2845,8 @@ var ConfigModel = (function () {
       code.id = "newtoken-text-" + idx;
       box.appendChild(code);
       var warn = el("p", "tokenwarn", "This is the only time it is shown. The site keeps just a fingerprint of it, so it cannot show it again: "
-        + "copy it now and give it to the station's operator for the token in their publish settings. Apply the change here for it to work.");
+        + "copy it now and give it to the station's operator for the token in their publish settings. "
+        + "The token only works once the change is applied, and \"Try until next restart\" is for one run: the token stops working at the next restart unless you use \"Save and restart\".");
       box.appendChild(warn);
       var bar = el("div", "bar");
       var say = el("span", "muted", made.copied ? "Copied." : "");
@@ -4039,7 +4040,7 @@ var ConfigModel = (function () {
         return;
       }
       result("good", (persist ? "Saved to the file. " : "In force until the next restart. ")
-        + "The station is restarting...");
+        + "The " + (isSite() ? "site" : "station") + " is restarting...");
       if (notice) {
         // The page it would wait on is about to be somewhere else, or nowhere: say so instead.
         $("result").appendChild(document.createTextNode(" "));
@@ -4068,7 +4069,7 @@ var ConfigModel = (function () {
         busy = false;
         return load().then(function () {
           if (setup.active && setup.phase === "restarting") { setup.phase = "done"; render(); }
-          result("good", "The station is back, running on the new configuration"
+          result("good", "The " + (isSite() ? "site" : "station") + " is back, running on the new configuration"
             + (persist ? "." : " until its next restart."));
         });
       }).catch(tryAgain);
@@ -4078,7 +4079,7 @@ var ConfigModel = (function () {
       if (Date.now() - started > 120000) {
         busy = false;
         if (setup.active && setup.phase === "restarting") { setup.phase = "steps"; setup.error = "The station has not come back after two minutes. Its journal says why: journalctl -u pdn-soundmodem"; render(); }
-        result("bad", "The station has not come back after two minutes. Its journal says why: journalctl -u pdn-soundmodem");
+        result("bad", "The " + (isSite() ? "site" : "station") + " has not come back after two minutes. Its journal says why: journalctl -u pdn-soundmodem");
       } else {
         waitForRestart(started, persist);
       }

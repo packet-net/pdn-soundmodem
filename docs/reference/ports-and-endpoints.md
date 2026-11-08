@@ -469,7 +469,7 @@ The station journals `publish: live at https://<site>/r/<slug>/` when the `welco
 
 ### The monitor site's routes
 
-A `monitor` section turns the process into a site on `waterfall.port`, which must be stated. It opens no KISS, ARDOP or paging port and serves none of the station's `/api/` endpoints bar the five that edit the configuration (below), and no `/metrics` or `/survey/` route; `waterfall.public` is forced true.
+A `monitor` section turns the process into a site on `waterfall.port`, which must be stated. It opens no KISS, ARDOP or paging port and serves none of the station's `/api/` endpoints bar the six that edit the configuration and report on it (below), and no `/metrics` or `/survey/` route; `waterfall.public` is forced true.
 
 | Route | Method | Serves |
 |---|---|---|
@@ -483,7 +483,7 @@ A `monitor` section turns the process into a site on `waterfall.port`, which mus
 | `/api/config`, `/api/config/schema`, `/api/config/plan`, `/api/config/history`, `/api/config/history/ID`, `/api/report` | as on a station | the same configuration API a station has, only when the file has an `api.key`, and then every request but the page and `schema` must present it. The site's root only, never under `/r/<slug>/` |
 | anything else | | 404 |
 
-A site has no open configuration: with no `api.key` the five configuration paths are a 404 whatever `bind` is. `/api/config/discover` (which looks at this machine's hardware), the rig, the transmitter and the mixer are not served on a site at all, key or not. A change POSTed to `/api/config` is checked with the checks start-up makes, including that every modem has an `rfFrequency`, and applied by exiting 1 for systemd to restart, as on a station.
+A site has no open configuration: with no `api.key` the six paths above are a 404 whatever `bind` is. `/api/config/discover` (which looks at this machine's hardware), the rig, the transmitter and the mixer are not served on a site at all, key or not. A change POSTed to `/api/config` is checked with the checks start-up makes, including that every modem has an `rfFrequency`, and applied by exiting 1 for systemd to restart, as on a station. The check covers what the file loader and the band plan refuse, that every modem can be built, that the frame log directory (or its nearest existing parent) can be written, and, when `bind` or `waterfall.port` changed, that the address exists and the port can be opened. It cannot see a receiver or a directory that is down, and it will not turn a site into a station: a document without a `monitor` section is declined. If a one-run change still fails to start, the daemon exits 1 and systemd restarts it on the saved file. A wrong key is answered after a wait that doubles from 1 s to 30 s for each further wrong key from the same address.
 
 A slug is the `monitor.uplinks[].slug` of a relayed station, or the directory's slug for a listed web receiver. A slug the site does not offer is a 404.
 
