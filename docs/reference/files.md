@@ -14,7 +14,7 @@ What the Debian package installs, what pdn-soundmodem reads and writes on disk, 
 | `/etc/systemd/system/multi-user.target.wants/pdn-soundmodem.service` | The enable symlink, created by postinst on first install. Not shipped in the package |
 | `/usr/share/pdn-soundmodem/soundmodem.example.json` | The starter config, a copy of [`soundmodem.example.json`](../../soundmodem.example.json) from the repository: private pipe device, one `afsk1200` modem, station page on every interface. The file postinst seeds from |
 | `/etc/pdn-soundmodem/` | Shipped as an empty directory, so it outlives a remove and purge has to delete it by hand |
-| `/etc/pdn-soundmodem/soundmodem.json` | The station's config. Seeded by postinst from the example if absent, owned by root, mode 0644. Not a dpkg-owned file |
+| `/etc/pdn-soundmodem/soundmodem.json` | The station's config. Seeded by postinst from the example if absent. Owned `root:pdn-soundmodem`, mode 0660, so the station page can save to it (and the `api.key` in it is not world-readable). Not a dpkg-owned file |
 | `/var/lib/pdn-soundmodem/` | The state directory. Created by systemd from `StateDirectory=` at each start, owned by the service user, mode 0750. A template instance's is `NAME/` inside it |
 | `/usr/share/doc/pdn-soundmodem/copyright`, `changelog.Debian.gz` | Licence and changelog |
 
@@ -63,14 +63,14 @@ The mixer state file is the only file written without a config section asking fo
 | Service user | `pdn-soundmodem`, a system user with no home directory, created by postinst with `adduser --system --no-create-home --group` |
 | Supplementary groups | `audio` for `/dev/snd/*`; `dialout` for serial PTT on `/dev/ttyUSB*` and `/dev/ttyS*` |
 | `/var/lib/pdn-soundmodem` | `StateDirectory=pdn-soundmodem`, `StateDirectoryMode=0750`, owned by the service user; created by systemd at every start. The template has `StateDirectory=pdn-soundmodem/%i` |
-| `/etc/pdn-soundmodem/soundmodem.json` | root, 0644, readable by the service. `ReadWritePaths=/etc/pdn-soundmodem` lifts `ProtectSystem=full` for that one directory so a `?persist=true` write is not blocked by the unit |
+| `/etc/pdn-soundmodem/soundmodem.json` | `root:pdn-soundmodem`, 0660, read and written by the service. `ReadWritePaths=/etc/pdn-soundmodem` lifts `ProtectSystem=full` for that one directory so a `?persist=true` write is not blocked by the unit |
 | Hardening | `NoNewPrivileges=true`, `ProtectHome=true`, `ProtectSystem=full` |
 | Realtime priority | `LimitRTPRIO=10` permits realtime scheduling up to priority 10; nothing in the modem asks for it, so the line has no effect |
 | Start condition | `ConditionPathExists=/etc/pdn-soundmodem/soundmodem.json`: the unit does not start at all without the config file. The template's is `/etc/pdn-soundmodem/%i.json` |
 | Stopping | `KillMode=mixed`: `systemctl stop` signals the modem alone, which ends its own feed process (`rtl_sdr`, `rx_sdr`, an `iqpipe` command) on the way out. `TimeoutStopSec` is systemd's default |
 | Exit codes | `Restart=on-failure` with `RestartPreventExitStatus=2`: exit 2 (the configuration is wrong) is not retried, so the journal carries one explanation; any other non-zero exit, or a crash, restarts after `RestartSec=5`; exit 0 stays stopped. The config API's restart exits 1. The codes are listed in the [command-line reference](command-line.md#exit-codes) |
 
-The seeded config file is owned by root, and `ReadWritePaths` only removes the read-only mount. A `?persist=true` write from the service therefore fails with a permission error until the file is made writable by the service user, for example `chown pdn-soundmodem /etc/pdn-soundmodem/soundmodem.json`. Neither the package nor the unit does this. The 500 the modem answers with blames `ProtectSystem=full` and suggests adding `ReadWritePaths=/etc/pdn-soundmodem`, which the shipped unit already has; the file's ownership is the cause.
+The package makes the config files group-writable by the service (see the table above), and `ReadWritePaths` lifts the read-only mount, so a `?persist=true` write from the service works. On upgrade postinst only changes a `/etc/pdn-soundmodem/*.json` that is a regular file, still `root:root` with mode 0644 (as older packages left it); a file you have already set up differently is left alone, and if it is not writable by the service a save answers 500 with "the service cannot write" and the reason.
 
 `/dev/hidraw*` is root-only by default and CM108 PTT opens it for writing, so the service user needs a udev rule granting the `audio` group access to the interface's node, in `/etc/udev/rules.d/99-pdn-soundmodem-cm108.rules`, with the interface's vendor and product IDs (`0d8c:013c` is a common C-Media interface):
 

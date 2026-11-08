@@ -910,77 +910,87 @@ internal sealed class ConfigApi
 
     /// <summary>
     /// The settings that make the station run a command or load an assembly: <c>iqpipe.command</c>
-    /// (run through <c>/bin/sh -c</c>) and each <c>modemPlugins[].path</c> (an assembly loaded into
-    /// the daemon). Nothing else in the configuration executes anything: the other paths name
-    /// files the station reads or writes, devices, and hosts, not programs. Checked by
-    /// <see cref="CodeSettingsNeedingAKey"/>.
+    /// (run through <c>/bin/sh -c</c>) and each <c>modemPlugins[].path</c>. Nothing else in the
+    /// configuration executes anything: the other paths name files the station reads or writes,
+    /// devices, and hosts, not programs. Adding or changing one is code execution as the service
+    /// user, so the API accepts it only from a request made on the station itself, key or no key:
+    /// a key set by an earlier request would otherwise be the way in.
     /// </summary>
-    internal const string CodeSettingsNeedKeyMessage =
-        "Setting this needs an access key: set api.key first, or edit the file on the machine";
+    internal const string CodeSettingsMessage =
+        "Settings that run programs or load code can only be changed on the station itself, or by editing the file";
 
     /// <summary>
-    /// The settings in <paramref name="proposedJson"/> that add or change something which runs a
-    /// command or loads code, against <paramref name="runningJson"/>; empty when there are none.
-    /// A value already in the running configuration is left alone, and removing one is allowed.
-    /// Without an access key the configuration API is open to anyone who can reach the port, so
-    /// these must not be settable through it (they are code execution as the service user).
+    /// The settings in <paramref name="proposed"/> that add or change something which runs a
+    /// command or loads code, against <paramref name="running"/> (null or unloadable counts as
+    /// none). Both are the configuration as the loader parses it, so key capitalisation and
+    /// duplicates are the loader's own business. A value the running configuration already has is
+    /// left alone, and removing one is not a change.
     /// </summary>
-    internal static List<string> CodeSettingsNeedingAKey(string proposedJson, string runningJson)
+    internal static List<string> CodeSettingsChanged(DaemonConfig proposed, DaemonConfig? running)
     {
         var found = new List<string>();
-        var lenient = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
-        JsonNode? proposed;
-        JsonNode? running;
-        try
-        {
-            proposed = JsonNode.Parse(proposedJson, null, lenient);
-            running = string.IsNullOrWhiteSpace(runningJson) ? null : JsonNode.Parse(runningJson, null, lenient);
-        }
-        catch (JsonException)
-        {
-            // Not a document the loader will accept either; its own refusal is the better answer.
-            return found;
-        }
-
-        string? command = Member(Member(proposed, "iqpipe"), "command")?.ToString();
-        if (!string.IsNullOrWhiteSpace(command)
-            && command != Member(Member(running, "iqpipe"), "command")?.ToString())
+        string? command = proposed.IqPipe?.Command;
+        if (!string.IsNullOrWhiteSpace(command) && command != running?.IqPipe?.Command)
         {
             found.Add("iqpipe.command");
         }
 
-        var had = new HashSet<string>(StringComparer.Ordinal);
-        if (Member(running, "modemPlugins") is JsonArray old)
+        var had = new HashSet<string>(
+            (running?.ModemPlugins ?? []).Select(p => p.Path), StringComparer.Ordinal);
+        if ((proposed.ModemPlugins ?? []).Any(p => !string.IsNullOrWhiteSpace(p.Path) && !had.Contains(p.Path)))
         {
-            foreach (JsonNode? entry in old)
-            {
-                if (Member(entry, "path")?.ToString() is { } path)
-                {
-                    had.Add(path);
-                }
-            }
-        }
-
-        if (Member(proposed, "modemPlugins") is JsonArray now)
-        {
-            foreach (JsonNode? entry in now)
-            {
-                if (Member(entry, "path")?.ToString() is { Length: > 0 } path && !had.Contains(path))
-                {
-                    found.Add("modemPlugins");
-                    break;
-                }
-            }
+            found.Add("modemPlugins");
         }
 
         return found;
     }
 
-    /// <summary>A member of an object by name in any case; null if absent or not an object.</summary>
-    private static JsonNode? Member(JsonNode? node, string name) =>
-        node is JsonObject o
-            ? o.FirstOrDefault(p => string.Equals(p.Key, name, StringComparison.OrdinalIgnoreCase)).Value
-            : null;
+    /// <summary>
+    /// Whether the request was made on the station itself: from a loopback address, with none of
+    /// the headers a reverse proxy or tunnel on this machine adds (which make every visitor look
+    /// local).
+    /// </summary>
+    internal static bool IsOnTheStation(HttpListenerRequest request)
+    {
+        if (request.RemoteEndPoint?.Address is not { } address || !IPAddress.IsLoopback(address))
+        {
+            return false;
+        }
+
+        string[] forwarding =
+        [
+            "Forwarded", "X-Real-IP", "CF-Connecting-IP", "True-Client-IP", "X-Client-IP",
+            "X-Cluster-Client-IP", "Via", "CF-Ray", "CF-Visitor", "Fastly-Client-IP",
+        ];
+        foreach (string? name in request.Headers.AllKeys)
+        {
+            if (name is not null
+                && (name.StartsWith("X-Forwarded-", StringComparison.OrdinalIgnoreCase)
+                    || forwarding.Contains(name, StringComparer.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Null if the request may go ahead, else the refusal for it: a change that adds or changes
+    /// something which runs code, from anywhere but the station itself.
+    /// </summary>
+    private string? CodeRefusal(HttpListenerContext context, string body)
+    {
+        if (IsOnTheStation(context.Request)
+            || LoadProposed(body, _configPath, out DaemonConfig? proposed) is not null || proposed is null)
+        {
+            // Not a document the loader accepts: its own refusal is the better answer.
+            return null;
+        }
+
+        DaemonConfig? running = LoadProposed(_runningJson(), null, out DaemonConfig? parsed) is null ? parsed : null;
+        return CodeSettingsChanged(proposed, running).Count > 0 ? CodeSettingsMessage : null;
+    }
 
     private static bool HasMonitorSection(string json)
     {
@@ -1824,6 +1834,30 @@ internal sealed class ConfigApi
             stored = version;
         }
 
+        // The same key twice, spelt the same, is the document's fault: a plain 400. (Valid JSON
+        // is checked first, so that bad syntax stays Validate's to describe.)
+        var lenient = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
+        try
+        {
+            using (JsonDocument.Parse(body, lenient))
+            {
+            }
+
+            lenient.AllowDuplicateProperties = false;
+            using (JsonDocument.Parse(body, lenient))
+            {
+            }
+        }
+        catch (JsonException e) when (lenient.AllowDuplicateProperties == false)
+        {
+            await RespondAsync(context, 400, $"the document has the same key twice: {e.Message}").ConfigureAwait(false);
+            return null;
+        }
+        catch (JsonException)
+        {
+            // Not valid JSON: Validate says where, in its own words.
+        }
+
         if (RestoreHidden(body, stored, out string why) is not string restored)
         {
             await RespondAsync(context, 400, why).ConfigureAwait(false);
@@ -1840,11 +1874,10 @@ internal sealed class ConfigApi
             return;
         }
 
-        // With no access key this API answers anyone who can reach the port, so it must not be a
-        // way to run a command or load an assembly as the service user (#782 review).
-        if (_key.Length == 0 && CodeSettingsNeedingAKey(body, _runningJson()).Count > 0)
+        // Settings that run code are accepted from the station itself only (see CodeSettingsMessage).
+        if (CodeRefusal(context, body) is string code)
         {
-            await RespondAsync(context, 403, CodeSettingsNeedKeyMessage).ConfigureAwait(false);
+            await RespondAsync(context, 403, code).ConfigureAwait(false);
             return;
         }
 

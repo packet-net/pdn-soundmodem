@@ -181,8 +181,12 @@ code=$(curl -s -o /tmp/persist.out -w '%{http_code}' -X POST --data-binary @/etc
                     || { bad "persist POST answered '$code': $(cat /tmp/persist.out 2>/dev/null)"; }
 [ "$before" = "$(sha256sum /etc/pdn-soundmodem/soundmodem.json)" ] && ok "the saved file is the document posted" \
                     || bad "the saved file differs from the document posted"
-sleep 8
-check "the service is back up after the save" "systemctl is-active --quiet pdn-soundmodem.service"
+back=no
+for _ in $(seq 1 20); do
+  systemctl is-active --quiet pdn-soundmodem.service && { back=yes; break; }
+  sleep 1
+done
+[ "$back" = yes ] && ok "the service is back up after the save" || bad "the service did not come back within 20 s of the save"
 
 echo
 echo "== start =="

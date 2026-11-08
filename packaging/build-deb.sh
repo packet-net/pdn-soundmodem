@@ -258,6 +258,9 @@ case "$1" in
     fi
     if [ ! -e "$CONFIG" ] && [ -f "$EXAMPLE" ]; then
         cp "$EXAMPLE" "$CONFIG"
+        # Seeded in the state the loop below acts on, whatever the umask.
+        chown root:root "$CONFIG" 2>/dev/null || true
+        chmod 0644 "$CONFIG" 2>/dev/null || true
         echo "pdn-soundmodem: seeded $CONFIG from the example."
     elif [ -f "$CONFIG" ] && [ -f "$EXAMPLE" ] && command -v sha256sum >/dev/null \
          && [ "$(sha256sum "$CONFIG" | awk '{print $1}')" = "$OLD_EXAMPLE_SHA256" ]; then
@@ -266,14 +269,20 @@ case "$1" in
         echo "pdn-soundmodem: replaced the unedited old example in $CONFIG with the new starter."
     fi
     # The config pages save to these files as the service user, so the service's group may
-    # write them (and, at 0660, nobody else may read an api.key out of them). On install and
-    # upgrade, for the plain unit's file and every instance's.
-    for _f in /etc/pdn-soundmodem/*.json; do
-        if [ -f "$_f" ]; then
-            chown root:pdn-soundmodem "$_f"
-            chmod 0660 "$_f"
-        fi
-    done
+    # write them (and, at 0660, nobody else may read an api.key out of them). Only files the old
+    # postinst left (regular, root:root, 0644) are touched; anything an admin set up otherwise
+    # stays as it is. Never fatal: a failure here must not half-configure the package.
+    if getent group pdn-soundmodem >/dev/null 2>&1; then
+        for _f in /etc/pdn-soundmodem/*.json; do
+            if [ -f "$_f" ] && [ ! -L "$_f" ] \
+               && [ "$(stat -c '%U:%G %a' "$_f" 2>/dev/null)" = "root:root 644" ]; then
+                chown root:pdn-soundmodem "$_f" 2>/dev/null && chmod 0660 "$_f" 2>/dev/null \
+                    || echo "pdn-soundmodem: could not make $_f writable by the service; leaving it"
+            fi
+        done
+    else
+        echo "pdn-soundmodem: no pdn-soundmodem group; leaving the config files' permissions alone"
+    fi
     # Apply the hidraw rule to interfaces already plugged in, so CM108 PTT works without a
     # re-plug. Skipped where udev is not running (a container, a chroot).
     if [ -d /run/udev ] && command -v udevadm >/dev/null; then
