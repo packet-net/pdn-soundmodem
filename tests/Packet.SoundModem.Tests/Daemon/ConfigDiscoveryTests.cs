@@ -393,4 +393,26 @@ public partial class ConfigPageTests
         js.Evaluate("ConfigModel.keyingChoices(JSON.parse(foundJson), {})[0].detail").AsString()
             .Should().Contain("/dev/hidrawN can change after a replug or a reboot");
     }
+
+    [Fact]
+    public void Picking_A_Flex_Clears_The_Lease_Only_Transmit_Setting_And_Names_It()
+    {
+        Engine js = Model();
+        js.SetValue("foundJson", FoundJson);
+        string answer = js.Evaluate("""
+            (function () {
+              var M = ConfigModel, found = JSON.parse(foundJson);
+              var doc = { rig: { rigctld: "localhost:4532" }, modems: [ { mode: "bpsk300" }, { mode: "bpsk300", transmitOnlyUnderLease: true } ] };
+              var c = M.radioChoices(found)[2];
+              var note = M.radioNote(doc, c);
+              M.pickRadio(doc, c);
+              return JSON.stringify({ note: note, doc: doc });
+            })()
+            """).AsString();
+        JsonNode result = JsonNode.Parse(answer)!;
+
+        result["note"]!.GetValue<string>().Should().Contain("lease-only transmit setting on modem 2");
+        result["doc"]!["modems"]![1]!.AsObject().ContainsKey("transmitOnlyUnderLease").Should().BeFalse();
+        result["doc"]!["modems"]![1]!["mode"]!.GetValue<string>().Should().Be("bpsk300");
+    }
 }

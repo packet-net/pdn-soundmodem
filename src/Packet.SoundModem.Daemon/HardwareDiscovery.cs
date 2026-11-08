@@ -128,6 +128,7 @@ internal sealed class HardwareDiscovery
     private readonly TimeSpan _flexListen;
     private readonly object _gate = new();
     private Task<JsonObject>? _running;
+    private bool _runningFresh;
     private Section<FoundFlex>? _flexCache;
     private Section<FoundUberSdr>? _uberCache;
 
@@ -179,28 +180,42 @@ internal sealed class HardwareDiscovery
     {
         // One look at a time: a second request (a double-clicked "Look again", two open pages)
         // takes the one in flight rather than starting its own Flex listen and directory fetch.
+        // A fresh request does not take a look that may be answering from the memory: it starts
+        // its own, which then is the one later requests join.
         Task<JsonObject> running;
         lock (_gate)
         {
-            running = _running ??= RunAsync(fresh);
+            if (_running is null || (fresh && !_runningFresh))
+            {
+                Task<JsonObject>? mine = null;
+
+                // Off this thread, and stored before it can finish: the clear below takes the
+                // same lock, so it cannot run ahead of the store, and it only clears its own task.
+                mine = Task.Run(async () =>
+                {
+                    try
+                    {
+                        return await LookAsync(fresh, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        lock (_gate)
+                        {
+                            if (ReferenceEquals(_running, mine))
+                            {
+                                _running = null;
+                            }
+                        }
+                    }
+                });
+                _running = mine;
+                _runningFresh = fresh;
+            }
+
+            running = _running;
         }
 
         return running.WaitAsync(cancellation);
-    }
-
-    private async Task<JsonObject> RunAsync(bool fresh)
-    {
-        try
-        {
-            return await LookAsync(fresh, CancellationToken.None).ConfigureAwait(false);
-        }
-        finally
-        {
-            lock (_gate)
-            {
-                _running = null;
-            }
-        }
     }
 
     private async Task<JsonObject> LookAsync(bool fresh, CancellationToken cancellation)

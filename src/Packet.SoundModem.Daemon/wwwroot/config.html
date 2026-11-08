@@ -1133,6 +1133,17 @@ var ConfigModel = (function () {
         if (Object.keys(alsa).length === 0) remove(doc, "alsa");
       } });
     }
+    // A modem that transmits only under a lease needs a rig section and is refused on a Flex, so
+    // it goes too: the setting means nothing once the rig is gone, and the modem is then planned
+    // with the others.
+    var lease = get(doc, "modems");
+    if (Array.isArray(lease)) {
+      lease.forEach(function (m, i) {
+        if (m && typeof m === "object" && get(m, "transmitOnlyUnderLease") === true) {
+          out.push({ words: "the lease-only transmit setting on modem " + (i + 1), apply: function () { remove(m, "transmitOnlyUnderLease"); } });
+        }
+      });
+    }
     if (choice.kind === "ubersdr") {
       drop("publish", "publishing to the monitor");
       var modems = get(doc, "modems");
@@ -1514,7 +1525,7 @@ var ConfigModel = (function () {
     }
     choices.forEach(function (c) {
       box.appendChild(option(c.id, device === c.device, c.title, c.detail, function () {
-        pickRemoved = M.pickRadio(doc, c);
+        pickRemoved = pickRemoved.concat(M.pickRadio(doc, c));
         edited(true, "pick-" + c.id);
       }, M.radioNote(doc, c)));
     });
@@ -1537,7 +1548,7 @@ var ConfigModel = (function () {
       pick.addEventListener("change", function () {
         var c = ubers.filter(function (u) { return u.id === pick.value; })[0];
         if (!c) return;
-        pickRemoved = M.pickRadio(doc, c);
+        pickRemoved = pickRemoved.concat(M.pickRadio(doc, c));
         edited(true, "uber-pick");
       });
       wrap.appendChild(pick);

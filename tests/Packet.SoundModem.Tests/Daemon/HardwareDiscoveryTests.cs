@@ -167,6 +167,37 @@ public sealed class HardwareDiscoveryTests
     }
 
     [Fact]
+    public async Task A_Look_That_Finishes_At_Once_Does_Not_Pin_Its_Answer_For_Later_Looks()
+    {
+        int calls = 0;
+        var flex = new FakeFlex(() => [Flex with { Name = $"look {Interlocked.Increment(ref calls)}" }]);
+        HardwareDiscovery discovery = Discovery(Shack(), flex);
+
+        JsonObject first = await discovery.DescribeAsync(true, CancellationToken.None);
+        JsonObject second = await discovery.DescribeAsync(true, CancellationToken.None);
+
+        first["flexRadios"]!["items"]![0]!["name"]!.GetValue<string>().Should().Be("look 1");
+        second["flexRadios"]!["items"]![0]!["name"]!.GetValue<string>().Should().Be("look 2");
+    }
+
+    [Fact]
+    public async Task A_Fresh_Request_During_A_Normal_Look_Gets_A_Look_Of_Its_Own()
+    {
+        var release = new TaskCompletionSource<IReadOnlyList<FoundFlex>>();
+        var started = new TaskCompletionSource();
+        var slow = new SlowFlex(release.Task, started);
+        HardwareDiscovery discovery = Discovery(Shack(), flex: null, uber: null, time: null, flexProbe: slow, flexListen: TimeSpan.FromSeconds(30));
+
+        Task<JsonObject> normal = discovery.DescribeAsync(false, CancellationToken.None);
+        await started.Task;
+        Task<JsonObject> fresh = discovery.DescribeAsync(true, CancellationToken.None);
+        release.SetResult([Flex]);
+        await Task.WhenAll(normal, fresh);
+
+        slow.Calls.Should().Be(2, "a fresh request does not take a look that may be from the memory");
+    }
+
+    [Fact]
     public async Task A_Failed_Slow_Lookup_Is_Not_Remembered()
     {
         int calls = 0;
