@@ -84,6 +84,16 @@ public sealed record TxTestRequest(bool TwoTone, double ToneHz, double Seconds)
     /// alone. See <see cref="TxTestProbe"/>.
     /// </summary>
     public TxTestProbe? Probe { get; init; }
+
+    /// <summary>
+    /// A keyed marker to send in place of the steady tone, or null for the tone. <c>cw-e</c> is
+    /// the only one: Morse letter E, over and over, at <see cref="ToneHz"/> for
+    /// <see cref="Seconds"/>. A marker the station does not know is refused, never ignored.
+    /// </summary>
+    public string? Marker { get; init; }
+
+    /// <summary>The one marker there is: a run of Morse E at the tone frequency.</summary>
+    public const string CwEMarker = "cw-e";
 }
 
 /// <summary>

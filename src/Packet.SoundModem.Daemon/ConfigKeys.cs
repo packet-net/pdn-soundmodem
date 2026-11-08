@@ -218,6 +218,7 @@ internal static class ConfigKeys
         K("polyglotPort", "Polyglot KISS port, shorthand", advanced: true, area: "software", when: OnKinds(Station));
         K("ptt", "Push to talk", area: "keying", when: OnKinds(k => k.Transmits && k.TakesRig));
         K("rig", "Rig control through rigctld", area: "radio", when: OnKinds(k => k.TakesRig));
+        K("gpsdo", "GPSDO 10 MHz reference, from MQTT", advanced: true, area: "radio", when: OnKinds(Station));
         K("mailcast", "Mailcast, retired", area: "advanced");
         K("carrierSense", "Carrier sense from the radio", area: "keying", when: OnKinds(k => k.Transmits));
         K("txTest", "Transmitter test", area: "advanced", when: OnKinds(k => k.Transmits));
@@ -293,6 +294,13 @@ internal static class ConfigKeys
         K("required", "Stop if rigctld does not answer", advanced: true);
         K("mode", "Rig mode", advanced: true);
         K("passbandHz", "Rig filter width", "Hz", advanced: true);
+
+        T("GpsdoConfig");
+        K("host", "MQTT broker");
+        K("port", "MQTT broker port");
+        K("username", "MQTT username", advanced: true);
+        K("password", "MQTT password", advanced: true);
+        K("topicPrefix", "Topic prefix", advanced: true);
 
         T("CarrierSenseConfig");
         K("radio", "Radio driver");

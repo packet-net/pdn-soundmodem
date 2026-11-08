@@ -187,6 +187,7 @@ var modems = new List<ModemConfig>();
 List<PolyglotConfig> polyglotPorts = [];
 PttConfig? pttConfig = null;
 RigConfig? rigConfig = null;
+GpsdoConfig? gpsdoConfig = null;
 bool mailcastSectionLeft = false;
 CarrierSenseConfig? carrierSenseConfig = null;
 AlsaConfig? alsaConfig = null;
@@ -281,6 +282,7 @@ if (configPath is not null)
     polyglotPorts = config.Polyglot;
     pttConfig = config.Ptt;
     rigConfig = config.Rig;
+    gpsdoConfig = config.Gpsdo;
     mailcastSectionLeft = config.Mailcast is not null;
     carrierSenseConfig = config.CarrierSense;
     alsaConfig = config.Alsa;
@@ -2689,6 +2691,32 @@ TxLeaseTuning? txLeaseTuning = rig is null
             bandPlan is null ? 0 : stationDevice.RigDialOffsetHz(bandPlan.Sideband),
             rigConfig?.Mode));
 runtimeApi?.ServeTxLease(channel, channel.ReceiveOnlyReason, txLeaseTuning);
+
+// The GPSDO's 10 MHz reference (issue #789), from the display that watches it, over MQTT: a chip
+// in the operator page's top bar, one journal line per change of verdict, and a "reference"
+// object on /api/txlease for the mailcast head end. It holds nothing back: a station on a bad
+// reference still transmits, and the journal line is the warning.
+GpsdoReference? gpsdoReference = null;
+if (benchTxTest is null && gpsdoConfig is not null)
+{
+    gpsdoReference = new GpsdoReference(gpsdoConfig.TopicPrefix, stationJournal, TimeProvider.System);
+    if (waterfallServer is not null && waterfallConfig?.Public != true)
+    {
+        void ShowReference(ReferenceVerdict verdict) =>
+            waterfallServer.SetReferenceStatus(verdict.Word, verdict.Chip, verdict.Detail);
+
+        ShowReference(gpsdoReference.Current);
+        gpsdoReference.Changed += ShowReference;
+    }
+
+    runtimeApi?.ServeReference(gpsdoReference);
+    Console.WriteLine(
+        $"gpsdo: watching the 10 MHz reference on mqtt://{gpsdoConfig.Host}:{gpsdoConfig.Port}, "
+        + $"topics {string.Join(" and ", gpsdoReference.Topics)}");
+    _ = new GpsdoFeed(gpsdoConfig, gpsdoReference, stationJournal, TimeProvider.System).RunAsync(cancellation.Token);
+}
+
+using var gpsdoLifetime = new Disposer(() => gpsdoReference?.Dispose());
 // Keep a stretch of receive audio on request (POST /api/keepaudio, issue #723): an in-memory ring
 // and a look at the carrier sense ten times a second, so a client told "busy" can later see what
 // the channel sounded like and which detector said so. Only with a keyed API, the only way to ask.

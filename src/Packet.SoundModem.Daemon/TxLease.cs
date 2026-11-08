@@ -47,9 +47,28 @@ internal static class TxLeaseApi
     /// </param>
     /// <param name="tuning">What tunes the rig for a take that asks for it (issue #760), or null
     /// without a rig; then <c>"tune": true</c> is accepted and ignored.</param>
+    /// <param name="reference">The GPSDO's 10 MHz reference (issue #789), or null for a station
+    /// with no <c>gpsdo</c> section; every answer that describes the lease then carries it.</param>
     internal static (int Status, JsonObject Answer) Handle(
         SoundModemChannel channel, string method, string body, string? cannot, RigControl? rig = null,
-        TxLeaseTuning? tuning = null)
+        TxLeaseTuning? tuning = null, GpsdoReference? reference = null)
+    {
+        (int status, JsonObject answer) = Answer(channel, method, body, cannot, rig, tuning);
+
+        // On every answer that describes the lease, and on nothing else: a head end reads it
+        // before each slot from the GET, and the take that follows reads the same. Left out
+        // entirely without a "gpsdo" section, so a head end can tell "no feed" from "unknown".
+        if (reference is not null && answer.ContainsKey("held"))
+        {
+            answer["reference"] = reference.Describe();
+        }
+
+        return (status, answer);
+    }
+
+    private static (int Status, JsonObject Answer) Answer(
+        SoundModemChannel channel, string method, string body, string? cannot, RigControl? rig,
+        TxLeaseTuning? tuning)
     {
         TransmitLease lease = channel.TransmitLease;
         if (method == "GET")

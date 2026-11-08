@@ -511,6 +511,43 @@ public sealed class RigConfig
 }
 
 /// <summary>
+/// The GPSDO that disciplines the radio's 10 MHz reference, as a display watching it publishes it
+/// over MQTT (issue #789; the display is M0LTE/gpsdo-cyd). Null, the default, watches nothing.
+/// See <see cref="GpsdoReference"/>.
+/// </summary>
+/// <remarks>
+/// A radio on an external reference can report "locked" while the reference itself has gone bad:
+/// GB7RDG's Flex did for a week in November 2026 and nothing on the station could tell. The
+/// display knows, and this is how the station hears it: the page's top bar, one journal line per
+/// change, and a <c>reference</c> object on <c>/api/txlease</c> for a program that decides
+/// whether a slot is worth sending. Nothing here holds a transmission back.
+/// </remarks>
+public sealed class GpsdoConfig
+{
+    /// <summary>The MQTT broker the display publishes to. Required: there is no default broker.</summary>
+    public string? Host { get; set; }
+
+    /// <summary>The broker's port. Default 1883, plain MQTT.</summary>
+    public int Port { get; set; } = 1883;
+
+    /// <summary>The broker username, or null for a broker that takes none.</summary>
+    public string? Username { get; set; }
+
+    /// <summary>The broker password, or null. Never served back by the configuration API.</summary>
+    public string? Password { get; set; }
+
+    /// <summary>
+    /// What the display's topics start with: it publishes <c>&lt;prefix&gt;/status</c> and
+    /// <c>&lt;prefix&gt;/state</c>. Default <c>gpsdo</c>.
+    /// </summary>
+    public string TopicPrefix { get; set; } = "gpsdo";
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
+/// <summary>
 /// The operator's transmitter test: a two-tone linearity check, or one tone for a carrier-level
 /// or FM deviation check. Present by default; there is nothing here that has to be switched on,
 /// because nothing happens until an operator asks for it.
@@ -1678,6 +1715,10 @@ public sealed class DaemonConfig
     /// See <see cref="RigConfig"/>.</summary>
     public RigConfig? Rig { get; set; }
 
+    /// <summary>The GPSDO's 10 MHz reference state, read from MQTT; null = not watched. See
+    /// <see cref="GpsdoConfig"/>.</summary>
+    public GpsdoConfig? Gpsdo { get; set; }
+
     /// <summary>A leftover <c>mailcast</c> section from before the built-in receiver was removed
     /// (issue #588). Read as anything at all and ignored apart from one start-up line; see
     /// <see cref="MailcastRetired"/>.</summary>
@@ -1867,6 +1908,12 @@ public sealed class DaemonConfig
                     "\"s5066\" is for a station with a transmitter, and this file is a monitor site: remove it.");
             }
 
+            if (config.Gpsdo is not null)
+            {
+                throw new InvalidDataException(
+                    "\"gpsdo\" is for a station on a radio with an external reference, and this file is a monitor site: remove it.");
+            }
+
 
             // Everything below this is about a station: an ARDOP TNC, a KISS port, a dial, a
             // PTT. A monitor has none of them, and letting the station checks run over an empty
@@ -2006,6 +2053,7 @@ public sealed class DaemonConfig
         }
 
         ValidateRig(config);
+        ValidateGpsdo(config);
 
         // "modemPlugins": null deserialises to a null list, not to the property initialiser, and
         // every read below would then throw where an operator expects a message about their file.
@@ -2898,6 +2946,7 @@ public sealed class DaemonConfig
         Unknown("deadFeed", config.DeadFeed?.UnknownSettings);
         Unknown("ptt", config.Ptt?.UnknownSettings);
         Unknown("rig", config.Rig?.UnknownSettings);
+        Unknown("gpsdo", config.Gpsdo?.UnknownSettings);
         Unknown("carrierSense", config.CarrierSense?.UnknownSettings);
         Unknown("txTest", config.TxTest.UnknownSettings);
         Unknown("paging", config.Paging?.UnknownSettings);
@@ -2977,6 +3026,43 @@ public sealed class DaemonConfig
     /// <summary>True for the mode name that is an ARDOP virtual TNC rather than a packet modem.</summary>
     internal static bool IsArdop(string? mode) =>
         string.Equals(mode, "ardop", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A <c>gpsdo</c> section names a broker and a topic prefix the display could actually be
+    /// publishing under. The prefix is trimmed of slashes here, so <c>"gpsdo/"</c> means the same
+    /// as <c>"gpsdo"</c>; a wildcard in it would subscribe to other devices' topics.
+    /// </summary>
+    private static void ValidateGpsdo(DaemonConfig config)
+    {
+        if (config.Gpsdo is not { } gpsdo)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(gpsdo.Host))
+        {
+            throw new InvalidDataException(
+                "\"gpsdo\" has no \"host\": give the MQTT broker the display publishes to, "
+                + "e.g. {\"host\": \"192.168.1.10\"}, or remove the section.");
+        }
+
+        gpsdo.Host = gpsdo.Host.Trim();
+        if (gpsdo.Port is < 1 or > 65535)
+        {
+            throw new InvalidDataException(
+                $"\"gpsdo\".\"port\" is {gpsdo.Port}: use 1-65535, or remove it for 1883.");
+        }
+
+        string prefix = (gpsdo.TopicPrefix ?? "").Trim().Trim('/');
+        if (prefix.Length == 0 || prefix.Contains('+', StringComparison.Ordinal) || prefix.Contains('#', StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"\"gpsdo\".\"topicPrefix\" is \"{gpsdo.TopicPrefix}\": give the display's prefix with no "
+                + "wildcards, e.g. \"gpsdo\", or remove it for that default.");
+        }
+
+        gpsdo.TopicPrefix = prefix;
+    }
 
     /// <summary>
     /// The transmitter test's two numbers, checked when the file is read rather than when the

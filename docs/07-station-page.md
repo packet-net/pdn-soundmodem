@@ -30,7 +30,7 @@ When a newer pdn-soundmodem is in the [apt repository](01-install.md#add-the-rep
 
 ![The update notice, reading "Version 0.88.0 is available (you have 0.50.0)" with a link to what changed and a link to the apt repository setup](images/update-notice.png)
 
-Beside the wordmark, a status pill reports the radio behind the station: a FlexRadio's frequency reference, or a web receiver's session state. It turns red when something is wrong and stays hidden on a sound-card station, which has no radio to ask.
+Beside the wordmark, a status pill reports the radio behind the station: a FlexRadio's frequency reference, or a web receiver's session state. It turns red when something is wrong and stays hidden on a sound-card station, which has no radio to ask. A station with a [`gpsdo`](reference/config.md#gpsdo) section has a second pill for its 10 MHz reference: green OK, red unreliable, grey unknown.
 
 When a program on the same machine is listening to the station's audio, such as the mailcast receiver, a second pill names it: "listening: pdn-mailcast-receiver", with the name linking to that program's own page. It appears only while the program is connected, and never on a public page.
 

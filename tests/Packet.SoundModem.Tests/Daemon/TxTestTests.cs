@@ -1158,6 +1158,7 @@ public class TxTestTests
         toneOnly["probe"].Should().BeNull();
         toneOnly.ContainsKey("probeComplete").Should().BeTrue();
         toneOnly["probeComplete"].Should().BeNull();
+        toneOnly.ContainsKey("marker").Should().BeFalse("only a reply that sent a marker names one");
 
         // Over the cap: the station's own limit, so 409, with the sums in the sentence.
         answers[2].Status.Should().Be(HttpStatusCode.Conflict, answers[2].Body);
@@ -1212,5 +1213,113 @@ public class TxTestTests
         outcome.Refusal.Should().Contain("nothing was transmitted");
         rig.Band.ChannelBusy = false;
         rig.Keying.Should().BeEmpty("the stopped test never keyed the radio");
+    }
+
+    // ---------------------------------------------------------------- the cw-e marker
+
+    [Fact]
+    public async Task A_Cw_E_Marker_Sends_Shaped_Dits_At_The_Tone_Frequency_For_The_Asked_Length()
+    {
+        await using var rig = ProbeRig();
+
+        TxTestOutcome outcome = await rig.Runner.RunAsync(
+            new TxTestRequest(false, 1800, 2) { SubChannel = 0, Marker = TxTestRequest.CwEMarker });
+
+        outcome.Ran.Should().BeTrue(outcome.Refusal);
+        await rig.SettledAsync();
+        rig.Keying.Should().Equal(["key", "unkey"], "the marker is one keyup, like the tone");
+
+        // TXDELAY, then 2 s: nine dits of 60 ms at 20 wpm, one every 240 ms, then silence to the
+        // full length so a probe after it would start where it does after a tone.
+        float[] audio = rig.Output.Snapshot();
+        int lead = Rate * 20 / 1000, dot = Rate * 60 / 1000;
+        audio.Length.Should().Be(lead + (2 * Rate));
+        float[] marker = audio[lead..];
+        for (int k = 0; k < 9; k++)
+        {
+            int at = k * 4 * dot;
+            Amplitude(marker[at..(at + dot)], 1800).Should().BeApproximately(0.8, 0.02, $"dit {k} is the tone at full level");
+            marker[at].Should().Be(0f, "each dit rises from nothing, shaped like the ident's");
+            if (k < 8)
+            {
+                marker[(at + dot)..(at + (4 * dot))].Should().OnlyContain(s => s == 0f, "between dits the key is up");
+            }
+        }
+
+        marker[((8 * 4 * dot) + dot)..].Should().OnlyContain(s => s == 0f, "after the last dit only silence");
+        marker[..((8 * 4 * dot) + dot)].Should().Equal(
+            Packet.SoundModem.Ident.MorseGenerator.Real("EEEEEEEEE", 1800, 0.8, 20, Rate),
+            "the ident's own keyer, edges and all");
+
+        rig.Lines.Should().Contain(line => line.Contains("Morse E marker at 1800 Hz, 20 wpm, 2.0 s"));
+        rig.Records.Should().ContainSingle().Which.AudioHz.Should().Be(1800);
+    }
+
+    [Fact]
+    public async Task A_Probe_Follows_A_Marker_Exactly_Where_It_Follows_A_Tone()
+    {
+        await using var rig = ProbeRig();
+
+        TxTestOutcome outcome = await rig.Runner.RunAsync(
+            new TxTestRequest(false, 1800, 1) { SubChannel = 0, Probe = Zc255, Marker = TxTestRequest.CwEMarker });
+
+        outcome.Ran.Should().BeTrue(outcome.Refusal);
+        outcome.ProbeComplete.Should().BeTrue();
+        await rig.SettledAsync();
+        float[] audio = rig.Output.Snapshot();
+        float[] probe = ProbeSignal.Render(ProbeSignal.Zc255, 1800, 0.8, Rate);
+        int lead = Rate * 20 / 1000, marker = Rate, gap = Rate / 2;
+        audio.Length.Should().Be(lead + marker + gap + probe.Length);
+        audio.AsSpan(lead + marker).Slice(gap).ToArray().Should().Equal(probe);
+    }
+
+    [Fact]
+    public async Task A_Marker_Keeps_The_Tones_Lease_Rule()
+    {
+        await using var rig = ProbeRig();
+        rig.Channel.TransmitLease.Take(0, TimeSpan.FromMinutes(1));
+
+        TxTestOutcome outcome = await rig.Runner.RunAsync(
+            new TxTestRequest(false, 1800, 1) { Marker = TxTestRequest.CwEMarker });
+
+        outcome.Ran.Should().BeFalse();
+        outcome.Refusal.Should().Contain("holds the transmit lease");
+        rig.Keying.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task The_Api_Takes_The_Cw_E_Marker_And_Refuses_Any_Other()
+    {
+        await using var rig = ProbeRig(maxSeconds: 15);
+
+        List<(HttpStatusCode Status, string Body)> answers = await PostAllAsync(rig.Runner,
+        [
+            """{"toneHz": 1800, "seconds": 1, "marker": "cw-e"}""",
+            """{"toneHz": 1800, "seconds": 1, "marker": "cw-x"}""",
+            """{"twoTone": true, "seconds": 1, "marker": "cw-e"}""",
+            """{"toneHz": 1800, "seconds": 1, "marker": 5}""",
+            """{"toneHz": 1800, "seconds": 1, "marker": "cw-e", "probe": {"kind": "zc255", "gapSeconds": 0.5}}""",
+        ]);
+
+        // With a marker an absent twoTone means the one frequency the marker is keyed at.
+        answers[0].Status.Should().Be(HttpStatusCode.OK, answers[0].Body);
+        JsonNode marked = JsonNode.Parse(answers[0].Body)!;
+        marked["sent"]!.GetValue<string>().Should().Contain("Morse E marker at 1800 Hz, 20 wpm");
+        marked["marker"]!.GetValue<string>().Should().Be("cw-e", "the head end learns from the reply that the marker was honoured");
+
+        answers[1].Status.Should().Be(HttpStatusCode.BadRequest);
+        answers[1].Body.Should().Contain("unknown marker \"cw-x\"").And.Contain("\"cw-e\"");
+        answers[2].Status.Should().Be(HttpStatusCode.BadRequest);
+        answers[2].Body.Should().Contain("a marker is sent at one frequency");
+        answers[3].Status.Should().Be(HttpStatusCode.BadRequest);
+        answers[3].Body.Should().Contain("\"marker\" a string");
+
+        answers[4].Status.Should().Be(HttpStatusCode.OK, answers[4].Body);
+        JsonNode both = JsonNode.Parse(answers[4].Body)!;
+        both["probeComplete"]!.GetValue<bool>().Should().BeTrue();
+        both["marker"]!.GetValue<string>().Should().Be("cw-e");
+        both["sent"]!.GetValue<string>().Should().Contain("Morse E marker").And.Contain("zc255-2400-rrc015-v1 probe");
+
+        rig.Records.Should().HaveCount(2, "the two good requests went out and the refused ones did not");
     }
 }

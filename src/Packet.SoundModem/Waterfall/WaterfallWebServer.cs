@@ -914,6 +914,44 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
 
     /// <summary>
+    /// The 10 MHz reference chip beside the radio status (issue #789): <paramref name="state"/>
+    /// is <c>ok</c>, <c>unreliable</c> or <c>unknown</c>, which colours it, <paramref name="text"/>
+    /// is what it says and <paramref name="detail"/> is its tooltip. A null state takes it off the
+    /// page; a station with no GPSDO feed never sets one, and the chip is never shown at all.
+    /// </summary>
+    /// <remarks>
+    /// Operator pages only: the host does not call this for a public page, and nothing here
+    /// relays it to a monitor site, whose visitors have no use for this station's oscillator.
+    /// </remarks>
+    public void SetReferenceStatus(string? state, string? text, string? detail)
+    {
+        object? reference = state is null ? null : new { state, text, detail };
+        lock (_stateLock)
+        {
+            if (state == _referenceState && text == _referenceText && detail == _referenceDetail)
+            {
+                return;
+            }
+
+            _referenceState = state;
+            _referenceText = text;
+            _referenceDetail = detail;
+        }
+
+        if (_source is not null)
+        {
+            _configMessage = BuildConfigMessage(); // before Start, Start's own build picks it up
+        }
+
+        Broadcast(WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(
+            new { type = "reference", reference }, Json));
+    }
+
+    private string? _referenceState;
+    private string? _referenceText;
+    private string? _referenceDetail;
+
+    /// <summary>
     /// The sentence <see cref="SetRadioStatus"/> was last given, or null for a station with
     /// nothing to say. For anything that attaches after it was set and needs the current value
     /// rather than the next change: a browser gets it with its config message, and an
@@ -1346,6 +1384,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             linesPerSecond = source.LinesPerSecond,
             dialHz = _options.DialFrequencyHz,
             radioStatus = _radioStatus,
+            // The GPSDO's 10 MHz reference (issue #789), when the host has a feed; never on a
+            // public page, where the host does not set it either.
+            reference = _options.Public || _referenceState is null
+                ? null
+                : new { state = _referenceState, text = _referenceText, detail = _referenceDetail },
             sideband = _options.Sideband,
             page = Page.Value.Version,
             // Additive, like every other field here: an older tab that has never heard of it

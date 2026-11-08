@@ -66,6 +66,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | `s5066` | object | absent: off | A STANAG 5066 node on this channel, serving its SIS port. See [`s5066`](#s5066). |
 | `flex` | object | absent: defaults | Slice parameters for a headless FlexRadio. |
 | `rig` | object | absent: no rig control | A radio controlled through Hamlib's rigctld: the band plan's dial, a rigctld PTT and tuning windows. |
+| `gpsdo` | object | absent: not watched | The radio's GPSDO 10 MHz reference, as a display watching it publishes it over MQTT. See [`gpsdo`](#gpsdo). |
 | `mailcast` | object | absent | Retired. The built-in mailcast receiver was removed; a leftover section is ignored with one journal line. See [`mailcast`](#mailcast). |
 | `ubersdr` | object | absent: defaults | Stream parameters for a public UberSDR web receiver. |
 | `openwebrx` | object | absent: defaults | Stream parameters for a public OpenWebRX or OpenWebRX+ receiver. |
@@ -334,7 +335,17 @@ A test asked for through `POST /api/txtest` can follow its tone with a channel-s
 - The tone, gap and probe together must fit within `maxSeconds`. A test that would not is refused (409), never cut short. Mailcast's slot (a 10 s tone, the 1.5 s gap and the 6.5 s probe) needs `maxSeconds` of at least 18; the default 30 is enough.
 - The reply's `probe` is the id of the probe when all of it went out, or null, and `probeComplete` is true when it did, false when a stop cut it short or kept it off the air, and null when no probe was asked for. A station too old to know the field leaves both keys out, so a head end can tell it sent the tone alone.
 - `{"stop": true}` always wins: whatever else the body carries, it stops the test and is answered 200.
+- `"marker": "cw-e"` sends a run of Morse E in place of the steady tone; see [the CW marker](#the-cw-marker). A probe follows it exactly as it follows a tone.
 - The renderer, `Packet.SoundModem.Audio.ProbeSignal`, is public in the library, with every parameter in its `ProbeDescriptor`, so a receiver can build the identical reference.
+
+### The CW marker
+
+`POST /api/txtest` with `"marker": "cw-e"` sends Morse letter E over and over, at `toneHz`, for the `seconds` asked, instead of the steady tone: `{"toneHz": 1800, "seconds": 10, "marker": "cw-e", "subChannel": 3}`. On the air it sounds like a steady "dit dit dit", four dits a second. The pdn-mailcast head end uses it to mark a slot sent while the [10 MHz reference](#gpsdo) is unknown.
+
+- 20 wpm, the ident's own speed: 60 ms dits, one every 240 ms, keyed by the same code as the CW ident with the same 5 ms shaped edges. As many as fit in `seconds`, then silence to the full length, so a probe starts where it would after a tone.
+- Everything else is the tone's: the level, `maxSeconds`, the lease rule, the channel wait and Stop.
+- With a marker, `twoTone` absent means a single tone. These are refused with 400: any other marker value, `"twoTone": true` with a marker, and a marker that is not a string.
+- A reply that sent the marker says `"marker": "cw-e"`. A plain tone's reply has no `marker` key, and a station too old to know markers ignores the field and sends the tone, so the key is how a caller knows the marker went out.
 
 ## `alsa`
 
@@ -465,6 +476,30 @@ A radio controlled through Hamlib's `rigctld`, for any device but `flex:`, `uber
 - Refused: `rig` with a `flex:`, `ubersdr:`, `openwebrx:`, `rtltcp:` or `sdrconnect:` device; a `rigctld` that is not `host:port`; a `mode` outside `USB`, `PKTUSB`, `LSB`, `PKTLSB`, `FM`, `FMN`, `PKTFM`, `PKTFMN` (other Hamlib modes are for tuning windows only), or one that disagrees with `sideband`; a `passbandHz` below 0 or above 20000.
 - `POST /api/rig/tune` and `GET /api/rig` need an [`api`](#api) key; see [rig tuning windows](ports-and-endpoints.md#rig-tuning-windows).
 - The rigctld connection has no authentication, which is rigctld's own design. Keep it on loopback or a trusted network.
+
+## `gpsdo`
+
+```json
+{ "gpsdo": { "host": "192.168.1.10", "port": 1883, "topicPrefix": "gpsdo" } }
+```
+
+Watches a GPSDO that disciplines the radio's 10 MHz reference, through a display that publishes its state over MQTT ([M0LTE/gpsdo-cyd](https://github.com/M0LTE/gpsdo-cyd)). A radio can say "external reference locked" while the reference itself has gone bad; the display knows better. Absent, nothing is watched.
+
+| Key | Type | Default | What it is |
+|---|---|---|---|
+| `host` | string | required | The MQTT broker the display publishes to. |
+| `port` | int | `1883` | The broker's port. |
+| `username` | string | absent: none | The broker username, if it wants one. |
+| `password` | string | absent: none | The broker password. Never served back by the API. |
+| `topicPrefix` | string | `"gpsdo"` | The display's topic prefix: it publishes `<prefix>/status` and `<prefix>/state`. |
+
+- The verdict is **OK** when the display's latest report says `reference_ok` true, **unreliable** when it says false, and **unknown** before any report, while the display is offline, when its last report is more than 30 s old, or when `reference_ok` is missing. A retained report from before the station connected does not count until a fresh one arrives.
+- The station page shows it beside the radio status: green "10 MHz OK", red "10 MHz unreliable" with the display's state text, grey "10 MHz unknown" (hover for why). Never on a public page.
+- One journal line per change, for example `10 MHz reference unreliable: GPS LOST (was OK for 3h12m)`.
+- [`GET /api/txlease`](ports-and-endpoints.md#the-reference-on-the-lease) carries it as `reference`, for the mailcast head end.
+- It holds nothing back: packet frames and everything else still go out while the reference is unreliable.
+- The broker is reconnected by itself, with one line when it goes (`gpsdo: lost the MQTT broker at ...; reconnecting` or `gpsdo: cannot reach the MQTT broker at ...; retrying quietly`) and one when it is back.
+- Refused at load: no `host`, a `port` outside 1 to 65535, a `topicPrefix` that is empty or has `+` or `#` in it, and the section in a monitor file.
 
 ## `mailcast`
 

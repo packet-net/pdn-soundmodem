@@ -46,6 +46,7 @@
                   background: rgba(255,255,255,.06); font-size: 12px; }
   .radio-status.bad { background: rgba(255,120,90,.16); color: #ff9a7a; }
   .radio-status.quiet { color: var(--muted); }
+  .radio-status.good { background: rgba(90,200,120,.16); color: #7ddc98; }
   .radio-status a { color: var(--amber); text-decoration: none; }
   .radio-status a:hover { text-decoration: underline; }
   /* Public deployment: a paragraph for a visitor who has never seen a packet waterfall, and
@@ -505,6 +506,9 @@
     <!-- The radio's frequency reference, when it has one to report. Hidden entirely rather
          than shown empty, so a soundcard station is not told about an absent oscillator. -->
     <span id="radioStatus" class="radio-status" hidden></span>
+    <!-- The GPSDO's 10 MHz reference, from its display over MQTT (issue #789). Only on a station
+         with a "gpsdo" section; green OK, red unreliable, grey unknown. -->
+    <span id="refStatus" class="radio-status" hidden></span>
     <!-- Programs on this machine listening through the channel audio stream, named as they
          named themselves, each linked to its own page when it said where that is. -->
     <span id="listeners" class="radio-status quiet" hidden></span>
@@ -807,6 +811,20 @@ function setRadioStatus(status) {
   el.textContent = status;
   el.classList.toggle("bad", /UNLOCKED|reboot|unknown|unreachable|refus|gave up|could not/i.test(status));
   el.classList.toggle("quiet", /^(idle|no viewers|connecting)\b/i.test(status));
+}
+
+// The 10 MHz reference chip: {state: "ok"|"unreliable"|"unknown", text, detail}, or null for a
+// station with no GPSDO feed, which shows nothing.
+function setReferenceStatus(ref) {
+  const el = document.getElementById("refStatus");
+  if (!el) return;
+  if (!ref || !ref.state) { el.hidden = true; el.textContent = ""; el.title = ""; return; }
+  el.hidden = false;
+  el.textContent = ref.text || ("10 MHz " + ref.state);
+  el.title = ref.detail ? "GPSDO: " + ref.detail : "";
+  el.classList.toggle("good", ref.state === "ok");
+  el.classList.toggle("bad", ref.state === "unreliable");
+  el.classList.toggle("quiet", ref.state !== "ok" && ref.state !== "unreliable");
 }
 
 // Programs on this machine reading the channel audio stream that said who they are:
@@ -2613,11 +2631,14 @@ function connect() {
         applyDaemonVersion();
         applyUpdate(cfg.update);
         setRadioStatus(cfg.radioStatus);
+        setReferenceStatus(cfg.reference);
         setListeners(cfg.listeners);
         syncTxTestRunning();
         renderChips(); resizeAll(); drawRuler(); drawOverlay();
       } else if (msg.type === "radio") {
         setRadioStatus(msg.status);
+      } else if (msg.type === "reference") {
+        setReferenceStatus(msg.reference);
       } else if (msg.type === "update") {
         applyUpdate(msg.update);
       } else if (msg.type === "listeners") {
