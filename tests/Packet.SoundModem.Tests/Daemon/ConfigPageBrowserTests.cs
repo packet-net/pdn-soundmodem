@@ -624,13 +624,25 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await Assertions.Expect(page.Locator("#nudge-one-run")).ToBeVisibleAsync(new() { Timeout = StepMs });
         ILocator save = page.Locator("#nudge-save-one-run");
         await Assertions.Expect(save).ToBeEnabledAsync(new() { Timeout = StepMs });
-        await save.ClickAsync();
-        await Assertions.Expect(save).ToBeDisabledAsync(new() { Timeout = StepMs });
+        // Counted rather than watched: the button is disabled only while the save is in flight, and
+        // on a fast station the page is already redrawn by the time an assertion could look, which
+        // made "is it disabled" a race (main CI run 42478200748). What matters is that a second
+        // click while saving posts nothing, so the test double-clicks and counts the saves.
+        int saves = 0;
+        page.Request += (_, request) =>
+        {
+            if (request.Method == "POST" && request.Url.Contains("persist=true", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref saves);
+            }
+        };
+        await save.DblClickAsync();
         await Assertions.Expect(page.Locator("#result")).ToContainTextAsync("The station is back", new() { Timeout = RestartMs });
         await _station.WaitForStartsAsync(3);
 
         _station.ReadConfig()["waterfall"]!["title"]!.GetValue<string>().Should().Be("kept after all", "saving writes what was running");
         _station.Starts.Should().Be(3, "one save, one restart");
+        Volatile.Read(ref saves).Should().Be(1, "a second click while saving must not post again");
     }
 
     [Fact(Timeout = 600_000)]
