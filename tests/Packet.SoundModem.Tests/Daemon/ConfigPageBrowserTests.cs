@@ -315,7 +315,7 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await page.Locator("#choice-mode-qpsk600").ClickAsync();
 
         await Assertions.Expect(page.Locator("#modem-f-modems_1_")).ToBeVisibleAsync(new() { Timeout = StepMs });
-        await Assertions.Expect(page.Locator("#modem-f-modems_1_ > .head > .name")).ToHaveTextAsync("600 baud QPSK", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#modem-f-modems_1_ .head .who .line .name")).ToHaveTextAsync("600 baud QPSK", new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#modem-f-modems_1_ .sub")).ToHaveTextAsync("Sub-channel 1", new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#modem-f-modems_1_ .talks")).ToContainTextAsync("NinoTNC mode 9", new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#strip-svg .blk[data-sub='1']")).ToBeVisibleAsync(new() { Timeout = StepMs });

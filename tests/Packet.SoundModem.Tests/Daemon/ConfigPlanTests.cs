@@ -93,8 +93,20 @@ public partial class ConfigPageTests
         foreach ((string mode, string bits) in expected)
         {
             ModeLabels.For(mode)!.NinoMode.Should().Be(Convert.ToInt32(bits, 2), mode);
-            modes.Should().Contain($"| `{mode}` |", mode);
-            modes.Should().Contain($"NinoTNC ({bits})", $"{mode} is documented with {bits}");
+            string row = modes.Split('\n').Single(l => l.StartsWith($"| `{mode}` |", StringComparison.Ordinal));
+            row.Should().Contain($"NinoTNC ({bits})", $"the row of {mode} gives {bits}");
+        }
+
+        // Every "mode N (bits)" a label says is its own number, in the form the docs give.
+        foreach ((string mode, ModeLabels.Label label) in ModeLabels.Table)
+        {
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+                         label.TalksTo, @"mode (\d+) \((\d{4})\)"))
+            {
+                label.NinoMode.Should().NotBeNull($"{mode} names a NinoTNC mode number");
+                Convert.ToInt32(m.Groups[2].Value, 2).Should().Be(int.Parse(m.Groups[1].Value), mode);
+                Convert.ToInt32(m.Groups[2].Value, 2).Should().Be(label.NinoMode!.Value, mode);
+            }
         }
 
         ModeLabels.Table.Where(t => t.Value.NinoMode is not null).Select(t => t.Key)

@@ -173,9 +173,13 @@
   .strip .key { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 6px; }
   .strip .key i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
   .strip .problem { margin-top: 8px; color: var(--warn); font-size: 13px; }
+  .modem > .head { flex-wrap: nowrap; align-items: flex-start; }
+  .modem > .head .who { flex: 1; min-width: 0; }
+  .modem > .head .line { display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap; }
   .modem > .head .swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
   .modem > .head .sub { color: var(--muted); font-size: 13px; }
-  .modem > .head .talks { color: var(--muted); font-size: 13.5px; }
+  .modem > .head .talks { color: var(--muted); font-size: 13.5px; margin-top: 2px; }
+  .modem > .head .btn { flex: none; }
   .modem .field .hint { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
   .modem .field .hint:empty { display: none; }
   .modem .field .warntext { color: var(--warn); font-size: 12.5px; margin-top: 4px; }
@@ -961,8 +965,9 @@ var ConfigModel = (function () {
   // The strip, as numbers: the axis, its ticks, the passband, the dial and a block for each
   // modem, from the plan endpoint's answer. overrides maps a sub-channel to the centre a block
   // is being dragged to, ahead of the next answer.
-  function stripLayout(plan, overrides) {
+  function stripLayout(plan, overrides, maxTicks) {
     overrides = overrides || {};
+    maxTicks = maxTicks || 7;
     var rf = plan.axis === "rf";
     var blocks = [];
     var lo = Infinity, hi = -Infinity;
@@ -996,10 +1001,10 @@ var ConfigModel = (function () {
     lo -= pad; hi += pad;
     var steps = [50, 100, 200, 500, 1000, 2000, 5000, 10000];
     var step = steps[steps.length - 1];
-    for (var s = 0; s < steps.length; s++) { if ((hi - lo) / steps[s] <= 7) { step = steps[s]; break; } }
+    for (var s = 0; s < steps.length; s++) { if ((hi - lo) / steps[s] <= maxTicks) { step = steps[s]; break; } }
     var ticks = [];
     for (var t = Math.ceil(lo / step) * step; t <= hi; t += step) {
-      ticks.push({ pos: t, label: rf ? (t / 1e6).toFixed(step >= 100 ? 4 : 5) : String(Math.round(t)) });
+      ticks.push({ pos: t, label: rf ? (t / 1e6).toFixed(step >= 1000 ? 3 : step >= 100 ? 4 : 5) : String(Math.round(t)) });
     }
     return { axis: plan.axis, lo: lo, hi: hi, ticks: ticks, passband: pass, dial: dial, blocks: blocks };
   }
@@ -1125,6 +1130,7 @@ var ConfigModel = (function () {
       plan.data = null;
       plan.error = "";
       plan.overrides = {};
+      autoChosen = {};
       restoredFrom = null;
       restoredSecrets = [];
       errors = {};
@@ -1519,6 +1525,7 @@ var ConfigModel = (function () {
   var SVGNS = "http://www.w3.org/2000/svg";
   var plan = { data: null, seq: 0, shown: 0, timer: null, overrides: {}, error: "", layout: null, geom: null, drag: null };
   var picker = { open: false, group: null };
+  var autoChosen = {};   // sub-channels the page picked for a modem it added
   var PLAN_DELAY = 250;
 
   function svg(tag, attrs, text) {
@@ -1695,13 +1702,40 @@ var ConfigModel = (function () {
     caption.firstChild.textContent = "";
     caption.firstChild.appendChild(el("b", null, words.head));
     caption.firstChild.appendChild(document.createTextNode(words.tail ? ", " + words.tail : ""));
-    var layout = M.stripLayout(plan.data, plan.overrides);
-    plan.layout = layout;
     var W = Math.max(280, Math.floor(view.clientWidth || 600));
-    var PAD = 14, H = 150, TOP = 56, BOTTOM = 108;
-    plan.geom = { W: W, pad: PAD };
+    var PAD = 14;
+    var narrow = W < 500;
+    // Tick labels are never closer than their own width and a gap: fewer, shorter ones on a phone.
+    var usable = W - 2 * PAD;
+    var layout = M.stripLayout(plan.data, plan.overrides, 1);
+    var charsPer = plan.data.axis === "rf" ? 7 : 5;
+    var maxTicks = Math.max(2, Math.floor(usable / (charsPer * 6.8 + 18)));
+    layout = M.stripLayout(plan.data, plan.overrides, maxTicks);
+    plan.layout = layout;
     function x(pos) { return PAD + (pos - layout.lo) / (layout.hi - layout.lo) * (W - 2 * PAD); }
-    plan.geom.x = x;
+    // Labels: one row above the blocks, and a second (third) row for a label that would touch one
+    // already placed, so none overlap.
+    var placed = [];
+    layout.blocks.slice().sort(function (p, q) { return p.centre - q.centre; }).forEach(function (b) {
+      var entry = findModem(b.subChannel);
+      var name = entry ? modemTitle(entry) : b.mode;
+      var max = narrow ? 18 : 28;
+      b.text = name.length > max ? name.slice(0, max - 1) + "." : name;
+      b.labelW = b.text.length * 6.8;
+      var mid = x(b.centre);
+      b.labelLeft = Math.max(2, Math.min(W - 2 - b.labelW, mid - b.labelW / 2));
+      var row = 0;
+      for (;;) {
+        var clash = placed.some(function (o) { return o.row === row && b.labelLeft < o.labelLeft + o.labelW + 8 && b.labelLeft + b.labelW + 8 > o.labelLeft; });
+        if (!clash) break;
+        row++;
+      }
+      b.row = row;
+      placed.push(b);
+    });
+    var rows = placed.reduce(function (m, b) { return Math.max(m, b.row + 1); }, 1);
+    var TOP = 30 + rows * 15, BOTTOM = TOP + (narrow ? 42 : 52), H = BOTTOM + 44;
+    plan.geom = { W: W, pad: PAD, x: x, top: TOP };
     var s = svg("svg", { viewBox: "0 0 " + W + " " + H, width: W, height: H, role: "group", id: "strip-svg",
                          "aria-label": words.head + (words.tail ? ", " + words.tail : "") });
     if (layout.passband) {
@@ -1715,17 +1749,19 @@ var ConfigModel = (function () {
     }
     s.appendChild(svg("line", { x1: 0, y1: BOTTOM + 4, x2: W, y2: BOTTOM + 4, stroke: "#1e2632" }));
     layout.ticks.forEach(function (t) {
-      s.appendChild(svg("line", { x1: x(t.pos), y1: BOTTOM + 4, x2: x(t.pos), y2: BOTTOM + 10, stroke: "#2a3441" }));
-      s.appendChild(svg("text", { x: x(t.pos), y: H - 6, fill: "#8793a0", "font-size": 11, "text-anchor": "middle",
+      var tx = x(t.pos);
+      var anchor = tx < 24 ? "start" : tx > W - 24 ? "end" : "middle";
+      s.appendChild(svg("line", { x1: tx, y1: BOTTOM + 4, x2: tx, y2: BOTTOM + 10, stroke: "#2a3441" }));
+      s.appendChild(svg("text", { x: tx, y: H - 6, fill: "#8793a0", "font-size": 11, "text-anchor": anchor,
                                   "font-family": "ui-monospace, monospace" }, t.label));
     });
-    layout.blocks.forEach(function (b) { s.appendChild(drawBlock(b, layout, x, TOP, BOTTOM)); });
-    // The edge a block sticks out past, said where it happens.
+    // The edge a block sticks out past, drawn under the blocks so no label or number is struck through.
     layout.blocks.forEach(function (b) {
       if (!layout.passband || b.kinds.indexOf("outside") < 0) return;
       var edge = b.hi > layout.passband.hi + 0.5 ? layout.passband.hi : layout.passband.lo;
       s.appendChild(svg("line", { x1: x(edge), y1: 22, x2: x(edge), y2: BOTTOM, stroke: "#ffb86b", "stroke-width": 1.5 }));
     });
+    layout.blocks.forEach(function (b) { s.appendChild(drawBlock(b, layout, x, TOP, BOTTOM)); });
     view.textContent = "";
     view.appendChild(s);
     keys.textContent = "";
@@ -1770,19 +1806,15 @@ var ConfigModel = (function () {
     }
     var geo = blockGeometry(b, layout, x);
     var flagged = b.kinds.length > 0;
+    // A solid underlay, so whatever is drawn behind a block (the edge of the passband) does not show through it.
+    g.appendChild(svg("rect", { "class": "under", x: geo.left, y: top, width: geo.width, height: bottom - top, rx: 3, fill: "#11161d" }));
     var rect = svg("rect", { "class": "body", x: geo.left, y: top, width: geo.width, height: bottom - top, rx: 3,
                              fill: colour, "fill-opacity": flagged ? ".6" : ".85" });
     if (flagged) { rect.setAttribute("stroke", "#ffb86b"); rect.setAttribute("stroke-width", "1.5"); rect.setAttribute("stroke-dasharray", "4 3"); }
     g.appendChild(rect);
-    var short = name.length > 26 ? name.slice(0, 25) + "." : name;
-    var row = layout.blocks.indexOf(b) % 2 === 0 ? top - 8 : top - 22;
-    // A label wider than the room beside its block is kept inside the drawing, on the side it would spill over.
-    var half = short.length * 3.4, mid = geo.left + geo.width / 2, anchor = "middle", lx = mid;
-    if (mid + half > plan.geom.W - 2) { anchor = "end"; lx = plan.geom.W - 2; }
-    else if (mid - half < 2) { anchor = "start"; lx = 2; }
-    var label = svg("text", { "class": "lbl", x: lx, y: row, fill: "#d9e2ea", "font-size": 12, "text-anchor": anchor }, short);
-    g.appendChild(label);
-    g.appendChild(svg("text", { "class": "num", x: geo.left + geo.width / 2, y: (top + bottom) / 2 + 4, fill: "#10151b", "font-size": 12,
+    g.appendChild(svg("text", { "class": "lbl", x: b.labelLeft, y: top - 8 - b.row * 15, fill: "#d9e2ea", "font-size": 12,
+                                stroke: "#11161d", "stroke-width": 6, "paint-order": "stroke", "stroke-linejoin": "round" }, b.text));
+    g.appendChild(svg("text", { "class": "num", x: geo.left + geo.width / 2, y: (top + bottom) / 2 + 4, fill: "#10151b", "font-size": 13,
                                 "font-weight": 600, "text-anchor": "middle" }, String(b.subChannel)));
     if (b.movable) wireBlock(g, b);
     return g;
@@ -1794,11 +1826,9 @@ var ConfigModel = (function () {
     var layout = plan.layout, x = plan.geom.x;
     var moved = { lo: centre - b.width / 2, hi: centre + b.width / 2 };
     var geo = blockGeometry(moved, layout, x);
-    var rect = g.querySelector("rect.body");
-    rect.setAttribute("x", geo.left);
-    rect.setAttribute("width", geo.width);
+    g.querySelectorAll("rect").forEach(function (r) { r.setAttribute("x", geo.left); r.setAttribute("width", geo.width); });
     var lbl = g.querySelector("text.lbl");
-    if (lbl.getAttribute("text-anchor") === "middle") lbl.setAttribute("x", geo.left + geo.width / 2);
+    lbl.setAttribute("x", Math.max(2, Math.min(plan.geom.W - 2 - b.labelW, geo.left + geo.width / 2 - b.labelW / 2)));
     g.querySelector("text.num").setAttribute("x", geo.left + geo.width / 2);
     g.dataset.centre = centre;
     var rf = layout.axis === "rf";
@@ -1914,13 +1944,16 @@ var ConfigModel = (function () {
     card.id = "modem-" + idFor(item.path);
     card.dataset.sub = sub;
     var head = el("div", "head");
+    var who = el("div", "who");
+    var line = el("div", "line");
     var sw = el("span", "swatch");
     sw.style.background = M.colourOf(i);
-    head.appendChild(sw);
-    head.appendChild(el("span", "name", modemTitle(entry)));
-    head.appendChild(el("span", "sub", "Sub-channel " + sub));
-    if (info) head.appendChild(el("span", "talks", "Talks to " + info.talksTo));
-    head.appendChild(el("span", "spacer"));
+    line.appendChild(sw);
+    line.appendChild(el("span", "name", modemTitle(entry)));
+    line.appendChild(el("span", "sub", "Sub-channel " + sub));
+    who.appendChild(line);
+    if (info) who.appendChild(el("div", "talks", "Talks to " + info.talksTo));
+    head.appendChild(who);
     head.appendChild(smallButton("remove-" + idFor(item.path), "Remove", function () {
       var arr = M.valueAt(doc, n.path);
       arr.splice(i, 1);
@@ -1942,7 +1975,7 @@ var ConfigModel = (function () {
     };
     if (tunable) body.appendChild(drawFrequency(item, sub, byDial, info));
     var subNode = node("subChannel");
-    if (subNode && subNode.shown) body.appendChild(drawField(subNode));
+    if (subNode && subNode.shown) body.appendChild(drawSubChannel(subNode, sub));
 
     // Everything else a modem has: the mode, then the specialist keys, behind More.
     var more = [];
@@ -1976,6 +2009,42 @@ var ConfigModel = (function () {
     }
     card.appendChild(body);
     return card;
+  }
+
+  // The KISS sub-channel as a compact choice of 0 to 15, with one line on what it is for. The
+  // reference's own help and the key path are with the other keys under More.
+  function drawSubChannel(n, sub) {
+    var id = idFor(n.path);
+    var row = el("div", "field");
+    var label = el("label", null, "KISS sub-channel");
+    label.htmlFor = id;
+    row.appendChild(label);
+    var box = el("div", "input");
+    var select = el("select");
+    select.id = id;
+    var seen = false;
+    for (var v = 0; v < 16; v++) {
+      var opt = el("option", null, v + (v === sub && autoChosen[sub] ? " (chosen for you)" : ""));
+      opt.value = String(v);
+      select.appendChild(opt);
+      if (v === sub) seen = true;
+    }
+    if (!seen) { var odd = el("option", null, String(sub)); odd.value = String(sub); select.appendChild(odd); }
+    select.value = String(sub);
+    box.appendChild(select);
+    row.appendChild(box);
+    row.appendChild(el("div", "hint", "What your node software calls this port"));
+    var err = el("div", "err");
+    err.id = "e-" + id;
+    err.hidden = true;
+    row.appendChild(err);
+    var key = modemKey("subChannel");
+    if (JSON.stringify(M.valueAt(loaded, n.path)) !== JSON.stringify(M.valueAt(doc, n.path))) label.classList.add("changed");
+    select.addEventListener("change", function () {
+      M.writeField(doc, n.path, key, select.value);
+      edited(true, id);
+    });
+    return row;
   }
 
   // The frequency of a modem: MHz when the station has a dial, audio Hz when it has not.
@@ -2098,6 +2167,7 @@ var ConfigModel = (function () {
   function addModem(n, mode) {
     var list = modemList();
     var sub = M.nextSubChannel(list);
+    if (sub !== null) autoChosen[sub] = true;
     if (sub === null) {
       picker = { open: false, group: null };
       render();
