@@ -84,6 +84,13 @@
   .area p { max-width: 62ch; overflow-wrap: anywhere; }
   .area p + p { margin-top: 4px; }
   .area .sub { color: var(--muted); font-size: 13.5px; }
+  .notice { margin-top: 8px; padding: 8px 11px; border-left: 2px solid var(--warn); background: #1b1610;
+            font-size: 13.5px; max-width: 62ch; overflow-wrap: anywhere; }
+  .notice b { color: var(--warn); font-weight: 600; }
+  .notice .acts { margin-top: 5px; display: flex; gap: 14px; font-size: 13px; }
+  .notice .dismiss { background: none; border: 0; padding: 0; color: var(--muted); font-size: 13px; }
+  .notice .dismiss:hover { color: var(--ink); }
+  #nudges-top .notice { margin: 0 0 18px; }
   .edit { border: 1px solid var(--edge); border-radius: 5px; padding: 4px 12px; font-size: 13.5px; color: var(--ink); }
   .edit:hover { border-color: var(--amber); color: var(--amber); text-decoration: none; }
 
@@ -857,6 +864,7 @@ var ConfigModel = (function () {
       var fl = get(doc, "frameLog");
       out.push(isSet(fl) && isSet(get(fl, "path"))
         ? "Heard frames are kept in " + get(fl, "path") + ", one file for each receiver."
+        : isSet(fl) ? "The frame log is switched on but has no folder to keep its files in."
         : "Heard frames are not kept.");
     }
     return out;
@@ -1811,8 +1819,8 @@ var ConfigModel = (function () {
   function setupNetwork(doc) {
     var b = get(doc, "bind");
     if (!isSet(b)) return false;
-    b = String(b).toLowerCase();
-    return !(b === "127.0.0.1" || b === "::1" || b === "localhost");
+    b = String(b).trim().toLowerCase();
+    return !(b === "::1" || b === "localhost" || /^127\.\d+\.\d+\.\d+$/.test(b));
   }
 
   // Writes the KISS port and who may reach it. Returns "" or the reason it wrote nothing. The
@@ -1912,6 +1920,712 @@ var ConfigModel = (function () {
     return rows;
   }
 
+  // ---------------------------------------------------------------- the overview in plain sentences
+  // What each area of a station says about it, in words, and the few things worth a second look.
+  // A sentence is built only from what the file sets, or from the default the reference gives for
+  // what it leaves out, plus whatever the page has learnt about the station: facts.found (what
+  // /api/config/discover returned), facts.plan (the plan endpoint's answer for this document),
+  // facts.hosts (the station page socket's KISS ports and how many programs are on each) and
+  // facts.source ("file", or "ephemeral" while a one-run change is in force). Any of them may be
+  // missing, and then the sentence says less; it never guesses.
+
+  var NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+  function countWord(n) { return n >= 0 && n <= 10 ? NUMBER_WORDS[n] : String(n); }
+
+  // "a, b and c".
+  function joinWords(list) {
+    if (list.length <= 1) return list.join("");
+    return list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
+  }
+
+  // 7050000 -> "7.0500"; 7050300 -> "7.0503"; 7050310 -> "7.05031". Four decimals at least.
+  function mhzShort(hz) {
+    var s = (Math.round(hz) / 1e6).toFixed(6);
+    while (s.length > s.indexOf(".") + 5 && s.charAt(s.length - 1) === "0") s = s.slice(0, -1);
+    return s;
+  }
+
+  // 2400 -> "2.4 kHz"; 3000 -> "3 kHz".
+  function khzWords(hz) {
+    var s = (hz / 1000).toFixed(1);
+    if (/\.0$/.test(s)) s = s.slice(0, -2);
+    return s + " kHz";
+  }
+
+  function modemList(doc) {
+    var list = get(doc, "modems");
+    return Array.isArray(list) ? list : [];
+  }
+
+  function subOfModem(m) {
+    var s = get(m, "subChannel");
+    return typeof s === "number" ? s : 0;
+  }
+
+  function isArdopMode(mode) { return String(mode || "").toLowerCase() === "ardop"; }
+
+  // What the daemon says about a kind of audio device (schema.deviceKindFacts, from the same table
+  // the settings are drawn from): {name, hasMixer, transmits, takesRig, mayPublish}.
+  function kindFact(schema, kind) {
+    var list = schema && Array.isArray(schema.deviceKindFacts) ? schema.deviceKindFacts : [];
+    for (var i = 0; i < list.length; i++) if (list[i].name === kind) return list[i];
+    return null;
+  }
+
+  // The kind of device a station has, for words: the daemon's kind name, with "null" (the sound
+  // card name that opens no audio at all) told apart from a real card.
+  function stationKind(schema, doc) {
+    var k = deviceKind(schema, doc);
+    if (k === "alsa" && String(get(doc, "device") || "").toLowerCase() === "null") return "null";
+    return k;
+  }
+
+  function listensOnly(schema, kind) {
+    var f = kindFact(schema, kind);
+    return !!f && f.transmits === false;
+  }
+
+  // Whether the station can send anything at all.
+  function canTransmit(schema, doc) {
+    var kind = stationKind(schema, doc);
+    if (kind === "null" || kind === "monitor" || listensOnly(schema, kind)) return false;
+    if (kind === "flex") {
+      var flex = get(doc, "flex");
+      if (flex && get(flex, "receiveOnly") === true) return false;
+    }
+    return true;
+  }
+
+  // Where a listener bound to "bind" can be reached from, in words. No bind is this machine.
+  function bindWords(doc) {
+    var b = get(doc, "bind");
+    if (!isSet(b)) return "this machine only";
+    var t = String(b).trim().toLowerCase();
+    if (t === "::1" || t === "localhost" || /^127\.\d+\.\d+\.\d+$/.test(t)) return "this machine only";
+    if (t === "*" || t === "0.0.0.0" || t === "::") return "every network interface";
+    return "the interface " + String(b).trim();
+  }
+
+  function hasAccessKey(doc) {
+    var api = get(doc, "api");
+    return isSet(api) && typeof api === "object" && isSet(get(api, "key"));
+  }
+
+  function kissPortOf(doc) {
+    var p = get(doc, "kissPort");
+    return typeof p === "number" ? p : 8105;
+  }
+
+  function modemName(schema, mode) {
+    var info = modeInfo(schema, mode);
+    return info ? info.name : String(mode === undefined ? "afsk1200" : mode);
+  }
+
+  // One sound card, named as the machine knows it where it does: "USB Audio Device".
+  function cardWords(device, cards) {
+    var card = cardOfDevice(device, cards);
+    return card ? "\"" + card.name + "\"" : String(device);
+  }
+
+  // The parts of "flex:<radio>[:slice][@station]".
+  function flexParts(device) {
+    var rest = String(device).slice(String(device).indexOf(":") + 1);
+    var at = rest.indexOf("@");
+    var station = at >= 0 ? rest.slice(at + 1) : "";
+    if (at >= 0) rest = rest.slice(0, at);
+    var slice = "";
+    var m = /^(.*):([A-Ha-h])$/.exec(rest);
+    if (m) { rest = m[1]; slice = m[2].toUpperCase(); }
+    return { radio: rest, slice: slice, station: station };
+  }
+
+  function discovered(facts, name) {
+    return section(facts && facts.found, name);
+  }
+
+  // A FlexRadio in words, with its model and name when discovery saw it.
+  function flexWords(doc, facts) {
+    var parts = flexParts(get(doc, "device"));
+    var flex = get(doc, "flex") || {};
+    var radio = parts.radio, lead;
+    var seen = discovered(facts, "flexRadios");
+    var known = null;
+    seen.forEach(function (f) {
+      var host = radio.replace(/:\d+$/, "");
+      if (known) return;
+      if (f.ip === host || (/^serial=/i.test(radio) && f.serial === radio.slice(7)) || (/^name=/i.test(radio) && f.name === radio.slice(5))) known = f;
+    });
+    var model = known && known.model ? String(known.model).replace(/^flex-?/i, "") : "";
+    var what = "FlexRadio" + (model ? " " + model : "");
+    if (known && known.name && known.name !== known.model) what += " called \"" + known.name + "\"";
+    if (radio.toLowerCase() === "discover") lead = "A FlexRadio found on the network when the station starts";
+    else if (radio.toLowerCase() === "mock") lead = "A pretend FlexRadio on this machine";
+    else if (/^serial=/i.test(radio)) lead = "A " + what + " with serial " + radio.slice(7);
+    else if (/^name=/i.test(radio)) lead = known ? "A " + what + " (found by its name)" : "The FlexRadio named \"" + radio.slice(5) + "\"";
+    else lead = "A " + what + " at " + radio;
+    var where = parts.station ? ", using the slice of the running SmartSDR station \"" + parts.station + "\""
+      : parts.slice ? ", slice " + parts.slice : ", on a slice it makes itself";
+    var dax = isSet(get(flex, "daxChannel")) ? String(get(flex, "daxChannel")) : (parts.station ? "1" : "2");
+    var rx = get(flex, "receiveOnly") === true ? "receiving only" : "receiving and transmitting";
+    return lead + where + ", " + rx + " through DAX channel " + dax + ".";
+  }
+
+  // The kind of radio the station is set up for: "usb", "lsb" or "fm".
+  function radioKindOf(schema, doc, plan) {
+    if (plan && typeof plan.radio === "string") return plan.radio;
+    var s = get(doc, "sideband");
+    if (typeof s === "string" && s !== "") return s.toLowerCase();
+    if (stationKind(schema, doc) === "flex") {
+      var mode = String(get(get(doc, "flex") || {}, "mode") || "DIGU").toUpperCase();
+      return mode === "DIGL" || mode === "LSB" ? "lsb" : mode === "FM" || mode === "NFM" ? "fm" : "usb";
+    }
+    return "usb";
+  }
+
+  // The audio window the daemon judges a modem against: what the plan says, else the nominal 300 to 2700 Hz.
+  function planLimits(plan) {
+    return {
+      low: plan && typeof plan.limitAudioLowHz === "number" ? plan.limitAudioLowHz : 300,
+      high: plan && typeof plan.limitAudioHighHz === "number" ? plan.limitAudioHighHz : 2700
+    };
+  }
+
+  function firstLine(text) {
+    var line = String(text || "").split("\n")[0].replace(/[:.\s]+$/, "");
+    return line.length > 200 ? line.slice(0, 200) : line;
+  }
+
+  // How wide the radio's passband is, as far as anything says: a Flex as the plan sets it, a rig as
+  // rig.passbandHz asks for it, a web receiver as its configured filter. Otherwise only what the
+  // daemon assumes, said as an assumption. Empty when the rig keeps its own normal width.
+  function bandWidthWords(schema, doc, plan, pass, lim) {
+    if (!plan) return "";
+    var kind = stationKind(schema, doc);
+    var rig = get(doc, "rig");
+    if (kind === "flex") {
+      return pass && typeof pass.audioLowHz === "number" && typeof pass.audioHighHz === "number"
+        ? khzWords(Math.min(pass.audioHighHz, lim.high) - Math.max(pass.audioLowHz, lim.low)) + " wide" : "";
+    }
+    if (kind === "ubersdr") {
+      var u = get(doc, "ubersdr") || {};
+      var lo = typeof get(u, "ssbLowHz") === "number" ? get(u, "ssbLowHz") : 150;
+      var hi = typeof get(u, "ssbHighHz") === "number" ? get(u, "ssbHighHz") : 3450;
+      return khzWords(hi - lo) + " wide";
+    }
+    if (isSet(rig) && typeof rig === "object") {
+      var w = get(rig, "passbandHz");
+      if (typeof w === "number") return w > 0 ? khzWords(w) + " wide" : "";
+      return pass && typeof pass.audioLowHz === "number" && typeof pass.audioHighHz === "number"
+        ? khzWords(pass.audioHighHz - pass.audioLowHz) + " wide" : "";
+    }
+    return "taken to pass " + Math.round(lim.low) + " to " + Math.round(lim.high) + " Hz";
+  }
+
+  // "Dial 7.0500 MHz, upper sideband, 2.8 kHz wide." as small print, from the plan where there is one.
+  function bandSentence(schema, doc, plan) {
+    var radio = radioKindOf(schema, doc, plan);
+    if (radio === "fm") {
+      var first = modemList(doc).filter(function (m) { return typeof get(m, "rfFrequency") === "number"; })[0];
+      return first ? "FM, on the channel at " + mhzShort(get(first, "rfFrequency")) + " MHz."
+        : "FM. The modems are placed by audio tone, not by radio frequency.";
+    }
+    var side = radio === "lsb" ? "lower sideband" : "upper sideband";
+    if (plan && plan.ok === false) return "The band plan cannot place these modems: " + firstLine(plan.problem) + ".";
+    var rfPlaced = modemList(doc).some(function (m) { return typeof get(m, "rfFrequency") === "number"; });
+    var dial = plan && typeof plan.dialHz === "number" ? plan.dialHz
+      : typeof get(doc, "dialFrequency") === "number" ? get(doc, "dialFrequency") : null;
+    // The plan's passband is stretched round the modems; the radio's own is no wider than the daemon's range.
+    var pass = plan && plan.passband ? plan.passband : null;
+    var lim = planLimits(plan);
+    var width = bandWidthWords(schema, doc, plan, pass, lim);
+    if (dial !== null) return "Dial " + mhzShort(dial) + " MHz, " + side + (width ? ", " + width : "") + ".";
+    if (rfPlaced) {
+      // The dial is the plan's to choose; until it has come back there is nothing true to say about it.
+      return plan ? capital(side) + ". The band plan chooses the dial." : capital(side) + ".";
+    }
+    if (stationKind(schema, doc) === "flex") {
+      var f = parseFloat(get(get(doc, "flex") || {}, "frequency"));
+      return "Slice at " + mhzShort((isNaN(f) ? 14.1 : f) * 1e6) + " MHz, " + side + (width ? ", " + width : "") + ".";
+    }
+    return capital(side) + (width ? ", " + width : "") + ". No dial is set, so the modems are placed by audio tone.";
+  }
+
+  function radioLines(schema, doc, facts) {
+    var kind = stationKind(schema, doc);
+    var dev = isSet(get(doc, "device")) ? String(get(doc, "device")) : "default";
+    var cards = discovered(facts, "soundCards");
+    var plan = facts && facts.plan;
+    var out = [];
+    var band = true;
+    var rest = dev.slice(dev.indexOf(":") + 1);
+    if (kind === "null") {
+      out.push("No audio device is set, so the station neither hears nor sends anything.");
+      band = false;
+    } else if (kind === "pipe") {
+      out.push("Two named pipes stand in for the sound card and the radio, for testing.");
+      out.push("Device: " + dev);
+    } else if (kind === "flex") {
+      out.push(flexWords(doc, facts));
+    } else if (kind === "ubersdr") {
+      var host = hostOfInstance(rest);
+      var u = null;
+      discovered(facts, "uberSdr").forEach(function (x) {
+        if (!u && (x.device === dev || String(x.host).toLowerCase() === host.toLowerCase())) u = x;
+      });
+      out.push(u && u.name ? "The UberSDR web receiver \"" + u.name + "\"" + (u.location ? " in " + u.location : "") + " (" + host + "), listening only."
+        : "The UberSDR web receiver at " + host + ", listening only.");
+    } else if (kind === "openwebrx") {
+      out.push("The OpenWebRX web receiver at " + hostOfInstance(rest) + ", listening only.");
+    } else if (kind === "iqcard") {
+      out.push("IQ from the left and right inputs of the sound card " + cardWords(rest, cards) + ", listening only.");
+    } else if (kind === "rtltcp") {
+      out.push("An RTL-SDR behind an rtl_tcp server at " + rest + ", listening only.");
+    } else if (kind === "sdrconnect") {
+      out.push("An SDRplay radio through SDRconnect at " + rest + ", listening only.");
+    } else if (kind === "iqpipe") {
+      out.push("Raw IQ from a command or a pipe, listening only.");
+    } else {
+      var cap = isSet(get(doc, "captureDevice")) ? String(get(doc, "captureDevice")) : dev;
+      var play = isSet(get(doc, "playbackDevice")) ? String(get(doc, "playbackDevice")) : dev;
+      var named = cardOfDevice(dev, cards);
+      if (cap !== play) {
+        out.push("Receiving through the sound card " + cardWords(cap, cards)
+          + " and transmitting through the sound card " + cardWords(play, cards) + ".");
+      } else if (named) {
+        out.push("Audio goes in and out through the sound card " + cardWords(dev, cards) + ".");
+      } else if (dev.toLowerCase() === "default") {
+        out.push("Audio goes in and out through the system's default sound card.");
+      } else {
+        out.push("Audio goes in and out through the sound card " + dev + ".");
+      }
+    }
+    if (band) out.push(bandSentence(schema, doc, plan));
+    if (kind === "alsa" && cardOfDevice(dev, cards)) out.push("Device: " + dev);
+    var rig = get(doc, "rig");
+    var fact = kindFact(schema, kind === "null" ? "alsa" : kind);
+    if (isSet(rig) && typeof rig === "object" && fact && fact.takesRig) {
+      out.push("The radio is controlled through Hamlib's rigctld at " + (isSet(get(rig, "rigctld")) ? get(rig, "rigctld") : "127.0.0.1:4532") + ".");
+    }
+    return out;
+  }
+
+  // "m0ltesdr.example", from the host, host:port or URL a web receiver is named by.
+  function hostOfInstance(text) {
+    var t = String(text);
+    return /^[a-z][a-z0-9+.-]*:\/\//i.test(t) ? hostOf(t) : t;
+  }
+
+  function keyingLines(schema, doc, facts) {
+    var kind = stationKind(schema, doc);
+    var out = [];
+    if (kind === "null") return ["There is no audio device, so nothing is keyed."];
+    if (listensOnly(schema, kind)) return ["This station only listens, so there is no radio to key."];
+    if (kind === "flex") {
+      var flex = get(doc, "flex") || {};
+      if (get(flex, "receiveOnly") === true) return ["This station only listens, so it never keys the FlexRadio."];
+      out.push("The radio keys itself; this station asks it to transmit over the network"
+        + (get(flex, "arbitration") === true ? ", after waiting for the radio to be quiet." : "."));
+    } else {
+      var ptt = get(doc, "ptt");
+      if (!isSet(ptt) || typeof ptt !== "object") {
+        out.push(kind === "pipe" ? "There is no radio on a pipe, so nothing is keyed."
+          : "Nothing keys the radio: it relies on its own VOX, or has no keying line.");
+      } else {
+        var type = String(get(ptt, "type") || "serial").toLowerCase();
+        var dev = get(ptt, "device");
+        if (type === "cm108") {
+          var hid = null;
+          discovered(facts, "hidDevices").forEach(function (h) { if (!hid && h.path === dev) hid = h; });
+          out.push("The PTT pin (GPIO " + (typeof get(ptt, "gpio") === "number" ? get(ptt, "gpio") : 3) + ") of the CM108-type interface "
+            + (isSet(dev) ? (hid && hid.name ? "\"" + hid.name + "\" at " : "at ") + dev : "(no device chosen yet)") + " keys the radio.");
+        } else if (type === "rigctld") {
+          var rig = get(doc, "rig");
+          out.push("Hamlib's rigctld at " + (isSet(rig) && isSet(get(rig, "rigctld")) ? get(rig, "rigctld") : "127.0.0.1:4532") + " keys the radio over its control cable.");
+        } else if (type === "serial") {
+          out.push("The " + String(get(ptt, "line") || "rts").toUpperCase() + " line of the serial port "
+            + (isSet(dev) ? dev : "(no port chosen yet)") + " keys the radio.");
+        } else {
+          out.push("The keying method \"" + type + "\" keys the radio.");
+        }
+      }
+    }
+    var cs = get(doc, "carrierSense");
+    var port = isSet(cs) && typeof cs === "object" ? get(cs, "port") : undefined;
+    var driver = isSet(cs) && typeof cs === "object" && isSet(get(cs, "radio")) ? String(get(cs, "radio")).toLowerCase() : "tait";
+    if (isSet(port) && driver !== "none") {
+      var busy = get(cs, "busyAboveDbm");
+      out.push("Carrier sense asks the radio over " + port + (typeof busy === "number" ? ", and also counts a signal above " + busy + " dBm as busy." : "."));
+    } else if (isSet(cs) && typeof cs === "object" && get(cs, "audioFallback") === false) {
+      out.push("Carrier sense uses only the modems' own energy detectors.");
+    } else {
+      out.push("Carrier sense listens to the audio.");
+    }
+    return out;
+  }
+
+  function modemWords(schema, m) {
+    var mode = get(m, "mode") === undefined ? "afsk1200" : get(m, "mode");
+    var info = modeInfo(schema, mode);
+    var name = info ? info.name : String(mode);
+    var rf = get(m, "rfFrequency"), hz = get(m, "frequency");
+    var where = typeof rf === "number" ? " on " + mhzShort(rf) + " MHz"
+      : typeof hz === "number" ? " at an audio tone of " + Math.round(hz) + " Hz"
+      : info && typeof info.defaultCentreHz === "number" ? " at its usual audio tone, " + Math.round(info.defaultCentreHz) + " Hz" : "";
+    return name + where + (get(m, "transmitOnlyUnderLease") === true ? " (transmitting only under a lease)" : "");
+  }
+
+  // Which modems the plan says are outside what the radio hears, and which pairs overlap.
+  function planProblems(plan) {
+    var outside = [], pairs = [], seen = {};
+    if (!plan || !Array.isArray(plan.warnings)) return { outside: outside, pairs: pairs };
+    plan.warnings.forEach(function (w) {
+      // The daemon only holds a modem to the radio's window when it places modems by radio frequency.
+      if (w.kind === "outside") { if (plan.axis === "rf" && outside.indexOf(w.subChannel) < 0) outside.push(w.subChannel); }
+      else if (w.kind === "overlap") {
+        var a = Math.min(w.subChannel, w.other), b = Math.max(w.subChannel, w.other);
+        if (!seen[a + "-" + b]) { seen[a + "-" + b] = true; pairs.push([a, b]); }
+      }
+    });
+    return { outside: outside, pairs: pairs };
+  }
+
+  function modesLines(schema, doc, facts) {
+    var list = modemList(doc);
+    var plan = facts && facts.plan;
+    var out = [];
+    if (list.length === 0) {
+      if (isSet(get(doc, "ardop"))) return ["No modems are listed; ARDOP runs from its own section."];
+      return ["No modems are listed, so the station runs the default one: " + modemWords(schema, {}) + "."];
+    }
+    var words = list.map(function (m) { return modemWords(schema, m); });
+    out.push(capital(countWord(list.length)) + (list.length === 1 ? " modem: " : " modems: ") + joinWords(words) + ".");
+    if (list.length > 1 && radioKindOf(schema, doc, plan) === "fm") out.push("On FM every modem shares the one channel the radio is set to.");
+    if (!plan || plan.ok === false) return out;
+    var problems = planProblems(plan);
+    if (problems.outside.length > 0) {
+      out.push(joinWords(problems.outside.map(function (s) { return planModemName(schema, doc, plan, s); }))
+        + (problems.outside.length === 1 ? " falls" : " fall") + " outside what the radio hears.");
+    }
+    if (problems.outside.length === 0 && plan.passband && plan.axis === "rf"
+        && !(Array.isArray(plan.notes) && plan.notes.length > 0)) {
+      out.push((list.length === 1 ? "It fits" : (list.length === 2 ? "Both fit" : "All " + countWord(list.length) + " fit"))
+        + " inside the radio's passband.");
+    }
+    problems.pairs.forEach(function (p) {
+      out.push(planModemName(schema, doc, plan, p[0]) + " and " + planModemName(schema, doc, plan, p[1]) + " overlap on the band.");
+    });
+    return out;
+  }
+
+  // A modem by its mode, and its sub-channel when two share a mode.
+  function planModemName(schema, doc, plan, sub) {
+    var mode;
+    (plan.modems || []).forEach(function (m) { if (m.subChannel === sub) mode = m.mode; });
+    var same = (plan.modems || []).filter(function (m) { return m.mode === mode; }).length;
+    return modemName(schema, mode) + (same > 1 ? " (sub-channel " + sub + ")" : "");
+  }
+
+  function softwareLines(schema, doc, facts) {
+    var kind = stationKind(schema, doc);
+    var port = kissPortOf(doc);
+    var where = bindWords(doc);
+    var out = ["Node and BBS software connect over KISS to port " + port + " " + (where === "this machine only" ? "on this machine only." : "on " + where + ".")];
+    var list = modemList(doc);
+    var packet = list.filter(function (m) { return !isArdopMode(get(m, "mode")); });
+    var poly = get(doc, "polyglotPort");
+    if (typeof poly === "number") {
+      out.push(packet.length >= 2
+        ? "Port " + poly + " puts all " + countWord(packet.length) + " packet modems behind one KISS port, sending each frame in the mode its next hop was last heard in."
+        : "Port " + poly + " is meant to put every packet modem behind one KISS port, but that needs at least two packet modems and there is "
+          + (packet.length === 0 ? "none." : "one."));
+    }
+    var many = get(doc, "polyglot");
+    if (Array.isArray(many)) {
+      many.forEach(function (p) {
+        var subs = get(p, "subChannels");
+        var pp = get(p, "port");
+        out.push((typeof pp === "number" ? "Port " + pp : "A polyglot port with no number yet") + " puts " + (Array.isArray(subs) && subs.length > 0 ? "sub-channels " + joinWords(subs.map(String)) : "some modems")
+          + " behind one KISS port, sending each frame in the mode its next hop was last heard in.");
+      });
+    }
+    list.forEach(function (m) {
+      var own = get(m, "port");
+      if (isArdopMode(get(m, "mode"))) {
+        var p = typeof own === "number" ? own : 8515;
+        out.push("ARDOP listens on port " + p + ", with its data on port " + (p + 1) + ".");
+      } else if (typeof own === "number") {
+        out.push(modemName(schema, get(m, "mode")) + " also has a KISS port of its own, " + own + ".");
+      }
+    });
+    var paging = get(doc, "paging");
+    if (isSet(paging)) out.push("POCSAG paging listens on port " + (typeof get(paging, "port") === "number" ? get(paging, "port") : 8106) + ".");
+    if (listensOnly(schema, kind)) out.push("This station only listens, so frames sent to it over KISS are dropped.");
+    var hosts = facts && Array.isArray(facts.hosts) ? facts.hosts : null;
+    if (hosts) {
+      var here = 0, other = 0;
+      hosts.forEach(function (h) { if (h.port === port) here += h.clients || 0; else other += h.clients || 0; });
+      var line = here === 0 ? "Nothing is connected to it now."
+        : here === 1 ? "One program is connected to it now." : capital(countWord(here)) + " programs are connected to it now.";
+      if (other > 0) line += " " + capital(countWord(other)) + (other === 1 ? " more is" : " more are") + " connected to the other ports.";
+      out.push(line);
+    }
+    return out;
+  }
+
+  function sharingLines(schema, doc, facts) {
+    var kind = stationKind(schema, doc);
+    var wf = get(doc, "waterfall");
+    var out = [];
+    if (!isSet(wf)) {
+      out.push("No station page is set up.");
+    } else {
+      var port = typeof get(wf, "port") === "number" ? get(wf, "port") : 8107;
+      var where = bindWords(doc);
+      var at = "port " + port + " on " + where;
+      if (get(wf, "public") === true) {
+        out.push("The station page is public, at " + at + ": visitors can watch it, and it never carries the mixer or the transmitter test.");
+      } else if (hasAccessKey(doc)) {
+        out.push("The station page is at " + at + ", and asks for the access key before any change.");
+      } else if (where === "this machine only") {
+        out.push("The station page is at " + at + ". It asks for no key, but only this machine can reach it.");
+      } else {
+        out.push("The station page is at " + at + ", and asks for no key, so anyone who can reach it can change settings.");
+      }
+    }
+    var fl = get(doc, "frameLog");
+    var bits = [];
+    if (isSet(fl)) bits.push(isSet(get(fl, "path")) ? "Heard frames are kept in " + get(fl, "path") + "." : "Heard frames are kept in frames.db in the station's state folder.");
+    else bits.push("Heard frames are not kept.");
+    var pub = get(doc, "publish");
+    if (isSet(pub)) bits.push("This station is offered on the monitor at " + hostOf(get(pub, "url") || "") + " as " + (get(pub, "callsign") || "(no callsign yet)") + ".");
+    else if ((kindFact(schema, kind === "null" ? "alsa" : kind) || {}).mayPublish) bits.push("Not sent to a public monitor.");
+    out.push(bits.join(" "));
+    var metrics = get(doc, "metrics");
+    if (isSet(metrics) && get(metrics, "enabled") !== false && !isSet(wf)) {
+      out.push("Metrics are switched on, but there is no station page to serve them.");
+    } else if (isSet(metrics) && get(metrics, "enabled") !== false) {
+      out.push("Prometheus metrics are served at /metrics on the station page's port, with no key.");
+    }
+    return out;
+  }
+
+  // The plain sentences for one area of a station, the first the main one and the rest small
+  // print. An area this does not describe gets the generic line of what its settings are.
+  function describe(schema, doc, areaId, facts) {
+    if (isSet(get(doc, "monitor"))) return summary(schema, doc, areaId);
+    facts = facts || {};
+    if (areaId === "radio") return radioLines(schema, doc, facts);
+    if (areaId === "keying") return keyingLines(schema, doc, facts);
+    if (areaId === "modes") return modesLines(schema, doc, facts);
+    if (areaId === "software") return softwareLines(schema, doc, facts);
+    if (areaId === "sharing") return sharingLines(schema, doc, facts);
+    return summary(schema, doc, areaId);
+  }
+
+  // ---------------------------------------------------------------- worth a look
+  // A short list of things that are probably not what the operator meant, each one plain sentence
+  // and a link to the setting. This table is the whole of it: to add a nudge, add a row; to drop
+  // one, delete its row. Nothing here is about the licence or an ident.
+  //   id     a stable name, what a dismissal is remembered under
+  //   scope  "station", "site" or "any"
+  //   needs  "plan" when the plan endpoint's answer is needed to judge it
+  //   when   whether it applies, given the context c (see nudgeContext)
+  //   text   the sentence
+  //   path   the setting it is about (or hash, for a page that is not a setting)
+  //   link   what the link says
+  var NUDGES = [
+    { id: "open-network", scope: "station", path: "api.key", link: "Set an access key",
+      when: function (c) { return openNetwork(c) !== ""; },
+      text: function (c) { return openNetwork(c); } },
+    { id: "no-ptt", scope: "station", path: "ptt", link: "Choose a keying method",
+      when: function (c) { return c.kind === "alsa" && !isSet(get(c.doc, "ptt")); },
+      text: function () {
+        return "Nothing is set to key the radio, so it relies on VOX, which decides for itself when to start sending and can lose the start of a packet. Ignore this if the station only listens.";
+      } },
+    { id: "fm-audio-sense", scope: "station", needs: "plan", path: "carrierSense", link: "Carrier sense",
+      when: function (c) { return c.kind === "alsa" && c.fm && !radioSense(c.doc); },
+      text: function (c) {
+        var cs = get(c.doc, "carrierSense");
+        var rate = c.facts.plan && typeof c.facts.plan.dspRateHz === "number" ? c.facts.plan.dspRateHz : 0;
+        if (isSet(cs) && typeof cs === "object" && get(cs, "audioFallback") === false) {
+          return "This FM station has no control cable to the radio and reading carrier sense from the audio is switched off, so it can read the channel as clear while someone else is transmitting.";
+        }
+        if (rate > 0 && rate < 48000) {
+          return "This FM station has no control cable to the radio and its channel runs at 12 kHz, which is too slow for reading carrier sense from the audio's shape, so a plain energy detector is used, and on open-squelch FM that reads clear while someone else is transmitting.";
+        }
+        if (rate >= 48000) {
+          return "Carrier sense on this FM station is read from the audio. A control cable to the radio is strongly recommended on FM, so the radio itself says when the channel is busy.";
+        }
+        return "Carrier sense on this FM station is read from the audio, or from a plain energy detector, which on open-squelch FM can read the channel as clear while someone else is transmitting. A control cable to the radio is strongly recommended on FM.";
+      } },
+    { id: "one-run", scope: "any", hash: "history", link: "Earlier versions", action: "save",
+      when: function (c) { return c.facts.source === "ephemeral"; },
+      text: function () {
+        return "A one-run change is in force. The station goes back to the saved file the next time it restarts, unless you save it. Saving restarts the station for a few seconds and does not keep the file's comments.";
+      } },
+    { id: "plan-refused", scope: "station", needs: "plan", path: "modems", link: "Modems and frequencies",
+      when: function (c) { return c.facts.plan.ok === false; },
+      text: function (c) { return "The band plan cannot place these modems: " + firstLine(c.facts.plan.problem) + "."; } },
+    { id: "plan-notes", scope: "station", needs: "plan", path: "dialFrequency", link: "Radio and audio",
+      when: function (c) {
+        return c.facts.plan.ok !== false && Array.isArray(c.facts.plan.notes) && c.facts.plan.notes.length > 0
+          && planProblems(c.facts.plan).outside.length === 0;
+      },
+      text: function (c) {
+        return "The band plan says: " + c.facts.plan.notes.map(firstLine).join("; ") + ".";
+      } },
+    { id: "modem-outside", scope: "station", needs: "plan", path: "modems", link: "Modems and frequencies",
+      when: function (c) { return planProblems(c.facts.plan).outside.length > 0; },
+      text: function (c) {
+        var subs = planProblems(c.facts.plan).outside;
+        return joinWords(subs.map(function (s) { return planModemName(c.schema, c.doc, c.facts.plan, s); }))
+          + (subs.length === 1 ? " falls" : " fall") + " outside what the radio hears, so it may be clipped or not heard.";
+      } },
+    { id: "modem-overlap", scope: "station", needs: "plan", path: "modems", link: "Modems and frequencies",
+      when: function (c) { return planProblems(c.facts.plan).pairs.length > 0; },
+      text: function (c) {
+        var pairs = planProblems(c.facts.plan).pairs;
+        return "Modems overlap on the band, so they share part of it: " + pairs.map(function (p) {
+          return planModemName(c.schema, c.doc, c.facts.plan, p[0]) + " and " + planModemName(c.schema, c.doc, c.facts.plan, p[1]);
+        }).join("; ") + ".";
+      } },
+    { id: "public-audio-controls", scope: "station", path: "waterfall.enableAudioControls", link: "Station page",
+      when: function (c) {
+        var wf = get(c.doc, "waterfall");
+        return isSet(wf) && get(wf, "public") === true && get(wf, "enableAudioControls") === true;
+      },
+      text: function () {
+        return "The station page is public and the audio controls setting is on, but a public page never carries them, so the setting does nothing.";
+      } },
+    { id: "ptt-without-transmitter", scope: "station", path: "ptt", link: "Keying",
+      when: function (c) { return isSet(get(c.doc, "ptt")) && !c.tx; },
+      text: function (c) {
+        return "Keying is set up, but this station cannot transmit (" + (c.kind === "null" ? "it has no audio device"
+          : c.kind === "flex" ? "the FlexRadio is receive only" : "it only listens") + "), so the keying is never used.";
+      } },
+    { id: "site-open-directory", scope: "site", path: "monitor.allow", link: "Receivers and directory",
+      when: function (c) {
+        var site = get(c.doc, "monitor") || {};
+        return !isSet(get(site, "allow")) && !isLocalHost(directoryHost(c.schema, site));
+      },
+      text: function (c) {
+        return "No allow-list is set, so any receiver in the public directory at " + directoryHost(c.schema, get(c.doc, "monitor") || {})
+          + " may be offered. That is fine for a site open to all of them; list hosts to offer only some.";
+      } },
+    { id: "site-uplink-no-token", scope: "site", path: "monitor.uplinks", link: "Private station uplinks",
+      when: function (c) { return uplinksWithoutToken(c.doc).length > 0; },
+      text: function (c) {
+        var who = uplinksWithoutToken(c.doc);
+        return joinWords(who) + (who.length === 1 ? " has" : " have") + " no token yet, so "
+          + (who.length === 1 ? "that station cannot" : "those stations cannot") + " publish here.";
+      } },
+    { id: "site-framelog-folder", scope: "site", path: "frameLog.path", link: "Logging",
+      when: function (c) {
+        var fl = get(c.doc, "frameLog");
+        if (!isSet(fl)) return false;
+        var p = get(fl, "path");
+        return !isSet(p) || /\.db$/i.test(String(p));
+      },
+      text: function () {
+        return "A monitor keeps one frame log file for each receiver, inside a folder, and does not start when the log is named as a file such as frames.db. Give the log a folder.";
+      } }
+  ];
+
+  // The open-network nudge's sentence, or "" when it does not apply. Settings are open only when
+  // there is a station page that is not public and no key; KISS is open to the network whatever
+  // the page does, and has no access control of its own.
+  function openNetwork(c) {
+    if (!setupNetwork(c.doc) || hasAccessKey(c.doc)) return "";
+    var wf = get(c.doc, "waterfall");
+    var settingsOpen = isSet(wf) && get(wf, "public") !== true;
+    if (settingsOpen) {
+      return "The settings page, the station page and the KISS port can be reached from your network and there is no access key, so anyone on the network can change settings"
+        + (c.tx ? " and key the radio." : ".");
+    }
+    if (c.tx) {
+      return "The KISS port can be reached from your network, and KISS has no access control, so anyone on the network can send through this station and key the radio.";
+    }
+    return "";
+  }
+
+  // The address part of a directory URL, or its default.
+  function directoryHost(schema, site) {
+    var dir = get(site, "directory");
+    return hostOf(isSet(dir) ? dir : defaultOf(schema, "MonitorConfig", "directory"));
+  }
+
+  // Whether a host name is this machine or a private network: not somewhere on the public internet.
+  function isLocalHost(host) {
+    var h = String(host).toLowerCase().replace(/^\[|\](:\d+)?$/g, "").replace(/:\d+$/, "");
+    if (h === "localhost" || h === "::1") return true;
+    if (/\.(lan|local|internal|home\.arpa|localdomain)$/.test(h)) return true;
+    var m = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(h);
+    if (!m) return false;
+    var a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+    return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31);
+  }
+
+  function uplinksWithoutToken(doc) {
+    var list = get(get(doc, "monitor") || {}, "uplinks");
+    if (!Array.isArray(list)) return [];
+    return list.filter(function (u) { return !isSet(get(u, "tokenSha256")); }).map(function (u) {
+      return isSet(get(u, "callsign")) ? String(get(u, "callsign")) : "(an uplink with no callsign)";
+    });
+  }
+
+  // Whether the radio itself is asked whether the channel is busy.
+  function radioSense(doc) {
+    var cs = get(doc, "carrierSense");
+    if (!isSet(cs) || typeof cs !== "object") return false;
+    var driver = isSet(get(cs, "radio")) ? String(get(cs, "radio")).toLowerCase() : "tait";
+    return isSet(get(cs, "port")) && driver !== "none";
+  }
+
+  function nudgeContext(schema, doc, facts) {
+    facts = facts || {};
+    var plan = facts.plan;
+    var side = get(doc, "sideband");
+    return {
+      schema: schema, doc: doc, facts: facts,
+      kind: stationKind(schema, doc),
+      tx: canTransmit(schema, doc),
+      fm: (typeof side === "string" && side.toLowerCase() === "fm") || (!!plan && plan.radio === "fm")
+    };
+  }
+
+  // The nudges that apply to a document, each as {id, text, path, hash, link, area}, and the ids
+  // that could not be judged yet because the plan has not come back.
+  function nudgesFor(schema, doc, facts) {
+    var site = isSet(get(doc, "monitor"));
+    var c = nudgeContext(schema, doc, facts);
+    var list = [], undecided = [];
+    NUDGES.forEach(function (n) {
+      if (n.scope === "station" && site) return;
+      if (n.scope === "site" && !site) return;
+      if (n.needs === "plan" && !c.facts.plan) { undecided.push(n.id); return; }
+      if (!n.when(c)) return;
+      list.push({
+        id: n.id, text: n.text(c), path: n.path || "", hash: n.hash || "", link: n.link, action: n.action || "",
+        area: n.path ? areaOf(schema, n.path, doc) : ""
+      });
+    });
+    return { list: list, undecided: undecided };
+  }
+
+  // Which nudges to show given what was dismissed, and what to remember: a dismissal holds only
+  // while the nudge says the same thing, so it returns when the situation changes, and is forgotten
+  // when the nudge stops applying (unless it could not be judged yet).
+  function nudgesShown(found, dismissed) {
+    dismissed = dismissed || {};
+    var keep = {}, shown = [];
+    found.list.forEach(function (n) {
+      if (dismissed[n.id] === n.text) keep[n.id] = n.text;
+      else shown.push(n);
+    });
+    found.undecided.forEach(function (id) { if (dismissed[id] !== undefined) keep[id] = dismissed[id]; });
+    return { shown: shown, keep: keep };
+  }
+
   var HIDDEN = "(set, not shown)";
 
   return {
@@ -1924,7 +2638,7 @@ var ConfigModel = (function () {
     drawable: drawable, monitorOverview: monitorOverview, monitorModems: monitorModems, monitorUplinks: monitorUplinks,
     tokenFromBytes: tokenFromBytes, sha256Hex: sha256Hex, slugFor: slugFor, receiverRows: receiverRows,
     hostToggled: hostToggled, hostListed: hostListed, siteLosesPage: siteLosesPage, monitorAreas: MONITOR_AREAS,
-    locateIssue: locateIssue, areaOf: areaOf, pageMove: pageMove, becomesMonitor: becomesMonitor, secretWords: secretWords, changedLabels: changedLabels, summary: summary,
+    describe: describe, nudgesFor: nudgesFor, nudgesShown: nudgesShown, nudgeTable: NUDGES, mhzShort: mhzShort, locateIssue: locateIssue, areaOf: areaOf, pageMove: pageMove, becomesMonitor: becomesMonitor, secretWords: secretWords, changedLabels: changedLabels, summary: summary,
     mhzText: mhzText, mhzFromText: mhzFromText, snap: snap, toneHz: toneHz, dragTo: dragTo,
     keyDelta: keyDelta, keyMove: keyMove, dragMoved: dragMoved, blockLimits: blockLimits, layoutLimits: layoutLimits, nudged: nudged, freeCentre: freeCentre, nextSubChannel: nextSubChannel,
     newModem: newModem, modeInfo: modeInfo, modesOfGroup: modesOfGroup, stripLayout: stripLayout,
@@ -1968,6 +2682,9 @@ var ConfigModel = (function () {
   var errors = {};       // path -> reason, for fields whose text is not a value
   var textInvalid = false;
   var instance = null;   // which daemon process answered the last read
+  var runSource = "file"; // "ephemeral" while a one-run change is in force
+  var overviewPlan = null;  // the plan endpoint's answer for the running configuration, or null
+  var overviewHosts = null; // the KISS ports and their programs, as /api/config/hosts last said
   var busy = false;
   var check = { state: "idle", seq: 0, problem: "", path: null };
   var checkTimer = null;
@@ -2033,10 +2750,13 @@ var ConfigModel = (function () {
     }).then(function (answer) {
       if (!answer) return;
       instance = answer.instance || null;
+      runSource = answer.source === "ephemeral" ? "ephemeral" : "file";
       neverConfigured = !!(answer.setup && answer.setup.neverConfigured);
       loaded = answer.running || {};
       doc = clone(loaded);
       plan.data = null;
+      overviewPlan = null;
+      overviewHosts = null;
       plan.error = "";
       plan.overrides = {};
       autoChosen = {};
@@ -2137,6 +2857,7 @@ var ConfigModel = (function () {
       found.data = d;
       found.state = "done";
       paintFound();
+      paintOverview();
     }).catch(function (e) {
       if (seq !== found.seq) return;
       found.state = "failed";
@@ -2309,8 +3030,8 @@ var ConfigModel = (function () {
     $("station-link").textContent = isSite() ? "Site page" : "Station page";
     $("skip-setup").hidden = !(inSetup && setup.phase === "steps");
     $("edit-text").hidden = inSetup;
-    if (!(inSetup && (setup.phase === "done" || (setup.phase === "steps" && setup.step === "keying")))) closeStation();
-    else openStation();
+    if (!inSetup || !stationNeeded()) closeStation(); else openStation();
+    if (at !== "overview") stopHostsPolling();
     $("edit-text").textContent = at === "text" ? "Back to the settings" : "Edit as text";
     $("edit-text").classList.toggle("on", at === "text");
     renderNav();
@@ -2374,51 +3095,190 @@ var ConfigModel = (function () {
     else if (at === "text") drawText(root);
     else if (at === "setup") drawSetup(root);
     else drawArea(root, at);
+    if (focusAfter) {
+      var target = $(focusAfter);
+      focusAfter = "";
+      if (target) {
+        var wrap = target.closest("details");
+        if (wrap) wrap.open = true;
+        target.scrollIntoView({ block: "center" });
+        if (target.focus) target.focus();
+      }
+    }
     if (onModes() || (at === "setup" && setup.step === "modes" && setup.phase === "steps")) { paintPlan(); schedulePlan(true); }
   }
 
   // ---------------------------------------------------------------- overview
-  function drawOverview(root) {
-    if (isSite()) { drawSiteOverview(root); return; }
-    root.appendChild(el("h1", null, "Your station"));
-    root.appendChild(el("p", "lede", "What this station is set up to do, in one place. Each area opens the settings behind it."));
-    schema.areas.forEach(function (a) {
-      if (!present(a.id)) return;
-      var row = el("div", "area");
-      row.id = "overview-" + a.id;
-      row.appendChild(el("h2", null, a.title));
-      var body = el("div");
-      M.summary(schema, doc, a.id).forEach(function (line, i) { body.appendChild(el("p", i === 0 ? null : "sub", line)); });
-      row.appendChild(body);
-      var change = el("a", "edit", "Change");
-      change.id = "change-" + a.id;
-      change.href = "#" + a.id;
-      row.appendChild(change);
-      root.appendChild(row);
+  // One row for each area: what it has set in plain sentences, and under them anything worth a
+  // look. The sentences are the model's (M.describe); what the page adds is the facts it fetches
+  // about the station (the plan, what the machine has, who is on the KISS ports) and that
+  // sentences are painted again when they arrive.
+  var NUDGE_STORE = "pdn-soundmodem-nudges:" + location.host + location.pathname;   // per station, and kept
+
+  function dismissedNudges() {
+    try { return JSON.parse(localStorage.getItem(NUDGE_STORE) || "{}") || {}; } catch (e) { return {}; }
+  }
+
+  function rememberNudges(kept) {
+    try {
+      if (Object.keys(kept).length === 0) localStorage.removeItem(NUDGE_STORE);
+      else localStorage.setItem(NUDGE_STORE, JSON.stringify(kept));
+    } catch (e) { /* storage refused: the nudges just come back next time */ }
+  }
+
+  // The Overview describes the station as it runs now, so what it is built from is the running
+  // configuration, not the edits waiting to be applied.
+  function overviewFacts() {
+    return { found: found.data, plan: overviewPlan, hosts: overviewHosts, source: runSource };
+  }
+
+  var hostsTimer = null;
+
+  function stopHostsPolling() {
+    clearInterval(hostsTimer);
+    hostsTimer = null;
+  }
+
+  function fetchHosts() {
+    return api("api/config/hosts").then(function (r) { return r.ok ? r.json() : null; }).then(function (m) {
+      if (!m || !Array.isArray(m.ports)) return;
+      overviewHosts = m.ports;
+      paintOverview();
+    }).catch(function () { /* the line about connected programs is left out */ });
+  }
+
+  // Asks for what the sentences can use and paints again as each answer comes. A site has none of it.
+  function fetchOverviewFacts() {
+    if (overviewIsSite()) return;
+    if (found.state === "idle") look(false);
+    api("api/config/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(loaded)
+    }).then(function (r) {
+      if (r.status === 401) { load(); return null; }
+      return r.text().then(function (t) { return r.status === 200 ? JSON.parse(t) : null; });
+    }).then(function (answer) {
+      // A plan that did not come back is no plan: an older one must not stand in for it.
+      overviewPlan = answer || null;
+      paintOverview();
+    }).catch(function () { overviewPlan = null; paintOverview(); });
+    fetchHosts();
+    stopHostsPolling();
+    hostsTimer = setInterval(function () { if (route() === "overview") fetchHosts(); else stopHostsPolling(); }, 5000);
+  }
+
+  function nudgeBox(n) {
+    var box = el("div", "notice");
+    box.id = "nudge-" + n.id;
+    box.appendChild(el("b", null, "Worth a look."));
+    box.appendChild(document.createTextNode(" " + n.text));
+    var acts = el("div", "acts");
+    var go = el("a", null, n.link);
+    go.id = "nudge-go-" + n.id;
+    go.href = n.hash ? "#" + n.hash : "#" + n.area;
+    go.addEventListener("click", function () { focusAfter = n.path ? idFor(n.path) : ""; });
+    acts.appendChild(go);
+    // Saving what is running writes the file from the pending document, so it is offered only when
+    // there are no other edits waiting to be saved with it.
+    if (n.action === "save" && changedCount() === 0) {
+      var save = el("button", "btn small", "Save it to the file");
+      save.type = "button";
+      save.id = "nudge-save-" + n.id;
+      save.addEventListener("click", function () {
+        if (busy) return;
+        save.disabled = true;
+        apply(true);
+      });
+      acts.appendChild(save);
+    }
+    var no = el("button", "dismiss", "Dismiss");
+    no.type = "button";
+    no.id = "nudge-dismiss-" + n.id;
+    no.addEventListener("click", function () {
+      var kept = dismissedNudges();
+      kept[n.id] = n.text;
+      rememberNudges(kept);
+      paintOverview();
+    });
+    acts.appendChild(no);
+    box.appendChild(acts);
+    return box;
+  }
+
+  // The field a nudge's link points at, to be found once the area it opens has drawn.
+  var focusAfter = "";
+
+  function paintOverview() {
+    var root = $("form-view");
+    if (!root || !schema || !loaded || route() !== "overview") return;
+    var facts = overviewFacts();
+    var applying = M.nudgesFor(schema, loaded, facts);
+    var decided = M.nudgesShown(applying, dismissedNudges());
+    rememberNudges(decided.keep);
+    var by = {};
+    decided.shown.forEach(function (n) { (by[n.area] = by[n.area] || []).push(n); });
+    var top = $("nudges-top");
+    if (top) {
+      top.textContent = "";
+      (by[""] || []).forEach(function (n) { top.appendChild(nudgeBox(n)); });
+    }
+    root.querySelectorAll("[data-overview-area]").forEach(function (body) {
+      var id = body.dataset.overviewArea;
+      body.textContent = "";
+      M.describe(schema, loaded, id, facts).forEach(function (line, i) { body.appendChild(el("p", i === 0 ? null : "sub", line)); });
+      (by[id] || []).forEach(function (n) { body.appendChild(nudgeBox(n)); });
     });
   }
 
-  // A site's overview: what the site is, in sentences, and then each of its areas.
-  function drawSiteOverview(root) {
-    root.appendChild(el("h1", null, "Your monitor site"));
-    var lede = el("div", "lede site-about");
-    lede.id = "site-about";
-    M.monitorOverview(schema, doc).forEach(function (line) { lede.appendChild(el("p", null, line)); });
-    root.appendChild(lede);
+  function areaRow(a) {
+    var row = el("div", "area");
+    row.id = "overview-" + a.id;
+    row.appendChild(el("h2", null, a.title));
+    var body = el("div");
+    body.dataset.overviewArea = a.id;
+    row.appendChild(body);
+    var change = el("a", "edit", "Change");
+    change.id = "change-" + a.id;
+    change.href = "#" + a.id;
+    row.appendChild(change);
+    return row;
+  }
+
+  function overviewIsSite() { return !!loaded && M.isSet(M.get(loaded, "monitor")); }
+
+  // One line when edits are waiting: the rest of the page is about what runs now.
+  function pendingNote(root) {
+    var n = changedCount();
+    if (n === 0) return;
+    var p = el("p", "lede", "You have " + n + (n === 1 ? " change" : " changes") + " not applied yet; this describes the "
+      + (overviewIsSite() ? "site" : "station") + " as it runs now.");
+    p.id = "overview-pending";
+    root.appendChild(p);
+  }
+
+  function drawOverview(root) {
+    var site = overviewIsSite();
+    root.appendChild(el("h1", null, site ? "Your monitor site" : "Your station"));
+    pendingNote(root);
+    if (site) {
+      // A site's overview: what the site is, in sentences, and then each of its areas.
+      var lede = el("div", "lede site-about");
+      lede.id = "site-about";
+      M.monitorOverview(schema, loaded).forEach(function (line) { lede.appendChild(el("p", null, line)); });
+      root.appendChild(lede);
+    } else {
+      root.appendChild(el("p", "lede", "What this station is set up to do, in one place. Each area opens the settings behind it."));
+    }
+    var top = el("div");
+    top.id = "nudges-top";
+    root.appendChild(top);
     schema.areas.forEach(function (a) {
-      if (a.id.indexOf("monitor") !== 0) return;
-      var row = el("div", "area");
-      row.id = "overview-" + a.id;
-      row.appendChild(el("h2", null, a.title));
-      var body = el("div");
-      M.summary(schema, doc, a.id).forEach(function (line, i) { body.appendChild(el("p", i === 0 ? null : "sub", line)); });
-      row.appendChild(body);
-      var change = el("a", "edit", "Change");
-      change.id = "change-" + a.id;
-      change.href = "#" + a.id;
-      row.appendChild(change);
-      root.appendChild(row);
+      var mine = a.id.indexOf("monitor") === 0;
+      if (mine === site && (site || a.id !== "setup")) root.appendChild(areaRow(a));
     });
+    paintOverview();
+    if (!site) fetchOverviewFacts();
   }
 
   // ---------------------------------------------------------------- an area
@@ -4042,6 +4902,7 @@ var ConfigModel = (function () {
       if (r.status !== 200) {
         busy = false;
         result("bad", M.problemText(r.text));
+        paintOverview();
         return;
       }
       result("good", (persist ? "Saved to the file. " : "In force until the next restart. ")
@@ -4056,6 +4917,7 @@ var ConfigModel = (function () {
     }).catch(function (e) {
       busy = false;
       result("bad", "Could not reach the station: " + e.message);
+      paintOverview();
     });
   }
 
@@ -4445,6 +5307,7 @@ var ConfigModel = (function () {
         paintKeyTest();
       } else if (m.type === "txtest") onKeyStatus(m);
       else if (m.type === "level") paintLevel(m);
+
     };
     ws.onclose = function () {
       if (station.ws !== ws) return;

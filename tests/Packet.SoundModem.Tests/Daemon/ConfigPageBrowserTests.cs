@@ -553,6 +553,86 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         value.Should().MatchRegex(@"^\d+\.\d{6}$", "the new modem has a radio frequency like the others");
     }
 
+    /// <summary>The overview says what the station is in sentences and flags what is worth a look,
+    /// all from the configuration the station is running; edits waiting to be applied only get a line.</summary>
+    [Fact(Timeout = 600_000)]
+    public async Task The_Overview_Describes_The_Running_Station_And_A_Nudge_Shows_And_Stays_Dismissed()
+    {
+        RequireBrowser();
+        // Two modems on top of each other: the station runs, and the plan says they overlap.
+        _station = await Station.StartAsync(_scratch.FullName, key: null, modems: """
+            [ { "subChannel": 0, "mode": "bpsk300", "rfFrequency": 7050000 },
+              { "subChannel": 1, "mode": "bpsk300", "rfFrequency": 7050100 } ]
+            """);
+        IPage page = await OpenConfigAsync();
+
+        // The sentences, built from the station's own file. Wait for them before saying anything is absent.
+        await Assertions.Expect(page.Locator("#overview-radio")).ToContainTextAsync(
+            "Two named pipes stand in for the sound card", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#overview-modes")).ToContainTextAsync("Two modems:", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#overview-software")).ToContainTextAsync(
+            "Node and BBS software connect over KISS to port", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#overview-sharing")).ToContainTextAsync(
+            "The station page is at port", new() { Timeout = StepMs });
+
+        // The plan comes back and says the two overlap.
+        ILocator nudge = page.Locator("#nudge-modem-overlap");
+        await Assertions.Expect(nudge).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(nudge).ToContainTextAsync("overlap on the band", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#nudge-open-network")).ToHaveCountAsync(0);
+
+        // Dismissed, it stays away across a trip round the other areas and across a fresh load.
+        await page.Locator("#nudge-dismiss-modem-overlap").ClickAsync();
+        await Assertions.Expect(nudge).ToHaveCountAsync(0, new() { Timeout = StepMs });
+        await GoToAsync(page, "sharing");
+        await GoToAsync(page, "overview");
+        await Assertions.Expect(page.Locator("#overview-modes")).ToContainTextAsync("Two modems:", new() { Timeout = StepMs });
+        await Assertions.Expect(nudge).ToHaveCountAsync(0);
+        await page.ReloadAsync();
+        await Assertions.Expect(page.Locator("#overview-modes")).ToContainTextAsync("Two modems:", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#overview-modes")).ToContainTextAsync("overlap", new() { Timeout = StepMs });
+        await Assertions.Expect(nudge).ToHaveCountAsync(0);
+
+        // An edit waiting to be applied does not change what the overview says about the station; it
+        // gets one line, and no nudge for a situation that is not running.
+        await GoToAsync(page, "software");
+        await ReplaceAsync(page, "#f-bind", "*");
+        await GoToAsync(page, "overview");
+        await Assertions.Expect(page.Locator("#overview-pending")).ToContainTextAsync(
+            "1 change not applied yet; this describes the station as it runs now.", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#overview-software")).ToContainTextAsync("this machine only", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#nudge-open-network")).ToHaveCountAsync(0);
+    }
+
+    /// <summary>The one-run nudge's button saves what is running, once, and cannot be pressed twice.</summary>
+    [Fact(Timeout = 600_000)]
+    public async Task The_One_Run_Nudge_Saves_What_Is_Running_To_The_File_Once()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null);
+        IPage page = await OpenConfigAsync();
+        await GoToAsync(page, "sharing");
+        await ReplaceAsync(page, "#f-waterfall_title", "kept after all");
+        await Assertions.Expect(page.Locator("#try")).ToBeEnabledAsync(new() { Timeout = StepMs });
+        await page.Locator("#try").ClickAsync();
+        await Assertions.Expect(page.Locator("#result")).ToContainTextAsync("The station is back", new() { Timeout = RestartMs });
+        await _station.WaitForStartsAsync(2);
+        _station.ReadConfig()["waterfall"]!["title"]!.GetValue<string>().Should().Be("before", "the file was not touched by a one-run change");
+
+        await ReloadSettingsAsync(page);
+        await GoToAsync(page, "overview");
+        await Assertions.Expect(page.Locator("#nudge-one-run")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        ILocator save = page.Locator("#nudge-save-one-run");
+        await Assertions.Expect(save).ToBeEnabledAsync(new() { Timeout = StepMs });
+        await save.ClickAsync();
+        await Assertions.Expect(save).ToBeDisabledAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#result")).ToContainTextAsync("The station is back", new() { Timeout = RestartMs });
+        await _station.WaitForStartsAsync(3);
+
+        _station.ReadConfig()["waterfall"]!["title"]!.GetValue<string>().Should().Be("kept after all", "saving writes what was running");
+        _station.Starts.Should().Be(3, "one save, one restart");
+    }
+
     [Fact(Timeout = 600_000)]
     public async Task A_Section_Added_On_The_Page_And_An_Edit_Pasted_As_Text_Are_Both_Saved()
     {
@@ -776,9 +856,10 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await Assertions.Expect(page.Locator("#report")).Not.ToBeVisibleAsync(new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#setup")).ToBeVisibleAsync(new() { Timeout = StepMs });
 
-        // And /config#report opens the dialog on a fresh load.
-        await page.GotoAsync(_station.Url("config#report"));
-        await Assertions.Expect(page.Locator("#report")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        // And /config#report opens the dialog on a fresh load: a new page, as a link someone was sent would be.
+        IPage fresh = await _context!.NewPageAsync();
+        await fresh.GotoAsync(_station.Url("config#report"));
+        await Assertions.Expect(fresh.Locator("#report")).ToBeVisibleAsync(new() { Timeout = StepMs });
     }
 
     private async Task<IPage> NewReportPageAsync()

@@ -141,6 +141,11 @@ internal sealed class ConfigApi
     /// </summary>
     internal void ServeDiscovery(HardwareDiscovery discovery) => _discovery = discovery;
 
+    /// <summary>Where the station's last KISS port snapshot comes from (the station page's
+    /// <c>hosts</c> message, as JSON bytes), installed by the daemon. Null on a site, which has no
+    /// KISS ports.</summary>
+    internal Func<byte[]?>? HostPorts { get; set; }
+
     // ---------------------------------------------------------------- TX test
     /// <summary>
     /// Lets this API run the operator's transmitter test, at <c>/api/txtest</c>. Installed by the
@@ -1016,13 +1021,13 @@ internal sealed class ConfigApi
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
         if (path is not ("/api/config" or "/api/proposals" or "/api/txtest" or "/api/txlease" or "/api/mixer"
-            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio" or "/api/config/schema" or "/api/config/plan" or "/api/config/discover" or "/api/report" or ConfigPage.Path)
+            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio" or "/api/config/schema" or "/api/config/plan" or "/api/config/discover" or "/api/config/hosts" or "/api/report" or ConfigPage.Path)
             && !path.StartsWith("/api/config/history", StringComparison.Ordinal))
         {
             return false;
         }
 
-        bool isConfig = path is "/api/config" or "/api/config/plan" or "/api/config/discover" or "/api/report" || path.StartsWith("/api/config/history", StringComparison.Ordinal);
+        bool isConfig = path is "/api/config" or "/api/config/plan" or "/api/config/discover" or "/api/config/hosts" or "/api/report" || path.StartsWith("/api/config/history", StringComparison.Ordinal);
 
         // The configuration page and the description it draws its form from hold no secret and
         // change nothing, so they are served to anyone who can reach the listener. The page asks
@@ -1148,6 +1153,12 @@ internal sealed class ConfigApi
         if (path is "/api/config/discover")
         {
             await GuardedAsync(context, () => DiscoverAsync(context)).ConfigureAwait(false);
+            return true;
+        }
+
+        if (path is "/api/config/hosts")
+        {
+            await GuardedAsync(context, () => HostsAsync(context)).ConfigureAwait(false);
             return true;
         }
 
@@ -1573,6 +1584,23 @@ internal sealed class ConfigApi
 
     /// <summary>Indented, because these answers are read by people as often as by scripts.</summary>
     private static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true };
+
+    /// <summary>
+    /// <c>GET /api/config/hosts</c>: which KISS ports have how many programs on them right now, as
+    /// the station page's socket says it. Over HTTP so the settings page is not counted as a viewer.
+    /// </summary>
+    private async Task HostsAsync(HttpListenerContext context)
+    {
+        if (context.Request.HttpMethod != "GET")
+        {
+            await RespondAsync(context, 405, "GET to see which programs are on the KISS ports").ConfigureAwait(false);
+            return;
+        }
+
+        byte[]? message = HostPorts?.Invoke();
+        string json = message is null ? "{\"type\":\"hosts\",\"ports\":[]}" : System.Text.Encoding.UTF8.GetString(message);
+        await RespondJsonAsync(context, 200, json).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// <c>GET /api/config/discover</c>: what this machine has that a setting could name. Read-only;

@@ -87,6 +87,15 @@ internal static class ConfigSchema
             ["hidden"] = ConfigApi.Hidden,
             ["areas"] = ConfigKeys.AreasJson(),
             ["deviceKinds"] = new JsonArray([.. ConfigKeys.DeviceKinds.Select(k => (JsonNode)k)]),
+            // What the daemon knows about each kind, so the page words its sentences from the same facts.
+            ["deviceKindFacts"] = new JsonArray([.. ConfigKeys.Kinds.Select(k => (JsonNode)new JsonObject
+            {
+                ["name"] = k.Name,
+                ["hasMixer"] = k.HasMixer,
+                ["transmits"] = k.Transmits,
+                ["takesRig"] = k.TakesRig,
+                ["mayPublish"] = k.MayPublish,
+            })]),
             ["modes"] = ModeLabels.Json(),
             ["types"] = types,
         };

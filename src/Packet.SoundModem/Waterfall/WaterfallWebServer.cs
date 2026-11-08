@@ -551,6 +551,20 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     private WaterfallSource? _source;
     private byte[]? _surveyMessage;
     private byte[]? _hostPortsMessage;
+
+    /// <summary>The last <c>hosts</c> message (which KISS ports have how many programs on them), as
+    /// JSON, or null before the first. For the settings page, which asks over HTTP so that it is not
+    /// counted as a viewer of the station page.</summary>
+    public byte[]? HostPortsMessage
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                return _hostPortsMessage;
+            }
+        }
+    }
     private byte[]? _updateMessage;
     private string _surveyDirectory = "";
     private volatile bool _keyed;
