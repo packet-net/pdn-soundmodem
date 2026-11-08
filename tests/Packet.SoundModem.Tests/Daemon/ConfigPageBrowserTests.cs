@@ -604,6 +604,35 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await Assertions.Expect(page.Locator("#nudge-open-network")).ToHaveCountAsync(0);
     }
 
+    /// <summary>The one-run nudge's button saves what is running, once, and cannot be pressed twice.</summary>
+    [Fact(Timeout = 600_000)]
+    public async Task The_One_Run_Nudge_Saves_What_Is_Running_To_The_File_Once()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null);
+        IPage page = await OpenConfigAsync();
+        await GoToAsync(page, "sharing");
+        await ReplaceAsync(page, "#f-waterfall_title", "kept after all");
+        await Assertions.Expect(page.Locator("#try")).ToBeEnabledAsync(new() { Timeout = StepMs });
+        await page.Locator("#try").ClickAsync();
+        await Assertions.Expect(page.Locator("#result")).ToContainTextAsync("The station is back", new() { Timeout = RestartMs });
+        await _station.WaitForStartsAsync(2);
+        _station.ReadConfig()["waterfall"]!["title"]!.GetValue<string>().Should().Be("before", "the file was not touched by a one-run change");
+
+        await ReloadSettingsAsync(page);
+        await GoToAsync(page, "overview");
+        await Assertions.Expect(page.Locator("#nudge-one-run")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        ILocator save = page.Locator("#nudge-save-one-run");
+        await Assertions.Expect(save).ToBeEnabledAsync(new() { Timeout = StepMs });
+        await save.ClickAsync();
+        await Assertions.Expect(save).ToBeDisabledAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#result")).ToContainTextAsync("The station is back", new() { Timeout = RestartMs });
+        await _station.WaitForStartsAsync(3);
+
+        _station.ReadConfig()["waterfall"]!["title"]!.GetValue<string>().Should().Be("kept after all", "saving writes what was running");
+        _station.Starts.Should().Be(3, "one save, one restart");
+    }
+
     [Fact(Timeout = 600_000)]
     public async Task A_Section_Added_On_The_Page_And_An_Edit_Pasted_As_Text_Are_Both_Saved()
     {

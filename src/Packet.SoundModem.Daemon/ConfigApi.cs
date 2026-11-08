@@ -1586,10 +1586,6 @@ internal sealed class ConfigApi
     private static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true };
 
     /// <summary>
-    /// <c>GET /api/config/discover</c>: what this machine has that a setting could name. Read-only;
-    /// <c>?fresh=1</c> skips the 30 second memory of the slow lookups.
-    /// </summary>
-    /// <summary>
     /// <c>GET /api/config/hosts</c>: which KISS ports have how many programs on them right now, as
     /// the station page's socket says it. Over HTTP so the settings page is not counted as a viewer.
     /// </summary>
@@ -1606,6 +1602,10 @@ internal sealed class ConfigApi
         await RespondJsonAsync(context, 200, json).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// <c>GET /api/config/discover</c>: what this machine has that a setting could name. Read-only;
+    /// <c>?fresh=1</c> skips the 30 second memory of the slow lookups.
+    /// </summary>
     private async Task DiscoverAsync(HttpListenerContext context)
     {
         if (context.Request.HttpMethod != "GET")

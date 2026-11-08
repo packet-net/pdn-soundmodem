@@ -108,7 +108,7 @@ public partial class ConfigPageTests
 
         lines.Should().Equal(
             "Audio goes in and out through the sound card \"USB Audio Device\".",
-            "Dial 7.0500 MHz, upper sideband, 2.4 kHz wide.",
+            "Dial 7.0500 MHz, upper sideband, taken to pass 300 to 2700 Hz.",
             "Device: plughw:CARD=Device,DEV=0");
     }
 
@@ -405,21 +405,23 @@ public partial class ConfigPageTests
         NudgeIds(doc).Contains("no-ptt").Should().Be(shows);
 
     [Theory]
-    [InlineData("""{ "sideband": "fm" }""", "{}", true)]
-    [InlineData("""{ "sideband": "FM", "carrierSense": { "audioFallback": false } }""", "{}", true)]
+    [InlineData("""{ "sideband": "fm" }""", """{ "plan": { "radio": "fm", "ok": true, "dspRateHz": 48000, "warnings": [] } }""", true)]
+    [InlineData("""{ "sideband": "FM", "carrierSense": { "audioFallback": false } }""", """{ "plan": { "radio": "fm", "ok": true, "dspRateHz": 48000, "warnings": [] } }""", true)]
     [InlineData("""{ }""", """{ "plan": { "radio": "fm", "ok": true, "warnings": [] } }""", true)]
-    [InlineData("""{ "sideband": "fm", "carrierSense": { "port": "/dev/ttyUSB1" } }""", "{}", false)]
-    [InlineData("""{ "sideband": "fm", "carrierSense": { "radio": "none", "port": "/dev/ttyUSB1" } }""", "{}", true)]
-    [InlineData("""{ "sideband": "usb" }""", "{}", false)]
-    [InlineData("""{ "sideband": "fm", "device": "null" }""", "{}", false)]
+    [InlineData("""{ "sideband": "fm" }""", "{}", false)]
+    [InlineData("""{ "sideband": "fm", "carrierSense": { "port": "/dev/ttyUSB1" } }""", """{ "plan": { "radio": "fm", "ok": true, "warnings": [] } }""", false)]
+    [InlineData("""{ "sideband": "fm", "carrierSense": { "radio": "none", "port": "/dev/ttyUSB1" } }""", """{ "plan": { "radio": "fm", "ok": true, "warnings": [] } }""", true)]
+    [InlineData("""{ "sideband": "usb" }""", """{ "plan": { "radio": "usb", "ok": true, "warnings": [] } }""", false)]
+    [InlineData("""{ "sideband": "fm", "device": "null" }""", """{ "plan": { "radio": "fm", "ok": true, "warnings": [] } }""", false)]
     public void The_Fm_Nudge_Is_For_Audio_Carrier_Sense_On_Fm(string doc, string facts, bool shows) =>
         NudgeIds(doc, facts).Contains("fm-audio-sense").Should().Be(shows);
 
     [Fact]
     public void The_Fm_Nudge_Says_More_When_The_Audio_Fallback_Is_Off()
     {
-        Nudges("""{ "sideband": "fm" }""").Single(n => n.Id == "fm-audio-sense").Text.Should().Contain("strongly recommended");
-        Nudges("""{ "sideband": "fm", "carrierSense": { "audioFallback": false } }""").Single(n => n.Id == "fm-audio-sense").Text
+        const string plan = """{ "plan": { "radio": "fm", "ok": true, "warnings": [] } }""";
+        Nudges("""{ "sideband": "fm" }""", plan).Single(n => n.Id == "fm-audio-sense").Text.Should().Contain("strongly recommended");
+        Nudges("""{ "sideband": "fm", "carrierSense": { "audioFallback": false } }""", plan).Single(n => n.Id == "fm-audio-sense").Text
             .Should().Contain("clear while someone else is transmitting");
     }
 
@@ -437,8 +439,8 @@ public partial class ConfigPageTests
         NudgeIds(modems).Should().NotContain(["modem-outside", "modem-overlap"], "no plan, no claim");
         NudgeIds(modems, $$"""{ "plan": {{UsbPlan}} }""").Should().NotContain(["modem-outside", "modem-overlap"]);
 
-        const string outside = """{ "plan": { "ok": true, "radio": "usb", "modems": [ { "subChannel": 1, "mode": "qpsk600" } ], "warnings": [ { "subChannel": 1, "kind": "outside", "text": "x" } ] } }""";
-        Nudges(modems, outside).Single(n => n.Id == "modem-outside").Text.Should().Be(Name("qpsk600") + " falls outside the 300 to 2700 Hz the radio is taken to pass, so it may be clipped or not heard.");
+        const string outside = """{ "plan": { "ok": true, "radio": "usb", "axis": "rf", "modems": [ { "subChannel": 1, "mode": "qpsk600" } ], "warnings": [ { "subChannel": 1, "kind": "outside", "text": "x" } ] } }""";
+        Nudges(modems, outside).Single(n => n.Id == "modem-outside").Text.Should().Be(Name("qpsk600") + " falls outside what the radio hears, so it may be clipped or not heard.");
         NudgeIds(modems, outside).Should().NotContain("modem-overlap");
 
         const string overlap = """
@@ -596,10 +598,10 @@ public partial class ConfigPageTests
 
         string[] lines = Lines(doc, "modes", $$"""{ "plan": {{plan}} }""");
         lines.Should().NotContain(l => l.Contains("fit inside"), "the plan's own passband is stretched round the modems");
-        lines.Should().Contain(l => l.Contains("falls outside what the radio hears"));
-        Nudges(doc, $$"""{ "plan": {{plan}} }""").Single(n => n.Id == "modem-outside").Text
-            .Should().Contain("outside the 300 to 2700 Hz");
-        Lines(doc, "radio", $$"""{ "plan": {{plan}} }""").Should().Contain("Dial 7.0500 MHz, upper sideband, 2.4 kHz wide.");
+        lines.Should().NotContain(l => l.Contains("falls outside"), "the daemon's own warnings say nothing for a stretched passband");
+        Nudges(doc, $$"""{ "plan": {{plan}} }""").Single(n => n.Id == "plan-notes").Text
+            .Should().Contain("outside the nominal 300-");
+        Lines(doc, "radio", $$"""{ "plan": {{plan}} }""").Should().Contain("Dial 7.0500 MHz, upper sideband, taken to pass 300 to 2700 Hz.");
     }
 
     [Fact]
@@ -654,23 +656,24 @@ public partial class ConfigPageTests
             (function () {
               var schema = JSON.parse(schemaJson);
               var found = ConfigModel.nudgesFor(schema, { modems: [ { mode: "bpsk300" } ] }, { plan: null });
-              var s = ConfigModel.nudgesShown(found, { "modem-outside": "x", "plan-refused": "y", "plan-notes": "z" });
+              var s = ConfigModel.nudgesShown(found, { "modem-outside": "x", "plan-refused": "y", "plan-notes": "z", "fm-audio-sense": "w" });
               return JSON.stringify({ undecided: found.undecided, keep: Object.keys(s.keep) });
             })()
             """).AsString();
         JsonNode result = JsonNode.Parse(answer)!;
-        result["undecided"]!.AsArray().Select(n => n!.GetValue<string>()).Should().BeEquivalentTo("modem-outside", "modem-overlap", "plan-refused", "plan-notes");
-        result["keep"]!.AsArray().Select(n => n!.GetValue<string>()).Should().BeEquivalentTo("modem-outside", "plan-refused", "plan-notes");
+        result["undecided"]!.AsArray().Select(n => n!.GetValue<string>()).Should().BeEquivalentTo("modem-outside", "modem-overlap", "plan-refused", "plan-notes", "fm-audio-sense");
+        result["keep"]!.AsArray().Select(n => n!.GetValue<string>()).Should().BeEquivalentTo("modem-outside", "plan-refused", "plan-notes", "fm-audio-sense");
     }
 
     [Fact]
     public void The_Fm_Nudge_Follows_The_Channel_Rate_The_Plan_Reports()
     {
         string Text(string facts) => Nudges("""{ "sideband": "fm" }""", facts).Single(n => n.Id == "fm-audio-sense").Text;
+        NudgeIds("""{ "sideband": "fm" }""").Should().NotContain("fm-audio-sense", "its words depend on the plan, so it waits for it");
 
         Text("""{ "plan": { "radio": "fm", "ok": true, "dspRateHz": 48000, "warnings": [] } }""").Should().StartWith("Carrier sense on this FM station is read from the audio.").And.Contain("strongly recommended");
         Text("""{ "plan": { "radio": "fm", "ok": true, "dspRateHz": 12000, "warnings": [] } }""").Should().Contain("runs at 12 kHz").And.Contain("energy detector");
-        Text("{}").Should().Contain("energy detector").And.Contain("can read the channel as clear");
+        Text("""{ "plan": { "radio": "fm", "ok": true, "warnings": [] } }""").Should().Contain("energy detector").And.Contain("can read the channel as clear");
     }
 
     [Fact]
@@ -744,5 +747,45 @@ public partial class ConfigPageTests
     {
         Lines("""{ "monitor": { }, "frameLog": { } }""", "monitor-logging").Should().Equal("The frame log is switched on but has no folder to keep its files in.");
         Lines("""{ "monitor": { } }""", "monitor-logging").Should().Equal("Heard frames are not kept.");
+    }
+
+    [Theory]
+    [InlineData("""{ "device": "null", "rig": { }, "modems": [ { "subChannel": 0, "mode": "bpsk300", "rfFrequency": 7050300 }, { "subChannel": 1, "mode": "afsk1200", "rfFrequency": 7051800 } ] }""")]
+    [InlineData("""{ "device": "null", "modems": [ { "subChannel": 0, "mode": "ms110d-wn3", "frequency": 1800 } ] }""")]
+    [InlineData("""{ "device": "null", "modems": [ { "subChannel": 0, "mode": "ms110d-wn3", "rfFrequency": 7053800 } ] }""")]
+    public async Task A_Valid_Plan_The_Daemon_Accepts_Is_Not_Called_Outside(string doc)
+    {
+        string plan = await RealPlanAsync(doc);
+
+        JsonNode.Parse(plan)!["ok"]!.GetValue<bool>().Should().BeTrue(plan);
+        string[] ids = NudgeIds(doc, $$"""{ "plan": {{plan}} }""");
+        ids.Should().NotContain(["modem-outside", "modem-overlap", "plan-refused"], plan);
+        Lines(doc, "modes", $$"""{ "plan": {{plan}} }""").Should().NotContain(l => l.Contains("falls outside"));
+    }
+
+    [Fact]
+    public void The_Band_Sentence_Says_Only_What_Is_Known_About_The_Radios_Width()
+    {
+        const string plan = """{ "ok": true, "radio": "usb", "axis": "rf", "dialHz": 7050000, "limitAudioLowHz": 300, "limitAudioHighHz": 2700, "passband": { "audioLowHz": 300, "audioHighHz": 2700 }, "modems": [], "warnings": [] }""";
+        string Band(string doc) => Lines(doc, "radio", $$"""{ "plan": {{plan}} }""").Single(l => l.StartsWith("Dial "));
+
+        Band("""{ "device": "plughw:CARD=Device,DEV=0" }""").Should().Be("Dial 7.0500 MHz, upper sideband, taken to pass 300 to 2700 Hz.");
+        Band("""{ "rig": { "passbandHz": 2000 } }""").Should().Be("Dial 7.0500 MHz, upper sideband, 2 kHz wide.");
+        Band("""{ "rig": { "passbandHz": 0 } }""").Should().Be("Dial 7.0500 MHz, upper sideband.");
+        Band("""{ "device": "ubersdr:x.example" }""").Should().Be("Dial 7.0500 MHz, upper sideband, 3.3 kHz wide.");
+        Band("""{ "device": "ubersdr:x.example", "ubersdr": { "ssbLowHz": 300, "ssbHighHz": 2700 } }""").Should().Be("Dial 7.0500 MHz, upper sideband, 2.4 kHz wide.");
+    }
+
+    [Fact]
+    public async Task The_Hosts_Endpoint_Is_Open_To_The_Machines_Own_Name_Without_A_Key_And_Is_Not_A_Monitors()
+    {
+        using var station = new Station(_dir, key: "");
+        HttpResponseMessage open = await station.Client.GetAsync(station.Url("api/config/hosts"));
+        open.StatusCode.Should().Be(System.Net.HttpStatusCode.OK, "a keyless station answers the settings endpoints to the machine's own address");
+
+        await using var site = await SiteHost.StartAsync(_dir, "a-long-site-key");
+        using var request = new HttpRequestMessage(HttpMethod.Get, site.Url("api/config/hosts"));
+        request.Headers.Add("X-API-Key", "a-long-site-key");
+        (await site.Client.SendAsync(request)).StatusCode.Should().Be(System.Net.HttpStatusCode.NotFound, "a site has no KISS ports");
     }
 }

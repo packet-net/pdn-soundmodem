@@ -2095,6 +2095,32 @@ var ConfigModel = (function () {
     return line.length > 200 ? line.slice(0, 200) : line;
   }
 
+  // How wide the radio's passband is, as far as anything says: a Flex as the plan sets it, a rig as
+  // rig.passbandHz asks for it, a web receiver as its configured filter. Otherwise only what the
+  // daemon assumes, said as an assumption. Empty when the rig keeps its own normal width.
+  function bandWidthWords(schema, doc, plan, pass, lim) {
+    if (!plan) return "";
+    var kind = stationKind(schema, doc);
+    var rig = get(doc, "rig");
+    if (kind === "flex") {
+      return pass && typeof pass.audioLowHz === "number" && typeof pass.audioHighHz === "number"
+        ? khzWords(Math.min(pass.audioHighHz, lim.high) - Math.max(pass.audioLowHz, lim.low)) + " wide" : "";
+    }
+    if (kind === "ubersdr") {
+      var u = get(doc, "ubersdr") || {};
+      var lo = typeof get(u, "ssbLowHz") === "number" ? get(u, "ssbLowHz") : 150;
+      var hi = typeof get(u, "ssbHighHz") === "number" ? get(u, "ssbHighHz") : 3450;
+      return khzWords(hi - lo) + " wide";
+    }
+    if (isSet(rig) && typeof rig === "object") {
+      var w = get(rig, "passbandHz");
+      if (typeof w === "number") return w > 0 ? khzWords(w) + " wide" : "";
+      return pass && typeof pass.audioLowHz === "number" && typeof pass.audioHighHz === "number"
+        ? khzWords(pass.audioHighHz - pass.audioLowHz) + " wide" : "";
+    }
+    return "taken to pass " + Math.round(lim.low) + " to " + Math.round(lim.high) + " Hz";
+  }
+
   // "Dial 7.0500 MHz, upper sideband, 2.8 kHz wide." as small print, from the plan where there is one.
   function bandSentence(schema, doc, plan) {
     var radio = radioKindOf(schema, doc, plan);
@@ -2111,10 +2137,7 @@ var ConfigModel = (function () {
     // The plan's passband is stretched round the modems; the radio's own is no wider than the daemon's range.
     var pass = plan && plan.passband ? plan.passband : null;
     var lim = planLimits(plan);
-    // An ordinary rig is taken to pass the daemon's nominal window; a radio whose filters the daemon owns is as wide as the plan sets it.
-    var width = !plan ? "" : lim.high < 10000 ? khzWords(lim.high - lim.low) + " wide"
-      : pass && typeof pass.audioLowHz === "number" && typeof pass.audioHighHz === "number"
-        ? khzWords(Math.min(pass.audioHighHz, lim.high) - Math.max(pass.audioLowHz, lim.low)) + " wide" : "";
+    var width = bandWidthWords(schema, doc, plan, pass, lim);
     if (dial !== null) return "Dial " + mhzShort(dial) + " MHz, " + side + (width ? ", " + width : "") + ".";
     if (rfPlaced) {
       // The dial is the plan's to choose; until it has come back there is nothing true to say about it.
@@ -2255,17 +2278,9 @@ var ConfigModel = (function () {
   function planProblems(plan) {
     var outside = [], pairs = [], seen = {};
     if (!plan || !Array.isArray(plan.warnings)) return { outside: outside, pairs: pairs };
-    // The plan's own passband is stretched round a pinned dial's modems, so its warnings miss a modem
-    // the dial pushed out; each modem is also judged here against the window the daemon uses.
-    if (plan.ok !== false && plan.radio !== "fm" && Array.isArray(plan.modems)) {
-      var lim = planLimits(plan);
-      plan.modems.forEach(function (m) {
-        if (m.leaseOnly || typeof m.audioCentreHz !== "number" || typeof m.audioLowHz !== "number" || typeof m.audioHighHz !== "number") return;
-        if ((m.audioLowHz < lim.low - 1 || m.audioHighHz > lim.high + 1) && outside.indexOf(m.subChannel) < 0) outside.push(m.subChannel);
-      });
-    }
     plan.warnings.forEach(function (w) {
-      if (w.kind === "outside") { if (outside.indexOf(w.subChannel) < 0) outside.push(w.subChannel); }
+      // The daemon only holds a modem to the radio's window when it places modems by radio frequency.
+      if (w.kind === "outside") { if (plan.axis === "rf" && outside.indexOf(w.subChannel) < 0) outside.push(w.subChannel); }
       else if (w.kind === "overlap") {
         var a = Math.min(w.subChannel, w.other), b = Math.max(w.subChannel, w.other);
         if (!seen[a + "-" + b]) { seen[a + "-" + b] = true; pairs.push([a, b]); }
@@ -2291,7 +2306,8 @@ var ConfigModel = (function () {
       out.push(joinWords(problems.outside.map(function (s) { return planModemName(schema, doc, plan, s); }))
         + (problems.outside.length === 1 ? " falls" : " fall") + " outside what the radio hears.");
     }
-    if (problems.outside.length === 0 && plan.passband && plan.axis === "rf") {
+    if (problems.outside.length === 0 && plan.passband && plan.axis === "rf"
+        && !(Array.isArray(plan.notes) && plan.notes.length > 0)) {
       out.push((list.length === 1 ? "It fits" : (list.length === 2 ? "Both fit" : "All " + countWord(list.length) + " fit"))
         + " inside the radio's passband.");
     }
@@ -2426,7 +2442,7 @@ var ConfigModel = (function () {
       text: function () {
         return "Nothing is set to key the radio, so it relies on VOX, which decides for itself when to start sending and can lose the start of a packet. Ignore this if the station only listens.";
       } },
-    { id: "fm-audio-sense", scope: "station", path: "carrierSense", link: "Carrier sense",
+    { id: "fm-audio-sense", scope: "station", needs: "plan", path: "carrierSense", link: "Carrier sense",
       when: function (c) { return c.kind === "alsa" && c.fm && !radioSense(c.doc); },
       text: function (c) {
         var cs = get(c.doc, "carrierSense");
@@ -2463,8 +2479,7 @@ var ConfigModel = (function () {
       text: function (c) {
         var subs = planProblems(c.facts.plan).outside;
         return joinWords(subs.map(function (s) { return planModemName(c.schema, c.doc, c.facts.plan, s); }))
-          + (subs.length === 1 ? " falls" : " fall") + " outside the " + planWindowWords(c.facts.plan)
-          + " the radio is taken to pass, so it may be clipped or not heard.";
+          + (subs.length === 1 ? " falls" : " fall") + " outside what the radio hears, so it may be clipped or not heard.";
       } },
     { id: "modem-overlap", scope: "station", needs: "plan", path: "modems", link: "Modems and frequencies",
       when: function (c) { return planProblems(c.facts.plan).pairs.length > 0; },
@@ -2515,11 +2530,6 @@ var ConfigModel = (function () {
         return "A monitor keeps one frame log file for each receiver, inside a folder, and does not start when the log is named as a file such as frames.db. Give the log a folder.";
       } }
   ];
-
-  function planWindowWords(plan) {
-    var lim = planLimits(plan);
-    return Math.round(lim.low) + " to " + Math.round(lim.high) + " Hz";
-  }
 
   // The open-network nudge's sentence, or "" when it does not apply. Settings are open only when
   // there is a station page that is not public and no key; KISS is open to the network whatever
@@ -3175,7 +3185,11 @@ var ConfigModel = (function () {
       var save = el("button", "btn small", "Save it to the file");
       save.type = "button";
       save.id = "nudge-save-" + n.id;
-      save.addEventListener("click", function () { apply(true); });
+      save.addEventListener("click", function () {
+        if (busy) return;
+        save.disabled = true;
+        apply(true);
+      });
       acts.appendChild(save);
     }
     var no = el("button", "dismiss", "Dismiss");
@@ -4888,6 +4902,7 @@ var ConfigModel = (function () {
       if (r.status !== 200) {
         busy = false;
         result("bad", M.problemText(r.text));
+        paintOverview();
         return;
       }
       result("good", (persist ? "Saved to the file. " : "In force until the next restart. ")
@@ -4902,6 +4917,7 @@ var ConfigModel = (function () {
     }).catch(function (e) {
       busy = false;
       result("bad", "Could not reach the station: " + e.message);
+      paintOverview();
     });
   }
 
