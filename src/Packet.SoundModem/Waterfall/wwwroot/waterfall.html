@@ -199,6 +199,8 @@
   .spacer { flex: 1; }
   #configLink { color: var(--amber); text-decoration: none; font-size: 12px; white-space: nowrap; }
   #configLink:hover { text-decoration: underline; }
+  #reportLink { color: var(--muted); text-decoration: none; font-size: 12px; white-space: nowrap; }
+  #reportLink:hover { text-decoration: underline; }
   #meta { font-family: var(--mono); font-size: 10px; color: var(--muted); text-align: right; line-height: 1.5; }
   /* Its own line rather than a <br> before it, so that the public flavour hiding it takes the
      line away as well instead of leaving an empty one under the connection state. The second
@@ -624,6 +626,8 @@
   <!-- The configuration page, when the daemon serves one. Relative, so it is right under a
        site that serves this page at /r/<slug>/ as well as at the root. -->
   <a id="configLink" href="config" hidden>settings</a>
+  <!-- The same page, opened on its Report a problem dialog; shown wherever the settings link is. -->
+  <a id="reportLink" href="config#report" hidden>report a problem</a>
   <div id="meta"><span id="conn" class="dead">connecting…</span><span id="stats"></span></div>
 </header>
 
@@ -2605,6 +2609,7 @@ function connect() {
         checkPageVersion(msg.page);
         applyPublicFlavour();
         $("configLink").hidden = !cfg.configPage;
+        $("reportLink").hidden = !cfg.configPage;
         applyDaemonVersion();
         applyUpdate(cfg.update);
         setRadioStatus(cfg.radioStatus);

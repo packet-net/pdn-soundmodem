@@ -55,6 +55,7 @@ internal sealed class ConfigApi
     private RigControl? _rig;
     private HardwareDiscovery? _discovery;
     private KeepAudio.KeepAudioRecorder? _keepAudio;
+    private RecentOutput? _recentOutput;
     private string _mixerWhyNot = "this station has no sound-card mixer";
 
     /// <summary>One mixer change at a time; see the wait in <see cref="MixerAsync"/>.</summary>
@@ -65,6 +66,10 @@ internal sealed class ConfigApi
     private readonly Action _requestRestart;
     private readonly bool _ephemeralInForce;
     private readonly bool _openAudioControls;
+
+    /// <summary>When this object was made, which is when the daemon started serving; the uptime
+    /// <c>/api/report</c> gives.</summary>
+    private readonly DateTimeOffset _started;
 
     /// <summary>Whether a station with no key serves its configuration openly; false on a public
     /// page, which is for visitors and is not a private home network.</summary>
@@ -92,6 +97,7 @@ internal sealed class ConfigApi
         bool openAudioControls = false, bool openConfiguration = true, TimeProvider? time = null)
     {
         _time = time ?? TimeProvider.System;
+        _started = _time.GetUtcNow();
         _history = new ConfigHistory(ephemeralPath, _time);
         _openAudioControls = openAudioControls;
         _openConfiguration = openConfiguration;
@@ -118,6 +124,13 @@ internal sealed class ConfigApi
         _proposals = proposals;
         _prospectorCounts = counts;
     }
+
+    /// <summary>
+    /// Gives <c>/api/report</c> the daemon's recent console output to attach. Without it the
+    /// report is served with no log lines.
+    /// </summary>
+    /// <param name="recent">What keeps the last lines of the console.</param>
+    internal void ServeReport(RecentOutput recent) => _recentOutput = recent;
 
     // ---------------------------------------------------------------- discovery
     /// <summary>
@@ -878,13 +891,13 @@ internal sealed class ConfigApi
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
         if (path is not ("/api/config" or "/api/proposals" or "/api/txtest" or "/api/txlease" or "/api/mixer"
-            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio" or "/api/config/schema" or "/api/config/plan" or "/api/config/discover" or ConfigPage.Path)
+            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio" or "/api/config/schema" or "/api/config/plan" or "/api/config/discover" or "/api/report" or ConfigPage.Path)
             && !path.StartsWith("/api/config/history", StringComparison.Ordinal))
         {
             return false;
         }
 
-        bool isConfig = path is "/api/config" or "/api/config/plan" or "/api/config/discover" || path.StartsWith("/api/config/history", StringComparison.Ordinal);
+        bool isConfig = path is "/api/config" or "/api/config/plan" or "/api/config/discover" or "/api/report" || path.StartsWith("/api/config/history", StringComparison.Ordinal);
 
         // The configuration page and the description it draws its form from hold no secret and
         // change nothing, so they are served to anyone who can reach the listener. The page asks
@@ -973,6 +986,12 @@ internal sealed class ConfigApi
         if (path.StartsWith("/api/config/history", StringComparison.Ordinal))
         {
             await GuardedAsync(context, () => HistoryAsync(context, path)).ConfigureAwait(false);
+            return true;
+        }
+
+        if (path is "/api/report")
+        {
+            await GuardedAsync(context, () => ReportAsync(context)).ConfigureAwait(false);
             return true;
         }
 
@@ -1167,6 +1186,79 @@ internal sealed class ConfigApi
               "config": {{Redact(document)}}
             }
             """).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// <c>GET /api/report</c>: what the page's "Report a problem" dialog gathers. The version, the
+    /// kind of device, how long the daemon has been up, the configuration as <c>/api/config</c>
+    /// serves it (every secret blanked) and the daemon's recent console lines, which are scrubbed
+    /// of the same secrets by value. Read-only.
+    /// </summary>
+    private async Task ReportAsync(HttpListenerContext context)
+    {
+        if (context.Request.HttpMethod != "GET")
+        {
+            await RespondAsync(context, 405, "GET to read a report of this station's state").ConfigureAwait(false);
+            return;
+        }
+
+        string running = _runningJson();
+        JsonNode? stored = null;
+        try
+        {
+            stored = JsonNode.Parse(running, nodeOptions: null, Jsonc);
+        }
+        catch (JsonException)
+        {
+            // The running configuration parsed once or the daemon would not be here.
+        }
+
+        var secrets = new List<string?> { _key };
+        secrets.AddRange(Secrets.Select(s => At(stored, s.Path)).Select(StringOf));
+        secrets.Add(StringOf(At(stored, "mailcast.bbs.password")));
+
+        string device = StringOf(At(stored, "device")) ?? "default";
+        var log = new JsonArray();
+        foreach (string line in _recentOutput?.Lines(secrets, KeptAddresses(context.Request, stored)) ?? [])
+        {
+            log.Add(line);
+        }
+
+        string? commit = Packet.SoundModem.Waterfall.DaemonVersion.Commit;
+        var report = new JsonObject
+        {
+            ["version"] = Packet.SoundModem.Waterfall.DaemonVersion.Version,
+            ["commit"] = commit,
+            ["release"] = Packet.SoundModem.Waterfall.DaemonVersion.IsRelease,
+            ["deviceKind"] = DeviceKinds.Of(device).Name,
+            ["uptimeSeconds"] = (long)Math.Max(0, (_time.GetUtcNow() - _started).TotalSeconds),
+            ["config"] = JsonNode.Parse(Redact(running)),
+            ["logLines"] = log,
+            ["logLimit"] = RecentOutput.MaxLines,
+        };
+        await RespondJsonAsync(context, 200, report.ToJsonString(Pretty)).ConfigureAwait(false);
+
+        static string? StringOf(JsonNode? node) =>
+            node is JsonValue v && v.TryGetValue(out string? s) ? s : null;
+    }
+
+    /// <summary>The addresses that stay readable in the report's log lines: loopback, and the
+    /// ones this station itself listens on (the address this request came to, and
+    /// <c>bind</c>), which are the operator's own.</summary>
+    private static IReadOnlyList<string> KeptAddresses(HttpListenerRequest request, JsonNode? stored)
+    {
+        var kept = new List<string>();
+        if (request.LocalEndPoint?.Address is { } local)
+        {
+            kept.Add(local.ToString());
+        }
+
+        if (At(stored, "bind") is JsonValue bind && bind.TryGetValue(out string? text) && text is not null)
+        {
+            kept.Add(text);
+        }
+
+        return kept;
     }
 
     /// <summary>

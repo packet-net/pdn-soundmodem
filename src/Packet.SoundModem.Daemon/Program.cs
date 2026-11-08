@@ -31,6 +31,11 @@ using M0LTE.Ms110d;
 // parsed in the switch below and a --config file is then loaded over them; UsageTests reads that
 // switch and fails if its flags and the usage text's differ, so the two cannot drift.
 
+// The last few hundred lines of console output, kept for "Report a problem" (GET /api/report).
+// Installed before anything is written so that start-up is in it too; the console still gets
+// every line exactly as before.
+RecentOutput recentOutput = RecentOutput.Install();
+
 string device = "default";
 // "captureDevice" and "playbackDevice": a sound card for one direction when it is not "device".
 // Config file only, and null on every station that does not split its audio.
@@ -1766,6 +1771,7 @@ if (benchTxTest is null
         // A public page is for visitors on the open internet, not a private home network: there
         // the configuration wants a key like everything else.
         openConfiguration: waterfallConfig?.Public != true);
+    configApi.ServeReport(recentOutput);
     waterfallServer.ApiHandler = configApi.HandleAsync;
     waterfallServer.ServesConfigPage = apiKey.Length > 0 || waterfallConfig?.Public != true;
 
