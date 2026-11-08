@@ -1200,9 +1200,9 @@ public partial class ConfigPageTests : IDisposable
             """).AsString();
 
         string[] names = [.. JsonNode.Parse(answer)!.AsArray().Select(n => n!.GetValue<string>())];
-        names.Should().Contain(["monitor", "waterfall", "ubersdr", "frameLog", "bind", "sideband", "dialFrequency", "idBeacons", "deadFeed", "modemPlugins"]);
+        names.Should().Contain(["monitor", "waterfall", "ubersdr", "frameLog", "bind", "sideband", "dialFrequency", "idBeacons", "deadFeed", "modemPlugins", "api"]);
         names.Should().NotContain(["device", "captureDevice", "playbackDevice", "captureRate", "alsa", "ptt", "rig", "publish",
-            "kissPort", "modems", "api", "survey", "metrics", "rawCapture", "frequencyMatching", "paging", "txTest", "carrierSense"]);
+            "kissPort", "modems", "survey", "metrics", "rawCapture", "frequencyMatching", "paging", "txTest", "carrierSense"]);
     }
 
     [Theory]

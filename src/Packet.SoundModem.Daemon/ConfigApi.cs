@@ -97,6 +97,7 @@ internal sealed class ConfigApi
         bool openAudioControls = false, bool openConfiguration = true, TimeProvider? time = null)
     {
         _time = time ?? TimeProvider.System;
+        _guesses = new KeyGuesses(_time);
         _started = _time.GetUtcNow();
         _history = new ConfigHistory(ephemeralPath, _time);
         _openAudioControls = openAudioControls;
@@ -781,8 +782,16 @@ internal sealed class ConfigApi
     /// at the restart, which takes the station down until somebody reads the journal. Null keeps
     /// the old behaviour for a caller with no such path, which is what the tests use.
     /// </param>
-    public static string? Validate(string json, string? asPath = null)
+    public static string? Validate(string json, string? asPath = null, string? runningJson = null)
     {
+        // A site stays a site. Said before anything else is read, so it is the answer even for a
+        // document with other trouble: dropping "monitor" would restart it as a station.
+        if (runningJson is not null && HasMonitorSection(runningJson) && !HasMonitorSection(json))
+        {
+            return "This is a monitor site; removing the monitor section would turn it into a station. "
+                + "Do that by editing the file on the machine.";
+        }
+
         if (LoadProposed(json, asPath, out DaemonConfig? proposed) is string error)
         {
             return error;
@@ -792,7 +801,11 @@ internal sealed class ConfigApi
         {
             // Plan mutates the entries it is given, which is why this runs against the
             // throwaway parse and never against anything the station is using.
-            PlanFor(proposed!);
+            RfPlan.Result? plan = PlanFor(proposed!);
+            if (proposed!.Monitor is not null && MonitorRefusal(proposed, plan, runningJson) is string site)
+            {
+                return site;
+            }
         }
         catch (Exception plan) when (plan is InvalidDataException or ArgumentException)
         {
@@ -800,6 +813,107 @@ internal sealed class ConfigApi
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// What a monitor site's start-up refuses after the file has loaded, asked here too: a site
+    /// is the one thing a person cannot walk over to and fix, so a change it would exit 2 on is
+    /// declined while the running site is still up. The same three refusals as
+    /// <see cref="MonitorStartup"/>, in the same words.
+    /// </summary>
+    private static string? MonitorRefusal(DaemonConfig proposed, RfPlan.Result? plan, string? runningJson)
+    {
+        if (plan is null)
+        {
+            return "\"monitor\".\"modems\" has no \"rfFrequency\". A web receiver has no dial already "
+                + "set to read off, so the band plan is the only thing that can tune it: give "
+                + "every modem an \"rfFrequency\" and the dial is worked out from them.";
+        }
+
+        if (plan.IsFm)
+        {
+            return "\"sideband\": \"fm\" cannot be served by a monitor: its web receivers are SSB. "
+                + "Remove \"sideband\", or run FM on a station.";
+        }
+
+        string? refused = null;
+        var journal = new StationJournal("", _ => { }, line => refused ??= line);
+        List<ModemConfig> modems = proposed.Monitor!.Modems;
+        if (!StationFactory.TryResolveDspRate(modems, journal, out int dspRate)
+            || !StationFactory.TryAddModems(
+                new Channel.SoundModemChannel(dspRate), modems, dspRate, detectorOverride: null, journal))
+        {
+            return refused ?? "a modem in \"monitor\".\"modems\" cannot be built";
+        }
+
+        // What start-up would exit 2 on without the modems being at fault: a frame log it cannot
+        // write, and an address or port it cannot open. Exit 2 is final under the shipped unit,
+        // so these are declined here.
+        if (proposed.FrameLog is { } frameLog && MonitorStartup.FrameLogProblem(frameLog.Path) is string log)
+        {
+            return log;
+        }
+
+        return runningJson is null ? null : ListenProblem(proposed, runningJson);
+    }
+
+    /// <summary>
+    /// Whether the site could open the address and port a proposal names, when they are not the
+    /// ones it is running on (the running ones are in use by it, by definition). The address has
+    /// to be one this machine has, and the port free and permitted. Tried by binding and letting go
+    /// at once; the site's own listener is not touched. Null when it would, or when nothing moved.
+    /// </summary>
+    private static string? ListenProblem(DaemonConfig proposed, string runningJson)
+    {
+        DaemonConfig? running = LoadProposed(runningJson, null, out DaemonConfig? parsed) is null ? parsed : null;
+        int port = proposed.Waterfall!.Port;
+        System.Net.IPAddress address = DaemonConfig.ParseBind(proposed.Bind) ?? System.Net.IPAddress.Loopback;
+        System.Net.IPAddress? was = running is null ? null : DaemonConfig.ParseBind(running.Bind);
+        bool samePort = running?.Waterfall?.Port == port;
+        if (samePort && Equals(was, address))
+        {
+            return null;
+        }
+
+        // The running site holds its port, so with the port unchanged only the address is in
+        // question, and port 0 (any free one) asks that without colliding with the site itself.
+        // "*" and "0.0.0.0" are the same address once parsed.
+        int tried = samePort ? 0 : port;
+        try
+        {
+            var probe = new System.Net.Sockets.TcpListener(address, tried);
+            probe.Start();
+            probe.Stop();
+        }
+        catch (System.Net.Sockets.SocketException e)
+        {
+            string where = $"{proposed.Bind}:{port}";
+            return e.SocketErrorCode switch
+            {
+                System.Net.Sockets.SocketError.AddressAlreadyInUse =>
+                    $"The site could not listen on {where}: another program is using that port. Pick another \"waterfall\".\"port\".",
+                System.Net.Sockets.SocketError.AccessDenied =>
+                    $"The site could not listen on {where}: this service may not use that port (ports below 1024 need extra permission). Pick another \"waterfall\".\"port\".",
+                System.Net.Sockets.SocketError.AddressNotAvailable =>
+                    $"The site could not listen on {where}: this machine has no address \"{proposed.Bind}\". Change \"bind\" to one it has, or \"*\" for all of them.",
+                _ => $"The site could not listen on {where}: {e.Message}",
+            };
+        }
+
+        return null;
+    }
+
+    private static bool HasMonitorSection(string json)
+    {
+        try
+        {
+            return JsonNode.Parse(json, nodeOptions: null, Jsonc) is JsonObject root
+                && root.Any(p => string.Equals(p.Key, "monitor", StringComparison.OrdinalIgnoreCase) && p.Value is not null);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -821,7 +935,7 @@ internal sealed class ConfigApi
                 return error;
             }
 
-            foreach (ModemConfig modem in proposed.Modems)
+            foreach (ModemConfig modem in ModemsOf(proposed))
             {
                 if (!DaemonConfig.IsArdop(modem.Mode) && !ModemCatalog.IsKnown(modem.Mode))
                 {
@@ -861,9 +975,16 @@ internal sealed class ConfigApi
     internal static RfPlan.Result? PlanFor(DaemonConfig proposed)
     {
         return BandPlanner.Plan(
-            proposed.Modems, proposed.Sideband, proposed.DialFrequency, DspRateFor(proposed),
+            ModemsOf(proposed), proposed.Sideband, proposed.DialFrequency, DspRateFor(proposed),
             CeilingFor(proposed));
     }
+
+    /// <summary>
+    /// The modems a configuration runs: a monitor site's are inside its <c>monitor</c> section and
+    /// every receiver gets them, a station's are the top-level list.
+    /// </summary>
+    internal static List<ModemConfig> ModemsOf(DaemonConfig config) =>
+        config.Monitor is { } monitor ? monitor.Modems : config.Modems;
 
     /// <summary>
     /// How far up the audio band the radio can be opened: the wide ceiling where the daemon owns
@@ -871,12 +992,16 @@ internal sealed class ConfigApi
     /// SSB window - the same answer start-up works from.
     /// </summary>
     internal static double? CeilingFor(DaemonConfig proposed) =>
-        DeviceKinds.Of(proposed.Device).OwnsTheRadio(proposed.Device) ? Passband.WideCeilingHz : null;
+        proposed.Monitor is null && DeviceKinds.Of(proposed.Device).OwnsTheRadio(proposed.Device)
+            ? Passband.WideCeilingHz
+            : null;
 
     /// <summary>The channel rate a proposal runs at: 48 kHz if any mode wants it, as start-up has it.</summary>
     internal static int DspRateFor(DaemonConfig proposed) =>
+        // A site works its rate out from its modems alone, as its start-up does.
+        proposed.Monitor is not null ? StationFactory.DspRateOf(proposed.Monitor.Modems) :
         // A leftover mailcast section still counts as an MS110D modem, as start-up has it.
-        proposed.Mailcast is not null || proposed.Modems.Any(
+        proposed.Mailcast is not null || ModemsOf(proposed).Any(
             m => !DaemonConfig.IsArdop(m.Mode) && ModemCatalog.DspRateFor(m.Mode) == 48000)
             ? 48000
             : 12000;
@@ -973,14 +1098,33 @@ internal sealed class ConfigApi
             return false;
         }
 
-        if (!open && !Authorised(context.Request))
+        if (!open)
         {
+            string from = context.Request.RemoteEndPoint?.Address?.ToString() ?? "unknown";
+            string? presented = PresentedKey(context.Request);
+
+            // A request with no key at all is the page asking whether one is wanted: it is
+            // answered 401 and is not a guess.
+            KeyAnswer answer = presented is null ? KeyAnswer.NoKey : _guesses.Check(from, KeyMatches(presented));
+            if (answer.Locked)
+            {
+                // Not even looked at: this address was wrong a moment ago and its next look is
+                // not due. Answered at once, so a flood holds nothing open and checks nothing.
+                context.Response.Headers["Retry-After"] = answer.RetryAfterSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                await RespondAsync(context, 429, $"too many wrong keys from this address: try again in {answer.RetryAfterSeconds} seconds")
+                    .ConfigureAwait(false);
+                return true;
+            }
+
+            if (!answer.Right)
+            {
             // 401 without a WWW-Authenticate challenge on purpose: this is a machine interface
             // with a shared secret, and inviting a browser to pop a password box would suggest
             // an interactive login that does not exist.
             await RespondAsync(context, 401, "unauthorized: present the configured api key as "
                 + "\"Authorization: Bearer KEY\" or \"X-API-Key: KEY\"").ConfigureAwait(false);
             return true;
+            }
         }
 
         if (path.StartsWith("/api/config/history", StringComparison.Ordinal))
@@ -1038,7 +1182,7 @@ internal sealed class ConfigApi
             // used to buy on a station that has both. The length check is not decoration:
             // FixedTimeEquals of two empty arrays is true, so on a station with no key an empty
             // X-API-Key would otherwise "match" and skip the check below.
-            bool keyed = _key.Length > 0 && Authorised(context.Request);
+            bool keyed = _key.Length > 0 && PresentedKey(context.Request) is { } offered && KeyMatches(offered);
 
             if (open && !keyed && context.Request.HttpMethod == "POST"
                 && !SameSite(context.Request))
@@ -1230,7 +1374,7 @@ internal sealed class ConfigApi
             ["version"] = Packet.SoundModem.Waterfall.DaemonVersion.Version,
             ["commit"] = commit,
             ["release"] = Packet.SoundModem.Waterfall.DaemonVersion.IsRelease,
-            ["deviceKind"] = DeviceKinds.Of(device).Name,
+            ["deviceKind"] = At(stored, "monitor") is not null ? ConfigKeys.MonitorKind : DeviceKinds.Of(device).Name,
             ["uptimeSeconds"] = (long)Math.Max(0, (_time.GetUtcNow() - _started).TotalSeconds),
             ["config"] = JsonNode.Parse(Redact(running)),
             ["logLines"] = log,
@@ -1454,6 +1598,7 @@ internal sealed class ConfigApi
     /// worked out by the band planning start-up uses, and nothing applied.
     /// </summary>
     private readonly TimeProvider _time;
+    private readonly KeyGuesses _guesses;
 
     /// <summary>Recent plan answers by the document they were for: the page asks again after every
     /// keystroke, and a plan renders a probe frame per mode, which a small machine feels.</summary>
@@ -1599,9 +1744,9 @@ internal sealed class ConfigApi
             context.Request.QueryString["check"], "true", StringComparison.OrdinalIgnoreCase);
         if (check)
         {
-            if (Validate(body, _configPath) is string problem)
+            if (Validate(body, _configPath, _runningJson()) is string problem)
             {
-                await RespondAsync(context, 400, problem).ConfigureAwait(false);
+                await RespondAsync(context, 400, ProblemOf(problem)).ConfigureAwait(false);
             }
             else
             {
@@ -1613,7 +1758,7 @@ internal sealed class ConfigApi
             return;
         }
 
-        if (Validate(body, _configPath) is string refusal)
+        if (Validate(body, _configPath, _runningJson()) is string refusal)
         {
             // The station is untouched. This is the whole reason the API exists rather than an
             // operator editing the file: a refusal here costs nothing that was working.
@@ -1623,7 +1768,7 @@ internal sealed class ConfigApi
                 Console.Error.WriteLine($"api:   {line}");
             }
 
-            await RespondAsync(context, 400, refusal).ConfigureAwait(false);
+            await RespondAsync(context, 400, ProblemOf(refusal)).ConfigureAwait(false);
             return;
         }
 
@@ -1802,7 +1947,7 @@ internal sealed class ConfigApi
         Waterfall.WaterfallWebServer.OriginMayKey(
             new Waterfall.PageOrigin(request.Headers["Origin"] ?? "", request.UserHostName ?? ""));
 
-    private bool Authorised(HttpListenerRequest request)
+    private static string? PresentedKey(HttpListenerRequest request)
     {
         string? presented = request.Headers["X-API-Key"];
         if (presented is null
@@ -1812,12 +1957,14 @@ internal sealed class ConfigApi
             presented = header["Bearer ".Length..].Trim();
         }
 
+        return presented;
+    }
+
+    private bool KeyMatches(string presented) =>
         // Fixed-time compare: the key is a shared secret over a socket that may be reachable from
         // the LAN, and a byte-at-a-time comparison leaks it one byte at a time.
-        return presented is not null
-            && CryptographicOperations.FixedTimeEquals(
-                Encoding.UTF8.GetBytes(presented), Encoding.UTF8.GetBytes(_key));
-    }
+        CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(presented), Encoding.UTF8.GetBytes(_key));
 
     private static Task RespondAsync(HttpListenerContext context, int status, string text) =>
         WriteAsync(context, status, "text/plain; charset=utf-8", text);
@@ -1834,5 +1981,127 @@ internal sealed class ConfigApi
         context.Response.ContentLength64 = bytes.Length;
         await context.Response.OutputStream.WriteAsync(bytes).ConfigureAwait(false);
         context.Response.Close();
+    }
+
+    /// <summary>What looking at a presented key came to.</summary>
+    private readonly record struct KeyAnswer(bool Right, bool Locked, int RetryAfterSeconds)
+    {
+        internal static KeyAnswer NoKey => new(false, false, 0);
+    }
+
+    /// <summary>
+    /// Wrong keys, by the address they came from. An address that has just been wrong is not
+    /// looked at again until a back-off has run out: 1 s, doubling per further wrong key to 30 s.
+    /// A key presented inside that time is answered 429 without being compared.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Why a right key does not jump the queue.</b> Comparing a key before refusing it
+    /// makes the throttle an oracle: whatever the answer to a locked address says, "the right key
+    /// gets in" means every guess is still tested, at wire speed, and the back-off only decides
+    /// the status code of the wrong ones. So the back-off limits the looks, not the answers:
+    /// each address gets one look per window, and the look is made inside a lock together with the
+    /// window's bookkeeping, so a flood of any width gets exactly one look and the rest an
+    /// instant 429. Nothing is held open (the reply is immediate, with Retry-After) and nothing is
+    /// compared. The price is that the operator, locked out by somebody else's guesses from the
+    /// same address (behind a tunnel everybody shares one), waits out the window, at most 30 s,
+    /// and a right key presented while the window runs gets a 429 and goes in on the retry. A
+    /// guesser gets two free wrong keys and is then held to one guess every 30 s per address.</para>
+    /// <para>A wrong key from a quiet address costs the legitimate user one second; a right key
+    /// clears the address. A burst is journalled at most once a minute per address, with how many
+    /// attempts it was, so a flood cannot fill the recent-output buffer the report reads.</para>
+    /// </remarks>
+    private sealed class KeyGuesses(TimeProvider time)
+    {
+        private static readonly TimeSpan First = TimeSpan.FromSeconds(1);
+        private static readonly TimeSpan Cap = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan Quiet = TimeSpan.FromMinutes(1);
+        private const int Remembered = 512;
+        private const int Grace = 2;
+
+        private sealed class Address
+        {
+            internal int Failures;
+            internal DateTimeOffset NextLook;
+            internal DateTimeOffset LastSeen;
+            internal int Attempts;
+            internal DateTimeOffset LastLogged = DateTimeOffset.MinValue;
+        }
+
+        private readonly Dictionary<string, Address> _by = [];
+
+        /// <param name="from">The address.</param>
+        /// <param name="matches">Whether the presented key is the right one (worked out by the
+        /// caller; it is only used when this address is due a look).</param>
+        internal KeyAnswer Check(string from, bool matches)
+        {
+            string? line = null;
+            KeyAnswer answer;
+            lock (_by)
+            {
+                DateTimeOffset now = time.GetUtcNow();
+                if (_by.Count >= Remembered)
+                {
+                    foreach (string old in _by.Where(p => now - p.Value.LastSeen > Quiet).Select(p => p.Key).ToList())
+                    {
+                        _by.Remove(old);
+                    }
+
+                    if (_by.Count >= Remembered)
+                    {
+                        _by.Clear();
+                    }
+                }
+
+                if (!_by.TryGetValue(from, out Address? a))
+                {
+                    a = new Address { LastSeen = now };
+                    _by[from] = a;
+                }
+
+                if (now - a.LastSeen > Quiet && now >= a.NextLook)
+                {
+                    a.Failures = 0;
+                }
+
+                a.LastSeen = now;
+                if (now < a.NextLook)
+                {
+                    a.Attempts++;
+                    answer = new KeyAnswer(false, true, (int)Math.Ceiling((a.NextLook - now).TotalSeconds));
+                }
+                else if (matches)
+                {
+                    _by.Remove(from);
+                    return new KeyAnswer(true, false, 0);
+                }
+                else
+                {
+                    a.Failures++;
+                    a.Attempts++;
+                    // The first two wrong keys in a row cost nothing: somebody mistyping and
+                    // typing it again is not an attack, and three guesses per quiet minute are not
+                    // worth anything to one. From the third the windows start, 1 s doubling to 30 s.
+                    if (a.Failures >= Grace + 1)
+                    {
+                        a.NextLook = now + TimeSpan.FromSeconds(Math.Min(Cap.TotalSeconds, First.TotalSeconds * Math.Pow(2, Math.Min(a.Failures - Grace - 1, 10))));
+                    }
+                    answer = new KeyAnswer(false, false, 0);
+                }
+
+                if (a.Attempts >= 3 && now - a.LastLogged >= Quiet)
+                {
+                    line = $"api: {a.Attempts} wrong or refused keys from {from} in the last minute";
+                    a.Attempts = 0;
+                    a.LastLogged = now;
+                }
+            }
+
+            if (line is not null)
+            {
+                Console.Error.WriteLine(line);
+            }
+
+            return answer;
+        }
     }
 }

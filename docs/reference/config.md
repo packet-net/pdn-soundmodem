@@ -657,7 +657,7 @@ There is no `bind` key here. The page listens on the top-level `bind`.
 }
 ```
 
-A file with `monitor` describes a site, not a station. It reads `bind`, `sideband`, `dialFrequency`, `modemPlugins`, `waterfall`, `ubersdr`, `frameLog`, `idBeacons`, `deadFeed` and this section; it serves no KISS, PTT, API, survey, paging, ARDOP, metrics or transmitter test. The other station sections (`kissPort`, `captureRate`, `ptt`, `api`, `survey`, `metrics`, `rawCapture`, `frequencyMatching`, `paging`, `ardop`, `txTest`) are known keys, so a monitor file accepts them without a word and never reads them; only `device`, `publish` and `alsa.mixer` are refused.
+A file with `monitor` describes a site, not a station. It reads `bind`, `sideband`, `dialFrequency`, `modemPlugins`, `waterfall`, `ubersdr`, `frameLog`, `idBeacons`, `deadFeed`, `api` and this section; it serves no KISS, PTT, survey, paging, ARDOP, metrics or transmitter test. Its `api` is only the `key`, which turns on the settings page at `/config` (see [`api`](#api)). The other station sections (`kissPort`, `captureRate`, `ptt`, `survey`, `metrics`, `rawCapture`, `frequencyMatching`, `paging`, `ardop`, `txTest`) are known keys, so a monitor file accepts them without a word and never reads them; only `device`, `publish` and `alsa.mixer` are refused.
 
 | Key | Type | Default | What it is |
 |---|---|---|---|
@@ -716,10 +716,11 @@ Rules and refusals:
 
 | Key | Type | Default | What it is |
 |---|---|---|---|
-| `key` | string | absent: configuration open, no other API | The shared secret every request must present, as `Authorization: Bearer KEY` or `X-API-Key: KEY`. It is also the configuration page's password. |
+| `key` | string | absent: configuration open on a station, no page on a monitor | The shared secret every request must present, as `Authorization: Bearer KEY` or `X-API-Key: KEY`. It is also the configuration page's password. |
 
 - Served under `/api/` on the page port. Without a key, the configuration page and `/api/config` are open to anyone who reaches the port by the machine's address or its own host name (not on a `public` page), and `/api/mixer` is open when `waterfall.enableAudioControls` is true. Everything else wants the key.
 - Refused: `api` without a `waterfall` section (`"api" is served on the waterfall's HTTP listener, and this station has no "waterfall" section - add one, or remove "api"`); `api` on a station run without `--config` (`"api" needs a --config file to read back and to write changes to`).
+- On a [`monitor`](#monitor) site `api.key` is the only thing read, and it is what turns the settings page on: the site is on the internet, so with no key it serves no page and no `/api/config` at all. The page and its API are at the site's root, and the endpoints are `/api/config`, `/api/config/schema`, `/api/config/plan`, `/api/config/history` and `/api/report`; `/api/config/discover` and the rest of the station API are not served. The start-up journal says `monitor: receive only ... settings page at http://.../config` or `no settings page, because the file has no "api"."key"`.
 - `POST /api/config` takes a whole document, validates it with the same checks as start-up, and restarts the process onto it for one run; `?persist=true` writes it to the config file, the only time the modem writes that file. The mechanics are under [the API](ports-and-endpoints.md#the-api-under-api).
 - The start-up journal names the endpoints: `api: configuration page at http://.../config and http://.../api/config (key required)`, or `api: configuration page at http://.../config, open to anyone who can reach it (no "api"."key" set)`, and `api: modem proposals over .../api/proposals` when `survey.propose` is on.
 - `POST /api/txlease` gives one sub-channel the transmitter for up to five minutes at a time, renewable, and refuses every other sub-channel's transmissions until it is released or runs out. It is for a scheduled transmission that shares the radio with ordinary traffic; there is nothing to configure. A modem with `identify` sends a closing ident when its lease ends. With a `rig` section a take can add `"tune": true` to have the rig tuned for the holder's modem and put back afterwards; a modem with `transmitOnlyUnderLease` is the one that needs it. See [the transmit lease](ports-and-endpoints.md#the-transmit-lease).

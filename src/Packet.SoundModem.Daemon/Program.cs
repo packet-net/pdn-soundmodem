@@ -233,6 +233,24 @@ if (configPath is not null)
     if (pendingPath is not null)
     {
         ConfigApi.ConsumePending(configPath);
+        if (apiEphemeralInForce && ConfigApi.PendingPath(configPath) is null)
+        {
+            // The safety net for every flavour. A one-run change was validated before it was written,
+            // but validation cannot see everything (a port taken meanwhile, a card unplugged), and exit
+            // 2 means "your configuration is wrong" and is final under the shipped unit. The one-run
+            // file is consumed just above (and only when it really is gone: one that could not be
+            // deleted would be tried again, and exiting 1 would then loop), so exiting 1 here makes systemd start the daemon again on the
+            // saved file instead of leaving the station or site down until somebody reads the journal.
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            {
+                if (Environment.ExitCode == 2)
+                {
+                    Console.Error.WriteLine(
+                        "api: the one-run change did not start; going back to the saved file");
+                    Environment.ExitCode = 1;
+                }
+            };
+        }
     }
 
     if (config is null)
@@ -324,7 +342,9 @@ if (configPath is not null)
             return 2;
         }
 
-        return await MonitorStartup.RunAsync(config);
+        return await MonitorStartup.RunAsync(
+            config, into: null,
+            new MonitorStartup.MonitorFile(configPath, apiConfigJson, apiEphemeralInForce, recentOutput));
     }
 }
 

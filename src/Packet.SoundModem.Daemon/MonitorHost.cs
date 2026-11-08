@@ -16,8 +16,10 @@ namespace Packet.SoundModem.Daemon;
 /// <remarks>
 /// <para>The front door is a <see cref="WaterfallRouter"/> on the waterfall's port. It serves the
 /// picker at <c>/</c>, the picker's own snapshot at <c>/api/instances</c>, and each receiver's
-/// page under <c>/r/&lt;slug&gt;/</c>. Nothing else is reachable: no KISS, no configuration API,
-/// no survey, no transmitter. A monitor is a display.</para>
+/// page under <c>/r/&lt;slug&gt;/</c>. Nothing else is reachable: no KISS, no survey, no
+/// transmitter, and no station API. The one exception is the settings page and its configuration
+/// API at the root, which exist only when the file has an <c>api.key</c> (see
+/// <see cref="MonitorHostOptions.ConfigHandler"/>). A monitor is a display.</para>
 /// <para><b>A station is built when its receiver is first asked for</b>, and then kept for the
 /// life of the process, because the links panel and the frame log surviving a visitor leaving and
 /// coming back is the whole reason a quiet band looks alive. Building it costs a few MB and no
@@ -156,8 +158,10 @@ internal sealed class MonitorHost : IAsyncDisposable
             + (_options.PublicUrl is { Length: > 0 } published
                 ? $", published as {published}/"
                 : ""));
-        _journal.Write(
-            "monitor: receive only - no KISS, no transmitter, no configuration API on this port");
+        _journal.Write(_options.ConfigHandler is null
+            ? "monitor: receive only - no KISS, no transmitter; no settings page, because the file has no \"api\".\"key\""
+            : "monitor: receive only - no KISS, no transmitter; "
+                + $"settings page at {_router.Url}config (the \"api\".\"key\" is its password)");
 
         if (_uplinks is { Entries.Count: > 0 } uplinks)
         {
@@ -202,6 +206,14 @@ internal sealed class MonitorHost : IAsyncDisposable
             return await ServeUnpickedAsync(context, path, readOnlyMethod).ConfigureAwait(false);
         }
 
+        // The settings page, at the site's root and never under a receiver. Only the routes a
+        // site has a use for are handed over, so the rest of the station's API (the hardware
+        // discovery, the rig, the transmitter) stays unreachable here whatever the handler is.
+        if (_options.ConfigHandler is { } config && IsConfigPath(path))
+        {
+            return await config(context, path).ConfigureAwait(false);
+        }
+
         if (readOnlyMethod && path is "/" or "/index.html")
         {
             await WriteAsync(context, "text/html; charset=utf-8", MonitorPage.Bytes)
@@ -224,6 +236,12 @@ internal sealed class MonitorHost : IAsyncDisposable
 
         return false;
     }
+
+    /// <summary>Whether a path is one the settings page uses: the page, its description of the
+    /// settings, the configuration itself, the band plan, the earlier versions and the "Report a problem" dialog's report.</summary>
+    internal static bool IsConfigPath(string path) =>
+        path is ConfigPage.Path or "/api/config" or "/api/config/schema" or "/api/config/plan" or "/api/report"
+        || path.StartsWith("/api/config/history", StringComparison.Ordinal);
 
     /// <summary>
     /// What this site asks crawlers not to walk: the receivers' pages and the API. The picker
@@ -1220,4 +1238,12 @@ internal sealed record MonitorHostOptions
 
     /// <summary>How the directory is fetched; null uses the client's own HTTP.</summary>
     public Func<CancellationToken, Task<string>>? FetchDirectory { get; init; }
+
+    /// <summary>
+    /// Answers the settings page and its API (<see cref="MonitorHost.IsConfigPath"/>), at the
+    /// site's root. Null, the default, is a site with no settings page at all: those paths are a
+    /// 404, which is what a site without an <c>api.key</c> gets. The caller only ever supplies one
+    /// that wants the key.
+    /// </summary>
+    public Func<System.Net.HttpListenerContext, string, Task<bool>>? ConfigHandler { get; init; }
 }

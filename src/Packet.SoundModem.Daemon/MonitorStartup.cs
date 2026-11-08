@@ -17,6 +17,18 @@ namespace Packet.SoundModem.Daemon;
 /// </remarks>
 internal static class MonitorStartup
 {
+    /// <summary>How long after a change has been answered the site starts going down for it.</summary>
+    internal static readonly TimeSpan RestartAfterAnswer = TimeSpan.FromMilliseconds(300);
+
+    /// <summary>The file a monitor run came from, for the settings page.</summary>
+    /// <param name="ConfigPath">The file the run was asked to read.</param>
+    /// <param name="RunningJson">What this process is running, verbatim, which may be a one-run
+    /// change and not the file.</param>
+    /// <param name="EphemeralInForce">Whether the run is on a one-run change.</param>
+    /// <param name="Recent">The recent console output, for the report dialog; null for none.</param>
+    internal sealed record MonitorFile(
+        string ConfigPath, string RunningJson, bool EphemeralInForce, RecentOutput? Recent = null);
+
     /// <summary>Runs the monitor. Returns the process exit code.</summary>
     /// <param name="config">The file, already loaded and checked.</param>
     /// <param name="into">
@@ -24,7 +36,12 @@ internal static class MonitorStartup
     /// the service's journal is; a test's own, so that asserting on a refusal does not mean
     /// redirecting the console out from under every other test in the run.
     /// </param>
-    internal static async Task<int> RunAsync(DaemonConfig config, StationJournal? into = null)
+    /// <param name="file">
+    /// The configuration file this run was read from, so the settings page can show it and write
+    /// to it; null for a run with no page to offer, which is every test that is not about it.
+    /// </param>
+    internal static async Task<int> RunAsync(
+        DaemonConfig config, StationJournal? into = null, MonitorFile? file = null)
     {
         MonitorConfig monitor = config.Monitor!;
         WaterfallConfig waterfall = config.Waterfall!;
@@ -145,9 +162,37 @@ internal static class MonitorStartup
                 cancellation.Cancel();
             });
 
+        // The settings page, and only with a key. A site is reachable from the internet, so there
+        // is no open mode here whatever a station on a private network may do: with no key the
+        // page is simply not built.
+        bool restartRequested = false;
+        Func<System.Net.HttpListenerContext, string, Task<bool>>? configHandler = ConfigHandlerFor(
+            config.Api?.Key ?? "", file,
+            () =>
+            {
+                // Exit 1, the door systemd's Restart=on-failure reopens, as a station's applied
+                // change uses: exit 2 would mean the new file is wrong.
+                restartRequested = true;
+                cancellation.Cancel();
+            },
+            file?.Recent);
+        if (configHandler is not null
+            && Environment.GetEnvironmentVariable("INVOCATION_ID") is null)
+        {
+            journal.WriteError(
+                "api: WARNING - not running under systemd, so an applied change will stop the daemon, not restart it");
+        }
+
+        if (file is { EphemeralInForce: true })
+        {
+            journal.WriteError(
+                $"api: running a one-run configuration applied over the API; a restart returns to {file.ConfigPath}");
+        }
+
         await using var host = new MonitorHost(
             new MonitorHostOptions
             {
+                ConfigHandler = configHandler,
                 Directory = new UberSdrDirectoryOptions
                 {
                     Url = monitor.Directory,
@@ -179,7 +224,104 @@ internal static class MonitorStartup
             },
             cancellation.Token);
 
-        return await host.RunAsync().ConfigureAwait(false);
+        int exit = await host.RunAsync().ConfigureAwait(false);
+        return restartRequested && exit == 0 ? 1 : exit;
+    }
+
+    /// <summary>
+    /// The settings page's handler, or null when the site has none.
+    /// </summary>
+    /// <remarks>
+    /// Null without a key, and that is the whole rule. A site is reachable from the internet, so
+    /// there is no open mode here whatever a station on a private network may do: with no key the
+    /// page and its API are simply not built, and their paths are a 404.
+    /// </remarks>
+    /// <param name="apiKey">The file's <c>api.key</c>, or empty.</param>
+    /// <param name="file">The file this run came from, or null for a run with no page to offer.</param>
+    /// <param name="requestRestart">What a change that has been validated and written does next.</param>
+    internal static Func<System.Net.HttpListenerContext, string, Task<bool>>? ConfigHandlerFor(
+        string apiKey, MonitorFile? file, Action requestRestart, RecentOutput? recent = null)
+    {
+        if (file is null || string.IsNullOrEmpty(apiKey))
+        {
+            return null;
+        }
+
+        var api = new ConfigApi(
+            apiKey, file.ConfigPath, ConfigApi.EphemeralPathFor(file.ConfigPath),
+            runningJson: () => file.RunningJson,
+            ephemeralInForce: file.EphemeralInForce,
+            requestRestart: () => _ = Task.Run(async () =>
+            {
+                // Off the request's own thread, and a moment later. Asked inline, the shutdown (the
+                // cancellation's continuations, then the host and its listener being taken down)
+                // runs on the thread that is still inside the request that asked for it, over the
+                // very connection it is answering, and the browser polling for the site to come
+                // back can be mid-request on the listener as it goes. Letting the answer reach the
+                // browser first, and taking the site down from a thread of its own, keeps the
+                // teardown from racing the request that started it.
+                await Task.Delay(RestartAfterAnswer).ConfigureAwait(false);
+                requestRestart();
+            }),
+            openConfiguration: false);
+        if (recent is not null)
+        {
+            api.ServeReport(recent);
+        }
+
+        return api.HandleAsync;
+    }
+
+    /// <summary>
+    /// Whether a site could keep its frame logs at <paramref name="path"/>, asked without making
+    /// anything the site would make: null when it could, else the sentence to show. The same
+    /// refusals as <see cref="TryPrepareFrameLogDirectory"/>, and for a directory that does not
+    /// exist yet, whether its nearest existing parent can be written to, which is what creating
+    /// it needs. Writability is tried with one empty file that is deleted at once, in a
+    /// directory that is already there; no directory is created.
+    /// </summary>
+    internal static string? FrameLogProblem(string path)
+    {
+        var said = new List<string>();
+        if (File.Exists(path)
+            || (!Directory.Exists(path)
+                && Path.GetExtension(path).Equals(".db", StringComparison.OrdinalIgnoreCase)))
+        {
+            TryPrepareFrameLogDirectory(path, new StationJournal("", _ => { }, said.Add), out _, create: false);
+            return said.Count > 0 ? said[0] : null;
+        }
+
+        string? probe = Path.GetFullPath(path);
+        while (probe is not null && !Directory.Exists(probe))
+        {
+            if (File.Exists(probe))
+            {
+                return $"The site cannot keep its frame logs at {path}: {probe} is a file, so nothing can be made under it. "
+                    + "Point \"frameLog\".\"path\" at a directory.";
+            }
+
+            probe = Path.GetDirectoryName(probe);
+        }
+
+        if (probe is null)
+        {
+            return $"The site cannot keep its frame logs at {path}: no part of that path exists.";
+        }
+
+        try
+        {
+            string trial = Path.Combine(probe, $".pdn-write-check-{Guid.NewGuid():N}");
+            using (new FileStream(trial, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose))
+            {
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return $"The site cannot keep its frame logs at {path}: {probe} is not writable by the service "
+                + $"({e.Message}). Pick a directory it can write to, or remove \"frameLog\".";
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -192,7 +334,7 @@ internal static class MonitorStartup
     /// SQLite error from somewhere inside the first station that happened to be picked.
     /// </remarks>
     internal static bool TryPrepareFrameLogDirectory(
-        string path, StationJournal journal, out string directory)
+        string path, StationJournal journal, out string directory, bool create = true)
     {
         directory = "";
 
@@ -218,6 +360,11 @@ internal static class MonitorStartup
                 + "frames-<slug>.db inside it. Drop the file name, e.g. "
                 + "\"/var/lib/pdn-soundmodem\".");
             return false;
+        }
+
+        if (!create)
+        {
+            return true;
         }
 
         try

@@ -75,7 +75,7 @@ Delete the `publish` block and restart. The socket goes and your row leaves the 
 
 ## Run a monitor site
 
-A [`monitor`](reference/config.md#monitor) section turns pdn-soundmodem into a site. It is exclusive with `device`: one process is a site or a station and never both. A site serves no KISS, no PTT, no API, no survey, no paging and no ARDOP, and `waterfall.public` is forced true.
+A [`monitor`](reference/config.md#monitor) section turns pdn-soundmodem into a site. It is exclusive with `device`: one process is a site or a station and never both. A site serves no KISS, no PTT, no station API, no survey, no paging and no ARDOP, and `waterfall.public` is forced true. Its only extra door is the [settings page](#change-the-site-from-a-page), and only when you give it a key.
 
 ```json
 {
@@ -93,14 +93,32 @@ A [`monitor`](reference/config.md#monitor) section turns pdn-soundmodem into a s
 }
 ```
 
-`waterfall.port` has to be written down, because the site serves all of itself on that one port. `monitor.modems` is required and every entry needs an `rfFrequency`; these are the modems every receiver on the site runs. [`frameLog.path`](reference/config.md#framelog) is a directory here rather than a file, holding one `frames-<slug>.db` per receiver. Four lines among the start-up ones say what this process is.
+`waterfall.port` has to be written down, because the site serves all of itself on that one port. `monitor.modems` is required and every entry needs an `rfFrequency`; these are the modems every receiver on the site runs. [`frameLog.path`](reference/config.md#framelog) is a directory here rather than a file, holding one `frames-<slug>.db` per receiver. Four lines among the start-up ones say what this process is. The last says where the settings page is, or why there is none.
 
 ```
 monitor: many receivers behind one page, receive only
 directory: 3 of 51 receivers listed from https://instances.ubersdr.org/api/instances
 monitor: http://127.0.0.1:8099/, published as https://monitor.example.org/
-monitor: receive only - no KISS, no transmitter, no configuration API on this port
+monitor: receive only - no KISS, no transmitter; settings page at http://127.0.0.1:8099/config (the "api"."key" is its password)
 ```
+
+Without an `api.key` that line reads `no settings page, because the file has no "api"."key"`.
+
+### Change the site from a page
+
+A site can be set up from a page, as a station can, at `/config` on the site's own address. It is there only when the file has an [`api.key`](reference/config.md#api):
+
+```json
+{ "api": { "key": "<a long random string>" } }
+```
+
+The key is the page's password. A site is on the internet, so unlike a station on a home network it is never open: with no key there is no page and no `/api/config`, and both are a 404. Make the key long and random, and put the site behind HTTPS (a tunnel or a proxy) so the key is not sent in the clear.
+
+The page shows the site in five areas: the receivers and the directory they come from, the modems every receiver runs (with the band strip, so you can see where they sit), the private stations that may publish, the page visitors see, and logging. Before it applies anything it checks the change the way the site would start: the file, the band plan, that every modem can be built, that the frame log directory can be written, and that a new address or port can be opened. It cannot see a receiver that is down, and it will not turn the site into a station. If a one-run change still fails to start, the site comes back on the saved file. A change can last for one run or be saved, and earlier versions are kept so you can go back. Applying restarts the site for a few seconds, and visitors watching a receiver reconnect. **Report a problem** works here too: it gathers the version, the settings with secrets blanked and the recent log into a pre-filled GitHub issue, and only you send it.
+
+To invite a private station, open Private station uplinks, add the station and press **Create a token**. The page makes the token in your browser, shows it once with a Copy button, and keeps only its SHA-256 in the file. It is the same token and hash `--uplink-token` prints. The site cannot show the token again, so copy it before you leave and send it to that station's operator. Use **Save and restart** for a new token: **Try until next restart** applies it for one run, and the station's token stops working at the next restart. After a few wrong keys the page answers 429 for up to 30 seconds.
+
+Taking the key out of the file turns the page off, and the page warns you before you apply that.
 
 ### Choose which receivers appear
 
