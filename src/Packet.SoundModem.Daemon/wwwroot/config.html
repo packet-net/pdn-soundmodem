@@ -2022,6 +2022,11 @@ var ConfigModel = (function () {
         showLogin(had ? "That is not this station's key." : "");
         return null;
       }
+      if (r.status === 429) {
+        sessionStorage.removeItem(KEY_STORE);
+        showLogin("Too many wrong keys from this address. Wait " + (r.headers.get("Retry-After") || "a few") + " seconds and try again.");
+        return null;
+      }
       if (r.status === 404) throw new Error("this station has no configuration file to edit (it was started without --config)");
       if (!r.ok) return r.text().then(function (t) { throw new Error(t); });
       return r.json();

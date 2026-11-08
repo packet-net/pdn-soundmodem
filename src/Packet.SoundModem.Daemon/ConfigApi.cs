@@ -867,15 +867,21 @@ internal sealed class ConfigApi
     {
         DaemonConfig? running = LoadProposed(runningJson, null, out DaemonConfig? parsed) is null ? parsed : null;
         int port = proposed.Waterfall!.Port;
-        if (running is not null && running.Bind == proposed.Bind && running.Waterfall?.Port == port)
+        System.Net.IPAddress address = DaemonConfig.ParseBind(proposed.Bind) ?? System.Net.IPAddress.Loopback;
+        System.Net.IPAddress? was = running is null ? null : DaemonConfig.ParseBind(running.Bind);
+        bool samePort = running?.Waterfall?.Port == port;
+        if (samePort && Equals(was, address))
         {
             return null;
         }
 
-        System.Net.IPAddress address = DaemonConfig.ParseBind(proposed.Bind) ?? System.Net.IPAddress.Loopback;
+        // The running site holds its port, so with the port unchanged only the address is in
+        // question, and port 0 (any free one) asks that without colliding with the site itself.
+        // "*" and "0.0.0.0" are the same address once parsed.
+        int tried = samePort ? 0 : port;
         try
         {
-            var probe = new System.Net.Sockets.TcpListener(address, port);
+            var probe = new System.Net.Sockets.TcpListener(address, tried);
             probe.Start();
             probe.Stop();
         }
@@ -1092,23 +1098,33 @@ internal sealed class ConfigApi
             return false;
         }
 
-        if (!open && !Authorised(context.Request))
+        if (!open)
         {
-            // A key that was presented and is wrong is a guess, and the next one from the same
-            // address waits longer. A request with no key at all is the page asking whether one is
-            // wanted, and is not a guess.
-            if (PresentedKey(context.Request) is not null)
+            string from = context.Request.RemoteEndPoint?.Address?.ToString() ?? "unknown";
+            string? presented = PresentedKey(context.Request);
+
+            // A request with no key at all is the page asking whether one is wanted: it is
+            // answered 401 and is not a guess.
+            KeyAnswer answer = presented is null ? KeyAnswer.NoKey : _guesses.Check(from, KeyMatches(presented));
+            if (answer.Locked)
             {
-                await _guesses.FailedAsync(context.Request.RemoteEndPoint?.Address?.ToString() ?? "unknown")
+                // Not even looked at: this address was wrong a moment ago and its next look is
+                // not due. Answered at once, so a flood holds nothing open and checks nothing.
+                context.Response.Headers["Retry-After"] = answer.RetryAfterSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                await RespondAsync(context, 429, $"too many wrong keys from this address: try again in {answer.RetryAfterSeconds} seconds")
                     .ConfigureAwait(false);
+                return true;
             }
 
+            if (!answer.Right)
+            {
             // 401 without a WWW-Authenticate challenge on purpose: this is a machine interface
             // with a shared secret, and inviting a browser to pop a password box would suggest
             // an interactive login that does not exist.
             await RespondAsync(context, 401, "unauthorized: present the configured api key as "
                 + "\"Authorization: Bearer KEY\" or \"X-API-Key: KEY\"").ConfigureAwait(false);
             return true;
+            }
         }
 
         if (path.StartsWith("/api/config/history", StringComparison.Ordinal))
@@ -1166,7 +1182,7 @@ internal sealed class ConfigApi
             // used to buy on a station that has both. The length check is not decoration:
             // FixedTimeEquals of two empty arrays is true, so on a station with no key an empty
             // X-API-Key would otherwise "match" and skip the check below.
-            bool keyed = _key.Length > 0 && Authorised(context.Request);
+            bool keyed = _key.Length > 0 && PresentedKey(context.Request) is { } offered && KeyMatches(offered);
 
             if (open && !keyed && context.Request.HttpMethod == "POST"
                 && !SameSite(context.Request))
@@ -1944,22 +1960,11 @@ internal sealed class ConfigApi
         return presented;
     }
 
-    private bool Authorised(HttpListenerRequest request)
-    {
-        string? presented = PresentedKey(request);
-
+    private bool KeyMatches(string presented) =>
         // Fixed-time compare: the key is a shared secret over a socket that may be reachable from
         // the LAN, and a byte-at-a-time comparison leaks it one byte at a time.
-        bool right = presented is not null
-            && CryptographicOperations.FixedTimeEquals(
-                Encoding.UTF8.GetBytes(presented), Encoding.UTF8.GetBytes(_key));
-        if (right)
-        {
-            _guesses.Succeeded(request.RemoteEndPoint?.Address?.ToString() ?? "unknown");
-        }
-
-        return right;
-    }
+        CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(presented), Encoding.UTF8.GetBytes(_key));
 
     private static Task RespondAsync(HttpListenerContext context, int status, string text) =>
         WriteAsync(context, status, "text/plain; charset=utf-8", text);
@@ -1978,37 +1983,65 @@ internal sealed class ConfigApi
         context.Response.Close();
     }
 
+    /// <summary>What looking at a presented key came to.</summary>
+    private readonly record struct KeyAnswer(bool Right, bool Locked, int RetryAfterSeconds)
+    {
+        internal static KeyAnswer NoKey => new(false, false, 0);
+    }
+
     /// <summary>
-    /// Wrong keys, by the address they came from: each one from an address that has just been
-    /// wrong waits longer for its answer, 1 s doubling to 30 s, and one right key clears it.
+    /// Wrong keys, by the address they came from. An address that has just been wrong is not
+    /// looked at again until a back-off has run out: 1 s, doubling per further wrong key to 30 s.
+    /// A key presented inside that time is answered 429 without being compared.
     /// </summary>
     /// <remarks>
-    /// The wait is an async delay on the request's own task, so it holds nothing but that one
-    /// connection: every other request, from this address or any other, is answered at once. A
-    /// legitimate user who mistypes once waits a second. A burst is journalled, once at the third
-    /// wrong key within a minute and then at every tenth, as the site's uplink does for tokens.
-    /// Behind a tunnel every visitor shares one address, so a guesser can slow the operator down
-    /// to the cap; it still cannot get in, and the cap is what bounds that.
+    /// <para><b>Why a right key does not jump the queue.</b> Comparing a key before refusing it
+    /// makes the throttle an oracle: whatever the answer to a locked address says, "the right key
+    /// gets in" means every guess is still tested, at wire speed, and the back-off only decides
+    /// the status code of the wrong ones. So the back-off limits the looks, not the answers:
+    /// each address gets one look per window, and the look is made inside a lock together with the
+    /// window's bookkeeping, so a flood of any width gets exactly one look and the rest an
+    /// instant 429. Nothing is held open (the reply is immediate, with Retry-After) and nothing is
+    /// compared. The price is that the operator, locked out by somebody else's guesses from the
+    /// same address (behind a tunnel everybody shares one), waits out the window, at most 30 s,
+    /// and a right key presented while the window runs gets a 429 and goes in on the retry. A
+    /// guesser gets two free wrong keys and is then held to one guess every 30 s per address.</para>
+    /// <para>A wrong key from a quiet address costs the legitimate user one second; a right key
+    /// clears the address. A burst is journalled at most once a minute per address, with how many
+    /// attempts it was, so a flood cannot fill the recent-output buffer the report reads.</para>
     /// </remarks>
     private sealed class KeyGuesses(TimeProvider time)
     {
-        internal static readonly TimeSpan First = TimeSpan.FromSeconds(1);
-        internal static readonly TimeSpan Cap = TimeSpan.FromSeconds(30);
-        private static readonly TimeSpan Burst = TimeSpan.FromMinutes(1);
+        private static readonly TimeSpan First = TimeSpan.FromSeconds(1);
+        private static readonly TimeSpan Cap = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan Quiet = TimeSpan.FromMinutes(1);
         private const int Remembered = 512;
+        private const int Grace = 2;
 
-        private readonly Dictionary<string, (int Failures, DateTimeOffset First, DateTimeOffset Last, int InWindow)> _by = [];
-
-        internal async Task FailedAsync(string from)
+        private sealed class Address
         {
-            TimeSpan wait;
-            int inWindow;
+            internal int Failures;
+            internal DateTimeOffset NextLook;
+            internal DateTimeOffset LastSeen;
+            internal int Attempts;
+            internal DateTimeOffset LastLogged = DateTimeOffset.MinValue;
+        }
+
+        private readonly Dictionary<string, Address> _by = [];
+
+        /// <param name="from">The address.</param>
+        /// <param name="matches">Whether the presented key is the right one (worked out by the
+        /// caller; it is only used when this address is due a look).</param>
+        internal KeyAnswer Check(string from, bool matches)
+        {
+            string? line = null;
+            KeyAnswer answer;
             lock (_by)
             {
                 DateTimeOffset now = time.GetUtcNow();
                 if (_by.Count >= Remembered)
                 {
-                    foreach (string old in _by.Where(p => now - p.Value.Last > Burst).Select(p => p.Key).ToList())
+                    foreach (string old in _by.Where(p => now - p.Value.LastSeen > Quiet).Select(p => p.Key).ToList())
                     {
                         _by.Remove(old);
                     }
@@ -2019,41 +2052,56 @@ internal sealed class ConfigApi
                     }
                 }
 
-                (int failures, DateTimeOffset firstAt, DateTimeOffset last, int windowCount) =
-                    _by.TryGetValue(from, out var known) ? known : (0, now, now, 0);
-                if (now - firstAt > Burst)
+                if (!_by.TryGetValue(from, out Address? a))
                 {
-                    firstAt = now;
-                    windowCount = 0;
+                    a = new Address { LastSeen = now };
+                    _by[from] = a;
                 }
 
-                // Failures reset by quiet too: an address silent for a minute starts again at a second.
-                if (now - last > Burst)
+                if (now - a.LastSeen > Quiet && now >= a.NextLook)
                 {
-                    failures = 0;
+                    a.Failures = 0;
                 }
 
-                failures++;
-                windowCount++;
-                inWindow = windowCount;
-                _by[from] = (failures, firstAt, now, windowCount);
-                wait = TimeSpan.FromSeconds(Math.Min(Cap.TotalSeconds, First.TotalSeconds * Math.Pow(2, Math.Min(failures - 1, 10))));
+                a.LastSeen = now;
+                if (now < a.NextLook)
+                {
+                    a.Attempts++;
+                    answer = new KeyAnswer(false, true, (int)Math.Ceiling((a.NextLook - now).TotalSeconds));
+                }
+                else if (matches)
+                {
+                    _by.Remove(from);
+                    return new KeyAnswer(true, false, 0);
+                }
+                else
+                {
+                    a.Failures++;
+                    a.Attempts++;
+                    // The first two wrong keys in a row cost nothing: somebody mistyping and
+                    // typing it again is not an attack, and three guesses per quiet minute are not
+                    // worth anything to one. From the third the windows start, 1 s doubling to 30 s.
+                    if (a.Failures >= Grace + 1)
+                    {
+                        a.NextLook = now + TimeSpan.FromSeconds(Math.Min(Cap.TotalSeconds, First.TotalSeconds * Math.Pow(2, Math.Min(a.Failures - Grace - 1, 10))));
+                    }
+                    answer = new KeyAnswer(false, false, 0);
+                }
+
+                if (a.Attempts >= 3 && now - a.LastLogged >= Quiet)
+                {
+                    line = $"api: {a.Attempts} wrong or refused keys from {from} in the last minute";
+                    a.Attempts = 0;
+                    a.LastLogged = now;
+                }
             }
 
-            if (inWindow == 3 || (inWindow > 3 && inWindow % 10 == 0))
+            if (line is not null)
             {
-                Console.Error.WriteLine($"api: {inWindow} wrong keys from {from} in the last minute");
+                Console.Error.WriteLine(line);
             }
 
-            await Task.Delay(wait, time).ConfigureAwait(false);
-        }
-
-        internal void Succeeded(string from)
-        {
-            lock (_by)
-            {
-                _by.Remove(from);
-            }
+            return answer;
         }
     }
 }

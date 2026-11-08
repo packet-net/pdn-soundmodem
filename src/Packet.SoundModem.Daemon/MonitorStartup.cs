@@ -280,6 +280,12 @@ internal static class MonitorStartup
         string? probe = Path.GetFullPath(path);
         while (probe is not null && !Directory.Exists(probe))
         {
+            if (File.Exists(probe))
+            {
+                return $"The site cannot keep its frame logs at {path}: {probe} is a file, so nothing can be made under it. "
+                    + "Point \"frameLog\".\"path\" at a directory.";
+            }
+
             probe = Path.GetDirectoryName(probe);
         }
 

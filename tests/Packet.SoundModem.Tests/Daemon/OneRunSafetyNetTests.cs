@@ -25,7 +25,7 @@ public sealed class OneRunSafetyNetTests : IDisposable
 
     public void Dispose() => Directory.Delete(_dir, recursive: true);
 
-    private (int Exit, string Output, string Pending) Run(string? pending)
+    private (int Exit, string Output, string Pending) Run(string? pending, bool keep = false)
     {
         string config = Path.Combine(_dir, "soundmodem.json");
         string state = Path.Combine(_dir, "state");
@@ -35,6 +35,11 @@ public sealed class OneRunSafetyNetTests : IDisposable
         if (pending is not null)
         {
             File.WriteAllText(pendingPath, pending);
+        }
+
+        if (keep)
+        {
+            File.WriteAllText(config, Saved);
         }
 
         var info = new ProcessStartInfo(UsageTests.DotnetHost())
@@ -84,6 +89,30 @@ public sealed class OneRunSafetyNetTests : IDisposable
 
         exit.Should().Be(1, output);
         output.Should().Contain("going back to the saved file");
+    }
+
+    [Fact]
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    public void A_One_Run_File_That_Could_Not_Be_Removed_Keeps_Exit_2_So_It_Cannot_Loop()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess, "a privileged process can remove it");
+        string state = Path.Combine(_dir, "state");
+        Directory.CreateDirectory(state);
+        File.WriteAllText(Path.Combine(state, "pending-config.json"), Saved.Replace("\"rfFrequency\": 7050300", "\"frequency\": 1500"));
+        File.SetUnixFileMode(state, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            (int exit, string output, string pending) = Run(pending: null, keep: true);
+
+            File.Exists(pending).Should().BeTrue("the test made it unremovable");
+            exit.Should().Be(2, output);
+            output.Should().Contain("could not remove the one-run configuration")
+                .And.NotContain("going back to the saved file", "that would be a lie, and the next start would be the same");
+        }
+        finally
+        {
+            File.SetUnixFileMode(state, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
     }
 
     [Fact]

@@ -271,6 +271,13 @@ public partial class ConfigPageTests
         Directory.Exists(Path.Combine(_dir, "not")).Should().BeFalse("a check creates no directory");
         Directory.EnumerateFileSystemEntries(_dir).Should().NotContain(e => e.Contains(".pdn-write-check", StringComparison.Ordinal));
 
+        // Under a regular file: nothing can be made there, and the nearest existing parent is it.
+        string blocker = Path.Combine(_dir, "regular-file");
+        File.WriteAllText(blocker, "");
+        ConfigApi.Validate(
+            SiteWith("\"waterfall\"", $"\"frameLog\": {{ \"path\": \"{blocker}/logs\" }}, \"waterfall\""), null, SiteFile)
+            .Should().Contain("is a file");
+
         // The refusals start-up has for a file where a directory belongs.
         string file = Path.Combine(_dir, "a-file");
         File.WriteAllText(file, "");
@@ -298,6 +305,15 @@ public partial class ConfigPageTests
         // Not moved: the running site holds the port, so it is not tried at all.
         ConfigApi.Validate(running.Replace("18099", busy.ToString()), null, running.Replace("18099", busy.ToString()))
             .Should().BeNull();
+
+        // Only the address moved, on the port the running site holds: that port is not tried (it
+        // would collide with the site itself), and "*" and "0.0.0.0" are one address.
+        string holding = SiteFile.Replace("8099", busy.ToString());
+        ConfigApi.Validate(holding.Replace("\"bind\": \"127.0.0.1\"", "\"bind\": \"*\""), null, holding).Should().BeNull();
+        ConfigApi.Validate(holding.Replace("\"bind\": \"127.0.0.1\"", "\"bind\": \"0.0.0.0\""), null, holding).Should().BeNull();
+        ConfigApi.Validate(holding.Replace("\"bind\": \"127.0.0.1\"", "\"bind\": \"203.0.113.9\""), null, holding).Should().Contain("has no address");
+        string everywhere = holding.Replace("\"bind\": \"127.0.0.1\"", "\"bind\": \"*\"");
+        ConfigApi.Validate(everywhere.Replace("\"*\"", "\"0.0.0.0\""), null, everywhere).Should().BeNull("the same address spelt twice");
 
         // A privileged port, for a service without the capability.
         if (!Environment.IsPrivilegedProcess)
@@ -343,49 +359,72 @@ public partial class ConfigPageTests
     // ---------------------------------------------------------------- wrong keys
 
     [Fact]
-    public async Task Each_Wrong_Key_From_One_Address_Waits_Longer_And_Holds_Nothing_Else_Up()
+    public async Task An_Address_That_Was_Wrong_Is_Not_Looked_At_Again_Until_Its_Back_Off_Runs_Out()
     {
         var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
         using var station = new Station(_dir, key: "right", time: time);
 
-        Task<HttpResponseMessage> Get(string? key)
+        async Task<HttpResponseMessage> Get(string? key)
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, station.Url("api/config"));
+            using var request = new HttpRequestMessage(HttpMethod.Get, station.Url("api/config"));
             if (key is not null)
             {
                 request.Headers.Add("X-API-Key", key);
             }
 
-            return station.Client.SendAsync(request);
+            return await station.Client.SendAsync(request);
         }
 
-        // A request with no key is the page asking whether one is wanted: not a guess, not slowed.
+        // No key at all is the page asking whether one is wanted: not a guess.
+        (await Get(null)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
         (await Get(null)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 
-        Task<HttpResponseMessage> first = Get("wrong");
-        await Task.Delay(300);
-        first.IsCompleted.Should().BeFalse("a wrong key waits a second");
+        // The first two wrong keys are a mistyped key and its retry: answered at once, no window.
+        (await Get("wrong")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await Get("wrong")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 
-        // Nothing else waits with it: the right key, from the same address, is answered at once.
+        // The third starts a one-second back-off.
+        (await Get("wrong")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        HttpResponseMessage locked = await Get("wrong-again");
+        locked.StatusCode.Should().Be((HttpStatusCode)429, "inside the window nothing is compared");
+        locked.Headers.RetryAfter!.Delta.Should().Be(TimeSpan.FromSeconds(1));
+        (await Get("right")).StatusCode.Should().Be((HttpStatusCode)429, "a right key is not a way round the window either");
+
+        time.Advance(TimeSpan.FromSeconds(1));
+        (await Get("right")).StatusCode.Should().Be(HttpStatusCode.OK, "once it runs out the right key goes straight in, and clears the address");
+
+        // Three more in a row: the third opens a one-second window, the fourth a two-second one.
+        for (int i = 0; i < 3; i++)
+        {
+            (await Get("wrong")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+
+        time.Advance(TimeSpan.FromSeconds(1));
+        (await Get("wrong")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        time.Advance(TimeSpan.FromSeconds(1));
+        (await Get("right")).StatusCode.Should().Be((HttpStatusCode)429, "the window is two seconds now");
+        time.Advance(TimeSpan.FromSeconds(1));
         (await Get("right")).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
 
-        // ... which also clears the count, so this wrong key is the first again.
-        time.Advance(TimeSpan.FromSeconds(1));
-        (await first).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    [Fact]
+    public async Task A_Parallel_Flood_Of_Wrong_Keys_Gets_Three_Looks_And_Instant_Refusals()
+    {
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        using var station = new Station(_dir, key: "right", time: time);
 
-        Task<HttpResponseMessage> second = Get("wrong");
-        await Task.Delay(300);
-        time.Advance(TimeSpan.FromSeconds(1));
-        (await second).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        HttpResponseMessage[] answers = await Task.WhenAll(Enumerable.Range(0, 400).Select(async i =>
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, station.Url("api/config"));
+            request.Headers.Add("X-API-Key", $"guess-{i}");
+            return await station.Client.SendAsync(request);
+        }));
+        watch.Stop();
 
-        // Two in a row without a success between: the next waits two seconds.
-        Task<HttpResponseMessage> third = Get("wrong");
-        await Task.Delay(300);
-        time.Advance(TimeSpan.FromSeconds(1));
-        await Task.Delay(300);
-        third.IsCompleted.Should().BeFalse("the second wrong key in a row waits two seconds");
-        time.Advance(TimeSpan.FromSeconds(1));
-        (await third).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        answers.Count(a => a.StatusCode == HttpStatusCode.Unauthorized).Should().Be(3, "three keys were compared, the free ones");
+        answers.Count(a => (int)a.StatusCode == 429).Should().Be(397, "the rest were not looked at");
+        watch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(30), "nothing was held waiting on a delay");
     }
 
     // ---------------------------------------------------------------- the page's own model
