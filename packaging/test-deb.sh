@@ -110,7 +110,7 @@ apt-get install -y -qq --reinstall "/debs/$DEB" >/dev/null 2>&1
 check "the unedited old example became the starter" "cmp -s /etc/pdn-soundmodem/soundmodem.json /usr/share/pdn-soundmodem/soundmodem.example.json"
 check "and is group-writable by the service"        "[ \"\$(stat -c '%U:%G %a' /etc/pdn-soundmodem/soundmodem.json)\" = 'root:pdn-soundmodem 660' ]"
 sed 's#/dev/hidraw0#/dev/hidraw1#' /w/old-example.json > /etc/pdn-soundmodem/soundmodem.json
-chmod 0644 /etc/pdn-soundmodem/soundmodem.json
+chown root:root /etc/pdn-soundmodem/soundmodem.json; chmod 0644 /etc/pdn-soundmodem/soundmodem.json
 cp /etc/pdn-soundmodem/soundmodem.json /tmp/edited.json
 apt-get install -y -qq --reinstall "/debs/$DEB" >/dev/null 2>&1
 check "an edited file is left alone"                "cmp -s /etc/pdn-soundmodem/soundmodem.json /tmp/edited.json"
