@@ -113,6 +113,12 @@ internal static class ConfigPlan
             // for one the plan could not build), else the audio band.
             ["axis"] = byDial ? "rf" : "audio",
             ["nyquistHz"] = dspRate / 2.0,
+            ["dspRateHz"] = dspRate,
+            // The audio window the daemon judges a modem against, wherever a dial was pinned: the
+            // nominal 300 to 2700 Hz of an ordinary rig, or the wide range where the daemon owns the radio's
+            // filters (a headless Flex). The passband below is stretched round the modems.
+            ["limitAudioLowHz"] = Passband.Nominal.LowHz,
+            ["limitAudioHighHz"] = ConfigApi.CeilingFor(proposed) ?? Passband.Nominal.HighHz,
             ["dialHz"] = dial,
             ["hasDial"] = dial is not null,
             ["problem"] = problem,

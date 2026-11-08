@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Text.Json.Nodes;
 using Jint;
 using Packet.SoundModem.Daemon;
@@ -21,8 +22,14 @@ public partial class ConfigPageTests
 
     private const string UsbPlan = """
         { "ok": true, "radio": "usb", "axis": "rf", "dialHz": 7050000, "hasDial": true,
-          "passband": { "audioLowHz": 300, "audioHighHz": 3100 },
+          "dspRateHz": 12000, "limitAudioLowHz": 300, "limitAudioHighHz": 2700, "passband": { "audioLowHz": 300, "audioHighHz": 2700 },
           "modems": [ { "subChannel": 0, "mode": "bpsk300" }, { "subChannel": 1, "mode": "qpsk600" } ], "warnings": [] }
+        """;
+
+    private const string FlexPlan = """
+        { "ok": true, "radio": "usb", "axis": "rf", "dialHz": 7050000, "hasDial": true, "dspRateHz": 12000,
+          "limitAudioLowHz": 300, "limitAudioHighHz": 10000, "passband": { "audioLowHz": 300, "audioHighHz": 3100 },
+          "modems": [], "warnings": [] }
         """;
 
     private static string[] Lines(string doc, string area, string facts = "{}")
@@ -38,7 +45,7 @@ public partial class ConfigPageTests
         return [.. JsonNode.Parse(answer)!.AsArray().Select(n => n!.GetValue<string>())];
     }
 
-    private static (string Id, string Text, string Area)[] Nudges(string doc, string facts = "{}")
+    private static (string Id, string Text, string Area, string Action)[] Nudges(string doc, string facts = "{}")
     {
         Engine js = Model();
         js.SetValue("schemaJson", ConfigSchema.Json);
@@ -48,7 +55,7 @@ public partial class ConfigPageTests
             JSON.stringify(ConfigModel.nudgesFor(JSON.parse(schemaJson), JSON.parse(docJson), JSON.parse(factsJson)).list)
             """).AsString();
         return [.. JsonNode.Parse(answer)!.AsArray().Select(n => (
-            n!["id"]!.GetValue<string>(), n["text"]!.GetValue<string>(), n["area"]!.GetValue<string>()))];
+            n!["id"]!.GetValue<string>(), n["text"]!.GetValue<string>(), n["area"]!.GetValue<string>(), n["action"]!.GetValue<string>()))];
     }
 
     private static string[] NudgeIds(string doc, string facts = "{}") => [.. Nudges(doc, facts).Select(n => n.Id)];
@@ -59,7 +66,7 @@ public partial class ConfigPageTests
     public void The_Radio_Sentence_For_A_Flex_Says_The_Model_The_Slice_And_The_Dax_Channel()
     {
         string[] lines = Lines("""{ "device": "flex:10.45.0.76:A", "flex": { "daxChannel": "1" } }""", "radio",
-            $$"""{ "found": {{FoundMachine}}, "plan": {{UsbPlan}} }""");
+            $$"""{ "found": {{FoundMachine}}, "plan": {{FlexPlan}} }""");
 
         lines[0].Should().Be("A FlexRadio 6500 called \"Shack\" at 10.45.0.76, slice A, receiving and transmitting through DAX channel 1.");
         lines[1].Should().Be("Dial 7.0500 MHz, upper sideband, 2.8 kHz wide.");
@@ -101,7 +108,7 @@ public partial class ConfigPageTests
 
         lines.Should().Equal(
             "Audio goes in and out through the sound card \"USB Audio Device\".",
-            "Dial 7.0500 MHz, upper sideband, 2.8 kHz wide.",
+            "Dial 7.0500 MHz, upper sideband, 2.4 kHz wide.",
             "Device: plughw:CARD=Device,DEV=0");
     }
 
@@ -337,7 +344,7 @@ public partial class ConfigPageTests
                 }
             }
 
-            foreach ((string _, string text, string _) in Nudges(doc, facts))
+            foreach ((string _, string text, string _, string _) in Nudges(doc, facts))
             {
                 text.Should().MatchRegex("^[\\x20-\\x7E]*$").And.NotContain("undefined").And.NotContain("[object");
             }
@@ -355,22 +362,34 @@ public partial class ConfigPageTests
     }
 
     [Theory]
+    [InlineData("""{ "bind": "*", "waterfall": { } }""", true)]
+    [InlineData("""{ "bind": "0.0.0.0", "device": "flex:discover", "waterfall": { } }""", true)]
+    [InlineData("""{ "bind": "192.168.1.5", "device": "pipe:a,b", "waterfall": { } }""", true)]
     [InlineData("""{ "bind": "*" }""", true)]
-    [InlineData("""{ "bind": "0.0.0.0", "device": "flex:discover" }""", true)]
-    [InlineData("""{ "bind": "192.168.1.5", "device": "pipe:a,b" }""", true)]
-    [InlineData("""{ "bind": "*", "api": { "key": "k" } }""", false)]
-    [InlineData("""{ "bind": "127.0.0.1" }""", false)]
+    [InlineData("""{ "bind": "*", "waterfall": { "public": true } }""", true)]
+    [InlineData("""{ "bind": "*", "device": "ubersdr:x.example", "waterfall": { } }""", true)]
+    [InlineData("""{ "bind": "*", "api": { "key": "k" }, "waterfall": { } }""", false)]
+    [InlineData("""{ "bind": "127.0.0.1", "waterfall": { } }""", false)]
+    [InlineData("""{ "bind": "127.0.0.2", "waterfall": { } }""", false)]
+    [InlineData("""{ "bind": "127.5.6.7" }""", false)]
+    [InlineData("""{ "bind": "*", "device": "ubersdr:x.example" }""", false)]
+    [InlineData("""{ "bind": "*", "device": "null" }""", false)]
     [InlineData("""{ }""", false)]
     public void The_Network_Nudge_Is_For_An_Open_Listener_With_No_Access_Key(string doc, bool shows) =>
         NudgeIds(doc).Contains("open-network").Should().Be(shows);
 
     [Fact]
-    public void The_Network_Nudge_Says_Keying_The_Radio_Only_When_The_Station_Can_Transmit()
+    public void The_Network_Nudge_Says_Only_What_Is_Open_And_What_Anyone_Could_Do()
     {
-        Nudges("""{ "bind": "*" }""").Single(n => n.Id == "open-network").Text.Should().EndWith("and key the radio.");
-        Nudges("""{ "bind": "*", "device": "ubersdr:x.example" }""").Single(n => n.Id == "open-network").Text
+        Nudges("""{ "bind": "*", "waterfall": { } }""").Single(n => n.Id == "open-network").Text
+            .Should().Be("The settings page, the station page and the KISS port can be reached from your network and there is no access key, so anyone on the network can change settings and key the radio.");
+        Nudges("""{ "bind": "*", "device": "ubersdr:x.example", "waterfall": { } }""").Single(n => n.Id == "open-network").Text
             .Should().EndWith("can change settings.");
-        Nudges("""{ "bind": "*" }""").Single(n => n.Id == "open-network").Area.Should().Be("sharing");
+        Nudges("""{ "bind": "*" }""").Single(n => n.Id == "open-network").Text
+            .Should().Be("The KISS port can be reached from your network, and KISS has no access control, so anyone on the network can send through this station and key the radio.");
+        Nudges("""{ "bind": "*", "waterfall": { "public": true } }""").Single(n => n.Id == "open-network").Text
+            .Should().StartWith("The KISS port", "a public page does not open the settings");
+        Nudges("""{ "bind": "*", "waterfall": { } }""").Single(n => n.Id == "open-network").Area.Should().Be("sharing");
     }
 
     [Theory]
@@ -419,7 +438,7 @@ public partial class ConfigPageTests
         NudgeIds(modems, $$"""{ "plan": {{UsbPlan}} }""").Should().NotContain(["modem-outside", "modem-overlap"]);
 
         const string outside = """{ "plan": { "ok": true, "radio": "usb", "modems": [ { "subChannel": 1, "mode": "qpsk600" } ], "warnings": [ { "subChannel": 1, "kind": "outside", "text": "x" } ] } }""";
-        Nudges(modems, outside).Single(n => n.Id == "modem-outside").Text.Should().Be(Name("qpsk600") + " falls outside what the radio hears, so it may be clipped or not heard.");
+        Nudges(modems, outside).Single(n => n.Id == "modem-outside").Text.Should().Be(Name("qpsk600") + " falls outside the 300 to 2700 Hz the radio is taken to pass, so it may be clipped or not heard.");
         NudgeIds(modems, outside).Should().NotContain("modem-overlap");
 
         const string overlap = """
@@ -504,14 +523,14 @@ public partial class ConfigPageTests
                 var s = ConfigModel.nudgesShown(ConfigModel.nudgesFor(schema, doc, facts), dismissed);
                 return { ids: s.shown.map(function (n) { return n.id; }), keep: s.keep };
               }
-              var open = { bind: "*", ptt: { type: "serial", device: "/dev/ttyUSB0" } };
+              var open = { bind: "*", waterfall: {}, ptt: { type: "serial", device: "/dev/ttyUSB0" } };
               var first = shown(open, {}, {});
               var text = ConfigModel.nudgesFor(schema, open, {}).list[0].text;
               var dismissed = {}; dismissed[first.ids[0]] = text;
               var out = {};
               out.first = first.ids;
               out.after = shown(open, {}, dismissed);
-              out.changed = shown({ bind: "*", device: "ubersdr:x.example" }, {}, dismissed).ids;
+              out.changed = shown({ bind: "*", waterfall: {}, device: "ubersdr:x.example" }, {}, dismissed).ids;
               out.gone = shown({}, {}, dismissed);
               var late = { "modem-outside": "x" };
               out.waiting = shown({ modems: [ { mode: "bpsk300" } ] }, {}, late).keep;
@@ -548,5 +567,182 @@ public partial class ConfigPageTests
             n["link"]!.GetValue<string>().Should().NotBeEmpty();
             n["scope"]!.GetValue<string>().Should().BeOneOf("station", "site", "any");
         }
+    }
+
+    // ---------------------------------------------------------------- the running configuration and the plan
+
+    private async Task<string> RealPlanAsync(string doc)
+    {
+        using var station = new Station(_dir, key: "");
+        HttpResponseMessage answer = await station.Client.PostAsync(
+            station.Url("api/config/plan"), new StringContent(doc, System.Text.Encoding.UTF8, "application/json"));
+        string text = await answer.Content.ReadAsStringAsync();
+        answer.StatusCode.Should().Be(System.Net.HttpStatusCode.OK, text);
+        return text;
+    }
+
+    [Fact]
+    public async Task A_Pinned_Dial_That_Pushes_A_Modem_Out_Is_Not_Called_A_Fit()
+    {
+        const string doc = """
+            { "device": "pipe:a,b", "sideband": "usb", "dialFrequency": 7050000,
+              "modems": [ { "subChannel": 0, "mode": "afsk300", "rfFrequency": 7051000 }, { "subChannel": 1, "mode": "afsk300", "rfFrequency": 7053500 } ] }
+            """;
+        string plan = await RealPlanAsync(doc);
+        JsonNode served = JsonNode.Parse(plan)!;
+        served["dspRateHz"]!.GetValue<double>().Should().Be(12000);
+        served["limitAudioLowHz"]!.GetValue<double>().Should().Be(300);
+        served["limitAudioHighHz"]!.GetValue<double>().Should().Be(2700);
+
+        string[] lines = Lines(doc, "modes", $$"""{ "plan": {{plan}} }""");
+        lines.Should().NotContain(l => l.Contains("fit inside"), "the plan's own passband is stretched round the modems");
+        lines.Should().Contain(l => l.Contains("falls outside what the radio hears"));
+        Nudges(doc, $$"""{ "plan": {{plan}} }""").Single(n => n.Id == "modem-outside").Text
+            .Should().Contain("outside the 300 to 2700 Hz");
+        Lines(doc, "radio", $$"""{ "plan": {{plan}} }""").Should().Contain("Dial 7.0500 MHz, upper sideband, 2.4 kHz wide.");
+    }
+
+    [Fact]
+    public async Task A_Plan_That_Fits_Is_Called_A_Fit_And_A_Flex_Is_Judged_By_Its_Own_Wider_Window()
+    {
+        const string doc = """
+            { "device": "pipe:a,b", "sideband": "usb", "dialFrequency": 7050000,
+              "modems": [ { "subChannel": 0, "mode": "afsk300", "rfFrequency": 7051000 }, { "subChannel": 1, "mode": "afsk300", "rfFrequency": 7051800 } ] }
+            """;
+        string plan = await RealPlanAsync(doc);
+        Lines(doc, "modes", $$"""{ "plan": {{plan}} }""").Should().Contain("Both fit inside the radio's passband.");
+        NudgeIds(doc, $$"""{ "plan": {{plan}} }""").Should().NotContain(["modem-outside", "plan-notes"]);
+
+        const string flex = """
+            { "device": "flex:mock", "dialFrequency": 7050000,
+              "modems": [ { "subChannel": 0, "mode": "afsk300", "rfFrequency": 7051000 }, { "subChannel": 1, "mode": "afsk300", "rfFrequency": 7052000 } ] }
+            """;
+        string flexPlan = await RealPlanAsync(flex);
+        JsonNode.Parse(flexPlan)!["limitAudioHighHz"]!.GetValue<double>().Should().Be(10000);
+        NudgeIds(flex, $$"""{ "plan": {{flexPlan}} }""").Should().NotContain("modem-outside");
+    }
+
+    [Fact]
+    public void The_Band_Sentence_Does_Not_Say_No_Dial_When_The_Plan_Has_Not_Chosen_One_Or_Refused()
+    {
+        const string placed = """{ "modems": [ { "mode": "bpsk300", "rfFrequency": 7050800 } ] }""";
+        Lines(placed, "radio").Should().Contain("Upper sideband.").And.NotContain(l => l.Contains("No dial"));
+        Lines(placed, "radio", """{ "plan": { "ok": true, "radio": "usb", "axis": "rf", "dialHz": null, "modems": [], "warnings": [] } }""")
+            .Should().Contain("Upper sideband. The band plan chooses the dial.");
+        Lines(placed, "radio", """{ "plan": { "ok": false, "radio": "usb", "problem": "band plan: no dial puts every modem inside 300-2700 Hz:\nmodem 0 ..." } }""")
+            .Should().Contain("The band plan cannot place these modems: band plan: no dial puts every modem inside 300-2700 Hz.");
+        Nudges(placed, """{ "plan": { "ok": false, "radio": "usb", "problem": "band plan: no dial puts every modem inside 300-2700 Hz:" } }""")
+            .Should().ContainSingle(n => n.Id == "plan-refused");
+    }
+
+    [Fact]
+    public void The_Plan_Notes_Become_A_Nudge_Unless_A_Modem_Outside_Already_Says_It()
+    {
+        const string notes = """{ "plan": { "ok": true, "radio": "usb", "notes": [ "band plan: dialFrequency 7050000 USB puts these outside the nominal 300-2700 Hz:" ], "modems": [], "warnings": [] } }""";
+        Nudges("""{ "modems": [ { "mode": "bpsk300" } ] }""", notes).Single(n => n.Id == "plan-notes").Text
+            .Should().Be("The band plan says: band plan: dialFrequency 7050000 USB puts these outside the nominal 300-2700 Hz.");
+        NudgeIds("""{ "modems": [ { "mode": "bpsk300" } ] }""", """{ "plan": { "ok": true, "radio": "usb", "notes": [], "modems": [], "warnings": [] } }""")
+            .Should().NotContain("plan-notes");
+    }
+
+    [Fact]
+    public void A_Plan_That_Did_Not_Come_Back_Decides_Nothing()
+    {
+        Engine js = Model();
+        js.SetValue("schemaJson", ConfigSchema.Json);
+        string answer = js.Evaluate("""
+            (function () {
+              var schema = JSON.parse(schemaJson);
+              var found = ConfigModel.nudgesFor(schema, { modems: [ { mode: "bpsk300" } ] }, { plan: null });
+              var s = ConfigModel.nudgesShown(found, { "modem-outside": "x", "plan-refused": "y", "plan-notes": "z" });
+              return JSON.stringify({ undecided: found.undecided, keep: Object.keys(s.keep) });
+            })()
+            """).AsString();
+        JsonNode result = JsonNode.Parse(answer)!;
+        result["undecided"]!.AsArray().Select(n => n!.GetValue<string>()).Should().BeEquivalentTo("modem-outside", "modem-overlap", "plan-refused", "plan-notes");
+        result["keep"]!.AsArray().Select(n => n!.GetValue<string>()).Should().BeEquivalentTo("modem-outside", "plan-refused", "plan-notes");
+    }
+
+    [Fact]
+    public void The_Fm_Nudge_Follows_The_Channel_Rate_The_Plan_Reports()
+    {
+        string Text(string facts) => Nudges("""{ "sideband": "fm" }""", facts).Single(n => n.Id == "fm-audio-sense").Text;
+
+        Text("""{ "plan": { "radio": "fm", "ok": true, "dspRateHz": 48000, "warnings": [] } }""").Should().StartWith("Carrier sense on this FM station is read from the audio.").And.Contain("strongly recommended");
+        Text("""{ "plan": { "radio": "fm", "ok": true, "dspRateHz": 12000, "warnings": [] } }""").Should().Contain("runs at 12 kHz").And.Contain("energy detector");
+        Text("{}").Should().Contain("energy detector").And.Contain("can read the channel as clear");
+    }
+
+    [Fact]
+    public void The_One_Run_Nudge_Offers_To_Save_And_Says_What_Saving_Does()
+    {
+        Engine js = Model();
+        string answer = js.Evaluate("""
+            JSON.stringify(ConfigModel.nudgeTable.filter(function (n) { return n.id === "one-run"; }).map(function (n) { return n.action; }))
+            """).AsString();
+        answer.Should().Be("[\"save\"]");
+        Nudges("{}", """{ "source": "ephemeral" }""").Single(n => n.Id == "one-run").Text
+            .Should().Contain("restarts the station for a few seconds").And.Contain("does not keep the file's comments");
+        Nudges("{}", """{ "source": "ephemeral" }""").Single(n => n.Id == "one-run").Action.Should().Be("save");
+    }
+
+    [Fact]
+    public void Keying_Words_Are_Right_Where_The_Daemon_Refuses_A_Ptt_Section()
+    {
+        foreach (string device in (string[])["flex:discover", "ubersdr:x.example", "openwebrx:https://x.example/", "rtltcp:10.0.0.1", "sdrconnect:10.0.0.2"])
+        {
+            Lines($$"""{ "device": "{{device}}", "ptt": { "type": "serial", "device": "/dev/ttyUSB0" } }""", "keying")[0]
+                .Should().NotContain("serial port", device);
+        }
+
+        Lines("""{ "device": "flex:discover", "ptt": { "type": "serial", "device": "/dev/ttyUSB0" } }""", "keying")[0].Should().StartWith("The radio keys itself");
+        Lines("""{ "device": "pipe:a,b", "ptt": { "type": "serial", "device": "/dev/ttyUSB0" } }""", "keying")[0].Should().Be("The RTS line of the serial port /dev/ttyUSB0 keys the radio.");
+        Lines("""{ "device": "flex:discover", "rig": { } }""", "radio").Should().NotContain(l => l.Contains("rigctld"), "a Flex is refused a rig section");
+    }
+
+    [Fact]
+    public void Metrics_With_No_Station_Page_Are_Said_To_Have_Nothing_To_Serve_Them()
+    {
+        Lines("""{ "metrics": { } }""", "sharing").Should().Contain("Metrics are switched on, but there is no station page to serve them.");
+        Lines("""{ "metrics": { "enabled": false } }""", "sharing").Should().NotContain(l => l.Contains("Metrics"));
+    }
+
+    [Fact]
+    public void A_Polyglot_Port_Is_Not_Claimed_Without_Two_Packet_Modems()
+    {
+        Lines("""{ "polyglotPort": 8120 }""", "software").Should().Contain(l => l.Contains("needs at least two packet modems"));
+        Lines("""{ "polyglotPort": 8120, "modems": [ { "mode": "bpsk300" } ] }""", "software").Should().Contain(l => l.Contains("but that needs at least two packet modems and there is one."));
+        Lines("""{ "polyglotPort": 8120, "modems": [ { "mode": "bpsk300" }, { "subChannel": 1, "mode": "qpsk600" } ] }""", "software")
+            .Should().Contain(l => l.StartsWith("Port 8120 puts all two packet modems"));
+    }
+
+    [Fact]
+    public void The_Schema_Serves_The_Daemons_Facts_About_Each_Device_Kind()
+    {
+        JsonArray served = JsonNode.Parse(ConfigSchema.Json)!["deviceKindFacts"]!.AsArray();
+
+        served.Select(k => (k!["name"]!.GetValue<string>(), k["hasMixer"]!.GetValue<bool>(), k["transmits"]!.GetValue<bool>(),
+                k["takesRig"]!.GetValue<bool>(), k["mayPublish"]!.GetValue<bool>()))
+            .Should().Equal(ConfigKeys.Kinds.Select(k => (k.Name, k.HasMixer, k.Transmits, k.TakesRig, k.MayPublish)));
+    }
+
+    [Fact]
+    public async Task The_Hosts_Endpoint_Answers_With_No_Ports_Before_The_Station_Has_Any_And_Wants_The_Key()
+    {
+        using var station = new Station(_dir, key: "the-key");
+
+        (await station.Client.GetAsync(station.Url("api/config/hosts"))).StatusCode.Should().Be(System.Net.HttpStatusCode.Unauthorized);
+        using var request = new HttpRequestMessage(HttpMethod.Get, station.Url("api/config/hosts"));
+        request.Headers.Add("X-API-Key", "the-key");
+        HttpResponseMessage answer = await station.Client.SendAsync(request);
+        answer.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+        JsonNode.Parse(await answer.Content.ReadAsStringAsync())!["ports"]!.AsArray().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_Sites_Frame_Log_With_No_Folder_Is_Not_Called_Absent()
+    {
+        Lines("""{ "monitor": { }, "frameLog": { } }""", "monitor-logging").Should().Equal("The frame log is switched on but has no folder to keep its files in.");
+        Lines("""{ "monitor": { } }""", "monitor-logging").Should().Equal("Heard frames are not kept.");
     }
 }

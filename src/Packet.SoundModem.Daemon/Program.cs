@@ -1793,6 +1793,7 @@ if (benchTxTest is null
         openConfiguration: waterfallConfig?.Public != true);
     configApi.ServeReport(recentOutput);
     waterfallServer.ApiHandler = configApi.HandleAsync;
+    configApi.HostPorts = () => waterfallServer?.HostPortsMessage;
     waterfallServer.ServesConfigPage = apiKey.Length > 0 || waterfallConfig?.Public != true;
 
     if (HardwareFixture.StartUpNotice() is { } fixtureNotice)
