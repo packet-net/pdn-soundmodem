@@ -29,17 +29,6 @@ namespace Packet.SoundModem.Daemon;
 /// </remarks>
 internal sealed class S5066Station : IAsyncDisposable
 {
-    /// <summary>The settings every node needs sooner or later and M0LTE.S5066 reads only when it
-    /// first uses them. Checked here at load, so a missing one is refused with the rest of the file
-    /// instead of stopping the node mid-exchange.</summary>
-    private static readonly (string Key, string Why)[] NeededLater =
-    [
-        ("csma.mode", "how the node contends for the channel: \"jitter\", \"slotted\" or \"ed3\""),
-        ("cas.max_links", "how many links the node holds at once"),
-        ("cas.link_request_retries", "how often a link request is repeated"),
-        ("cas.break_retries", "how often a link break is repeated"),
-    ];
-
     private readonly NodeHost _host;
     private readonly BusyInput _modem;
 
@@ -57,7 +46,9 @@ internal sealed class S5066Station : IAsyncDisposable
 
     /// <summary>
     /// Reads the section's <c>"node"</c> object: merged over M0LTE.S5066's defaults and read by its
-    /// own reader, with the settings it reads late checked now.
+    /// own reader, then checked by <see cref="NodeHost.CheckConfig(NodeConfig, IModemPort)"/>
+    /// against the modem the node will run on, so every setting the node would stop on later is
+    /// refused when the file is read rather than when the node starts.
     /// </summary>
     /// <exception cref="InvalidDataException">The object is missing or a setting is wrong; the
     /// message names it as <c>s5066.node.&lt;key&gt;</c>.</exception>
@@ -96,22 +87,14 @@ internal sealed class S5066Station : IAsyncDisposable
             throw new InvalidDataException($"\"s5066\".\"node\": {wrong.Message}");
         }
 
-        JsonObject merged = HostConfig.Merge(HostConfig.Defaults(), obj);
-        foreach ((string key, string why) in NeededLater)
+        try
         {
-            string[] path = key.Split('.');
-            if ((merged[path[0]] as JsonObject)?[path[1]] is null)
-            {
-                throw new InvalidDataException(
-                    $"\"s5066\".\"node\" has no {key}, and the standard sets no default for it: "
-                    + $"say {why}. See docs/16-stanag-5066.md.");
-            }
+            // The modem only plans here: nothing listens, plays or keys.
+            NodeHost.CheckConfig(parsed.Node, new Ms110dHostModem(NoAudio.Instance));
         }
-
-        if (parsed.Node.Csma.Mode == CsmaMode.Slotted && parsed.Node.Csma.NodeSlotPosition is null)
+        catch (ConfigException wrong)
         {
-            throw new InvalidDataException(
-                "\"s5066\".\"node\" has csma.mode \"slotted\" and no csma.node_slot_position: say which slot is this node's.");
+            throw new InvalidDataException($"\"s5066\".\"node\": {wrong.Message}");
         }
 
         return parsed;
@@ -179,6 +162,19 @@ internal sealed class S5066Station : IAsyncDisposable
 
         /// <summary>The waveform as a journal and the frame log show it, e.g. <c>wn6 short</c>.</summary>
         public string Waveform => $"wn{Wn} {InterleaverNames.ToName(Interleaver).Replace('_', ' ')}";
+    }
+
+    /// <summary>An audio path that is never started, for checking the node's settings against the
+    /// modem at load.</summary>
+    private sealed class NoAudio : IAudioChannel
+    {
+        internal static readonly NoAudio Instance = new();
+
+        /// <inheritdoc/>
+        public void Start(Action<ReadOnlyMemory<float>> received) => throw new InvalidOperationException("only for checking settings");
+
+        /// <inheritdoc/>
+        public void Play(float[] samples, Action played) => throw new InvalidOperationException("only for checking settings");
     }
 
     /// <summary>
