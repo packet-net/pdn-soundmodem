@@ -219,7 +219,7 @@
 
 
   /* ---------------------------------------------------------- guided setup */
-  body.setup-mode nav.areas { display: none; }
+  body.setup-mode nav.areas, body.setup-mode #source { display: none; }
   body.setup-mode .layout { grid-template-columns: 1fr; }
   body.setup-mode #pending { display: none !important; }
   body.setup-mode main { max-width: 760px; margin: 0 auto; width: 100%; padding-bottom: 80px; }
@@ -3855,7 +3855,7 @@ var ConfigModel = (function () {
     if (pickRemoved.length > 0) {
       wrap.appendChild(el("p", "stepnote", "Choosing that radio removed: " + pickRemoved.join(", ") + "."));
     }
-    var notice = pageNotice();
+    var notice = setupNotice();
     if (notice) {
       var np = el("p", "stepnote");
       np.id = "setup-notice";
@@ -3927,8 +3927,17 @@ var ConfigModel = (function () {
     runCheck(check.seq);
   }
 
+  // What saving does to this page, for setup: nothing worth saying when it stays at the address
+  // it is open at (opening the KISS port to the network leaves the page where it was, at the
+  // same host and port), so the restart can be waited for.
+  function setupNotice() {
+    var move = M.pageMove(loaded, doc, location.hostname, location.protocol);
+    if (move && move.kind === "moved" && move.url === location.protocol + "//" + location.host + "/config") return null;
+    return pageNotice();
+  }
+
   function saveSetup() {
-    var notice = pageNotice();
+    var notice = setupNotice();
     busy = true;
     setup.phase = "saving";
     setup.error = "";
