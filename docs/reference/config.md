@@ -494,7 +494,7 @@ Watches a GPSDO that disciplines the radio's 10 MHz reference, through a display
 | `topicPrefix` | string | `"gpsdo"` | The display's topic prefix: it publishes `<prefix>/status` and `<prefix>/state`. |
 
 - The verdict is **OK** when the display's latest report says `reference_ok` true, **unreliable** when it says false, and **unknown** before any report, while the display is offline, when its last report is more than 30 s old, or when `reference_ok` is missing.
-- A retained report (what the broker hands over on connect) counts as fresh while the display's status is `online`, so a restart just before a mailcast slot does not read unknown. A display that dies has its `offline` last will published within about 1.5 keepalives. With no status yet, a retained report waits for one or for a live report.
+- A retained report (what the broker hands over on connect) counts as fresh while the display's status is `online`, so a restart just before a mailcast slot does not read unknown. A display that dies has its `offline` last will published within about 1.5 keepalives. With no status yet, a retained report waits for one or for a live report. One gap: after a broker restart with persistence, a dead display's retained `online` and last state can read OK for up to 30 s before going stale.
 - The station page shows it beside the radio status: green "10 MHz OK", red "10 MHz unreliable" with the display's state text, grey "10 MHz unknown" (hover for why). Never on a public page.
 - One journal line per change, for example `10 MHz reference unreliable: GPS LOST (was OK for 3h12m)`.
 - [`GET /api/txlease`](ports-and-endpoints.md#the-reference-on-the-lease) carries it as `reference`, for the mailcast head end.

@@ -247,6 +247,32 @@ public sealed class GpsdoReferenceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_Tick_Skips_Rather_Than_Waits_While_A_Publication_Is_Stuck()
+    {
+        // A journal write or page update that hangs must not have a tick a second queue up
+        // behind it for ever; the tick returns at once and the next one tries again.
+        using GpsdoReference reference = Reference();
+        using var inside = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        reference.Changed += _ =>
+        {
+            inside.Set();
+            release.Wait(TimeSpan.FromSeconds(30));
+        };
+
+        Task stuck = Task.Run(() => reference.Receive("gpsdo/state", State("LOCKED", true), retained: false));
+        inside.Wait(TimeSpan.FromSeconds(10)).Should().BeTrue();
+
+        Task<bool> tick = Task.Run(reference.Tick);
+        (await Task.WhenAny(tick, Task.Delay(TimeSpan.FromSeconds(5)))).Should().BeSameAs(tick, "the tick must not block");
+        (await tick).Should().BeFalse("it skipped");
+
+        release.Set();
+        await stuck.WaitAsync(TimeSpan.FromSeconds(10));
+        reference.Tick().Should().BeTrue("once the lock is free the tick runs");
+    }
+
+    [Fact]
     public void A_Subscriber_That_Throws_Cannot_Take_The_Timer_Down_And_Is_Said_Once()
     {
         using GpsdoReference reference = Reference();

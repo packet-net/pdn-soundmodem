@@ -120,7 +120,7 @@ internal sealed class GpsdoReference : IDisposable
         _time = time;
         _since = time.GetUtcNow();
         _sinceStamp = time.GetTimestamp();
-        _check = time.CreateTimer(_ => Evaluate(), null, CheckEvery, CheckEvery);
+        _check = time.CreateTimer(_ => Tick(), null, CheckEvery, CheckEvery);
     }
 
     /// <summary>The two topics to subscribe to.</summary>
@@ -254,23 +254,51 @@ internal sealed class GpsdoReference : IDisposable
     {
         lock (_publish)
         {
-            try
-            {
-                Publish();
-            }
-            catch (Exception fault)
-            {
-                bool say;
-                lock (_gate)
-                {
-                    say = !_saidSubscriberFault;
-                    _saidSubscriberFault = true;
-                }
+            PublishGuarded();
+        }
+    }
 
-                if (say)
-                {
-                    _journal.WriteError($"gpsdo: showing the reference failed: {fault.GetBaseException().Message}");
-                }
+    /// <summary>
+    /// The timer's evaluation: skipped, returning false, when another evaluation holds the
+    /// publish lock, so ticks can never pile up behind a journal write that is stuck. The next
+    /// tick, a second later, tries again. Messages still wait their turn (<see cref="Evaluate"/>).
+    /// </summary>
+    internal bool Tick()
+    {
+        if (!_publish.TryEnter())
+        {
+            return false;
+        }
+
+        try
+        {
+            PublishGuarded();
+            return true;
+        }
+        finally
+        {
+            _publish.Exit();
+        }
+    }
+
+    private void PublishGuarded()
+    {
+        try
+        {
+            Publish();
+        }
+        catch (Exception fault)
+        {
+            bool say;
+            lock (_gate)
+            {
+                say = !_saidSubscriberFault;
+                _saidSubscriberFault = true;
+            }
+
+            if (say)
+            {
+                _journal.WriteError($"gpsdo: showing the reference failed: {fault.GetBaseException().Message}");
             }
         }
     }
