@@ -54,10 +54,13 @@ internal sealed record ReferenceVerdict(ReferenceState State, string Detail, Dat
 /// while the display is offline, and once its last report is more than <see cref="StaleAfter"/>
 /// old. Otherwise it is the display's own <c>reference_ok</c>, which is the one field the spec says
 /// to act on; an absent one is unknown, never false. The state text is shown, not parsed.</para>
-/// <para><b>A retained state is not a fresh one.</b> The broker hands a new subscriber the last
-/// state the display published, however long ago that was. Its text is kept, but only a state
-/// published while this station is listening counts as a report, so a display that died without
-/// its last will reads unknown rather than whatever it said last.</para>
+/// <para><b>A retained state counts only beside an online status.</b> The broker hands a new
+/// subscriber the last state the display published, however long ago. While the retained status
+/// is <c>online</c> that state is taken as fresh at receipt (a display that dies has its last will,
+/// <c>offline</c>, published within about 1.5 keepalives), so a restart just before a mailcast slot
+/// is not ten seconds of unknown. With the status absent it waits for one, or for a live report.</para>
+/// <para><b>Ages are monotonic.</b> A report's age and how long a verdict lasted are measured on
+/// <see cref="TimeProvider.GetTimestamp"/>; only <c>since</c> is wall time.</para>
 /// <para><b>Re-evaluated on a clock</b>, not only when a message arrives, because the case that
 /// matters most is the one where no message arrives at all.</para>
 /// <para>The MQTT side is <see cref="GpsdoFeed"/>; this class has no network, so a test drives it
@@ -79,17 +82,29 @@ internal sealed class GpsdoReference : IDisposable
     private readonly ITimer _check;
     private readonly Lock _gate = new();
 
+    /// <summary>
+    /// Held across working a verdict out and publishing it, so two evaluations (the timer and a
+    /// message) cannot publish out of order and leave the page showing the older one.
+    /// </summary>
+    private readonly Lock _publish = new();
+
     private string? _status;
     private bool _stateHeard;
     private string? _stateText;
     private bool? _referenceOk;
-    private DateTimeOffset? _reportedAt;
+    /// <summary>When the last report that counts arrived, on the monotonic clock.</summary>
+    private long? _reportedAt;
+
+    /// <summary>When a retained state arrived that could not count yet (no status heard).</summary>
+    private long? _retainedAt;
     private bool _brokerDown;
     private bool _saidUnreadable;
+    private bool _saidSubscriberFault;
 
     private ReferenceState _state = ReferenceState.Unknown;
     private string _detail = "no message yet";
     private DateTimeOffset _since;
+    private long _sinceStamp;
 
     /// <param name="topicPrefix">What the display's topics start with, without a trailing slash.</param>
     /// <param name="journal">Where the one line per change goes.</param>
@@ -104,6 +119,7 @@ internal sealed class GpsdoReference : IDisposable
         _journal = journal;
         _time = time;
         _since = time.GetUtcNow();
+        _sinceStamp = time.GetTimestamp();
         _check = time.CreateTimer(_ => Evaluate(), null, CheckEvery, CheckEvery);
     }
 
@@ -123,7 +139,7 @@ internal sealed class GpsdoReference : IDisposable
         {
             lock (_gate)
             {
-                (ReferenceState state, string detail, _) = Judge(_time.GetUtcNow());
+                (ReferenceState state, string detail, _) = Judge();
                 return new ReferenceVerdict(state, detail, _since);
             }
         }
@@ -155,6 +171,15 @@ internal sealed class GpsdoReference : IDisposable
                 lock (_gate)
                 {
                     _status = status;
+
+                    // A retained state that came before the status counts from when it came,
+                    // now the display is known to be online.
+                    if (status == "online" && _reportedAt is null && _retainedAt is long held)
+                    {
+                        _reportedAt = held;
+                    }
+
+                    _retainedAt = null;
                 }
             }
         }
@@ -186,9 +211,19 @@ internal sealed class GpsdoReference : IDisposable
                 _stateHeard = true;
                 _stateText = text;
                 _referenceOk = referenceOk;
-                if (!retained)
+                // A retained state is fresh at receipt only while the display's status is online:
+                // a display that dies has its last will published as "offline" within about 1.5
+                // keepalives, so an "online" status vouches for the state beside it. Without one
+                // it waits (for the status, or for a live report).
+                long arrived = _time.GetTimestamp();
+                if (!retained || _status == "online")
                 {
-                    _reportedAt = _time.GetUtcNow();
+                    _reportedAt = arrived;
+                    _retainedAt = null;
+                }
+                else if (_status is null)
+                {
+                    _retainedAt = arrived;
                 }
             }
         }
@@ -213,16 +248,41 @@ internal sealed class GpsdoReference : IDisposable
     }
 
     /// <summary>Works the verdict out again, journals a change of verdict and tells the page about
-    /// any change it shows. Called on every message and once a second.</summary>
+    /// any change it shows. Called on every message and once a second. Never throws: it runs on
+    /// the timer and on the MQTT client's thread, and neither may be taken down by a subscriber.</summary>
     internal void Evaluate()
+    {
+        lock (_publish)
+        {
+            try
+            {
+                Publish();
+            }
+            catch (Exception fault)
+            {
+                bool say;
+                lock (_gate)
+                {
+                    say = !_saidSubscriberFault;
+                    _saidSubscriberFault = true;
+                }
+
+                if (say)
+                {
+                    _journal.WriteError($"gpsdo: showing the reference failed: {fault.GetBaseException().Message}");
+                }
+            }
+        }
+    }
+
+    private void Publish()
     {
         ReferenceVerdict changed;
         string? line = null;
         bool problem = false;
         lock (_gate)
         {
-            DateTimeOffset now = _time.GetUtcNow();
-            (ReferenceState state, _, string shown) = Judge(now);
+            (ReferenceState state, _, string shown) = Judge();
             if (state == _state && shown == _detail)
             {
                 return;
@@ -231,9 +291,10 @@ internal sealed class GpsdoReference : IDisposable
             if (state != _state)
             {
                 line = $"10 MHz reference {ReferenceVerdict.Spoken(state)}: {shown} "
-                    + $"(was {ReferenceVerdict.Spoken(_state)} for {Span(now - _since)})";
+                    + $"(was {ReferenceVerdict.Spoken(_state)} for {Span(_time.GetElapsedTime(_sinceStamp))})";
                 problem = state != ReferenceState.Ok;
-                _since = now;
+                _since = _time.GetUtcNow();
+                _sinceStamp = _time.GetTimestamp();
             }
 
             _state = state;
@@ -241,6 +302,8 @@ internal sealed class GpsdoReference : IDisposable
             changed = new ReferenceVerdict(state, shown, _since);
         }
 
+        // Outside _gate (a subscriber may read Current) but inside _publish, so lines and page
+        // updates go out in the order the verdicts were reached.
         if (line is not null)
         {
             if (problem)
@@ -260,7 +323,7 @@ internal sealed class GpsdoReference : IDisposable
     /// The verdict, with two wordings of its reason: <c>Detail</c> as of now (a stale report's age
     /// in seconds) and <c>Shown</c>, which only changes when something does.
     /// </summary>
-    private (ReferenceState State, string Detail, string Shown) Judge(DateTimeOffset now)
+    private (ReferenceState State, string Detail, string Shown) Judge()
     {
         if (_status == "offline")
         {
@@ -272,12 +335,12 @@ internal sealed class GpsdoReference : IDisposable
             return Unknown(_brokerDown ? "MQTT broker unreachable" : _status == "online" ? "no state report yet" : "no message yet");
         }
 
-        if (_reportedAt is not DateTimeOffset reported)
+        if (_reportedAt is not long reported)
         {
             return Unknown(_brokerDown ? "MQTT broker unreachable" : "waiting for a fresh report");
         }
 
-        TimeSpan age = now - reported;
+        TimeSpan age = _time.GetElapsedTime(reported);
         if (age > StaleAfter)
         {
             string old = $"last report {Math.Floor(age.TotalSeconds).ToString("0", CultureInfo.InvariantCulture)} s old";
@@ -351,7 +414,9 @@ internal sealed class GpsdoReference : IDisposable
 /// <remarks>
 /// <para><b>Quiet about outages.</b> One line when the broker goes or cannot be reached, one when
 /// it is back, and nothing for the retries between: a broker down overnight would otherwise write
-/// a line every 30 s until morning. Retries back off from 1 s to 30 s.</para>
+/// a line every 30 s until morning. Retries back off from 1 s to 30 s. The outage is over only
+/// once a connection has lasted <see cref="SteadyAfter"/>: a broker that accepts and drops at once
+/// is still down, so it costs no lines and keeps the backoff.</para>
 /// <para><b>MQTTnet</b>, which the solution already pins for the NinoCompare tool, so no new
 /// package. The session is a delegate so the reconnect loop can be tested without a network.</para>
 /// </remarks>
@@ -383,39 +448,57 @@ internal sealed class GpsdoFeed
         _journal = journal;
         _time = time;
         _where = $"{config.Host}:{config.Port}";
-        _session = session ?? ((connected, cancel) => MqttSessionAsync(config, reference, connected, cancel));
+        _session = session ?? ((connected, cancel) => MqttSessionAsync(config, connected, cancel));
     }
+
+    /// <summary>How long a connection must last before an outage is over: until then a broker
+    /// that accepts and drops at once is still an outage, backed off and kept quiet.</summary>
+    internal static readonly TimeSpan SteadyAfter = TimeSpan.FromSeconds(60);
+
+    private readonly Lock _gate = new();
+    private bool _down;
+    private bool _ever;
+    private bool _saidRefused;
+    private TimeSpan _retry = TimeSpan.FromSeconds(1);
 
     /// <summary>Keeps the connection up until <paramref name="cancel"/> fires. Never throws.</summary>
     internal async Task RunAsync(CancellationToken cancel)
     {
-        bool down = false;
-        bool ever = false;
-        TimeSpan retry = TimeSpan.FromSeconds(1);
         while (!cancel.IsCancellationRequested)
         {
+            using var steady = CancellationTokenSource.CreateLinkedTokenSource(cancel);
             try
             {
                 string ended = await _session(
                     () =>
                     {
                         _reference.BrokerReachable(true);
-                        _journal.Write(down
-                            ? $"gpsdo: back on the MQTT broker at {_where}"
-                            : ever ? $"gpsdo: reconnected to the MQTT broker at {_where}" : $"gpsdo: connected to the MQTT broker at {_where}");
-                        down = false;
-                        ever = true;
-                        retry = TimeSpan.FromSeconds(1);
+                        bool first;
+                        lock (_gate)
+                        {
+                            first = !_ever && !_down;
+                            _ever = true;
+                        }
+
+                        if (first)
+                        {
+                            _journal.Write($"gpsdo: connected to the MQTT broker at {_where}");
+                        }
+
+                        _ = SteadyAsync(steady.Token);
                     },
                     cancel).ConfigureAwait(false);
+                await steady.CancelAsync().ConfigureAwait(false);
                 if (cancel.IsCancellationRequested)
                 {
                     break;
                 }
 
                 _reference.BrokerReachable(false);
-                _journal.WriteError($"gpsdo: lost the MQTT broker at {_where} ({ended}); reconnecting");
-                down = true;
+                if (Down())
+                {
+                    _journal.WriteError($"gpsdo: lost the MQTT broker at {_where} ({ended}); reconnecting");
+                }
             }
             catch (OperationCanceledException) when (cancel.IsCancellationRequested)
             {
@@ -423,33 +506,92 @@ internal sealed class GpsdoFeed
             }
             catch (Exception failed)
             {
+                await steady.CancelAsync().ConfigureAwait(false);
                 _reference.BrokerReachable(false);
-                if (!down)
+                if (Down())
                 {
                     _journal.WriteError(
                         $"gpsdo: cannot reach the MQTT broker at {_where} ({failed.GetBaseException().Message}); "
                         + "retrying quietly");
-                    down = true;
                 }
+            }
+
+            TimeSpan wait;
+            lock (_gate)
+            {
+                wait = _retry;
+                _retry = _retry * 2 > MaxRetry ? MaxRetry : _retry * 2;
             }
 
             try
             {
-                await Task.Delay(retry, _time, cancel).ConfigureAwait(false);
+                await Task.Delay(wait, _time, cancel).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
                 break;
             }
-
-            retry = retry * 2 > MaxRetry ? MaxRetry : retry * 2;
         }
     }
 
-    /// <summary>One MQTT connection: connect, subscribe, pass messages on, and return why it ended.</summary>
-    private static async Task<string> MqttSessionAsync(
-        GpsdoConfig config, GpsdoReference reference, Action connected, CancellationToken cancel)
+    /// <summary>Marks an outage, and says whether it is a new one worth a line.</summary>
+    private bool Down()
     {
+        lock (_gate)
+        {
+            bool fresh = !_down;
+            _down = true;
+            return fresh;
+        }
+    }
+
+    /// <summary>Once a connection has lasted <see cref="SteadyAfter"/>, the outage is over: the
+    /// backoff starts again from 1 s, and the next loss is a new line.</summary>
+    private async Task SteadyAsync(CancellationToken connection)
+    {
+        try
+        {
+            await Task.Delay(SteadyAfter, _time, connection).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        bool back;
+        lock (_gate)
+        {
+            back = _down;
+            _down = false;
+            _retry = TimeSpan.FromSeconds(1);
+        }
+
+        if (back)
+        {
+            _journal.Write($"gpsdo: back on the MQTT broker at {_where}");
+        }
+    }
+
+    /// <summary>Says once, for the life of the feed, that the broker would not let it subscribe.</summary>
+    private void SubscriptionRefused(string what)
+    {
+        lock (_gate)
+        {
+            if (_saidRefused)
+            {
+                return;
+            }
+
+            _saidRefused = true;
+        }
+
+        _journal.WriteError($"gpsdo: the MQTT broker at {_where} refused the subscription: {what}; check the broker's access rules");
+    }
+
+    /// <summary>One MQTT connection: connect, subscribe, pass messages on, and return why it ended.</summary>
+    private async Task<string> MqttSessionAsync(GpsdoConfig config, Action connected, CancellationToken cancel)
+    {
+        GpsdoReference reference = _reference;
         var factory = new MqttClientFactory();
         using IMqttClient client = factory.CreateMqttClient();
         var gone = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -485,7 +627,17 @@ internal sealed class GpsdoFeed
                 subscribe = subscribe.WithTopicFilter(f => f.WithTopic(topic));
             }
 
-            await client.SubscribeAsync(subscribe.Build(), cancel).ConfigureAwait(false);
+            MqttClientSubscribeResult subscribed = await client.SubscribeAsync(subscribe.Build(), cancel).ConfigureAwait(false);
+            string refused = string.Join(", ", subscribed.Items
+                .Where(i => i.ResultCode is not (MqttClientSubscribeResultCode.GrantedQoS0
+                    or MqttClientSubscribeResultCode.GrantedQoS1 or MqttClientSubscribeResultCode.GrantedQoS2))
+                .Select(i => $"{i.TopicFilter.Topic} ({i.ResultCode})"));
+            if (refused.Length > 0)
+            {
+                // Connected but deaf: the verdict stays unknown on its own, and this says why.
+                SubscriptionRefused(refused);
+            }
+
             connected();
             using (cancel.Register(() => gone.TrySetCanceled(cancel)))
             {

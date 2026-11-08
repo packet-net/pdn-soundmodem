@@ -3047,6 +3047,12 @@ public sealed class DaemonConfig
         }
 
         gpsdo.Host = gpsdo.Host.Trim();
+        if (!string.IsNullOrEmpty(gpsdo.Password) && string.IsNullOrEmpty(gpsdo.Username))
+        {
+            throw new InvalidDataException(
+                "\"gpsdo\" has a \"password\" but no \"username\": add the broker username, or remove the password.");
+        }
+
         if (gpsdo.Port is < 1 or > 65535)
         {
             throw new InvalidDataException(

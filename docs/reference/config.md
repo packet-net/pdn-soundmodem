@@ -490,16 +490,17 @@ Watches a GPSDO that disciplines the radio's 10 MHz reference, through a display
 | `host` | string | required | The MQTT broker the display publishes to. |
 | `port` | int | `1883` | The broker's port. |
 | `username` | string | absent: none | The broker username, if it wants one. |
-| `password` | string | absent: none | The broker password. Never served back by the API. |
+| `password` | string | absent: none | The broker password; needs `username`. Never served back by the API, and kept on a save only while `host`, `port` and `username` are unchanged. |
 | `topicPrefix` | string | `"gpsdo"` | The display's topic prefix: it publishes `<prefix>/status` and `<prefix>/state`. |
 
-- The verdict is **OK** when the display's latest report says `reference_ok` true, **unreliable** when it says false, and **unknown** before any report, while the display is offline, when its last report is more than 30 s old, or when `reference_ok` is missing. A retained report from before the station connected does not count until a fresh one arrives.
+- The verdict is **OK** when the display's latest report says `reference_ok` true, **unreliable** when it says false, and **unknown** before any report, while the display is offline, when its last report is more than 30 s old, or when `reference_ok` is missing.
+- A retained report (what the broker hands over on connect) counts as fresh while the display's status is `online`, so a restart just before a mailcast slot does not read unknown. A display that dies has its `offline` last will published within about 1.5 keepalives. With no status yet, a retained report waits for one or for a live report.
 - The station page shows it beside the radio status: green "10 MHz OK", red "10 MHz unreliable" with the display's state text, grey "10 MHz unknown" (hover for why). Never on a public page.
 - One journal line per change, for example `10 MHz reference unreliable: GPS LOST (was OK for 3h12m)`.
 - [`GET /api/txlease`](ports-and-endpoints.md#the-reference-on-the-lease) carries it as `reference`, for the mailcast head end.
 - It holds nothing back: packet frames and everything else still go out while the reference is unreliable.
-- The broker is reconnected by itself, with one line when it goes (`gpsdo: lost the MQTT broker at ...; reconnecting` or `gpsdo: cannot reach the MQTT broker at ...; retrying quietly`) and one when it is back.
-- Refused at load: no `host`, a `port` outside 1 to 65535, a `topicPrefix` that is empty or has `+` or `#` in it, and the section in a monitor file.
+- The broker is reconnected by itself, with one line when it goes (`gpsdo: lost the MQTT broker at ...; reconnecting` or `gpsdo: cannot reach the MQTT broker at ...; retrying quietly`) and one once a connection has lasted a minute (`gpsdo: back on the MQTT broker at ...`). A broker that accepts and drops at once stays quiet and backed off. A broker that refuses the subscription is one line.
+- Refused at load: a `password` without a `username`, no `host`, a `port` outside 1 to 65535, a `topicPrefix` that is empty or has `+` or `#` in it, and the section in a monitor file.
 
 ## `mailcast`
 

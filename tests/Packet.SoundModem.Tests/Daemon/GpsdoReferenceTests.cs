@@ -97,6 +97,7 @@ public sealed class GpsdoReferenceTests : IDisposable
     [InlineData("""{"device": "null", "gpsdo": {"host": "b", "port": 0}}""", "\"gpsdo\".\"port\" is 0")]
     [InlineData("""{"device": "null", "gpsdo": {"host": "b", "topicPrefix": "gpsdo/#"}}""", "\"gpsdo\".\"topicPrefix\"")]
     [InlineData("""{"device": "null", "gpsdo": {"host": "b", "topicPrefix": "/"}}""", "\"gpsdo\".\"topicPrefix\"")]
+    [InlineData("""{"device": "null", "gpsdo": {"host": "b", "password": "p"}}""", "\"gpsdo\" has a \"password\" but no \"username\"")]
     public void A_Section_That_Cannot_Work_Is_Refused_At_Load(string json, string expected)
     {
         (DaemonConfig? config, string error) = Load(json);
@@ -110,7 +111,7 @@ public sealed class GpsdoReferenceTests : IDisposable
     {
         ConfigApi.IsSecret("gpsdo.password").Should().BeTrue();
 
-        const string running = """{"device": "null", "gpsdo": {"host": "a.lan", "password": "pw"}}""";
+        const string running = """{"device": "null", "gpsdo": {"host": "a.lan", "port": 1883, "username": "u", "password": "pw"}}""";
         string served = ConfigApi.Redact(running);
         served.Should().NotContain("pw");
 
@@ -118,6 +119,10 @@ public sealed class GpsdoReferenceTests : IDisposable
         ConfigApi.RestoreHidden(served.Replace("a.lan", "evil.example", StringComparison.Ordinal), running, out string why)
             .Should().BeNull("a moved broker would be sent the password nobody was shown");
         why.Should().Contain("gpsdo.password");
+        ConfigApi.RestoreHidden(served.Replace("1883", "1884", StringComparison.Ordinal), running, out _)
+            .Should().BeNull("another port is another broker");
+        ConfigApi.RestoreHidden(served.Replace("\"u\"", "\"v\"", StringComparison.Ordinal), running, out _)
+            .Should().BeNull("another username is another account");
     }
 
     // ---------------------------------------------------------------- verdict
@@ -148,19 +153,112 @@ public sealed class GpsdoReferenceTests : IDisposable
     }
 
     [Fact]
-    public void A_Retained_State_Alone_Is_Not_A_Report()
+    public void A_Retained_State_Beside_An_Online_Status_Counts_At_Once()
     {
-        // What the broker hands a new subscriber is the display's last word, from whenever. A
-        // display that died without its last will would read as whatever it said last.
+        // A restart just before a mailcast slot: the broker hands over the retained status and
+        // state, and the head end's next look at /api/txlease must not read "unknown".
         using GpsdoReference reference = Reference();
         reference.Receive("gpsdo/status", "online", retained: true);
+        reference.Receive("gpsdo/state", State("LOCKED", true), retained: true);
+
+        reference.Current.State.Should().Be(ReferenceState.Ok);
+
+        _time.Advance(TimeSpan.FromSeconds(31));
+        reference.Current.State.Should().Be(ReferenceState.Unknown, "it ages from when it arrived, like any report");
+    }
+
+    [Fact]
+    public void A_Retained_State_With_No_Status_Waits_For_One()
+    {
+        using GpsdoReference reference = Reference();
         reference.Receive("gpsdo/state", State("LOCKED", true), retained: true);
 
         reference.Current.State.Should().Be(ReferenceState.Unknown);
         reference.Current.Detail.Should().Be("waiting for a fresh report");
 
+        _time.Advance(TimeSpan.FromSeconds(2));
+        reference.Receive("gpsdo/status", "online", retained: true);
+        reference.Current.State.Should().Be(ReferenceState.Ok, "the status vouches for the state that came first");
+
+        _time.Advance(TimeSpan.FromSeconds(29));
+        reference.Current.State.Should().Be(ReferenceState.Unknown, "and it is aged from when the state came, not the status");
+    }
+
+    [Fact]
+    public void A_Retained_State_Beside_An_Offline_Status_Is_Unknown()
+    {
+        using GpsdoReference reference = Reference();
+        reference.Receive("gpsdo/status", "offline", retained: true);
+        reference.Receive("gpsdo/state", State("LOCKED", true), retained: true);
+
+        reference.Current.Detail.Should().Be("display offline");
+    }
+
+    [Fact]
+    public void A_Report_Ages_On_The_Monotonic_Clock_Whatever_The_Wall_Clock_Does()
+    {
+        var clock = new SteppedClock(Noon);
+        using var reference = new GpsdoReference("gpsdo", new StationJournal("", _lines.Add, _errors.Add), clock);
         reference.Receive("gpsdo/state", State("LOCKED", true), retained: false);
-        reference.Current.State.Should().Be(ReferenceState.Ok);
+
+        clock.Step = TimeSpan.FromHours(-1);
+        clock.Advance(TimeSpan.FromSeconds(31));
+
+        reference.Current.State.Should().Be(ReferenceState.Unknown, "a wall clock stepped back does not make a report younger");
+        reference.Current.Detail.Should().Be("last report 31 s old");
+    }
+
+    /// <summary>A clock whose wall time can be stepped without its monotonic time moving.</summary>
+    private sealed class SteppedClock(DateTimeOffset start) : FakeTimeProvider(start)
+    {
+        internal TimeSpan Step { get; set; }
+
+        public override DateTimeOffset GetUtcNow() => base.GetUtcNow() + Step;
+
+        // The monotonic clock is the unstepped one.
+        public override long GetTimestamp() => base.GetUtcNow().UtcTicks;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+    }
+
+    [Fact]
+    public void Verdicts_Reach_The_Page_In_The_Order_They_Were_Reached()
+    {
+        // The timer and the MQTT thread both evaluate. Whatever interleaving they get, the last
+        // thing the page was told must be the verdict as it stands, or the chip is wrong until
+        // the next change, which can be hours.
+        using GpsdoReference reference = Reference();
+        ReferenceVerdict? last = null;
+        reference.Changed += v => last = v;
+
+        Parallel.For(0, 2000, new ParallelOptions { MaxDegreeOfParallelism = 8 }, i =>
+        {
+            reference.Receive("gpsdo/state", i % 2 == 0 ? State("LOCKED", true) : State("GPS LOST", false), retained: false);
+            if (i % 7 == 0)
+            {
+                reference.Evaluate();
+            }
+        });
+
+        reference.Evaluate();
+        ReferenceVerdict now = reference.Current;
+        last.Should().NotBeNull();
+        (last!.State, last.Detail).Should().Be((now.State, now.Detail));
+    }
+
+    [Fact]
+    public void A_Subscriber_That_Throws_Cannot_Take_The_Timer_Down_And_Is_Said_Once()
+    {
+        using GpsdoReference reference = Reference();
+        reference.Changed += _ => throw new InvalidOperationException("page gone");
+
+        reference.Receive("gpsdo/state", State("LOCKED", true), retained: false);
+        _time.Advance(TimeSpan.FromSeconds(31));
+        reference.Receive("gpsdo/state", State("GPS LOST", false), retained: false);
+
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+        _errors.Where(e => e.StartsWith("gpsdo: showing the reference failed", StringComparison.Ordinal))
+            .Should().ContainSingle().Which.Should().Contain("page gone");
     }
 
     [Fact]
@@ -280,7 +378,7 @@ public sealed class GpsdoReferenceTests : IDisposable
     // ---------------------------------------------------------------- the feed
 
     [Fact]
-    public async Task An_Outage_Is_One_Line_However_Many_Retries_And_The_Feed_Comes_Back_By_Itself()
+    public async Task An_Outage_Is_One_Line_However_Many_Retries_Or_Flaps_And_Back_Once_A_Connection_Lasts()
     {
         using GpsdoReference reference = Reference();
         var config = new GpsdoConfig { Host = "broker.lan" };
@@ -288,17 +386,18 @@ public sealed class GpsdoReferenceTests : IDisposable
         var sessionEnds = new TaskCompletionSource<string>();
         using var stop = new CancellationTokenSource();
 
-        // Up, dropped, then refused six times over, then up again for good.
+        // Up and dropped; refused three times; then five connections the broker drops at once,
+        // which are still the same outage; then one that stays.
         Task<string> Session(Action connected, CancellationToken cancel)
         {
             attempts++;
-            if (attempts == 1)
+            if (attempts == 1 || attempts is >= 5 and <= 9)
             {
                 connected();
                 return Task.FromResult("connection reset");
             }
 
-            if (attempts <= 7)
+            if (attempts <= 4)
             {
                 throw new System.Net.Sockets.SocketException(111);
             }
@@ -309,17 +408,17 @@ public sealed class GpsdoReferenceTests : IDisposable
 
         Task running = new GpsdoFeed(config, reference, new StationJournal("", _lines.Add, _errors.Add), _time, Session)
             .RunAsync(stop.Token);
-        for (int i = 0; i < 400 && (Volatile.Read(ref attempts) < 8 || _lines.Count < 2); i++)
+        for (int i = 0; i < 400 && (Volatile.Read(ref attempts) < 10 || _lines.Count < 2); i++)
         {
             await Task.Delay(5);
             _time.Advance(GpsdoFeed.MaxRetry);
         }
 
-        attempts.Should().Be(8);
+        attempts.Should().Be(10);
         _lines.Should().Equal(
             "gpsdo: connected to the MQTT broker at broker.lan:1883",
             "gpsdo: back on the MQTT broker at broker.lan:1883");
-        _errors.Should().HaveCount(1, "one line for the outage, none for its six refused retries");
+        _errors.Should().HaveCount(1, "one line for the outage, none for its refused retries or its flapping");
         _errors[0].Should().Be("gpsdo: lost the MQTT broker at broker.lan:1883 (connection reset); reconnecting");
 
         await stop.CancelAsync();

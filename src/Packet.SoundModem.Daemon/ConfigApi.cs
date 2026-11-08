@@ -509,7 +509,7 @@ internal sealed class ConfigApi
         ("api.key", []),
         ("publish.token", ["publish.url"]),
         ("ubersdr.password", ["device", "monitor.directory"]),
-        ("gpsdo.password", ["gpsdo.host"]),
+        ("gpsdo.password", ["gpsdo.host", "gpsdo.port", "gpsdo.username"]),
     ];
 
     /// <summary>
