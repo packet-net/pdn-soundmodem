@@ -224,6 +224,7 @@ internal static class ConfigKeys
         K("alsa", "Sound card mixer", area: "radio", when: OnKindsOrSet(k => k.HasMixer, "alsa"));
         K("paging", "Paging, POCSAG", area: "software", when: OnKinds(Station));
         K("ardop", "ARDOP, old style", advanced: true, area: "software", when: new ShownWhen(Set: ["ardop"]));
+        K("s5066", "STANAG 5066 node", advanced: true, area: "software", when: OnKinds(k => k.Transmits));
         K("flex", "FlexRadio", area: "radio", when: OnDevice("flex"));
         K("ubersdr", "UberSDR receiver", area: "radio", when: OnDevice("ubersdr", MonitorKind));
         K("openwebrx", "OpenWebRX receiver", area: "radio", when: OnDevice("openwebrx"));
@@ -329,6 +330,10 @@ internal static class ConfigKeys
 
         T("ArdopConfig");
         K("port", "ARDOP command port");
+
+        T("S5066Config");
+        K("port", "SIS port");
+        K("node", "Node settings, M0LTE.S5066 names");
 
         // ------------------------------------------------------------ radios and receivers
         T("FlexConfig");

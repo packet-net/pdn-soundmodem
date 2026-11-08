@@ -25,6 +25,8 @@
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="Jint" />
     <PackageReference Include="Microsoft.Playwright" />
+    <!-- A SIS client, for S5066StationTests to talk to the node an "s5066" section starts. -->
+    <PackageReference Include="M0LTE.S5066.Client" />
   </ItemGroup>
 
   <ItemGroup>

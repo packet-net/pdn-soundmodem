@@ -757,6 +757,32 @@ public sealed class ArdopConfig
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
+/// <summary>
+/// A STANAG 5066 node on this station's channel (<c>"s5066"</c>): the M0LTE.S5066 engine, serving
+/// the Subnetwork Interface (SIS) on a TCP port and sending over the MIL-STD-188-110D waveform.
+/// Null, the default, starts nothing at all. See <see cref="S5066Station"/>.
+/// </summary>
+public sealed class S5066Config
+{
+    /// <summary>The SIS port, on the <c>"bind"</c> address. 5066 is the port the standard names.</summary>
+    public int Port { get; set; } = 5066;
+
+    /// <summary>
+    /// The node's own settings, with M0LTE.S5066's names (<c>local_address</c>, <c>csma</c>,
+    /// <c>cas</c>, <c>drc</c>, <c>dts</c>, <c>sis</c>, <c>groups</c>, <c>prng_seed</c>), merged over
+    /// that package's defaults. Passed to it as written; nothing here renames or adds to them.
+    /// </summary>
+    public JsonElement? Node { get; set; }
+
+    /// <summary>The node settings, read and checked when the file was loaded.</summary>
+    [JsonIgnore]
+    internal M0LTE.S5066.Host.HostConfig? Parsed { get; set; }
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
 /// <summary>Headless FlexRadio slice-creation params (used when Device is
 /// <c>flex:&lt;radio&gt;</c> with no <c>@station</c> - the daemon owns the radio and creates
 /// its own slice). Ignored in attach mode (a <c>@station</c> device string). Defaults match
@@ -1682,6 +1708,10 @@ public sealed class DaemonConfig
     /// with the packet modems; docs/dev/ardop-design.md section 2.2 designed only this one.</summary>
     public ArdopConfig? Ardop { get; set; }
 
+    /// <summary>A STANAG 5066 node on this channel; null = none, which is the default and starts
+    /// nothing. See <see cref="S5066Config"/>.</summary>
+    public S5066Config? S5066 { get; set; }
+
     /// <summary>Headless FlexRadio slice params (Device <c>flex:</c> with no <c>@station</c>);
     /// null = defaults. Ignored for ALSA devices and attach-mode Flex.</summary>
     public FlexConfig? Flex { get; set; }
@@ -1828,6 +1858,12 @@ public sealed class DaemonConfig
         if (config.Monitor is not null)
         {
             ValidateMonitor(config);
+            if (config.S5066 is not null)
+            {
+                throw new InvalidDataException(
+                    "\"s5066\" is for a station with a transmitter, and this file is a monitor site: remove it.");
+            }
+
 
             // Everything below this is about a station: an ARDOP TNC, a KISS port, a dial, a
             // PTT. A monitor has none of them, and letting the station checks run over an empty
@@ -1837,6 +1873,11 @@ public sealed class DaemonConfig
             RequireBind(config);
             config.Warnings = CollectWarnings(config);
             return config;
+        }
+
+        if (config.S5066 is not null)
+        {
+            ValidateS5066(config);
         }
 
         // ARDOP is no longer exclusive with the packet modems: it shares the channel, and the
@@ -2858,6 +2899,7 @@ public sealed class DaemonConfig
         Unknown("txTest", config.TxTest.UnknownSettings);
         Unknown("paging", config.Paging?.UnknownSettings);
         Unknown("ardop", config.Ardop?.UnknownSettings);
+        Unknown("s5066", config.S5066?.UnknownSettings);
         Unknown("flex", config.Flex?.UnknownSettings);
         Unknown("alsa", config.Alsa?.UnknownSettings);
         Unknown("alsa mixer", config.Alsa?.Mixer?.UnknownSettings);
@@ -3077,6 +3119,29 @@ public sealed class DaemonConfig
         }
     }
 
+    /// <summary>
+    /// Reads the <c>"s5066"</c> section's node settings with M0LTE.S5066's own reader, so a
+    /// mistake there is refused when the file is read and not when the node first needs the value.
+    /// </summary>
+    private static void ValidateS5066(DaemonConfig config)
+    {
+        S5066Config section = config.S5066!;
+        if (config.Ardop is not null || config.Modems.Any(m => IsArdop(m.Mode)))
+        {
+            throw new InvalidDataException(
+                "\"s5066\" and ARDOP both run their own channel access and cannot share one channel: "
+                + "give them separate stations, or remove one.");
+        }
+
+        if (section.Port is < 1 or > 65535)
+        {
+            throw new InvalidDataException(
+                $"\"s5066\" has \"port\": {section.Port}: use 1 to 65535, or remove it for 5066.");
+        }
+
+        section.Parsed = S5066Station.ReadNode(section.Node);
+    }
+
     private static void ValidatePorts(DaemonConfig config)
     {
         var claimed = new Dictionary<int, string>();
@@ -3119,6 +3184,11 @@ public sealed class DaemonConfig
         if (config.Paging is not null)
         {
             Claim(config.Paging.Port, "the paging endpoint");
+        }
+
+        if (config.S5066 is not null)
+        {
+            Claim(config.S5066.Port, "the STANAG 5066 SIS port");
         }
 
         if (config.Ardop is not null)

@@ -191,6 +191,7 @@ bool mailcastSectionLeft = false;
 CarrierSenseConfig? carrierSenseConfig = null;
 AlsaConfig? alsaConfig = null;
 PagingConfig? paging = null;
+S5066Config? s5066Config = null;
 FlexConfig? flexConfig = null;
 UberSdrConfig? uberSdrConfig = null;
 OpenWebRxConfig? openWebRxConfig = null;
@@ -284,6 +285,7 @@ if (configPath is not null)
     carrierSenseConfig = config.CarrierSense;
     alsaConfig = config.Alsa;
     paging = config.Paging;
+    s5066Config = config.S5066;
     flexConfig = config.Flex;
     uberSdrConfig = config.UberSdr;
     openWebRxConfig = config.OpenWebRx;
@@ -561,8 +563,12 @@ using var updateCheck = new UpdateCheck(TimeProvider.System, stationJournal.Writ
 // A leftover "mailcast" section still counts as an MS110D modem here, as the removed receiver did,
 // so a station whose other settings were written for the 48 kHz channel (publish.audioRate, say)
 // starts exactly as before.
+// An "s5066" section counts the same way: its MS110D modem runs at 9600 Hz, which only the 48 kHz
+// channel divides.
 if (!StationFactory.TryResolveDspRate(
-        mailcastSectionLeft ? [.. modems, new ModemConfig { Mode = MailcastRetired.RateMode }] : modems,
+        mailcastSectionLeft || s5066Config is not null
+            ? [.. modems, new ModemConfig { Mode = MailcastRetired.RateMode }]
+            : modems,
         stationJournal, out int DspRate))
 {
     return 2;
@@ -2320,6 +2326,35 @@ if (benchTxTest is null && ardopModem is not null)
         + ")");
 }
 await using var ardopLifetime = ardopServer;
+
+// A STANAG 5066 node, only when the file has an "s5066" section; without one nothing here runs,
+// opens or prints. Built before the audio starts, like the ARDOP TNC, because its modem listens
+// on a channel receive tap.
+S5066Station? s5066Station = null;
+if (benchTxTest is null && s5066Config is not null)
+{
+    if (channel.ReceiveOnlyReason is not null)
+    {
+        Console.Error.WriteLine(
+            "s5066: WARNING - this station cannot transmit, so the node only listens and no link will complete");
+    }
+
+    try
+    {
+        s5066Station = S5066Station.Start(channel, s5066Config, listenAddress, Console.WriteLine);
+    }
+    catch (System.Net.Sockets.SocketException bindFailed)
+    {
+        Console.Error.WriteLine($"s5066: cannot listen on port {s5066Config.Port}: {bindFailed.Message}");
+        return 2;
+    }
+
+    string s5066Shown = Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString();
+    Console.WriteLine(
+        $"s5066 sis tcp: {s5066Shown}:{s5066Station.SisEndpoint.Port} (node {s5066Station.Address}, "
+        + $"MIL-STD-188-110D on the {DspRate} Hz channel, busy input from the channel's carrier sense)");
+}
+await using var s5066Lifetime = s5066Station;
 
 // Which sub-channel this station's own service transmissions are filed under in the frame log and
 // the frames panel: the operator's test tone and a POCSAG page, neither of which is a modem's
