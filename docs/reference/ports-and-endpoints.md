@@ -13,7 +13,7 @@ Every TCP listener pdn-soundmodem opens, what each one speaks, and what the jour
 | ARDOP data port | the ardopcf data socket | command port + 1 | always the next port up | length-prefixed blocks |
 | Paging port | POCSAG pages in, pages heard out | `8106` | `paging.port`, `--paging PORT[:BAUD]` | one text line per command |
 | Page port | the station page, its WebSocket, the channel audio stream, the receive window, survey captures, `/metrics`, `/api` | `8107` | `waterfall.port`, `--waterfall` | HTTP and WebSocket |
-| Monitor site | the picker, one page per receiver, `/uplink` | none; must be stated | `waterfall.port` with a `monitor` section | HTTP and WebSocket |
+| Monitor site | the picker, one page per receiver, `/uplink`, and with an `api.key` the settings page at `/config` | none; must be stated | `waterfall.port` with a `monitor` section | HTTP and WebSocket |
 
 Every listener binds to the top-level `bind` (`--bind`), which is `127.0.0.1` by default. `"*"` or `"0.0.0.0"` binds every interface. A `bind` that is not an IP address stops the modem with exit 2. There is no per-listener bind; the `waterfall` section has no `bind` key.
 
@@ -468,7 +468,7 @@ The station journals `publish: live at https://<site>/r/<slug>/` when the `welco
 
 ### The monitor site's routes
 
-A `monitor` section turns the process into a site on `waterfall.port`, which must be stated. It opens no KISS, ARDOP or paging port and serves none of the station's `/api/` endpoints, and no `/metrics` or `/survey/` route; `waterfall.public` is forced true.
+A `monitor` section turns the process into a site on `waterfall.port`, which must be stated. It opens no KISS, ARDOP or paging port and serves none of the station's `/api/` endpoints bar the five that edit the configuration (below), and no `/metrics` or `/survey/` route; `waterfall.public` is forced true.
 
 | Route | Method | Serves |
 |---|---|---|
@@ -478,7 +478,11 @@ A `monitor` section turns the process into a site on `waterfall.port`, which mus
 | `/r/<slug>` | `GET`, `HEAD` | a redirect to `/r/<slug>/` with the query string kept |
 | `/r/<slug>/`, `/r/<slug>/links`, `/r/<slug>/ws` | as the station page | that receiver's station page, links pane and WebSocket, built on the first request |
 | `/uplink` | WebSocket | above |
+| `/config` | `GET`, `HEAD` | the settings page, only when the file has an `api.key` |
+| `/api/config`, `/api/config/schema`, `/api/config/plan`, `/api/config/history`, `/api/config/history/ID` | as on a station | the same configuration API a station has, only when the file has an `api.key`, and then every request but the page and `schema` must present it. The site's root only, never under `/r/<slug>/` |
 | anything else | | 404 |
+
+A site has no open configuration: with no `api.key` the five configuration paths are a 404 whatever `bind` is. `/api/config/discover` (which looks at this machine's hardware), the rig, the transmitter and the mixer are not served on a site at all, key or not. A change POSTed to `/api/config` is checked with the checks start-up makes, including that every modem has an `rfFrequency`, and applied by exiting 1 for systemd to restart, as on a station.
 
 A slug is the `monitor.uplinks[].slug` of a relayed station, or the directory's slug for a listed web receiver. A slug the site does not offer is a 404.
 

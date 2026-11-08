@@ -192,6 +192,24 @@
   .choice span { color: var(--muted); font-size: 12.5px; }
 
 
+  /* ---------------------------------------------------------- a monitor site */
+  .site-about p { margin-bottom: 6px; color: var(--ink); }
+  .rxlist { grid-column: 1 / -1; max-height: 340px; overflow: auto; border: 1px solid var(--edge); border-radius: 5px; background: #0d1117; }
+  .rxlist > p { padding: 10px 12px; font-size: 13.5px; }
+  .rx { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--edge); }
+  .rx:first-child { border-top: 0; }
+  .rx .who { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .rx .who b { font-weight: 600; font-family: var(--mono); font-size: 13px; }
+  .rx .who small { display: block; color: var(--muted); font-size: 12.5px; }
+  .rx .btn.on { border-color: var(--amber); color: var(--amber); }
+  #receivers-filter { width: 100%; }
+  .token-row { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; padding: 0 16px 14px; font-size: 13px; }
+  .newtoken { margin: 0 16px 16px; padding: 12px 14px; border: 1px solid var(--amber); border-radius: 6px; background: #17130c; }
+  .newtoken .tokentext { display: block; margin: 8px 0; padding: 8px 10px; background: #0d1117; border: 1px solid var(--edge); border-radius: 5px;
+                         font-size: 13px; color: var(--ink); overflow-wrap: anywhere; user-select: all; }
+  .newtoken .tokenwarn { color: var(--warn); font-size: 13.5px; margin-bottom: 10px; }
+  .newtoken .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
   /* ---------------------------------------------------------- found on this machine */
   .found { margin-bottom: 18px; }
   .found .lead { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; font-size: 13.5px; color: var(--muted); margin-bottom: 10px; }
@@ -290,7 +308,7 @@
 <div id="loading">Loading the configuration...</div>
 
 <form id="login" hidden>
-  <p>This station has an <code>api.key</code>. Enter it to read and change the configuration.</p>
+  <p>Enter the <code>api.key</code> to read and change the configuration.</p>
   <input type="password" id="key" autocomplete="current-password" placeholder="api key" autofocus>
   <p id="login-error" class="bad" hidden></p>
   <button class="btn primary" type="submit">Unlock</button>
@@ -651,13 +669,293 @@ var ConfigModel = (function () {
       out[order[i].id] = { id: order[i].id, title: order[i].title, fields: [], sections: [], unknown: [] };
     }
     var nodes = plan(schema, schema.root, doc, "");
+    var site = isSet(get(doc, "monitor"));
     nodes.forEach(function (n) {
       if (n.node === "unknown") { out.advanced.unknown.push(n); return; }
+      if (site && placeForMonitor(out, n)) return;
       var id = n.key.area || "advanced";
+      // A monitor site has none of the station's areas: what a file sets of them is kept under
+      // Advanced, where it is shown but not offered.
+      if (site && id !== "advanced" && id.indexOf("monitor") !== 0) id = "advanced";
       if (!out[id]) out[id] = { id: id, title: id, fields: [], sections: [], unknown: [] };
       (n.node === "field" ? out[id].fields : out[id].sections).push(n);
     });
     return out;
+  }
+
+  // ---------------------------------------------------------------- monitor sites
+  // A file with a monitor section is a site, and the page shows it in five areas of its own
+  // instead of the station's. The settings are the same keys in the same file; only where the page
+  // puts them differs, so this is a table and not a second schema.
+  var MONITOR_AREAS = ["monitor", "monitor-modems", "monitor-uplinks", "monitor-site", "monitor-logging"];
+
+  // Where the keys inside "monitor" go; any not named here go with the receivers.
+  var MONITOR_INSIDE = { publicurl: "monitor-site", modems: "monitor-modems", uplinks: "monitor-uplinks" };
+
+  // Where the top-level keys a site reads go. "more" keeps a key behind More: a site rarely
+  // wants the dial or the sideband said, because the band plan works them out from the modems.
+  var MONITOR_OUTSIDE = {
+    ubersdr: { area: "monitor" },
+    waterfall: { area: "monitor-site", flat: true },
+    api: { area: "monitor-site" },
+    bind: { area: "monitor-site", more: true },
+    frameLog: { area: "monitor-logging" },
+    sideband: { area: "monitor-modems", more: true },
+    dialFrequency: { area: "monitor-modems", more: true }
+  };
+
+  function flatSection(n, children) {
+    return { node: "section", flat: true, path: n.path, key: n.key, present: n.present, children: children,
+             set: n.set, applies: true, shown: true, inactive: false };
+  }
+
+  // Puts one top-level node of a monitor's document into its area. False when it has no place of
+  // its own on a site, and so goes to Advanced.
+  function placeForMonitor(out, n) {
+    var name = n.key.name;
+    if (name.toLowerCase() === "monitor" && n.node === "section") {
+      var by = {};
+      n.children.forEach(function (c) {
+        var id = c.key ? MONITOR_INSIDE[c.key.name.toLowerCase()] || "monitor" : "monitor";
+        (by[id] = by[id] || []).push(c);
+      });
+      Object.keys(by).forEach(function (id) { out[id].sections.push(flatSection(n, by[id])); });
+      return true;
+    }
+    var at = null;
+    for (var k in MONITOR_OUTSIDE) if (k.toLowerCase() === name.toLowerCase()) at = MONITOR_OUTSIDE[k];
+    if (!at) return false;
+    if (at.more) n.moreHere = true;
+    if (at.flat) out[at.area].sections.push(flatSection(n, n.children));
+    else (n.node === "field" ? out[at.area].fields : out[at.area].sections).push(n);
+    return true;
+  }
+
+  // The nodes an area has to draw, with a site's flat sections opened out into their keys.
+  function drawable(group) {
+    var fields = [], sections = [];
+    function add(n) {
+      if (n.flat) { n.children.forEach(add); return; }
+      (n.node === "field" ? fields : sections).push(n);
+    }
+    group.fields.concat(group.sections).forEach(add);
+    return { fields: fields, sections: sections };
+  }
+
+  // The area a path of a site's document belongs to, or null when it is not one of the site's.
+  function monitorAreaOf(parts) {
+    if (typeof parts[0] !== "string") return null;
+    var top = parts[0].toLowerCase();
+    if (top === "monitor") {
+      return (typeof parts[1] === "string" && MONITOR_INSIDE[parts[1].toLowerCase()]) || "monitor";
+    }
+    for (var k in MONITOR_OUTSIDE) if (k.toLowerCase() === top) return MONITOR_OUTSIDE[k].area;
+    return null;
+  }
+
+  function defaultOf(schema, typeName, name) {
+    var keys = schema.types[typeName].keys;
+    for (var i = 0; i < keys.length; i++) if (keys[i].name === name) return keys[i]["default"];
+    return undefined;
+  }
+
+  function plural(n, one, many) { return n + " " + (n === 1 ? one : many || one + "s"); }
+
+  function hostOf(url) {
+    var m = /^[a-z][a-z0-9+.-]*:\/\/([^\/?#]+)/i.exec(String(url));
+    return m ? m[1] : String(url);
+  }
+
+  // One modem as a site says it: "Binary PSK 300 at 7.050300 MHz".
+  function monitorModemWords(schema, m) {
+    var info = modeInfo(schema, get(m, "mode"));
+    var rf = get(m, "rfFrequency");
+    return (info ? info.name : String(get(m, "mode"))) + (typeof rf === "number" ? " at " + mhzText(rf) + " MHz" : " with no frequency yet");
+  }
+
+  function monitorModems(doc) {
+    var m = get(get(doc, "monitor") || {}, "modems");
+    return Array.isArray(m) ? m : [];
+  }
+
+  function monitorUplinks(doc) {
+    var u = get(get(doc, "monitor") || {}, "uplinks");
+    return Array.isArray(u) ? u : [];
+  }
+
+  // Plain sentences about the whole site, for the top of the overview.
+  function monitorOverview(schema, doc) {
+    var site = get(doc, "monitor") || {};
+    var out = ["This is a monitor site: a public page that lists web receivers and lets anyone watch one decoding packet radio. It only listens; it transmits nothing."];
+    var modems = monitorModems(doc);
+    out.push(modems.length === 0
+      ? "No modems are set yet, so it has nothing to decode. Add one under Modems."
+      : "Every receiver it opens runs " + plural(modems.length, "modem") + ": "
+        + modems.map(function (m) { return monitorModemWords(schema, m); }).join(", ") + ".");
+    var dir = get(site, "directory");
+    out.push("Receivers come from " + hostOf(isSet(dir) ? dir : defaultOf(schema, "MonitorConfig", "directory")) + ".");
+    var uplinks = monitorUplinks(doc);
+    out.push(uplinks.length === 0
+      ? "No private stations may publish here."
+      : plural(uplinks.length, "private station") + " may publish here: "
+        + uplinks.map(function (u) { return get(u, "callsign") || "(no callsign yet)"; }).join(", ") + ".");
+    var pub = get(site, "publicUrl");
+    if (isSet(pub)) out.push("Visitors reach it at " + pub + ".");
+    out.push("This settings page is open only with the access key.");
+    return out;
+  }
+
+  // What one of a site's areas has set, in plain sentences: the overview's line for it.
+  function monitorSummary(schema, doc, id) {
+    var site = get(doc, "monitor") || {};
+    var out = [];
+    function num(name) { var v = get(site, name); return v === undefined || v === null ? defaultOf(schema, "MonitorConfig", name) : v; }
+    if (id === "monitor") {
+      var dir = get(site, "directory");
+      out.push("Receivers come from " + hostOf(isSet(dir) ? dir : defaultOf(schema, "MonitorConfig", "directory"))
+        + ", fetched again every " + plural(num("refreshMinutes"), "minute") + ". A receiver stays connected "
+        + plural(num("lingerSeconds"), "second") + " after its last viewer leaves.");
+      var allow = get(site, "allow") || [], deny = get(site, "deny") || [];
+      if (allow.length > 0) out.push("Only " + plural(allow.length, "receiver") + " may be listed.");
+      if (deny.length > 0) out.push(plural(deny.length, "receiver") + " never listed.");
+    } else if (id === "monitor-modems") {
+      var modems = monitorModems(doc);
+      out.push(modems.length === 0 ? "No modems yet."
+        : modems.map(function (m) { return monitorModemWords(schema, m); }).join(". ") + ".");
+    } else if (id === "monitor-uplinks") {
+      var uplinks = monitorUplinks(doc);
+      out.push(uplinks.length === 0 ? "No private station may publish here."
+        : plural(uplinks.length, "station") + ": " + uplinks.map(function (u) {
+            return (get(u, "callsign") || "(no callsign)") + (isSet(get(u, "slug")) ? " at /r/" + get(u, "slug") + "/" : "");
+          }).join(", ") + ".");
+    } else if (id === "monitor-site") {
+      var wf = get(doc, "waterfall") || {};
+      out.push((isSet(get(wf, "title")) ? "Titled \"" + get(wf, "title") + "\". " : "No title set. ")
+        + "Served on port " + (get(wf, "port") === undefined ? "?" : get(wf, "port")) + ".");
+      if (isSet(get(site, "publicUrl"))) out.push("Public address " + get(site, "publicUrl") + ".");
+    } else if (id === "monitor-logging") {
+      var fl = get(doc, "frameLog");
+      out.push(isSet(fl) && isSet(get(fl, "path"))
+        ? "Heard frames are kept in " + get(fl, "path") + ", one file for each receiver."
+        : "Heard frames are not kept.");
+    }
+    return out;
+  }
+
+  // ---- uplink tokens
+  // What the daemon's own --uplink-token makes: "pdnsm_" and 256 random bits as URL-safe base64
+  // without padding, and the lower-case hex SHA-256 of those characters. The page makes them
+  // itself so a token never leaves the browser; it holds only the hash, in the file it edits. The hash
+  // is worked out here, in plain script, because crypto.subtle is missing on a page served over
+  // plain http, which is how most of these are opened.
+  var B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  var TOKEN_PREFIX = "pdnsm_";
+
+  function tokenFromBytes(bytes) {
+    var out = "";
+    for (var i = 0; i < bytes.length; i += 3) {
+      var a = bytes[i], b = i + 1 < bytes.length ? bytes[i + 1] : 0, c = i + 2 < bytes.length ? bytes[i + 2] : 0;
+      out += B64URL.charAt(a >> 2) + B64URL.charAt(((a & 3) << 4) | (b >> 4));
+      if (i + 1 < bytes.length) out += B64URL.charAt(((b & 15) << 2) | (c >> 6));
+      if (i + 2 < bytes.length) out += B64URL.charAt(c & 63);
+    }
+    return TOKEN_PREFIX + out;
+  }
+
+  function utf8Bytes(text) {
+    var out = [];
+    for (var i = 0; i < text.length; i++) {
+      var c = text.charCodeAt(i);
+      if (c >= 0xd800 && c < 0xdc00 && i + 1 < text.length) {
+        c = 0x10000 + ((c - 0xd800) << 10) + (text.charCodeAt(++i) - 0xdc00);
+      }
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+      else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    }
+    return out;
+  }
+
+  var SHA_K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+  ];
+
+  function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
+
+  // SHA-256 of a string's UTF-8 bytes, as 64 lower-case hex characters.
+  function sha256Hex(text) {
+    var bytes = utf8Bytes(text);
+    var bits = bytes.length * 8;
+    bytes.push(0x80);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    for (var s = 7; s >= 0; s--) bytes.push(s >= 4 ? 0 : (bits >>> (s * 8)) & 255);
+    var h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    var w = new Array(64);
+    for (var off = 0; off < bytes.length; off += 64) {
+      for (var t = 0; t < 16; t++) {
+        w[t] = ((bytes[off + t * 4] << 24) | (bytes[off + t * 4 + 1] << 16) | (bytes[off + t * 4 + 2] << 8) | bytes[off + t * 4 + 3]) | 0;
+      }
+      for (t = 16; t < 64; t++) {
+        var s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+        var s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+        w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
+      }
+      var a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+      for (t = 0; t < 64; t++) {
+        var t1 = (hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + SHA_K[t] + w[t]) | 0;
+        var t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+        hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+      }
+      h[0] = (h[0] + a) | 0; h[1] = (h[1] + b) | 0; h[2] = (h[2] + c) | 0; h[3] = (h[3] + d) | 0;
+      h[4] = (h[4] + e) | 0; h[5] = (h[5] + f) | 0; h[6] = (h[6] + g) | 0; h[7] = (h[7] + hh) | 0;
+    }
+    return h.map(function (x) { return ("00000000" + (x >>> 0).toString(16)).slice(-8); }).join("");
+  }
+
+  // The page address a callsign gets, as the daemon works it out: lower case, every run of other
+  // characters one hyphen, none at either end ("GB7RDG-2" is "gb7rdg-2").
+  function slugFor(callsign) {
+    return String(callsign).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  }
+
+  // The receivers the directory lists, from api/instances, as pick-list rows. Stations that
+  // publish here are in the same list and are not receivers.
+  function receiverRows(answer) {
+    var rows = answer && Array.isArray(answer.receivers) ? answer.receivers : [];
+    return rows.filter(function (r) { return r && r.kind === "receiver" && r.host; }).map(function (r) {
+      var who = [r.callsign, r.location].filter(function (x) { return x; }).join(", ");
+      return { host: String(r.host), who: who, offered: r.offered !== false };
+    });
+  }
+
+  // A host added to a list of hosts, or taken out of it, in the order it was in. Case does not
+  // matter to the daemon, so it does not here.
+  function hostToggled(list, host) {
+    var out = [], had = false;
+    (Array.isArray(list) ? list : []).forEach(function (h) {
+      if (String(h).toLowerCase() === host.toLowerCase()) had = true; else out.push(h);
+    });
+    if (!had) out.push(host);
+    return out;
+  }
+
+  function hostListed(list, host) {
+    return (Array.isArray(list) ? list : []).some(function (h) { return String(h).toLowerCase() === host.toLowerCase(); });
+  }
+
+  // Whether a change takes the settings page away from a site: it has one now (a key is set) and
+  // the document has none.
+  function siteLosesPage(loaded, doc) {
+    return isSet(get(doc, "monitor")) && isSet(get(get(loaded, "api") || {}, "key"))
+      && !isSet(get(get(doc, "api") || {}, "key"));
   }
 
   function labelOf(key) { return key.label || key.name; }
@@ -755,7 +1053,8 @@ var ConfigModel = (function () {
     var modem = /\bmodem (\d+)\b/i.exec(problem);
     var modemAt = null;
     if (modem) {
-      var list = get(doc, "modems");
+      var site = isSet(get(doc, "monitor"));
+      var list = site ? monitorModems(doc) : get(doc, "modems");
       if (Array.isArray(list)) {
         for (var m = 0; m < list.length; m++) {
           if (list[m] && Number(get(list[m], "subChannel") === undefined ? 0 : get(list[m], "subChannel")) === Number(modem[1])) { modemAt = m; break; }
@@ -786,7 +1085,8 @@ var ConfigModel = (function () {
     }
 
     function inModem(name) {
-      return modemAt !== null && find("ModemConfig", name) ? "modems[" + modemAt + "]." + find("ModemConfig", name).name : null;
+      return modemAt !== null && find("ModemConfig", name)
+        ? (isSet(get(doc, "monitor")) ? "monitor.modems[" : "modems[") + modemAt + "]." + find("ModemConfig", name).name : null;
     }
 
     var quoted = problem.match(/"[A-Za-z][A-Za-z0-9.]*"(?:\."[A-Za-z][A-Za-z0-9]*")*/g) || [];
@@ -807,8 +1107,12 @@ var ConfigModel = (function () {
   }
 
   // The area a path belongs to: the area of its top-level key.
-  function areaOf(schema, path) {
+  function areaOf(schema, path, doc) {
     var parts = splitPath(path);
+    if (doc && isSet(get(doc, "monitor"))) {
+      var site = monitorAreaOf(parts);
+      if (site) return site;
+    }
     var keys = schema.types[schema.root].keys;
     for (var i = 0; i < keys.length; i++) {
       if (parts.length > 0 && typeof parts[0] === "string" && keys[i].name.toLowerCase() === parts[0].toLowerCase()) {
@@ -842,6 +1146,7 @@ var ConfigModel = (function () {
   // A plain sentence or two for the overview: what an area has set, with nothing worked out
   // from what the settings mean. (Sentences that do are for a later phase.)
   function summary(schema, doc, areaId) {
+    if (isSet(get(doc, "monitor")) && MONITOR_AREAS.indexOf(areaId) >= 0) return monitorSummary(schema, doc, areaId);
     var group = areas(schema, doc)[areaId];
     if (!group) return [];
     var facts = [];
@@ -1596,6 +1901,9 @@ var ConfigModel = (function () {
     parentOf: parentOf, diff: diff, fullDocument: fullDocument, newItem: newItem,
     isSet: isSet, deviceKind: deviceKind, areas: areas, labelOf: labelOf, itemOf: itemOf,
     docPath: docPath, describePath: describePath, problemText: problemText,
+    drawable: drawable, monitorOverview: monitorOverview, monitorModems: monitorModems, monitorUplinks: monitorUplinks,
+    tokenFromBytes: tokenFromBytes, sha256Hex: sha256Hex, slugFor: slugFor, receiverRows: receiverRows,
+    hostToggled: hostToggled, hostListed: hostListed, siteLosesPage: siteLosesPage, monitorAreas: MONITOR_AREAS,
     locateIssue: locateIssue, areaOf: areaOf, pageMove: pageMove, becomesMonitor: becomesMonitor, secretWords: secretWords, changedLabels: changedLabels, summary: summary,
     mhzText: mhzText, mhzFromText: mhzFromText, snap: snap, toneHz: toneHz, dragTo: dragTo,
     keyDelta: keyDelta, keyMove: keyMove, dragMoved: dragMoved, blockLimits: blockLimits, layoutLimits: layoutLimits, nudged: nudged, freeCentre: freeCentre, nextSubChannel: nextSubChannel,
@@ -1627,7 +1935,11 @@ var ConfigModel = (function () {
     software: "The ports your node and BBS software connect to.",
     sharing: "The station page, who may change settings, what is kept, and whether this station is shown on a public monitor.",
     advanced: "Settings most stations never touch.",
-    monitor: "This file runs a monitor site rather than a station."
+    monitor: "Which web receivers this site offers, and how it connects to them. It opens a receiver only while someone is watching it.",
+    "monitor-modems": "Every receiver runs these modems. Each needs a radio frequency, because a web receiver is tuned from the band plan they make. Drag a block on the band, or type the frequency.",
+    "monitor-uplinks": "Private stations that may publish to this site. Each gets its own token, and the site keeps only a fingerprint of it.",
+    "monitor-site": "How the site's page looks to visitors, and where it is served.",
+    "monitor-logging": "A log of every frame heard, kept for each receiver."
   };
 
   var schema = null;     // what /api/config/schema served
@@ -1648,6 +1960,9 @@ var ConfigModel = (function () {
   var $ = function (id) { return document.getElementById(id); };
 
   function key() { return sessionStorage.getItem(KEY_STORE) || ""; }
+
+  // Whether the document being edited is a monitor site rather than a station.
+  function isSite() { return !!doc && M.isSet(M.get(doc, "monitor")); }
 
   function api(path, options) {
     options = options || {};
@@ -1754,9 +2069,11 @@ var ConfigModel = (function () {
   // ---------------------------------------------------------------- routes
   function route() {
     var id = location.hash.replace(/^#/, "");
+    // Setup is for a station's radio and keying: a site has no such steps.
+    if (id === "setup" && isSite()) return "overview";
     if (id === "history" || id === "text" || id === "overview" || id === "setup") return id;
     var list = schema ? schema.areas : [];
-    for (var i = 0; i < list.length; i++) if (list[i].id === id) return id;
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return !doc || present(id) ? id : "overview";
     return "overview";
   }
 
@@ -1964,6 +2281,7 @@ var ConfigModel = (function () {
     if (!inSetup && setup.active && setup.phase === "steps") leaveSetup();
     document.body.classList.toggle("setup-mode", inSetup);
     $("mode-word").textContent = inSetup ? "setup" : "settings";
+    $("station-link").textContent = isSite() ? "Site page" : "Station page";
     $("skip-setup").hidden = !(inSetup && setup.phase === "steps");
     $("edit-text").hidden = inSetup;
     if (!(inSetup && (setup.phase === "done" || (setup.phase === "steps" && setup.step === "keying")))) closeStation();
@@ -1978,12 +2296,15 @@ var ConfigModel = (function () {
   }
 
   function present(areaId) {
-    // The monitor area is for monitor sites; a station never sees it.
-    return areaId !== "monitor" || M.isSet(M.get(doc, "monitor"));
+    // The monitor areas are for monitor sites, and a site has no other kind: a station never
+    // sees the first and a site never sees the rest (what a site's file sets of them is under Advanced).
+    var site = isSite();
+    if (areaId.indexOf("monitor") === 0) return site;
+    return !site || areaId === "advanced";
   }
 
   function issueArea() {
-    return check.state === "bad" && check.path ? M.areaOf(schema, check.path) : null;
+    return check.state === "bad" && check.path ? M.areaOf(schema, check.path, doc) : null;
   }
 
   function renderNav() {
@@ -2004,13 +2325,15 @@ var ConfigModel = (function () {
     link("overview", "Overview");
     schema.areas.forEach(function (a) {
       if (a.id === "advanced" || !present(a.id)) return;
-      var n = a.id === "modes" ? ((M.get(doc, "modems") || []).length) : 0;
+      var n = a.id === "modes" ? ((M.get(doc, "modems") || []).length)
+        : a.id === "monitor-modems" ? M.monitorModems(doc).length
+        : a.id === "monitor-uplinks" ? M.monitorUplinks(doc).length : 0;
       link(a.id, a.title, n, bad === a.id);
     });
     nav.appendChild(el("hr"));
     link("advanced", "Advanced", 0, bad === "advanced");
     link("history", "Earlier versions", history.list ? history.list.length : 0);
-    link("setup", "Run setup again");
+    if (!isSite()) link("setup", "Run setup again");
   }
 
   function renderMain(at) {
@@ -2026,15 +2349,39 @@ var ConfigModel = (function () {
     else if (at === "text") drawText(root);
     else if (at === "setup") drawSetup(root);
     else drawArea(root, at);
-    if (at === "modes" || (at === "setup" && setup.step === "modes" && setup.phase === "steps")) { paintPlan(); schedulePlan(true); }
+    if (onModes() || (at === "setup" && setup.step === "modes" && setup.phase === "steps")) { paintPlan(); schedulePlan(true); }
   }
 
   // ---------------------------------------------------------------- overview
   function drawOverview(root) {
+    if (isSite()) { drawSiteOverview(root); return; }
     root.appendChild(el("h1", null, "Your station"));
     root.appendChild(el("p", "lede", "What this station is set up to do, in one place. Each area opens the settings behind it."));
     schema.areas.forEach(function (a) {
       if (!present(a.id)) return;
+      var row = el("div", "area");
+      row.id = "overview-" + a.id;
+      row.appendChild(el("h2", null, a.title));
+      var body = el("div");
+      M.summary(schema, doc, a.id).forEach(function (line, i) { body.appendChild(el("p", i === 0 ? null : "sub", line)); });
+      row.appendChild(body);
+      var change = el("a", "edit", "Change");
+      change.id = "change-" + a.id;
+      change.href = "#" + a.id;
+      row.appendChild(change);
+      root.appendChild(row);
+    });
+  }
+
+  // A site's overview: what the site is, in sentences, and then each of its areas.
+  function drawSiteOverview(root) {
+    root.appendChild(el("h1", null, "Your monitor site"));
+    var lede = el("div", "lede site-about");
+    lede.id = "site-about";
+    M.monitorOverview(schema, doc).forEach(function (line) { lede.appendChild(el("p", null, line)); });
+    root.appendChild(lede);
+    schema.areas.forEach(function (a) {
+      if (a.id.indexOf("monitor") !== 0) return;
       var row = el("div", "area");
       row.id = "overview-" + a.id;
       row.appendChild(el("h2", null, a.title));
@@ -2058,12 +2405,16 @@ var ConfigModel = (function () {
     if (!group) return;
     var all = areaId === "advanced";
     var shown = function (n) { return n.shown; };
-    var fields = group.fields.filter(shown);
-    var sections = group.sections.filter(shown);
-    var basicFields = fields.filter(function (n) { return all || !n.key.advanced; });
-    var moreFields = fields.filter(function (n) { return !all && n.key.advanced; });
-    var basicSections = sections.filter(function (n) { return all || !n.key.advanced; });
-    var moreSections = sections.filter(function (n) { return !all && n.key.advanced; });
+    // A site's keys come in sections of their own that are opened out here, and some are kept
+    // behind More whatever the key says.
+    var drawn = M.drawable(group);
+    var fields = drawn.fields.filter(shown);
+    var sections = drawn.sections.filter(shown);
+    var tucked = function (n) { return !all && (n.moreHere || (n.key && n.key.advanced)); };
+    var basicFields = fields.filter(function (n) { return !tucked(n); });
+    var moreFields = fields.filter(tucked);
+    var basicSections = sections.filter(function (n) { return !tucked(n); });
+    var moreSections = sections.filter(tucked);
 
     if (basicFields.length === 0 && basicSections.length === 0 && moreFields.length === 0
         && moreSections.length === 0 && group.unknown.length === 0) {
@@ -2081,6 +2432,7 @@ var ConfigModel = (function () {
       if (found.state === "idle") look(false);
     }
     if (basicFields.length > 0) root.appendChild(fieldsCard(basicFields));
+    if (areaId === "monitor") root.appendChild(drawReceivers());
     basicSections.forEach(function (n) { root.appendChild(drawNode(n)); });
     group.unknown.forEach(function (n) {
       root.appendChild(el("p", "muted", "Not settings this version knows, kept as they are: " + n.names.join(", ")
@@ -2148,7 +2500,8 @@ var ConfigModel = (function () {
     switch (n.node) {
       case "field": return drawField(n);
       case "section": return drawSection(n);
-      case "list": return n.path === "modems" ? drawModems(n) : drawList(n);
+      case "list": return isModemList(n.path) ? drawModems(n)
+        : n.path === "monitor.uplinks" ? drawList(n, uplinkExtras) : drawList(n);
       case "unknown": {
         var u = el("div", "unknown");
         u.textContent = "Not settings this version knows, kept as they are: " + n.names.join(", ")
@@ -2243,7 +2596,7 @@ var ConfigModel = (function () {
     edited(true);
   }
 
-  function drawList(n) {
+  function drawList(n, extras) {
     var wrap = el("div");
     var noun = M.itemOf(n.key);
     var id = idFor(n.path);
@@ -2275,6 +2628,7 @@ var ConfigModel = (function () {
       var body = el("div", "body");
       fillBody(body, item.children, item.path);
       card.appendChild(body);
+      if (extras) extras(card, item, i);
       wrap.appendChild(card);
     });
     var add = el("button", "add", "Add a " + noun);
@@ -2289,6 +2643,224 @@ var ConfigModel = (function () {
     });
     wrap.appendChild(add);
     return wrap;
+  }
+
+  // ---------------------------------------------------------------- a monitor site: receivers and uplinks
+  // What api/instances said, once: it is the daemon's cached copy of the directory, so asking
+  // again would show the same list until the site's next fetch.
+  var directory = { state: "idle", rows: [], error: "", filter: "" };
+
+  function fetchDirectory(again) {
+    if (directory.state === "loading" || (directory.state === "done" && !again)) return;
+    directory.state = "loading";
+    paintReceivers();
+    fetch("api/instances").then(function (r) {
+      if (!r.ok) throw new Error("the site answered " + r.status);
+      return r.json();
+    }).then(function (answer) {
+      directory.rows = M.receiverRows(answer);
+      directory.error = answer.problem ? String(answer.problem) : "";
+      directory.state = "done";
+      paintReceivers();
+    }).catch(function (e) {
+      directory.state = "failed";
+      directory.error = e.message;
+      paintReceivers();
+    });
+  }
+
+  function siteList(name) {
+    var v = M.valueAt(doc, "monitor." + name);
+    return Array.isArray(v) ? v : [];
+  }
+
+  // Adds a host to one of the lists, or takes it off. A list left empty is taken out of the file.
+  function toggleHost(name, host) {
+    var next = M.hostToggled(siteList(name), host);
+    var at = M.parentOf(doc, "monitor." + name, true);
+    if (next.length === 0) M.remove(at.obj, at.last); else M.set(at.obj, at.last, next);
+    edited(true);
+  }
+
+  // The pick list for the allow and deny lists: the receivers the directory lists, read-only.
+  function drawReceivers() {
+    var card = el("div", "card");
+    card.id = "receivers";
+    var head = el("div", "head");
+    head.appendChild(el("span", "name", "Receivers in the directory"));
+    head.appendChild(el("span", "spacer"));
+    head.appendChild(smallButton("receivers-refresh", "Look again", function () { fetchDirectory(true); }));
+    card.appendChild(head);
+    var intro = el("div", "intro", "This is the list the site fetched, as visitors see it. Allow keeps a short list of receivers; Never hides one. Neither changes the lists above until you apply.");
+    card.appendChild(intro);
+    var body = el("div", "body");
+    var filter = el("input");
+    filter.type = "search";
+    filter.id = "receivers-filter";
+    filter.placeholder = "Filter by host, callsign or place";
+    filter.value = directory.filter;
+    filter.setAttribute("aria-label", "Filter the receivers");
+    var box = el("div", "input");
+    box.appendChild(filter);
+    var field = el("div", "field wide");
+    field.appendChild(box);
+    body.appendChild(field);
+    var list = el("div", "rxlist");
+    list.id = "receivers-list";
+    body.appendChild(list);
+    card.appendChild(body);
+    filter.addEventListener("input", function () { directory.filter = filter.value; paintReceivers(); });
+    setTimeout(function () { fetchDirectory(false); paintReceivers(); }, 0);
+    return card;
+  }
+
+  function paintReceivers() {
+    var list = $("receivers-list");
+    if (!list) return;
+    list.textContent = "";
+    var rows = directory.rows.slice();
+    // A host the lists name that the directory does not list now still gets a row, so it can be
+    // taken off again.
+    siteList("allow").concat(siteList("deny")).forEach(function (h) {
+      if (!rows.some(function (r) { return r.host.toLowerCase() === String(h).toLowerCase(); })) {
+        rows.push({ host: String(h), who: "not in the directory now", offered: false });
+      }
+    });
+    if (directory.state === "loading" && rows.length === 0) { list.appendChild(el("p", "muted", "Asking the site for its list...")); return; }
+    if (directory.state === "failed") list.appendChild(el("p", "muted", "Could not read the site's list: " + directory.error));
+    else if (directory.error) list.appendChild(el("p", "muted", "The directory has not answered lately (" + directory.error + "). This is the last list the site had."));
+    var needle = directory.filter.trim().toLowerCase();
+    var shown = rows.filter(function (r) { return needle === "" || (r.host + " " + r.who).toLowerCase().indexOf(needle) >= 0; });
+    if (shown.length === 0) {
+      if (directory.state === "done") list.appendChild(el("p", "muted", rows.length === 0 ? "The site has no receivers listed yet." : "No receiver matches."));
+      return;
+    }
+    shown.forEach(function (r) {
+      var row = el("div", "rx");
+      var who = el("div", "who");
+      who.appendChild(el("b", null, r.host));
+      if (r.who) who.appendChild(el("small", null, r.who));
+      row.appendChild(who);
+      [["allow", "Allow"], ["deny", "Never"]].forEach(function (c) {
+        var on = M.hostListed(siteList(c[0]), r.host);
+        var b = el("button", "btn small" + (on ? " on" : ""), c[1]);
+        b.type = "button";
+        b.id = "rx-" + c[0] + "-" + r.host.replace(/[^A-Za-z0-9]/g, "_");
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+        b.addEventListener("click", function () { toggleHost(c[0], r.host); });
+        row.appendChild(b);
+      });
+      list.appendChild(row);
+    });
+  }
+
+  // ---- uplink tokens
+  // Tokens made in this page and not yet seen by anyone, by the hash that went into the document.
+  // Held in memory only, so a reload or an apply loses them: that is the point.
+  var madeTokens = {};
+
+  function randomBytes(count) {
+    var bytes = new Uint8Array(count);
+    crypto.getRandomValues(bytes);
+    return bytes;
+  }
+
+  function copyText(text, done) {
+    function fallback() {
+      var area = el("textarea");
+      area.value = text;
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      document.body.removeChild(area);
+      done(ok);
+    }
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () { done(true); }, fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  function uplinkExtras(card, item, index) {
+    var entry = M.valueAt(doc, item.path) || {};
+    var hashPath = item.path + ".tokenSha256";
+    var hash = M.get(entry, "tokenSha256");
+    var idx = idFor(item.path);
+    var row = el("div", "token-row");
+    row.id = "token-row-" + idx;
+    var has = M.isSet(hash) && hash.length > 0;
+    var make = el("button", "btn small", has ? "Make a new token" : "Create a token");
+    make.type = "button";
+    make.id = "token-make-" + idx;
+    make.addEventListener("click", function () {
+      var token = M.tokenFromBytes(randomBytes(32));
+      var fingerprint = M.sha256Hex(token);
+      madeTokens[fingerprint] = { token: token, copied: false };
+      var at = M.parentOf(doc, hashPath, true);
+      M.set(at.obj, at.last, fingerprint);
+      delete errors[hashPath];
+      edited(true, make.id);
+    });
+    row.appendChild(make);
+    row.appendChild(el("span", "muted", has
+      ? "A new token replaces the old one, which stops working once you apply."
+      : "Makes a token here in your browser. The site keeps only its fingerprint."));
+    card.appendChild(row);
+
+    var made = has ? madeTokens[hash] : null;
+    if (made) {
+      var box = el("div", "newtoken");
+      box.id = "newtoken-" + idx;
+      box.setAttribute("role", "group");
+      box.setAttribute("aria-label", "The new token");
+      var who = M.get(entry, "callsign");
+      box.appendChild(el("b", null, "Token for " + (who || "this station")));
+      var code = el("code", "tokentext", made.token);
+      code.id = "newtoken-text-" + idx;
+      box.appendChild(code);
+      var warn = el("p", "tokenwarn", "This is the only time it is shown. The site keeps just a fingerprint of it, so it cannot show it again: "
+        + "copy it now and give it to the station's operator for the token in their publish settings. Apply the change here for it to work.");
+      box.appendChild(warn);
+      var bar = el("div", "bar");
+      var say = el("span", "muted", made.copied ? "Copied." : "");
+      say.id = "newtoken-say-" + idx;
+      var copy = el("button", "btn small", "Copy");
+      copy.type = "button";
+      copy.id = "newtoken-copy-" + idx;
+      copy.addEventListener("click", function () {
+        copyText(made.token, function (ok) {
+          made.copied = ok;
+          say.textContent = ok ? "Copied." : "Select the token above and copy it by hand.";
+        });
+      });
+      var hide = el("button", "btn small", "Hide it");
+      hide.type = "button";
+      hide.id = "newtoken-hide-" + idx;
+      hide.addEventListener("click", function () { delete madeTokens[hash]; edited(true); });
+      bar.appendChild(copy);
+      bar.appendChild(hide);
+      bar.appendChild(say);
+      box.appendChild(bar);
+      card.appendChild(box);
+    }
+
+    // The page address follows the callsign until somebody types one of their own.
+    var call = card.querySelector("#" + idFor(item.path + ".callsign"));
+    if (call) {
+      call.addEventListener("change", function () {
+        var e = M.valueAt(doc, item.path);
+        var typed = M.get(e, "callsign");
+        if (typeof typed !== "string" || typed === "") return;
+        var upper = typed.toUpperCase();
+        if (upper !== typed) M.set(e, "callsign", upper);
+        if (!M.isSet(M.get(e, "slug"))) M.set(e, "slug", M.slugFor(upper));
+        edited(true);
+      });
+    }
   }
 
   // ---------------------------------------------------------------- modems, and the band strip
@@ -2310,13 +2882,26 @@ var ConfigModel = (function () {
     return typeof s === "string" && s !== "" ? s.toLowerCase() : "usb";
   }
 
+  // Where the modems are: a station's list, or a site's inside its monitor section.
+  function modemsPath() { return isSite() ? "monitor.modems" : "modems"; }
+
+  function isModemList(path) { return path === "modems" || path === "monitor.modems"; }
+
+  // The id the cards' fields get for modem i, so the strip can find the one it moved.
+  function modemFieldId(i, name) { return idFor(modemsPath() + "[" + i + "]." + name); }
+
+  // Whether this is the area that has the modems and their band strip.
+  function onModes() { return route() === "modes" || route() === "monitor-modems"; }
+
   function modemList() {
-    var list = M.get(doc, "modems");
+    var list = M.valueAt(doc, modemsPath());
     return Array.isArray(list) ? list : [];
   }
 
-  // Whether the modems are placed by radio frequency: a dial, so MHz, and not on an FM set.
+  // Whether the modems are placed by radio frequency: a dial, so MHz, and not on an FM set. A
+  // site always is: its web receivers are tuned from the plan the frequencies make.
   function placedByDial() {
+    if (isSite()) return true;
     return radioKind() !== "fm" && modemList().some(function (m) { return M.isSet(M.get(m, "rfFrequency")); });
   }
 
@@ -2343,7 +2928,7 @@ var ConfigModel = (function () {
 
   // Asks the station where the modems would sit, a moment after the last change.
   function schedulePlan(now) {
-    if (!schema || !doc || !(route() === "modes" || (route() === "setup" && setup.step === "modes"))) return;
+    if (!schema || !doc || !(onModes() || (route() === "setup" && setup.step === "modes"))) return;
     clearTimeout(plan.timer);
     var seq = ++plan.seq;
     var strip = $("strip");
@@ -2622,14 +3207,14 @@ var ConfigModel = (function () {
     var name = rf ? "rfFrequency" : "frequency";
     M.set(entry, name, pos);
     if (rf) M.remove(entry, "frequency");
-    var input = $("f-modems_" + indexOfModem(sub) + "__" + name);
+    var input = $(modemFieldId(indexOfModem(sub), name));
     if (input) {
       input.value = rf ? M.mhzText(pos) : String(pos);
-      delete errors["modems[" + indexOfModem(sub) + "]." + name];
+      delete errors[modemsPath() + "[" + indexOfModem(sub) + "]." + name];
       var box = input.parentElement;
       box.classList.remove("invalid");
       var label = input.closest(".field").querySelector("label");
-      var at = "modems[" + indexOfModem(sub) + "]." + name;
+      var at = modemsPath() + "[" + indexOfModem(sub) + "]." + name;
       label.classList.toggle("changed", JSON.stringify(M.valueAt(loaded, at)) !== JSON.stringify(pos));
     }
     var hint = document.querySelector('[data-hint-for="' + sub + '"]');
@@ -2832,7 +3417,7 @@ var ConfigModel = (function () {
     select.value = String(sub);
     box.appendChild(select);
     row.appendChild(box);
-    row.appendChild(el("div", "hint", "What your node software calls this port"));
+    row.appendChild(el("div", "hint", isSite() ? "Tells the modems of this site apart" : "What your node software calls this port"));
     var err = el("div", "err");
     err.id = "e-" + id;
     err.hidden = true;
@@ -2853,7 +3438,7 @@ var ConfigModel = (function () {
     var id = idFor(path);
     var key = modemKey(name);
     var row = el("div", "field");
-    var label = el("label", null, byDial ? "Frequency" : "Audio frequency");
+    var label = el("label", null, byDial ? (isSite() ? "Frequency (required)" : "Frequency") : "Audio frequency");
     label.htmlFor = id;
     row.appendChild(label);
     var box = el("div", "input mono");
@@ -2958,7 +3543,8 @@ var ConfigModel = (function () {
     body.appendChild(choices);
     if (hidden) {
       var why = el("p", "muted", "Modes with no audio tone to place, such as 9600 baud packet and the OFDM modes, are not listed: "
-        + "this station places its modems by radio frequency. Put them on a station that places them by audio frequency or on FM.");
+        + (isSite() ? "a site tunes its receivers from the radio frequencies its modems are placed at, and these cannot be placed that way."
+          : "this station places its modems by radio frequency. Put them on a station that places them by audio frequency or on FM."));
       why.id = "picker-note";
       why.style.gridColumn = "1 / -1";
       why.style.fontSize = "13px";
@@ -3038,7 +3624,7 @@ var ConfigModel = (function () {
       arr.push(M.newModem(mode, sub, place));
       picker = { open: false, group: null };
       edited(true);
-      var field = $("f-modems_" + (arr.length - 1) + "__" + (place.length > 0 ? place[0].key : "subChannel"));
+      var field = $(modemFieldId(arr.length - 1, place.length > 0 ? place[0].key : isSite() ? "rfFrequency" : "subChannel"));
       if (field) field.focus();
     });
   }
@@ -3271,7 +3857,7 @@ var ConfigModel = (function () {
       return;
     }
     banner.textContent = "";
-    banner.appendChild(el("b", null, "The station would not start on this. "));
+    banner.appendChild(el("b", null, "The " + (isSite() ? "site" : "station") + " would not start on this. "));
     banner.appendChild(document.createTextNode(check.problem));
     banner.hidden = false;
   }
@@ -3310,7 +3896,7 @@ var ConfigModel = (function () {
         text = head;
         if (check.state === "ok") {
           canApply = true;
-          note = "Looks good: the station would start on this. Applying restarts it for a few seconds.";
+          note = "Looks good: the " + (isSite() ? "site" : "station") + " would start on this. Applying restarts it for a few seconds.";
         } else {
           note = "Checking...";
         }
@@ -3348,9 +3934,17 @@ var ConfigModel = (function () {
       out.push(document.createTextNode("Choosing that radio removed: " + pickRemoved.join(", ") + "."));
     }
     if (M.becomesMonitor(loaded, doc)) {
-      out.push(document.createTextNode("This makes the station a monitor site. A monitor does not serve this "
-        + "configuration page, so after the restart it will not answer here; to get it back, remove the "
-        + "\"monitor\" section from the config file on the machine and restart."));
+      var keyed = M.isSet(M.get(M.get(doc, "api") || {}, "key"));
+      out.push(document.createTextNode(keyed
+        ? "This makes the station a monitor site. It will serve this page at the same address, with the same key, "
+          + "but this page then shows the site's settings and not the station's."
+        : "This makes the station a monitor site. A site serves this page only when the file has an \"api\".\"key\" "
+          + "(it is on the internet, so it is never open), so after the restart it will not answer here; set a key first, "
+          + "or to get the station back, remove the \"monitor\" section from the config file on the machine and restart."));
+    }
+    if (M.siteLosesPage(loaded, doc)) {
+      out.push(document.createTextNode("Removing the access key turns this page off: a monitor site serves it only with a key. "
+        + "To get it back, set \"api\".\"key\" in the config file on the machine and restart."));
     }
     return out;
   }
@@ -4027,7 +4621,7 @@ var ConfigModel = (function () {
 
   // Which step a refusal about a setting belongs to.
   function stepFor(path) {
-    var area = M.areaOf(schema, path);
+    var area = M.areaOf(schema, path, doc);
     if (area === "radio") return setup.kind === "flex" || setup.kind === "ubersdr" ? "radio" : "card";
     return { keying: "keying", modes: "modes", software: "software" }[area] || null;
   }

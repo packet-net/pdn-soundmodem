@@ -35,7 +35,13 @@ internal static class ConfigKeys
         ("software", "Connect your software"),
         ("sharing", "Sharing and logging"),
         ("advanced", "Advanced"),
-        ("monitor", "Monitor site"),
+        // A monitor site's areas, shown in place of the station's when the file has a monitor
+        // section. The first keeps the id "monitor" it has always had.
+        ("monitor", "Receivers and directory"),
+        ("monitor-modems", "Modems"),
+        ("monitor-uplinks", "Private station uplinks"),
+        ("monitor-site", "Site page"),
+        ("monitor-logging", "Logging"),
     ];
 
     /// <summary>The kind a file with a <c>monitor</c> section is: a site, with no audio device.</summary>
@@ -228,7 +234,7 @@ internal static class ConfigKeys
         K("waterfall", "Station page", area: "sharing");
         K("monitor", "Monitor site", area: "monitor");
         K("publish", "Publish to a monitor site", area: "sharing", when: OnKinds(k => k.MayPublish));
-        K("api", "Access key", area: "sharing", when: OnKinds(Station));
+        K("api", "Access key", area: "sharing");
         K("frameLog", "Log of heard frames", area: "sharing");
         K("survey", "Survey of unreadable bursts", area: "advanced", when: OnKinds(Station));
         K("metrics", "Metrics for Prometheus and Grafana", area: "sharing", when: OnKinds(Station));
@@ -343,8 +349,8 @@ internal static class ConfigKeys
         K("ssbHighHz", "Filter upper edge", "Hz", advanced: true);
         K("startupGuardMs", "Audio dropped after connecting", "ms", advanced: true);
         K("gain", "Audio gain", "x", advanced: true);
-        K("onDemand", "Connect only while the station page is open");
-        K("lingerSeconds", "Stay connected after the last viewer", "s", advanced: true);
+        K("onDemand", "Connect only while the station page is open", when: OnDevice("ubersdr"));
+        K("lingerSeconds", "Stay connected after the last viewer", "s", advanced: true, when: OnDevice("ubersdr"));
 
         T("OpenWebRxConfig");
         K("profile", "Receiver profile");
@@ -413,8 +419,8 @@ internal static class ConfigKeys
         K("sideband", "Sideband the page draws for", advanced: true, choices: Sidebands);
         K("linesPerSecond", "Waterfall speed", "lines/s", advanced: true);
         K("fftSize", "Spectrum detail", "points", advanced: true);
-        K("public", "Public page for visitors");
-        K("enableAudioControls", "Level controls without a key", advanced: true);
+        K("public", "Public page for visitors", when: OnKinds(Station));
+        K("enableAudioControls", "Level controls without a key", advanced: true, when: OnKinds(Station));
         K("title", "Page title");
         K("about", "About text for visitors");
 

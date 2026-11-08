@@ -32,7 +32,8 @@ internal static class ConfigPlan
     internal static JsonObject Describe(DaemonConfig proposed)
     {
         int dspRate = ConfigApi.DspRateFor(proposed);
-        double?[] asked = [.. proposed.Modems.Select(m => m.RfFrequency)];
+        List<ModemConfig> asModems = ConfigApi.ModemsOf(proposed);
+        double?[] asked = [.. asModems.Select(m => m.RfFrequency)];
 
         RfPlan.Result? plan = null;
         string? problem = null;
@@ -60,7 +61,7 @@ internal static class ConfigPlan
         {
             try
             {
-                var leaseOnly = proposed.Modems
+                var leaseOnly = asModems
                     .Where(m => m.TransmitOnlyUnderLease && m.RfFrequency is not null && !DaemonConfig.IsArdop(m.Mode))
                     .ToList();
                 lease = BandPlanner.PlanLeaseOnly(leaseOnly, radio, dspRate, ConfigApi.CeilingFor(proposed));
@@ -74,9 +75,9 @@ internal static class ConfigPlan
         // The modems, as measured. A modem's audio centre is the plan's where there is one, else
         // what the file says, else the mode's own; a baseband mode has none and occupies from DC.
         var rows = new List<Row>();
-        for (int i = 0; i < proposed.Modems.Count; i++)
+        for (int i = 0; i < asModems.Count; i++)
         {
-            ModemConfig m = proposed.Modems[i];
+            ModemConfig m = asModems[i];
             PlannedModem? planned = plan?.Modems.FirstOrDefault(p => p.Slot.SubChannel == m.SubChannel);
             bool ardop = DaemonConfig.IsArdop(m.Mode);
             bool tunable = ardop || ModemCatalog.AcceptsCentreFrequency(m.Mode);

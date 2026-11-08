@@ -319,7 +319,9 @@ if (configPath is not null)
             return 2;
         }
 
-        return await MonitorStartup.RunAsync(config);
+        return await MonitorStartup.RunAsync(
+            config, into: null,
+            new MonitorStartup.MonitorFile(configPath, apiConfigJson, apiEphemeralInForce));
     }
 }
 

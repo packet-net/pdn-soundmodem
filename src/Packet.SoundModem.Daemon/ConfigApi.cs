@@ -779,11 +779,49 @@ internal sealed class ConfigApi
         {
             // Plan mutates the entries it is given, which is why this runs against the
             // throwaway parse and never against anything the station is using.
-            PlanFor(proposed!);
+            RfPlan.Result? plan = PlanFor(proposed!);
+            if (proposed!.Monitor is not null && MonitorRefusal(proposed, plan) is string site)
+            {
+                return site;
+            }
         }
         catch (Exception plan) when (plan is InvalidDataException or ArgumentException)
         {
             return plan.Message;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// What a monitor site's start-up refuses after the file has loaded, asked here too: a site
+    /// is the one thing a person cannot walk over to and fix, so a change it would exit 2 on is
+    /// declined while the running site is still up. The same three refusals as
+    /// <see cref="MonitorStartup"/>, in the same words.
+    /// </summary>
+    private static string? MonitorRefusal(DaemonConfig proposed, RfPlan.Result? plan)
+    {
+        if (plan is null)
+        {
+            return "\"monitor\".\"modems\" has no \"rfFrequency\". A web receiver has no dial already "
+                + "set to read off, so the band plan is the only thing that can tune it: give "
+                + "every modem an \"rfFrequency\" and the dial is worked out from them.";
+        }
+
+        if (plan.IsFm)
+        {
+            return "\"sideband\": \"fm\" cannot be served by a monitor: its web receivers are SSB. "
+                + "Remove \"sideband\", or run FM on a station.";
+        }
+
+        string? refused = null;
+        var journal = new StationJournal("", _ => { }, line => refused ??= line);
+        List<ModemConfig> modems = proposed.Monitor!.Modems;
+        if (!StationFactory.TryResolveDspRate(modems, journal, out int dspRate)
+            || !StationFactory.TryAddModems(
+                new Channel.SoundModemChannel(dspRate), modems, dspRate, detectorOverride: null, journal))
+        {
+            return refused ?? "a modem in \"monitor\".\"modems\" cannot be built";
         }
 
         return null;
@@ -808,7 +846,7 @@ internal sealed class ConfigApi
                 return error;
             }
 
-            foreach (ModemConfig modem in proposed.Modems)
+            foreach (ModemConfig modem in ModemsOf(proposed))
             {
                 if (!DaemonConfig.IsArdop(modem.Mode) && !ModemCatalog.IsKnown(modem.Mode))
                 {
@@ -848,9 +886,16 @@ internal sealed class ConfigApi
     internal static RfPlan.Result? PlanFor(DaemonConfig proposed)
     {
         return BandPlanner.Plan(
-            proposed.Modems, proposed.Sideband, proposed.DialFrequency, DspRateFor(proposed),
+            ModemsOf(proposed), proposed.Sideband, proposed.DialFrequency, DspRateFor(proposed),
             CeilingFor(proposed));
     }
+
+    /// <summary>
+    /// The modems a configuration runs: a monitor site's are inside its <c>monitor</c> section and
+    /// every receiver gets them, a station's are the top-level list.
+    /// </summary>
+    internal static List<ModemConfig> ModemsOf(DaemonConfig config) =>
+        config.Monitor is { } monitor ? monitor.Modems : config.Modems;
 
     /// <summary>
     /// How far up the audio band the radio can be opened: the wide ceiling where the daemon owns
@@ -858,12 +903,14 @@ internal sealed class ConfigApi
     /// SSB window - the same answer start-up works from.
     /// </summary>
     internal static double? CeilingFor(DaemonConfig proposed) =>
-        DeviceKinds.Of(proposed.Device).OwnsTheRadio(proposed.Device) ? Passband.WideCeilingHz : null;
+        proposed.Monitor is null && DeviceKinds.Of(proposed.Device).OwnsTheRadio(proposed.Device)
+            ? Passband.WideCeilingHz
+            : null;
 
     /// <summary>The channel rate a proposal runs at: 48 kHz if any mode wants it, as start-up has it.</summary>
     internal static int DspRateFor(DaemonConfig proposed) =>
         // A leftover mailcast section still counts as an MS110D modem, as start-up has it.
-        proposed.Mailcast is not null || proposed.Modems.Any(
+        proposed.Mailcast is not null || ModemsOf(proposed).Any(
             m => !DaemonConfig.IsArdop(m.Mode) && ModemCatalog.DspRateFor(m.Mode) == 48000)
             ? 48000
             : 12000;
