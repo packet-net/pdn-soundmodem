@@ -955,7 +955,7 @@ internal sealed class ConfigApi
     }
 
     private static readonly System.Text.RegularExpressions.Regex SafeAlsaName = new(
-        @"^(default|null|(hw|plughw|sysdefault|dsnoop|dmix|front|iec958)(:[A-Za-z0-9,=_.\-]*)?)$",
+        @"^(default|null|(hw|plughw|sysdefault|dsnoop|dmix|front|iec958)(:[A-Za-z0-9,=_.\-]*)?)\z",
         System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>
