@@ -409,6 +409,7 @@ A test asked for through `POST /api/txtest` can follow its tone with a channel-s
 - Present means on; absent, nothing about it starts, opens or prints. The node sends MIL-STD-188-110D through this station's sound card and PTT, so the channel runs at 48 kHz, as it does for an `ms110d-*` modem. Its busy input is the channel's carrier sense, not counting this station's own transmissions.
 - `node` is passed to M0LTE.S5066 as written. Refused when the file is read: no `node`; a `host` key in it (this station is the host); a key M0LTE.S5066 does not know or a value it will not take, as `"s5066"."node": <key>: <reason>`; and no `local_address`, `csma.mode`, `cas.max_links`, `cas.link_request_retries` or `cas.break_retries`, which the standard leaves without a default. `csma.node_slot_position` is needed with `csma.mode` `"slotted"`.
 - Refused beside ARDOP (both run their own channel access) and in a monitor's file. The port is claimed as `the STANAG 5066 SIS port`, see [`kissPort` and `bind`](#kissport-and-bind).
+- Each burst sent or heard is journalled as `tx[N] s5066 wn6 short 120 bytes` or `rx[N] s5066 wn6 short 128 bytes, SNR 18.0 dB` and written to the frame log with mode `s5066`, filed under the service sub-channel (the lowest configured, 0 where there is one).
 - Start-up prints `s5066 sis tcp: <address>:<port> (node <address>, ...)`; node messages carry the prefix `s5066:`. A receive-only station prints `s5066: WARNING - this station cannot transmit, ...` and the node only listens. [STANAG 5066](../16-stanag-5066.md) is the guide.
 
 ## `flex`
