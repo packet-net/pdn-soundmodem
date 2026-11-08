@@ -225,11 +225,15 @@ internal sealed class S5066Station : IAsyncDisposable
         /// <inheritdoc/>
         public void Play(float[] samples, Action played)
         {
+            // Upsampled here, on the modem's worker thread, rather than in the delegate below,
+            // which the transmitter calls once the radio is already keyed: a long burst's
+            // filtering would otherwise be dead air after the key, on top of TXDELAY.
+            float[] burst = Upsample(samples);
             Task queued;
             try
             {
                 queued = _channel.EnqueueTransmit(
-                    _ => Upsample(samples),
+                    txDelay => WithLeadIn(burst, txDelay),
                     rejected: null,
                     // The node runs its own channel access (Annex K), so its bursts wait on
                     // neither the packet modems' p-persistence roll nor their inhibit.
@@ -277,6 +281,24 @@ internal sealed class S5066Station : IAsyncDisposable
                 // Scratch reused per block: the modem consumes it before returning.
                 _received?.Invoke(_decimated.AsMemory(0, produced));
             }
+        }
+
+        /// <summary>
+        /// TXDELAY of silence ahead of the burst, as every other transmitter on the channel has
+        /// (Ms110dModem's Render): the 110D preamble starts at its first sample, and a radio still
+        /// switching to transmit would otherwise clip it.
+        /// </summary>
+        private float[] WithLeadIn(float[] burst, int txDelayMilliseconds)
+        {
+            int lead = (int)((long)_channel.SampleRate * Math.Max(0, txDelayMilliseconds) / 1000);
+            if (lead == 0)
+            {
+                return burst;
+            }
+
+            var output = new float[lead + burst.Length];
+            burst.CopyTo(output, lead);
+            return output;
         }
 
         private float[] Upsample(float[] samples)

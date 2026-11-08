@@ -164,6 +164,49 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
         bench.Heard.Should().BeGreaterThan(1, "every burst heard is reported too");
     }
 
+    [Fact]
+    public async Task A_Burst_Goes_Out_Behind_Txdelay_Of_Silence()
+    {
+        var channel = new SoundModemChannel(ChannelRate, randomSeed: 3);
+        channel.Csma.TxDelayMilliseconds = 100;
+        var written = new List<float>();
+        var sink = new PacedSink(block =>
+        {
+            lock (written)
+            {
+                written.AddRange(block);
+            }
+        });
+        using var stop = new CancellationTokenSource();
+        Task transmitter = channel.RunTransmitterAsync(sink, sink, stop.Token);
+        var audio = new S5066Station.ChannelAudio(channel, _ => { }, () => { });
+        var played = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // 50 ms of a 1 kHz tone at the modem's 9600 Hz.
+        float[] tone = [.. Enumerable.Range(0, 480).Select(i => 0.5f * MathF.Sin(2 * MathF.PI * 1000 * i / 9600))];
+        audio.Play(tone, played.SetResult);
+        await played.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await stop.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        float[] heard;
+        lock (written)
+        {
+            heard = [.. written];
+        }
+
+        int lead = ChannelRate / 10;
+        heard.Length.Should().BeGreaterThanOrEqualTo(lead + (tone.Length * 5), "TXDELAY, then the burst at 48 kHz");
+        heard.Take(lead).Max(MathF.Abs).Should().Be(0, "the first TXDELAY is silence, while the radio switches");
+        heard.Skip(lead).Max(MathF.Abs).Should().BeGreaterThan(0.3f, "the burst follows it");
+    }
+
     // ------------------------------------------------------------------------ helpers
 
     private DaemonConfig Load(string json)
