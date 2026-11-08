@@ -50,6 +50,27 @@ internal static class ConfigPlan
         bool upper = radio != "lsb";
         double? dial = fm ? null : plan?.DialHz ?? (problem is null ? proposed.DialFrequency : null);
 
+        // Placed by radio frequency when any modem was asked for one, as the page decides it too: a
+        // dial left in the file beside modems placed in audio terms does not make the strip an RF one.
+        bool byDial = !fm && asked.Any(a => a is not null);
+
+        // A modem that transmits only under a lease has a dial and centre of its own, planned alone.
+        Dictionary<int, RfPlan.Result> lease = [];
+        if (!fm && problem is null)
+        {
+            try
+            {
+                var leaseOnly = proposed.Modems
+                    .Where(m => m.TransmitOnlyUnderLease && m.RfFrequency is not null && !DaemonConfig.IsArdop(m.Mode))
+                    .ToList();
+                lease = BandPlanner.PlanLeaseOnly(leaseOnly, radio, dspRate, ConfigApi.CeilingFor(proposed));
+            }
+            catch (Exception e) when (e is InvalidDataException or ArgumentException)
+            {
+                lease = [];
+            }
+        }
+
         // The modems, as measured. A modem's audio centre is the plan's where there is one, else
         // what the file says, else the mode's own; a baseband mode has none and occupies from DC.
         var rows = new List<Row>();
@@ -70,7 +91,15 @@ internal static class ConfigPlan
                 : problem is not null ? asked[i]
                 : dial is double d && centre is double c ? (upper ? d + c : d - c)
                 : null;
-            rows.Add(new Row(m, width, tunable, centre, rf, planned is null && m.TransmitOnlyUnderLease));
+            double? leaseDial = null;
+            if (planned is null && lease.TryGetValue(m.SubChannel, out RfPlan.Result? own) && own.Modems.Count > 0)
+            {
+                leaseDial = own.DialHz;
+                centre = own.Modems[0].AudioCentreHz;
+                rf = own.Modems[0].Slot.RfCentreHz;
+            }
+
+            rows.Add(new Row(m, width, tunable, centre, rf, planned is null && m.TransmitOnlyUnderLease, leaseDial));
         }
 
         Passband? window = fm || problem is not null ? null : plan?.Window ?? AudioWindow(rows, proposed);
@@ -81,8 +110,8 @@ internal static class ConfigPlan
             ["radio"] = radio,
             // What the strip is drawn in: radio frequency where there is a dial (or modems asked
             // for one the plan could not build), else the audio band.
-            ["axis"] = !fm && (dial is not null || (problem is not null && rows.Any(r => r.Rf is not null)))
-                ? "rf" : "audio",
+            ["axis"] = byDial ? "rf" : "audio",
+            ["nyquistHz"] = dspRate / 2.0,
             ["dialHz"] = dial,
             ["hasDial"] = dial is not null,
             ["problem"] = problem,
@@ -131,13 +160,14 @@ internal static class ConfigPlan
             if (r.LeaseOnly)
             {
                 o["leaseOnly"] = true;
+                o["leaseDialHz"] = Round(r.LeaseDial);
             }
 
             modems.Add(o);
         }
 
         json["modems"] = modems;
-        json["warnings"] = Warnings(rows, window, dial, upper, problem is not null);
+        json["warnings"] = Warnings(rows, window, dial, upper, problem is not null, byDial);
         return json;
     }
 
@@ -148,26 +178,25 @@ internal static class ConfigPlan
     /// </summary>
     private static Passband AudioWindow(List<Row> rows, DaemonConfig proposed)
     {
-        bool flex = proposed.Device.StartsWith("flex:", StringComparison.OrdinalIgnoreCase);
         var slots = rows
             .Where(r => r.Centre is not null && !r.LeaseOnly)
             .Select(r => new RfSlot(r.Modem.SubChannel, r.Modem.Mode, r.Centre!.Value, r.Width))
             .ToList();
-        return Passband.Fit(slots, flex ? Passband.WideCeilingHz : Passband.Nominal.HighHz);
+        return Passband.Fit(slots, ConfigApi.CeilingFor(proposed) ?? Passband.Nominal.HighHz);
     }
 
     private static JsonArray Warnings(
-        List<Row> rows, Passband? window, double? dial, bool upper, bool refused)
+        List<Row> rows, Passband? window, double? dial, bool upper, bool refused, bool byDial)
     {
         var warnings = new JsonArray();
         List<Row> judged = [.. rows.Where(r => !r.LeaseOnly)];
 
         // Which edge is which: on lower sideband the audio top is the RF bottom, and the words
         // are in the terms the operator sees the modem in.
-        string Edge(bool audioTop) => dial is null || upper == audioTop ? "top" : "bottom";
+        string Edge(bool audioTop) => !byDial || upper == audioTop ? "top" : "bottom";
 
         string Place(double audioCentre) =>
-            dial is double d
+            byDial && dial is double d
                 ? RfPlan.Mhz(upper ? d + audioCentre : d - audioCentre)
                 : string.Create(CultureInfo.InvariantCulture, $"{audioCentre:0} Hz");
 
@@ -208,7 +237,7 @@ internal static class ConfigPlan
         {
             foreach (Row b in judged)
             {
-                if (ReferenceEquals(a, b) || !Overlap(a, b, dial is not null || refused, out double by))
+                if (ReferenceEquals(a, b) || !Overlap(a, b, byDial, out double by))
                 {
                     continue;
                 }
@@ -248,7 +277,7 @@ internal static class ConfigPlan
 
     /// <summary>One modem as the answer describes it.</summary>
     private sealed record Row(
-        ModemConfig Modem, double Width, bool Tunable, double? Centre, double? Rf, bool LeaseOnly)
+        ModemConfig Modem, double Width, bool Tunable, double? Centre, double? Rf, bool LeaseOnly, double? LeaseDial = null)
     {
         /// <summary>The bottom of its audio band; DC for a baseband mode.</summary>
         internal double AudioLow => Centre is double c ? c - (Width / 2) : 0;

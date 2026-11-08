@@ -136,6 +136,7 @@ internal static class ModeLabels
             table.Add(mode, new Label(name, talksTo, group, nino));
 
         const string NinoIl2p = "other IL2P+CRC stations";
+        const string QtV26 = "QtSoundModem V26A";
 
         // ------------------------------------------------------------ 1200 baud AFSK
         M("afsk1200", "1200 baud AFSK packet", "Most VHF and UHF APRS and packet nodes: a NinoTNC, Dire Wolf, QtSoundModem", "p1200");
@@ -149,15 +150,15 @@ internal static class ModeLabels
         M("afsk300", "300 baud AFSK packet", "NinoTNC mode 12 (1100) and other plain 300 baud AFSK stations", "hf300", 12);
         M("afsk300-il2p", "300 baud AFSK with IL2P", "NinoTNC mode 13 (1101) and other 300 baud IL2P stations", "hf300", 13);
         M("afsk300-il2pc", "300 baud AFSK with IL2P+CRC", $"NinoTNC mode 14 (1110) and {NinoIl2p}, as on the UK 40 m IL2P network", "hf300", 14);
-        M("bpsk300", "300 baud BPSK", $"NinoTNC mode 8 (1000) and {NinoIl2p}", "hf300", 8);
-        M("bpsk300-multi", "300 baud BPSK, extra decoders", $"The same stations as 300 baud BPSK (NinoTNC mode 8, 1000) and {NinoIl2p}", "hf300");
+        M("bpsk300", "300 baud BPSK", $"NinoTNC mode 8 (1000), {QtV26} and {NinoIl2p}", "hf300", 8);
+        M("bpsk300-multi", "300 baud BPSK, under its other name", "The same stations as 300 baud BPSK: this is that modem, spelled differently", "hf300");
         M("bpsk300-nocrc", "300 baud BPSK, no CRC", "300 baud IL2P stations that send no CRC (untested)", "hf300");
 
         // ------------------------------------------------------------ faster PSK
-        M("bpsk1200", "1200 baud BPSK", $"NinoTNC mode 10 (1010) and {NinoIl2p}", "hffast", 10);
-        M("bpsk1200-multi", "1200 baud BPSK, extra decoders", $"The same stations as 1200 baud BPSK (NinoTNC mode 10, 1010) and {NinoIl2p}", "hffast");
-        M("qpsk600", "600 baud QPSK", $"NinoTNC mode 9 (1001) and {NinoIl2p}", "hffast", 9);
-        M("qpsk2400", "2400 baud QPSK", $"NinoTNC mode 11 (1011) and {NinoIl2p}", "hffast", 11);
+        M("bpsk1200", "1200 baud BPSK", $"NinoTNC mode 10 (1010), {QtV26} and {NinoIl2p}", "hffast", 10);
+        M("bpsk1200-multi", "1200 baud BPSK, under its other name", "The same stations as 1200 baud BPSK: this is that modem, spelled differently", "hffast");
+        M("qpsk600", "600 baud QPSK", $"NinoTNC mode 9 (1001), {QtV26} and {NinoIl2p}", "hffast", 9);
+        M("qpsk2400", "2400 baud QPSK", $"NinoTNC mode 11 (1011), {QtV26} type 12 (not the older type 10) and {NinoIl2p}", "hffast", 11);
 
         // ------------------------------------------------------------ 9600 and faster
         M("qpsk3600", "3600 baud QPSK, for FM", $"NinoTNC mode 5 (0101) and {NinoIl2p}; it fills one FM voice channel", "p9600", 5);
