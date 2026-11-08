@@ -553,6 +553,55 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         value.Should().MatchRegex(@"^\d+\.\d{6}$", "the new modem has a radio frequency like the others");
     }
 
+    /// <summary>The overview says what the station is in sentences, and a nudge that applies shows,
+    /// can be dismissed, and stays dismissed while the page is used.</summary>
+    [Fact(Timeout = 600_000)]
+    public async Task The_Overview_Describes_The_Station_And_A_Nudge_Shows_And_Is_Dismissed()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null);
+        IPage page = await OpenConfigAsync();
+
+        // The sentences, built from the station's own file.
+        await Assertions.Expect(page.Locator("#overview-radio")).ToContainTextAsync(
+            "Two named pipes stand in for the sound card", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#overview-modes")).ToContainTextAsync("One modem:", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#overview-software")).ToContainTextAsync(
+            "Node and BBS software connect over KISS to port", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#overview-sharing")).ToContainTextAsync(
+            "The station page is at port", new() { Timeout = StepMs });
+
+        // A station that listens on this machine only has nothing to flag.
+        await Assertions.Expect(page.Locator("#nudge-open-network")).ToHaveCountAsync(0, new() { Timeout = StepMs });
+
+        // Open the listeners to the network with no access key: now there is something.
+        await GoToAsync(page, "software");
+        await ReplaceAsync(page, "#f-bind", "*");
+        await GoToAsync(page, "overview");
+        ILocator nudge = page.Locator("#nudge-open-network");
+        await Assertions.Expect(nudge).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(nudge).ToContainTextAsync("anyone on the network can change settings", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#overview-software")).ToContainTextAsync("every network interface", new() { Timeout = StepMs });
+
+        // Dismissed, it stays away across a trip round the other areas.
+        await page.Locator("#nudge-dismiss-open-network").ClickAsync();
+        await Assertions.Expect(nudge).ToHaveCountAsync(0, new() { Timeout = StepMs });
+        await GoToAsync(page, "sharing");
+        await GoToAsync(page, "overview");
+        await Assertions.Expect(page.Locator("#overview-software")).ToContainTextAsync("every network interface", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#nudge-open-network")).ToHaveCountAsync(0, new() { Timeout = StepMs });
+
+        // And it returns once the situation has gone and come back: the dismissal was of that situation.
+        await GoToAsync(page, "software");
+        await ReplaceAsync(page, "#f-bind", "127.0.0.1");
+        await GoToAsync(page, "overview");
+        await Assertions.Expect(page.Locator("#overview-software")).ToContainTextAsync("this machine only", new() { Timeout = StepMs });
+        await GoToAsync(page, "software");
+        await ReplaceAsync(page, "#f-bind", "*");
+        await GoToAsync(page, "overview");
+        await Assertions.Expect(page.Locator("#nudge-open-network")).ToBeVisibleAsync(new() { Timeout = StepMs });
+    }
+
     [Fact(Timeout = 600_000)]
     public async Task A_Section_Added_On_The_Page_And_An_Edit_Pasted_As_Text_Are_Both_Saved()
     {
