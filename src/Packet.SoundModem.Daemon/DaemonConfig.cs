@@ -778,6 +778,9 @@ public sealed class S5066Config
     [JsonIgnore]
     internal M0LTE.S5066.Host.HostConfig? Parsed { get; set; }
 
+    /// <summary>The node's own load-time warnings (<c>NodeHost.ConfigWarnings</c>), set when the file is read.</summary>
+    internal IReadOnlyList<string> NodeWarnings { get; set; } = [];
+
     /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
@@ -2963,6 +2966,11 @@ public sealed class DaemonConfig
                 + "the token crosses the network in clear. Use wss.");
         }
 
+        foreach (string line in config.S5066?.NodeWarnings ?? [])
+        {
+            warnings.Add($"s5066: {line}");
+        }
+
         return warnings;
     }
 
@@ -3140,6 +3148,7 @@ public sealed class DaemonConfig
         }
 
         section.Parsed = S5066Station.ReadNode(section.Node);
+        section.NodeWarnings = S5066Station.NodeWarnings(section.Parsed);
     }
 
     private static void ValidatePorts(DaemonConfig config)

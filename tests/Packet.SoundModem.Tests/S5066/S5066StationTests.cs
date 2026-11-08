@@ -64,6 +64,15 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
     }
 
     [Fact]
+    public void A_Contention_Slot_No_Longer_Than_The_Preamble_Is_Warned_Of()
+    {
+        string node = Node.Replace("\"csma\": { \"mode\": \"jitter\" }", "\"csma\": { \"mode\": \"jitter\", \"cont_slot_width_ms\": 10 }");
+        DaemonConfig config = Load($$"""{ "device": "null", "s5066": { "node": {{node}} } }""");
+
+        config.Warnings.Should().ContainSingle(w => w.StartsWith("s5066: ") && w.Contains("cont_slot_width_ms 10"));
+    }
+
+    [Fact]
     public void The_Port_Defaults_To_5066()
     {
         DaemonConfig config = Load($$"""{ "device": "null", "s5066": { "node": {{Node}} } }""");

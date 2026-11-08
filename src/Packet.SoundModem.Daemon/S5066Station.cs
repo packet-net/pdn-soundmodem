@@ -100,6 +100,11 @@ internal sealed class S5066Station : IAsyncDisposable
         return parsed;
     }
 
+    /// <summary>The node's load-time warnings for a section read by <see cref="ReadNode"/>, such as a
+    /// contention slot no longer than the modem's preamble. Warnings only; nothing is refused.</summary>
+    internal static IReadOnlyList<string> NodeWarnings(HostConfig parsed) =>
+        NodeHost.ConfigWarnings(parsed.Node, new Ms110dHostModem(NoAudio.Instance));
+
     /// <summary>
     /// Builds the node on <paramref name="channel"/> and starts it: the SIS server, the modem's
     /// receive tap and the busy input. Call before the channel's audio starts, as the ARDOP TNC is.
