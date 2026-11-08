@@ -39,9 +39,10 @@ namespace Packet.SoundModem.Tests.Daemon;
 [Trait("Category", "Browser")]
 public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTests.Browser>, IAsyncLifetime
 {
-    /// <summary>How long a restart may take on a loaded runner before it is a failure. The page
-    /// itself gives up at two minutes, so this is a little over that.</summary>
-    private const float RestartMs = 150_000;
+    /// <summary>How long a restart may take on a loaded runner before it is a failure: the page
+    /// itself gives up at two minutes (120 s, and says so in its result), so this is five seconds
+    /// over that and no more. Waiting longer would only be waiting for a message that has come.</summary>
+    private const float RestartMs = 125_000;
 
     /// <summary>The wait for anything else: a field, a message, a page load.</summary>
     private const float StepMs = 30_000;
@@ -127,7 +128,7 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await page.Locator("#configLink").ClickAsync();
         await Assertions.Expect(page).ToHaveURLAsync(_station.Url("config"), new() { Timeout = StepMs });
 
-        // A wrong key is refused and says so; the right one opens the form.
+        // A wrong key is refused and says so; the right one opens the settings.
         await Assertions.Expect(page.Locator("#login")).ToBeVisibleAsync(new() { Timeout = StepMs });
         await page.Locator("#key").FillAsync("not-the-key");
         await page.Locator("#login button").ClickAsync();
@@ -135,16 +136,19 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await page.Locator("#key").FillAsync(Key);
         await page.Locator("#login button").ClickAsync();
         await Assertions.Expect(page.Locator("#form-view")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#overview-radio")).ToBeVisibleAsync(new() { Timeout = StepMs });
 
         // The secret is not on the page in any form.
-        (await page.ContentAsync()).Should().NotContain(Key);
+        await GoToAsync(page, "sharing");
         await Assertions.Expect(page.Locator("#f-api_key")).ToHaveValueAsync("", new() { Timeout = StepMs });
+        (await page.ContentAsync()).Should().NotContain(Key);
 
-        await OpenSectionAsync(page, "modems");
-        await OpenSectionAsync(page, "waterfall");
+        await GoToAsync(page, "modes");
         await ReplaceAsync(page, "#f-modems_0__frequency", "1600");
+        await GoToAsync(page, "sharing");
         await ReplaceAsync(page, "#f-waterfall_title", "after");
         await Assertions.Expect(page.Locator("#changes")).ToContainTextAsync("2 changes", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#changes")).ToContainTextAsync("Audio frequency", new() { Timeout = StepMs });
 
         await SaveAsync(page);
 
@@ -159,8 +163,8 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
 
         // A fresh load reads the restarted station, so what it shows came from the daemon and not
         // from what was typed. (The tab keeps the key for the session, so no login this time.)
-        await ReloadFormAsync(page);
-        await OpenSectionAsync(page, "waterfall");
+        await ReloadSettingsAsync(page);
+        await GoToAsync(page, "sharing");
         await Assertions.Expect(page.Locator("#f-waterfall_title")).ToHaveValueAsync("after", new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#source")).ToHaveTextAsync(_station.ConfigPath, new() { Timeout = StepMs });
     }
@@ -173,8 +177,9 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         string before = File.ReadAllText(_station.ConfigPath);
         IPage page = await OpenConfigAsync();
 
-        await OpenSectionAsync(page, "waterfall");
+        await GoToAsync(page, "sharing");
         await ReplaceAsync(page, "#f-waterfall_title", "just this once");
+        await Assertions.Expect(page.Locator("#try")).ToBeEnabledAsync(new() { Timeout = StepMs });
         await page.Locator("#try").ClickAsync();
         await Assertions.Expect(page.Locator("#result")).ToContainTextAsync(
             "The station is back", new() { Timeout = RestartMs });
@@ -185,68 +190,70 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         File.Exists(_station.PendingPath).Should().BeFalse("the restart took the one-run change and removed it");
 
         // Read afresh from the restarted station: it is running the change, and says it is.
-        await ReloadFormAsync(page);
-        await OpenSectionAsync(page, "waterfall");
+        await ReloadSettingsAsync(page);
+        await GoToAsync(page, "sharing");
         await Assertions.Expect(page.Locator("#source")).ToContainTextAsync("one-run", new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#f-waterfall_title")).ToHaveValueAsync("just this once", new() { Timeout = StepMs });
     }
 
     [Fact(Timeout = 600_000)]
-    public async Task A_Configuration_The_Station_Would_Refuse_Changes_Nothing()
+    public async Task A_Configuration_The_Station_Would_Refuse_Is_Shown_At_Its_Field_And_Cannot_Be_Applied()
     {
         RequireBrowser();
         _station = await Station.StartAsync(_scratch.FullName, key: null);
         string before = File.ReadAllText(_station.ConfigPath);
         IPage page = await OpenConfigAsync();
 
-        // The 2026-08-15 outage: a trailing space in a mode name.
-        await OpenSectionAsync(page, "modems");
+        // The 2026-08-15 outage: a trailing space in a mode name. The station's own refusal comes
+        // back under the field it is about, and in the bar, with nothing to apply while it stands.
+        await GoToAsync(page, "modes");
         await ReplaceAsync(page, "#f-modems_0__mode", "bpsk300 ");
-        await page.Locator("#check").ClickAsync();
-        await Assertions.Expect(page.Locator("#result")).ToContainTextAsync("unknown mode", new() { Timeout = StepMs });
-
-        // The save has to reach the station and be declined there: its own journal line says so.
-        // (The page's message would read the same as the check's, so it cannot prove the save
-        // was sent at all.)
-        page.Dialog += (_, dialog) => _ = dialog.AcceptAsync();
-        await page.Locator("#save").ClickAsync();
-        await _station.WaitForLogAsync("api: configuration declined, the station is unchanged");
-        await Assertions.Expect(page.Locator("#result")).ToContainTextAsync("unknown mode", new() { Timeout = StepMs });
-        await Assertions.Expect(page.Locator("#save")).ToBeEnabledAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#e-f-modems_0__mode")).ToContainTextAsync("unknown mode", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#changes")).ToContainTextAsync("1 problem to fix", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#save")).ToBeDisabledAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#try")).ToBeDisabledAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#nav-modes .dot")).ToBeVisibleAsync(new() { Timeout = StepMs });
 
         File.ReadAllText(_station.ConfigPath).Should().Be(before);
         File.Exists(_station.PendingPath).Should().BeFalse();
         _station.Starts.Should().Be(1, "a refused configuration never restarts the station");
 
-        // And text that is not a number never reaches the station at all.
+        // Mending it lifts the refusal and the changes can go; a change that is fine is checked
+        // and offered.
         await ReplaceAsync(page, "#f-modems_0__mode", "bpsk300");
+        await ReplaceAsync(page, "#f-modems_0__frequency", "1600");
+        await Assertions.Expect(page.Locator("#save")).ToBeEnabledAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#e-f-modems_0__mode")).ToBeHiddenAsync(new() { Timeout = StepMs });
+
+        // And text that is not a number never reaches the station at all.
+        await GoToAsync(page, "software");
         await ReplaceAsync(page, "#f-kissPort", "eighty");
         await Assertions.Expect(page.Locator("#changes")).ToContainTextAsync("needs fixing", new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#save")).ToBeDisabledAsync(new() { Timeout = StepMs });
     }
 
     [Fact(Timeout = 600_000)]
-    public async Task A_Section_Added_On_The_Form_And_An_Edit_Pasted_As_Json_Are_Both_Saved()
+    public async Task A_Section_Added_On_The_Page_And_An_Edit_Pasted_As_Text_Are_Both_Saved()
     {
         RequireBrowser();
         _station = await Station.StartAsync(_scratch.FullName, key: null);
         string frameLog = Path.Combine(_scratch.FullName, "frames.db");
         IPage page = await OpenConfigAsync();
 
-        // A section the file does not have, added with its button.
-        await OpenSectionAsync(page, "frameLog");
-        await page.Locator("details.section[data-path='frameLog'] button.act").First.ClickAsync();
+        // A section the file does not have, set up with its button.
+        await GoToAsync(page, "sharing");
+        await page.Locator("#add-f-frameLog").ClickAsync();
         await ReplaceAsync(page, "#f-frameLog_path", frameLog);
 
-        // The JSON tab shows it, and text pasted there (comments and all) is what gets saved.
-        await page.Locator("#tab-json").ClickAsync();
+        // Edit as text shows it, and text pasted there (comments and all) is what gets saved.
+        await page.Locator("#edit-text").ClickAsync();
         await Assertions.Expect(page.Locator("#json")).ToHaveValueAsync(
             new System.Text.RegularExpressions.Regex("frameLog"), new() { Timeout = StepMs });
         JsonNode edited = JsonNode.Parse(await page.Locator("#json").InputValueAsync())!;
         edited["waterfall"]!["title"] = "pasted";
         await page.Locator("#json").FillAsync("// pasted from a notebook\n" + edited.ToJsonString() + "\n");
-        await page.Locator("#tab-form").ClickAsync();
-        await OpenSectionAsync(page, "waterfall");
+        await page.Locator("#edit-text").ClickAsync();
+        await GoToAsync(page, "sharing");
         await Assertions.Expect(page.Locator("#f-waterfall_title")).ToHaveValueAsync("pasted", new() { Timeout = StepMs });
 
         await SaveAsync(page);
@@ -255,6 +262,67 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         file["frameLog"]!["path"]!.GetValue<string>().Should().Be(frameLog);
         file["waterfall"]!["title"]!.GetValue<string>().Should().Be("pasted");
         _station.Starts.Should().Be(2);
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task An_Earlier_Version_Can_Be_Looked_At_And_Gone_Back_To()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null);
+        IPage page = await OpenConfigAsync();
+
+        // Nothing has been applied yet, so there is nothing to go back to.
+        await page.Locator("#nav-history").ClickAsync();
+        await Assertions.Expect(page.Locator("#form-view")).ToContainTextAsync("Nothing yet", new() { Timeout = StepMs });
+
+        // Two applied changes: one saved, one tried.
+        await GoToAsync(page, "sharing");
+        await ReplaceAsync(page, "#f-waterfall_title", "second");
+        await SaveAsync(page);
+        await GoToAsync(page, "sharing");
+        await ReplaceAsync(page, "#f-waterfall_title", "third");
+        await Assertions.Expect(page.Locator("#try")).ToBeEnabledAsync(new() { Timeout = StepMs });
+        await page.Locator("#try").ClickAsync();
+        await Assertions.Expect(page.Locator("#result")).ToContainTextAsync(
+            "The station is back", new() { Timeout = RestartMs });
+        await _station.WaitForStartsAsync(3);
+
+        // Newest first: the one tried, the one saved, then the original the station started on.
+        // The one tried is what is running, and says so.
+        await page.Locator("#nav-history").ClickAsync();
+        await Assertions.Expect(page.Locator("button[id^='restore-']")).ToHaveCountAsync(3, new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("[id^='inuse-']")).ToHaveCountAsync(1, new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator(".version").First.Locator("[id^='inuse-']")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await page.Locator("button[id^='look-']").Nth(1).ClickAsync();
+        await Assertions.Expect(page.Locator("[id^='look-body-']").Nth(1)).ToContainTextAsync("\"title\": \"second\"", new() { Timeout = StepMs });
+
+        // Going back loads it as a change that is checked like any other, and applying it
+        // writes the older title to the file.
+        await page.Locator("button[id^='restore-']").Nth(1).ClickAsync();
+        await Assertions.Expect(page.Locator("#changes")).ToContainTextAsync("1 change", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#changes")).ToContainTextAsync("Page title", new() { Timeout = StepMs });
+        await SaveAsync(page, starts: 4);
+
+        _station.ReadConfig()["waterfall"]!["title"]!.GetValue<string>().Should().Be("second");
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task Moving_Or_Removing_The_Station_Page_Is_Said_Before_It_Is_Applied()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null);
+        IPage page = await OpenConfigAsync();
+        await GoToAsync(page, "sharing");
+        int moved = FreePorts.Next();
+
+        await ReplaceAsync(page, "#f-waterfall_port", moved.ToString());
+        await Assertions.Expect(page.Locator("#page-notice")).ToContainTextAsync("moves the station page", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#page-notice")).ToContainTextAsync($":{moved}/config", new() { Timeout = StepMs });
+
+        await page.Locator("#revert").ClickAsync();
+        await GoToAsync(page, "sharing");
+        await page.Locator("#remove-f-waterfall").ClickAsync();
+        await Assertions.Expect(page.Locator("#page-notice")).ToContainTextAsync("removes the station page", new() { Timeout = StepMs });
     }
 
     // ---------------------------------------------------------------- steps
@@ -267,32 +335,30 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         return await _context.NewPageAsync();
     }
 
-    /// <summary>The configuration page of a station with no key, form showing.</summary>
+    /// <summary>The settings page of a station with no key, showing its overview.</summary>
     private async Task<IPage> OpenConfigAsync()
     {
         IPage page = await NewPageAsync();
         await page.GotoAsync(_station!.Url("config"));
-        await Assertions.Expect(page.Locator("#form-view")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#overview-radio")).ToBeVisibleAsync(new() { Timeout = StepMs });
         return page;
     }
 
-    /// <summary>Loads the page again and waits for its form, with no load error showing.</summary>
-    private static async Task ReloadFormAsync(IPage page)
+    /// <summary>Loads the page again and waits for the settings, with no load error showing.</summary>
+    private static async Task ReloadSettingsAsync(IPage page)
     {
         await page.ReloadAsync();
         await Assertions.Expect(page.Locator("#form-view")).ToBeVisibleAsync(new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#loading")).ToBeHiddenAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#nav")).ToBeVisibleAsync(new() { Timeout = StepMs });
     }
 
-    private static async Task OpenSectionAsync(IPage page, string name)
+    /// <summary>Opens an area from the menu and waits until it is the one showing.</summary>
+    private static async Task GoToAsync(IPage page, string area)
     {
-        ILocator section = page.Locator($"details.section[data-path='{name}']");
-        if (await section.GetAttributeAsync("open") is null)
-        {
-            await section.Locator("summary").ClickAsync();
-        }
-
-        await Assertions.Expect(section).ToHaveAttributeAsync("open", "", new() { Timeout = StepMs });
+        await page.Locator($"#nav-{area}").ClickAsync();
+        await Assertions.Expect(page.Locator($"#nav-{area}")).ToHaveClassAsync(
+            new System.Text.RegularExpressions.Regex("\\bon\\b"), new() { Timeout = StepMs });
     }
 
     /// <summary>Types a field's new text and waits until the page has taken it.</summary>
@@ -303,14 +369,15 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await Assertions.Expect(field).ToHaveValueAsync(text, new() { Timeout = StepMs });
     }
 
-    /// <summary>Save to file, agree to the question, and wait for the restarted station.</summary>
-    private async Task SaveAsync(IPage page)
+    /// <summary>Waits for the station to have checked the change, saves it, and waits for the
+    /// restarted station.</summary>
+    private async Task SaveAsync(IPage page, int starts = 2)
     {
-        page.Dialog += (_, dialog) => _ = dialog.AcceptAsync();
+        await Assertions.Expect(page.Locator("#save")).ToBeEnabledAsync(new() { Timeout = StepMs });
         await page.Locator("#save").ClickAsync();
         await Assertions.Expect(page.Locator("#result")).ToContainTextAsync(
             "The station is back", new() { Timeout = RestartMs });
-        await _station!.WaitForStartsAsync(2);
+        await _station!.WaitForStartsAsync(starts);
     }
 
     // ---------------------------------------------------------------- the browser

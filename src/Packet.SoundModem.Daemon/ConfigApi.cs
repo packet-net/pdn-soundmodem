@@ -59,6 +59,7 @@ internal sealed class ConfigApi
     /// <summary>One mixer change at a time; see the wait in <see cref="MixerAsync"/>.</summary>
     private readonly SemaphoreSlim _mixerGate = new(1, 1);
     private readonly string _ephemeralPath;
+    private readonly ConfigHistory _history;
     private readonly Func<string> _runningJson;
     private readonly Action _requestRestart;
     private readonly bool _ephemeralInForce;
@@ -79,6 +80,7 @@ internal sealed class ConfigApi
     /// <param name="runningJson">The configuration this process is running, as JSON.</param>
     /// <param name="ephemeralInForce">Whether this process started from an ephemeral change.</param>
     /// <param name="requestRestart">Asks the daemon to shut down for systemd to bring back.</param>
+    /// <param name="time">The clock, for the times on earlier versions; the system's if null.</param>
     /// <param name="openAudioControls">
     /// Whether <c>/api/mixer</c> answers without a key, from
     /// <c>"waterfall"."enableAudioControls"</c>. It opens that one endpoint and nothing else.
@@ -86,8 +88,9 @@ internal sealed class ConfigApi
     public ConfigApi(
         string key, string configPath, string ephemeralPath,
         Func<string> runningJson, bool ephemeralInForce, Action requestRestart,
-        bool openAudioControls = false, bool openConfiguration = true)
+        bool openAudioControls = false, bool openConfiguration = true, TimeProvider? time = null)
     {
+        _history = new ConfigHistory(ephemeralPath, time ?? TimeProvider.System);
         _openAudioControls = openAudioControls;
         _openConfiguration = openConfiguration;
         _key = key;
@@ -433,17 +436,46 @@ internal sealed class ConfigApi
     internal static IReadOnlyList<string> SecretPaths => [.. Secrets.Select(s => s.Path)];
 
     /// <summary>
-    /// Each secret, and the setting that says where it is sent. A placeholder keeps a stored
-    /// secret only while that setting is unchanged: otherwise anyone who could post a
+    /// Each secret, and the settings that say where it is sent. A placeholder keeps a stored
+    /// secret only while all of those settings are unchanged: otherwise anyone who could post a
     /// configuration could point <c>publish.url</c> at their own server and be sent the token
-    /// they were never shown.
+    /// they were never shown. The UberSDR password goes to the <c>device</c> and also to each
+    /// receiver the <c>monitor.directory</c> lists.
     /// </summary>
-    private static readonly (string Path, string? SentTo)[] Secrets =
+    private static readonly (string Path, string[] SentTo)[] Secrets =
     [
-        ("api.key", null),
-        ("publish.token", "publish.url"),
-        ("ubersdr.password", "device"),
+        ("api.key", []),
+        ("publish.token", ["publish.url"]),
+        ("ubersdr.password", ["device", "monitor.directory"]),
     ];
+
+    /// <summary>
+    /// The secrets whose values differ between two documents, by path and never by value. An
+    /// absent secret and an empty one are the same here. Used to say what going back to an
+    /// earlier version would change, because the served documents have every secret blanked and
+    /// so cannot show it.
+    /// </summary>
+    internal static IReadOnlyList<string> SecretsDiffering(string a, string b)
+    {
+        JsonNode? left, right;
+        try
+        {
+            left = JsonNode.Parse(a, nodeOptions: null, Jsonc);
+            right = JsonNode.Parse(b, nodeOptions: null, Jsonc);
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+
+        static string? Value(JsonNode? node)
+        {
+            string? text = node?.ToJsonString();
+            return text is null or "\"\"" ? null : text;
+        }
+
+        return [.. Secrets.Select(s => s.Path).Where(path => Value(At(left, path)) != Value(At(right, path)))];
+    }
 
     /// <summary>Whether the key at <paramref name="keyPath"/> is one whose value is never served.</summary>
     internal static bool IsSecret(string keyPath) =>
@@ -584,14 +616,20 @@ internal sealed class ConfigApi
             return null;
         }
 
-        foreach ((string path, string? sentTo) in Secrets)
+        foreach ((string path, string[] sentTo) in Secrets)
         {
-            if (sentTo is not null
-                && restored.Contains(path, StringComparer.OrdinalIgnoreCase)
-                && !JsonNode.DeepEquals(At(root, sentTo), At(stored, sentTo)))
+            if (!restored.Contains(path, StringComparer.OrdinalIgnoreCase))
             {
-                why = $"\"{sentTo}\" has changed, so \"{path}\" cannot be kept as it was: type it in again.";
-                return null;
+                continue;
+            }
+
+            foreach (string setting in sentTo)
+            {
+                if (!JsonNode.DeepEquals(At(root, setting), At(stored, setting)))
+                {
+                    why = $"\"{setting}\" has changed, so \"{path}\" cannot be kept as it was: type it in again.";
+                    return null;
+                }
             }
         }
 
@@ -792,10 +830,13 @@ internal sealed class ConfigApi
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
         if (path is not ("/api/config" or "/api/proposals" or "/api/txtest" or "/api/txlease" or "/api/mixer"
-            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio" or "/api/config/schema" or ConfigPage.Path))
+            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio" or "/api/config/schema" or ConfigPage.Path)
+            && !path.StartsWith("/api/config/history", StringComparison.Ordinal))
         {
             return false;
         }
+
+        bool isConfig = path is "/api/config" || path.StartsWith("/api/config/history", StringComparison.Ordinal);
 
         // The configuration page and the description it draws its form from hold no secret and
         // change nothing, so they are served to anyone who can reach the listener. The page asks
@@ -832,7 +873,7 @@ internal sealed class ConfigApi
         // open - these are private home networks"). Open to a person on the network, that is,
         // not to any web page their browser happens to have open: a POST from a page this
         // station did not serve is refused, as the open mixer's is.
-        bool openConfig = _key.Length == 0 && _openConfiguration && path is "/api/config";
+        bool openConfig = _key.Length == 0 && _openConfiguration && isConfig;
         if (openConfig)
         {
             if (!ByOwnName(context.Request))
@@ -878,6 +919,12 @@ internal sealed class ConfigApi
             // an interactive login that does not exist.
             await RespondAsync(context, 401, "unauthorized: present the configured api key as "
                 + "\"Authorization: Bearer KEY\" or \"X-API-Key: KEY\"").ConfigureAwait(false);
+            return true;
+        }
+
+        if (path.StartsWith("/api/config/history", StringComparison.Ordinal))
+        {
+            await GuardedAsync(context, () => HistoryAsync(context, path)).ConfigureAwait(false);
             return true;
         }
 
@@ -966,6 +1013,99 @@ internal sealed class ConfigApi
                     + "POST to replace it").ConfigureAwait(false);
                 return true;
         }
+    }
+
+    /// <summary>
+    /// <c>GET /api/config/history</c>, the versions the station has been applied on, and
+    /// <c>GET /api/config/history/ID</c>, one of them with its secrets redacted as
+    /// <c>GET /api/config</c> redacts the running one.
+    /// </summary>
+    private async Task HistoryAsync(HttpListenerContext context, string path)
+    {
+        if (context.Request.HttpMethod != "GET")
+        {
+            await RespondAsync(context, 405, "GET to list the earlier versions, GET /api/config/history/ID "
+                + "to read one; POST one back to /api/config to go back to it").ConfigureAwait(false);
+            return;
+        }
+
+        const string prefix = "/api/config/history";
+        string rest = path[prefix.Length..].Trim('/');
+        if (rest.Length == 0)
+        {
+            var versions = new JsonArray();
+            // The newest version that is what the station is running now, if any: the page says
+            // "in use now" on it. Compared as the page would see them, redacted.
+            string runningText = _runningJson();
+            JsonNode? running = null;
+            try
+            {
+                running = JsonNode.Parse(Redact(runningText));
+            }
+            catch (JsonException)
+            {
+            }
+
+            bool marked = false;
+            foreach (ConfigHistory.Version v in _history.List())
+            {
+                bool inUse = false;
+                var secretsChanged = new JsonArray();
+                if (_history.Read(v.Id) is { } text)
+                {
+                    // A version whose secrets differ is not what is running, though the redacted
+                    // documents look alike.
+                    IReadOnlyList<string> differing = SecretsDiffering(text, runningText);
+                    foreach (string secret in differing)
+                    {
+                        secretsChanged.Add(secret);
+                    }
+
+                    if (!marked && running is not null && differing.Count == 0)
+                    {
+                        try
+                        {
+                            inUse = JsonNode.DeepEquals(running, JsonNode.Parse(Redact(text)));
+                        }
+                        catch (JsonException)
+                        {
+                        }
+                    }
+                }
+
+                marked |= inUse;
+                versions.Add(new JsonObject
+                {
+                    ["id"] = v.Id,
+                    ["time"] = v.Time.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                    ["kind"] = v.Kind,
+                    ["inUse"] = inUse,
+                    ["secretsChanged"] = secretsChanged,
+                });
+            }
+
+            await RespondJsonAsync(context, 200,
+                new JsonObject { ["versions"] = versions }.ToJsonString(Pretty)).ConfigureAwait(false);
+            return;
+        }
+
+        string? document = _history.Read(rest);
+        ConfigHistory.Version? version = document is null ? null : _history.List().FirstOrDefault(v => v.Id == rest);
+        if (document is null || version is null)
+        {
+            await RespondAsync(context, 404, $"no earlier version \"{rest}\"").ConfigureAwait(false);
+            return;
+        }
+
+        await RespondJsonAsync(context, 200, $$"""
+            {
+              "id": {{JsonSerializer.Serialize(version.Id)}},
+              "time": {{JsonSerializer.Serialize(version.Time.ToString("O", System.Globalization.CultureInfo.InvariantCulture))}},
+              "kind": {{JsonSerializer.Serialize(version.Kind)}},
+              "secretsChanged": {{JsonSerializer.Serialize(SecretsDiffering(document, _runningJson()))}},
+              "config": {{Redact(document)}}
+            }
+            """).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1152,7 +1292,23 @@ internal sealed class ConfigApi
             return;
         }
 
-        if (RestoreHidden(body, _runningJson(), out string why) is not string restored)
+        // A document loaded from an earlier version has that version's secrets as placeholders:
+        // they are filled from the version, and the where-it-is-sent checks are made against it.
+        string stored = _runningJson();
+        string? restoreFrom = context.Request.QueryString["restoreFrom"];
+        if (!string.IsNullOrEmpty(restoreFrom))
+        {
+            if (_history.Read(restoreFrom) is not string version)
+            {
+                await RespondAsync(context, 400, $"\"restoreFrom\" names no earlier version: \"{restoreFrom}\"")
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            stored = version;
+        }
+
+        if (RestoreHidden(body, stored, out string why) is not string restored)
         {
             await RespondAsync(context, 400, why).ConfigureAwait(false);
             return;
@@ -1200,7 +1356,15 @@ internal sealed class ConfigApi
         try
         {
             EnsureDirectoryOf(target);
-            File.WriteAllText(target, body);
+            if (persist)
+            {
+                File.WriteAllText(target, body);
+            }
+            else
+            {
+                // The one-run file can hold the key too: private from the moment it exists.
+                ConfigHistory.WritePrivate(target, body);
+            }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException
                                     or ArgumentException or NotSupportedException)
@@ -1213,6 +1377,16 @@ internal sealed class ConfigApi
             await RespondAsync(context, 500, $"could not write {target}: {e.Message}{extra}")
                 .ConfigureAwait(false);
             return;
+        }
+
+        try
+        {
+            _history.Record(body, persist, _runningJson());
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // The apply has happened; losing a roll-back point is worth a line, not a failure.
+            Console.Error.WriteLine($"api: WARNING - could not keep this version for roll-back ({e.Message})");
         }
 
         Console.WriteLine(persist
