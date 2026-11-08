@@ -65,6 +65,17 @@ public partial class ConfigPageTests
     }
 
     [Fact]
+    public void The_Example_Seam_Says_So_At_Start_Up_And_Says_When_Its_File_Is_Missing()
+    {
+        ConfigSetup.NoticeFor(null).Should().BeNull();
+        ConfigSetup.NoticeFor("").Should().BeNull();
+        string file = Path.Combine(_dir, "example.json");
+        File.WriteAllText(file, "{}");
+        ConfigSetup.NoticeFor(file).Should().Contain(file).And.Contain("not the shipped one");
+        ConfigSetup.NoticeFor(file + ".gone").Should().Contain("not there").And.Contain("shipped example");
+    }
+
+    [Fact]
     public async Task The_Station_Says_Whether_It_Was_Never_Configured()
     {
         using var configured = new Station(_dir, key: "");

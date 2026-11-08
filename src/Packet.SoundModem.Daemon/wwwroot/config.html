@@ -1694,7 +1694,6 @@ var ConfigModel = (function () {
       if (!answer) return;
       instance = answer.instance || null;
       neverConfigured = !!(answer.setup && answer.setup.neverConfigured);
-      txInfo = answer.txTest || null;
       loaded = answer.running || {};
       doc = clone(loaded);
       plan.data = null;
@@ -3486,7 +3485,6 @@ var ConfigModel = (function () {
   // page. Nothing is written until "Save and start". What each step writes is decided in the
   // model (M.setup*); this draws it.
   var neverConfigured = false;   // what the station said at the last read
-  var txInfo = null;             // whether the running station could key the radio for a test
   var setup = null;
   var keyTest = { state: "idle", text: "" };
 
@@ -3778,14 +3776,15 @@ var ConfigModel = (function () {
       if (keyTest.state !== "running") return;
       keyTest = { state: "bad", text: "The station did not answer. Its journal says what it did: journalctl -u pdn-soundmodem" };
       paintKeyTest();
-    }, 60000);
+    }, 75000);   // longer than the runner's 60 s wait for a clear channel
     station.ws.send(JSON.stringify({ type: "txtest", twoTone: false, toneHz: 1000, seconds: 2 }));
     paintKeyTest();
   }
 
   // What the station says became of a test (the page socket's txtest message).
   function onKeyStatus(msg) {
-    if (keyTest.state !== "running" && keyTest.state !== "confirm" && keyTest.state !== "idle") return;
+    // Only a test this page started: another tab's, or none, is not this page's to report.
+    if (keyTest.state !== "running") return;
     if (msg.state === "running") { keyTest = { state: "running", text: "Keying the radio...", timer: keyTest.timer }; }
     else if (msg.state === "done") {
       clearTimeout(keyTest.timer);
@@ -4074,7 +4073,9 @@ var ConfigModel = (function () {
   function saveSetup() {
     // A finished setup always has its KISS port written, even left at the default: that is
     // also what tells it apart from the shipped example, which has none.
-    M.setupWriteSoftware(doc, String(M.setupKissPort(doc)), M.setupNetwork(doc));
+    // Only the port: the bind is written when its option is picked, so it was in the document
+    // that was checked, and saving never changes it.
+    M.set(doc, "kissPort", M.setupKissPort(doc));
     var notice = setupNotice();
     busy = true;
     setup.phase = "saving";

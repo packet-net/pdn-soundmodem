@@ -382,6 +382,37 @@ public class WaterfallTxTestTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_Page_Already_Open_Is_Sent_A_Config_That_Carries_The_Control_When_It_Is_Installed()
+    {
+        // The configuration page's setup opens its socket straight after a restart, while the
+        // daemon is still opening the sound card; without a second config it would see no test
+        // control for ever.
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(Channel(), port);
+        server.Start();
+
+        using ClientWebSocket early = await OpenAsync(port);
+        (_, byte[] first) = await Receive(early);
+        using (JsonDocument before = JsonDocument.Parse(first))
+        {
+            before.RootElement.GetProperty("txTest").ValueKind.Should().Be(JsonValueKind.Null);
+        }
+
+        server.SetTxTest(Control());
+
+        while (true)
+        {
+            (_, byte[] payload) = await Receive(early);
+            using JsonDocument message = JsonDocument.Parse(payload);
+            if (message.RootElement.GetProperty("type").GetString() == "config")
+            {
+                message.RootElement.GetProperty("txTest").GetProperty("maxSeconds").GetDouble().Should().Be(30);
+                break;
+            }
+        }
+    }
+
+    [Fact]
     public async Task A_Socket_Opened_Before_The_Control_Existed_Still_Cannot_Key()
     {
         // The start-up window. The daemon installs the control seconds after the listener opens -

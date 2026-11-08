@@ -2739,7 +2739,17 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _txTest = control;
         if (_source is not null)
         {
-            _configMessage = BuildConfigMessage(); // before Start, Start's own build picks it up
+            lock (_stateLock)
+            {
+                _configMessage = BuildConfigMessage(); // before Start, Start's own build picks it up
+
+                // Pages already open were sent the config as it was, with no control in it, and
+                // would never be sent another: the configuration page's setup, which opens its
+                // socket straight after a restart, sees the station before the daemon has opened
+                // the sound card and the PTT line, and would show "cannot key" for ever. A page
+                // applies every config it is sent, so the new one is pushed to them.
+                Broadcast(WebSocketMessageType.Text, _configMessage);
+            }
         }
     }
 

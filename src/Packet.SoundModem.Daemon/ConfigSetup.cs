@@ -66,8 +66,13 @@ internal static class ConfigSetup
         return Equal(doc, example);
     }
 
-    /// <summary>The shipped example's text: the one in this assembly, or the test seam's file.</summary>
-    internal static string ExampleText()
+    private static readonly Lazy<string> Example = new(ReadExample);
+
+    /// <summary>The shipped example's text: the one in this assembly, or the test seam's file.
+    /// Read once, when first needed.</summary>
+    internal static string ExampleText() => Example.Value;
+
+    private static string ReadExample()
     {
         if (Environment.GetEnvironmentVariable(ExampleVariable) is { Length: > 0 } path && File.Exists(path))
         {
@@ -83,6 +88,18 @@ internal static class ConfigSetup
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
+
+    /// <summary>The line the daemon journals at start-up when the test seam is in force, else
+    /// null. A named file that is not there is said, because the shipped example is then used.</summary>
+    internal static string? StartUpNotice() => NoticeFor(Environment.GetEnvironmentVariable(ExampleVariable));
+
+    /// <summary>The notice for a value of the variable.</summary>
+    internal static string? NoticeFor(string? path) =>
+        string.IsNullOrEmpty(path)
+            ? null
+            : File.Exists(path)
+                ? $"api: setup is comparing the configuration with the example in {path} ({ExampleVariable}), not the shipped one"
+                : $"api: {ExampleVariable} names {path}, which is not there; using the shipped example";
 
     /// <summary>Nothing in the text but whitespace and comments: no first token.</summary>
     private static bool IsBlank(string text)
