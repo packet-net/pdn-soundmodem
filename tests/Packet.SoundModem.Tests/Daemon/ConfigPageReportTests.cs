@@ -42,6 +42,19 @@ public partial class ConfigPageTests
     }
 
     [Fact]
+    public void The_Total_Kept_Is_Bounded_By_Characters_Not_Only_By_Lines()
+    {
+        var recent = new RecentOutput();
+
+        for (int i = 0; i < 100; i++)
+        {
+            recent.Add(new string((char)('a' + i % 26), 7000));
+        }
+
+        recent.Lines([]).Count.Should().BeLessThanOrEqualTo(RecentOutput.MaxStoredChars / 7000);
+    }
+
+    [Fact]
     public void The_Tee_Writes_Through_And_Keeps_Whole_Lines_Only()
     {
         var recent = new RecentOutput();
@@ -55,7 +68,7 @@ public partial class ConfigPageTests
         tee.Write("unfinished");
 
         real.ToString().Should().Be($"first{Environment.NewLine}second{Environment.NewLine}unfinished");
-        recent.Lines([]).Select(l => l[9..]).Should().Equal("first", "second");
+        recent.Lines([]).Select(l => l["HH:mm:ss UTC ".Length..]).Should().Equal("first", "second");
     }
 
     [Theory]
@@ -85,6 +98,104 @@ public partial class ConfigPageTests
 
         kept.Should().NotContain("RealSecretValue");
         kept.Should().Contain("passing", "only the secret goes");
+    }
+
+    [Theory]
+    [InlineData("Authorization: Basic dXNlcjpwYXNzd29yZA==", "dXNlcjpwYXNzd29yZA")]
+    [InlineData("sent header Authorization: Basic Zm9vOmJhcmJheg", "Zm9vOmJhcmJheg")]
+    [InlineData("{\"password\": \"two words\"}", "two words")]
+    [InlineData("config password='two words' loaded", "two words")]
+    [InlineData("secret_key=abc123xyz789 in use", "abc123xyz789")]
+    [InlineData("client.secret: s3cr3tvalue1", "s3cr3tvalue1")]
+    [InlineData("aws_access_key=AKIAEXAMPLE12345", "AKIAEXAMPLE12345")]
+    [InlineData("GET https://ghp_abcdefTOKEN123@example.org/x", "ghp_abcdefTOKEN123")]
+    public void The_Shape_Scrub_Covers_Basic_Quoted_Suffixed_And_Username_Only_Credentials(string line, string secret)
+    {
+        var recent = new RecentOutput();
+
+        recent.Add(line);
+
+        string kept = recent.Lines([]).Single();
+        kept.Should().NotContain(secret);
+        kept.Should().Contain(RecentOutput.Hidden);
+    }
+
+    [Fact]
+    public void Ordinary_Lines_Are_Not_Scrubbed()
+    {
+        var recent = new RecentOutput();
+
+        recent.Add("modem 0: bpsk300 @ 1500 Hz, Basic setup done, keyboard ready");
+
+        recent.Lines([]).Single().Should().EndWith("modem 0: bpsk300 @ 1500 Hz, Basic setup done, keyboard ready");
+    }
+
+    [Fact]
+    public void A_Secret_Straddling_The_Served_Cut_Is_Hidden_Not_Left_Half_Showing()
+    {
+        // The value is not in a shape the scrub knows, so only the by-value pass can find it, and
+        // it has to see the whole line: cut first, it would find half of it and miss.
+        const string Secret = "STRADDLING-SECRET-VALUE-0123456789";
+        var recent = new RecentOutput();
+        recent.Add(new string('x', RecentOutput.MaxLineChars - 10) + Secret + " tail");
+
+        string served = recent.Lines([Secret]).Single();
+
+        served.Should().NotContain("STRADDLING").And.NotContain("SECRET-VALUE");
+    }
+
+    [Fact]
+    public void A_Secret_Straddling_The_Stored_Cut_Is_Not_Left_Half_Showing()
+    {
+        const string Secret = "STRADDLING-SECRET-VALUE-0123456789";
+        var recent = new RecentOutput();
+        var tee = recent.Tee(TextWriter.Null);
+        tee.Write(new string('x', RecentOutput.MaxStoredLine - 12));
+        tee.Write(Secret);
+        tee.WriteLine(" tail");
+
+        string served = string.Concat(recent.Lines([Secret]));
+
+        served.Should().NotContain("STRADDLING").And.NotContain("SECRET");
+    }
+
+    [Theory]
+    [InlineData("peer 203.0.113.77 connected", "peer x.x.x.77 connected")]
+    [InlineData("from 192.168.1.20:8107 and 10.45.0.66", "from x.x.x.20:8107 and x.x.x.66")]
+    [InlineData("peer 2001:db8::1a2b connected", "peer x:x:x:x:x:x:x:1a2b connected")]
+    [InlineData("peer 2001:db8:85a3:0:0:8a2e:370:7334 up", "peer x:x:x:x:x:x:x:7334 up")]
+    [InlineData("listening on 127.0.0.1:8107 and ::1", "listening on 127.0.0.1:8107 and ::1")]
+    [InlineData("started at 12:00:00 build 0.103.0 id 999", "started at 12:00:00 build 0.103.0 id 999")]
+    [InlineData("bad address 999.1.1.1", "bad address 999.1.1.1")]
+    public void Network_Addresses_Are_Masked_But_Loopback_And_Times_Are_Not(string line, string expected)
+    {
+        var recent = new RecentOutput();
+        recent.Add(line);
+
+        recent.Lines([]).Single().Should().EndWith(expected);
+    }
+
+    [Fact]
+    public void The_Stations_Own_Addresses_Stay_Readable()
+    {
+        var recent = new RecentOutput();
+        recent.Add("listening on 192.168.1.20 and 2001:db8::5, peer 192.168.1.99");
+
+        string served = recent.Lines([], ["192.168.1.20", "2001:db8::5"]).Single();
+
+        served.Should().Contain("192.168.1.20").And.Contain("2001:db8::5").And.Contain("x.x.x.99");
+    }
+
+    [Fact]
+    public async Task The_Report_Masks_Addresses_In_The_Log_And_Keeps_Loopback()
+    {
+        var recent = new RecentOutput();
+        recent.Add("peer 203.0.113.77 and 127.0.0.1");
+        using var station = new Station(_dir, key: "", recent: recent);
+
+        string body = await station.Client.GetStringAsync(station.Url("api/report"));
+
+        body.Should().Contain("x.x.x.77").And.Contain("127.0.0.1").And.NotContain("203.0.113.77");
     }
 
     // ---------------------------------------------------------------- the endpoint
@@ -141,7 +252,7 @@ public partial class ConfigPageTests
         report["uptimeSeconds"]!.GetValue<long>().Should().Be(5400);
         report["config"]!["device"]!.GetValue<string>().Should().Be("null");
         report["logLines"]!.AsArray().Select(l => l!.GetValue<string>()).Should().ContainSingle()
-            .Which.Should().Be("10:00:00 start-up: listening");
+            .Which.Should().Be("10:00:00 UTC start-up: listening");
         report["logLimit"]!.GetValue<int>().Should().Be(RecentOutput.MaxLines);
     }
 
@@ -215,14 +326,74 @@ public partial class ConfigPageTests
     }
 
     [Fact]
-    public void When_Even_The_Configuration_Does_Not_Fit_Both_Are_Left_Out_Logs_First()
+    public void Both_Are_Left_Out_When_Neither_Fits()
     {
-        string[] logs = [.. Enumerable.Range(0, 400).Select(i => $"line {i}")];
+        string[] logs = [.. Enumerable.Range(0, 400).Select(i => $"12:00:00 UTC console line {i} of a busy station, with some detail")];
 
         JsonNode built = Build(Report(), what: "stuck", logs: logs, configPadding: 9000);
 
         built["url"]!.GetValue<string>().Length.Should().BeLessThanOrEqualTo(7500);
-        built["left"]!.AsArray().Select(p => p!["id"]!.GetValue<string>()).Should().Equal("logs", "configuration");
+        built["left"]!.AsArray().Select(p => p!["id"]!.GetValue<string>()).Should().BeEquivalentTo(["logs", "configuration"], "both are too big to fit");
+    }
+
+    [Fact]
+    public void A_Smaller_Part_Goes_Back_In_When_It_Fits_So_Less_Has_To_Be_Pasted()
+    {
+        // Configuration too big for the link, logs small: only the configuration is left out.
+        JsonNode built = Build(Report(), what: "stuck", logs: ["only a few", "short lines"], configPadding: 9000);
+
+        string url = built["url"]!.GetValue<string>();
+        url.Length.Should().BeLessThanOrEqualTo(7500);
+        url.Should().Contain("logs=").And.NotContain("configuration=");
+        built["left"]!.AsArray().Select(p => p!["id"]!.GetValue<string>()).Should().Equal("configuration");
+    }
+
+    [Fact]
+    public void A_Part_Dropped_For_A_Larger_One_Is_Tried_Again_Smallest_First()
+    {
+        // Logs 5000 characters, configuration 3000: both do not fit, the smaller configuration does.
+        string[] logs = [.. Enumerable.Range(0, 150).Select(i => $"console line {i:D3} of a station")];
+
+        JsonNode built = Build(Report(), what: "x", logs: logs, configPadding: 3000);
+
+        string url = built["url"]!.GetValue<string>();
+        url.Length.Should().BeLessThanOrEqualTo(7500);
+        url.Should().Contain("configuration=");
+        built["left"]!.AsArray().Select(p => p!["id"]!.GetValue<string>()).Should().Equal("logs");
+    }
+
+    [Fact]
+    public void A_Very_Long_Description_Is_Left_Out_Of_The_Link_And_Handed_Back()
+    {
+        string what = "It does not work. " + string.Concat(Enumerable.Repeat("More and more detail about it. ", 400));
+
+        JsonNode built = Build(Report(), what: what, logs: ["a"]);
+
+        string url = built["url"]!.GetValue<string>();
+        url.Length.Should().BeLessThanOrEqualTo(7500);
+        url.Should().NotContain("what-happened=");
+        url.Should().Contain("title=Problem", "the title is short and stays");
+        JsonNode first = built["left"]!.AsArray()[0]!;
+        first["id"]!.GetValue<string>().Should().Be("what-happened");
+        first["label"]!.GetValue<string>().Should().Be("What happened?");
+        first["text"]!.GetValue<string>().Should().StartWith("It does not work.");
+    }
+
+    [Fact]
+    public void No_Combination_Of_Long_Parts_Ever_Makes_A_Link_Over_The_Limit()
+    {
+        foreach (int words in new[] { 10, 300, 600 })
+        {
+            foreach (int padding in new[] { 0, 2500, 9000 })
+            {
+                string what = string.Concat(Enumerable.Repeat("detail ", words));
+                string[] logs = [.. Enumerable.Range(0, words).Select(i => $"line {i}")];
+
+                JsonNode built = Build(Report(), what, logs, configPadding: padding);
+
+                built["url"]!.GetValue<string>().Length.Should().BeLessThanOrEqualTo(7500, $"words {words}, padding {padding}");
+            }
+        }
     }
 
     [Fact]

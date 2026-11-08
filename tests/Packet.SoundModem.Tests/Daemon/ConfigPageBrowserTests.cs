@@ -667,6 +667,9 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
 
         await page.Locator("#report-what").FillAsync("Nothing decodes after the change");
         await Assertions.Expect(page.Locator("#report-copy")).ToBeEnabledAsync(new() { Timeout = StepMs });
+        // The link is rebuilt a moment after typing stops.
+        await Assertions.Expect(page.Locator("#report-open")).ToHaveAttributeAsync("href",
+            new System.Text.RegularExpressions.Regex("what-happened=Nothing"), new() { Timeout = StepMs });
         string href = (await page.Locator("#report-open").GetAttributeAsync("href"))!;
         var query = System.Web.HttpUtility.ParseQueryString(new Uri(href).Query);
         href.Should().StartWith("https://github.com/packet-net/pdn-soundmodem/issues/new?template=problem.yml&");
@@ -678,7 +681,8 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
 
         // Unticking a part takes it out of the link.
         await page.Locator("#report-inc-logs").UncheckAsync();
-        (await page.Locator("#report-open").GetAttributeAsync("href"))!.Should().NotContain("logs=");
+        await Assertions.Expect(page.Locator("#report-open")).Not.ToHaveAttributeAsync("href",
+            new System.Text.RegularExpressions.Regex("logs="), new() { Timeout = StepMs });
 
         // Clicking the link opens GitHub in a new tab; the test reads where it was going.
         await page.EvaluateAsync("""

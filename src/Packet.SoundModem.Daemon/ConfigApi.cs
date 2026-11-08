@@ -1188,17 +1188,6 @@ internal sealed class ConfigApi
     }
 
     /// <summary>
-    /// What the station thinks it should be listening to and is not, each with the complete
-    /// configuration that would act on it.
-    /// </summary>
-    /// <remarks>
-    /// The configuration travels with the proposal rather than being built by whoever acts on
-    /// it, so a caller never has to know how a modem entry is spelled or which sub-channel is
-    /// free - and, more to the point, so acting on a proposal is an ordinary POST to
-    /// <c>/api/config</c> and is validated, refused and made ephemeral by exactly the same code
-    /// as an operator's own edit. There is deliberately no apply endpoint here.
-    /// </remarks>
-    /// <summary>
     /// <c>GET /api/report</c>: what the page's "Report a problem" dialog gathers. The version, the
     /// kind of device, how long the daemon has been up, the configuration as <c>/api/config</c>
     /// serves it (every secret blanked) and the daemon's recent console lines, which are scrubbed
@@ -1229,7 +1218,7 @@ internal sealed class ConfigApi
 
         string device = StringOf(At(stored, "device")) ?? "default";
         var log = new JsonArray();
-        foreach (string line in _recentOutput?.Lines(secrets) ?? [])
+        foreach (string line in _recentOutput?.Lines(secrets, KeptAddresses(context.Request, stored)) ?? [])
         {
             log.Add(line);
         }
@@ -1252,6 +1241,36 @@ internal sealed class ConfigApi
             node is JsonValue v && v.TryGetValue(out string? s) ? s : null;
     }
 
+    /// <summary>The addresses that stay readable in the report's log lines: loopback, and the
+    /// ones this station itself listens on (the address this request came to, and
+    /// <c>bind</c>), which are the operator's own.</summary>
+    private static IReadOnlyList<string> KeptAddresses(HttpListenerRequest request, JsonNode? stored)
+    {
+        var kept = new List<string>();
+        if (request.LocalEndPoint?.Address is { } local)
+        {
+            kept.Add(local.ToString());
+        }
+
+        if (At(stored, "bind") is JsonValue bind && bind.TryGetValue(out string? text) && text is not null)
+        {
+            kept.Add(text);
+        }
+
+        return kept;
+    }
+
+    /// <summary>
+    /// What the station thinks it should be listening to and is not, each with the complete
+    /// configuration that would act on it.
+    /// </summary>
+    /// <remarks>
+    /// The configuration travels with the proposal rather than being built by whoever acts on
+    /// it, so a caller never has to know how a modem entry is spelled or which sub-channel is
+    /// free - and, more to the point, so acting on a proposal is an ordinary POST to
+    /// <c>/api/config</c> and is validated, refused and made ephemeral by exactly the same code
+    /// as an operator's own edit. There is deliberately no apply endpoint here.
+    /// </remarks>
     private async Task ProposalsAsync(HttpListenerContext context)
     {
         if (_proposals is null)

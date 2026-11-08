@@ -3230,6 +3230,7 @@ var ConfigModel = (function () {
         navigator.clipboard.writeText(text).then(function () { result("good", "Copied."); });
       } else {
         area.select();
+        area.setSelectionRange(0, area.value.length); // iOS ignores select() alone
         document.execCommand("copy");
         result("good", "Copied.");
       }
@@ -3346,7 +3347,7 @@ var ConfigModel = (function () {
       </div>
       <div class="part">
         <label><input type="checkbox" id="report-inc-logs" checked> Recent log lines <small id="report-size-logs"></small></label>
-        <details><summary>Look at it</summary><pre id="report-pre-logs"></pre></details>
+        <details><summary>Look at it</summary><p class="muted"><small>Network addresses in these lines are masked (for example x.x.x.123). 127.0.0.1 and this station's own address are left as they are. Times are UTC.</small></p><pre id="report-pre-logs"></pre></details>
       </div>
     </div>
 
@@ -3421,32 +3422,40 @@ var ReportModel = (function () {
     return NEW_ISSUE + "?" + q.join("&");
   }
 
-  // The link for the issue form, and what had to be left out of it. Long parts go first: the log
-  // lines, then the configuration. Whatever is left out is returned in "left", in the order the
-  // user is told to paste it, each with the id of the form field it belongs in.
-  function build(r, what, parts) {
-    var fields = [["title", titleFor(what)], [FIELD.what, String(what || "").trim()],
-      [FIELD.version, versionText(r)], [FIELD.device, r.deviceKind]];
-    var optional = [];
-    if (parts.config) optional.push({ id: FIELD.config, name: "configuration", text: configText(r) });
-    if (parts.logs) optional.push({ id: FIELD.logs, name: "log lines", text: logText(r) });
+  var LABEL = { "what-happened": "What happened?", "configuration": "Configuration", "logs": "Recent log lines" };
+  var NAME = { "what-happened": "description", "configuration": "configuration", "logs": "log lines" };
 
+  // The link for the issue form, and what had to be left out of it. Whatever the user has ticked
+  // goes in as long as the link stays under the limit: the description first (it is the one part
+  // GitHub requires), then the other parts smallest first, so that what does not fit, and has to
+  // be pasted by hand, is as little as possible. A part that would not fit is left out, and a
+  // smaller one after it can still go in. "left" is what was left out, largest first, each with
+  // the id and label of the form field it belongs in.
+  function build(r, what, parts) {
+    var text = String(what || "").trim();
+    var fields = [["title", titleFor(text)], [FIELD.version, versionText(r)], [FIELD.device, r.deviceKind]];
+    var optional = [];
+    if (parts.config) optional.push({ id: FIELD.config, text: configText(r) });
+    if (parts.logs) optional.push({ id: FIELD.logs, text: logText(r) });
     var left = [];
-    var kept = optional.slice();
-    var url;
-    function make() {
-      var all = fields.concat(kept.map(function (p) { return [p.id, p.text]; }));
-      return link(all);
+
+    var chosen = fields.slice();
+    var whatPart = { id: FIELD.what, text: text };
+    if (text.length > 0 && link(chosen.concat([[whatPart.id, whatPart.text]])).length <= LIMIT) {
+      chosen.push([whatPart.id, whatPart.text]);
+    } else if (text.length > 0) {
+      left.push(whatPart);
     }
-    url = make();
-    // Logs, then configuration: from the end of the list.
-    while (url.length > LIMIT && kept.length > 0) {
-      left.unshift(kept.pop());
-      url = make();
-    }
-    // The logs are the longer and the likelier to be wanted on the clipboard first.
-    left.sort(function (a, b) { return a.id === FIELD.logs ? -1 : b.id === FIELD.logs ? 1 : 0; });
-    return { url: url, left: left, limit: LIMIT };
+
+    optional.sort(function (a, b) { return encode(a.text).length - encode(b.text).length; });
+    optional.forEach(function (p) {
+      var tryIt = chosen.concat([[p.id, p.text]]);
+      if (link(tryIt).length <= LIMIT) chosen = tryIt; else left.push(p);
+    });
+
+    left.sort(function (a, b) { return encode(b.text).length - encode(a.text).length; });
+    left.forEach(function (p) { p.label = LABEL[p.id]; p.name = NAME[p.id]; });
+    return { url: link(chosen), left: left, limit: LIMIT };
   }
 
   return { build: build, plain: plain, link: link, titleFor: titleFor, versionText: versionText,
@@ -3481,20 +3490,20 @@ var ReportModel = (function () {
     return { config: $("report-inc-config").checked, logs: $("report-inc-logs").checked };
   }
 
-  // Both buttons and the link follow the box and the ticks, so what is shown is what is sent.
-  function refresh() {
+  // The buttons follow the box at once; the link follows it and the ticks, a moment later when
+  // typing (see refreshSoon), so what is shown is what is sent.
+  function buttons() {
     var ready = report !== null && $("report-what").value.trim().length > 0;
     $("report-copy").disabled = !ready;
     var open = $("report-open");
-    if (ready) {
-      open.href = R.build(report, $("report-what").value, parts()).url;
-      open.removeAttribute("aria-disabled");
-    } else {
-      open.href = "#";
-      open.setAttribute("aria-disabled", "true");
-    }
-    $("report-hint").textContent = report === null ? "" : ready ? ""
-      : "Say what went wrong first; then the buttons work.";
+    if (ready) open.removeAttribute("aria-disabled"); else open.setAttribute("aria-disabled", "true");
+    $("report-hint").textContent = report === null || ready ? "" : "Say what went wrong first; then the buttons work.";
+    return ready;
+  }
+
+  function refresh() {
+    var open = $("report-open");
+    open.href = buttons() ? R.build(report, $("report-what").value, parts()).url : "#";
   }
 
   function show(r) {
@@ -3548,50 +3557,68 @@ var ReportModel = (function () {
     area.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;";
     dlg.appendChild(area);
     area.select();
+    area.setSelectionRange(0, area.value.length); // iOS ignores select() alone
     var ok = false;
     try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
     dlg.removeChild(area);
     return Promise.resolve(ok);
   }
 
-  function place(p) {
-    return p.id === R.fields.config ? "Configuration" : "Recent log lines";
+  // The copy for a link that is too long is made when the button is pressed down, not when the
+  // click lands: it has to happen before the new tab takes the focus, or the browser refuses it.
+  // A keyboard press has no pointer-down, so it does the same on key-down; the click does it
+  // only if neither did.
+  var prepared = null;
+
+  function prepare() {
+    if (report === null || $("report-what").value.trim().length === 0) return null;
+    var built = R.build(report, $("report-what").value, parts());
+    $("report-open").href = built.url;
+    var copied = built.left.length === 0 ? Promise.resolve(true) : copyText(built.left[0].text);
+    prepared = { built: built, copied: copied };
+    return prepared;
   }
 
-  $("report-open").addEventListener("click", function (ev) {
-    if (report === null || $("report-what").value.trim().length === 0) { ev.preventDefault(); return; }
-    var built = R.build(report, $("report-what").value, parts());
-    this.href = built.url;
+  function announce(p) {
+    var built = p.built;
     lastLeft = built.left;
     if (built.left.length === 0) {
       note("good", "Opened GitHub in a new tab. Check it over there, then press Submit.");
       return;
     }
-    // The link would be too long for GitHub. The browser still opens it (without the long parts);
-    // the first left-out part goes to the clipboard, and the other has its own button.
     var first = built.left[0];
-    copyText(first.text).then(function (ok) {
-      var words = built.left.map(function (p) { return p.name; }).join(" and ");
+    p.copied.then(function (ok) {
+      var words = built.left.map(function (x) { return x.name; }).join(" and ");
       var msg = "The " + words + (built.left.length > 1 ? " were" : " was") + " too long for a link, so "
         + (built.left.length > 1 ? "they are" : "it is") + " not in the GitHub form. ";
-      msg += ok ? "The " + first.name + " is on your clipboard: paste it into the \"" + place(first) + "\" box."
+      msg += ok ? "The " + first.name + " is on your clipboard: paste it into the \"" + first.label + "\" box."
         : "Press Copy report instead, and paste what you need into the form.";
       note(ok ? "warn" : "bad", msg);
-      var extra = $("report-extra");
-      if (extra) extra.remove();
-      if (built.left.length > 1) {
+      Array.prototype.slice.call($("report-note").querySelectorAll("button")).forEach(function (old) { old.remove(); });
+      built.left.slice(1).forEach(function (part, i) {
         var b = document.createElement("button");
-        b.type = "button"; b.className = "btn small"; b.id = "report-extra";
-        b.textContent = "Copy the " + built.left[1].name;
+        b.type = "button"; b.className = "btn small"; b.id = "report-extra" + (i === 0 ? "" : "-" + i);
+        b.textContent = "Copy the " + part.name;
         b.addEventListener("click", function () {
-          copyText(built.left[1].text).then(function (done) {
-            note(done ? "good" : "bad", done ? "The " + built.left[1].name + " is on your clipboard: paste it into the \"" + place(built.left[1]) + "\" box." : "Could not copy. Use Copy report.");
+          copyText(part.text).then(function (done) {
+            note(done ? "good" : "bad", done ? "The " + part.name + " is on your clipboard: paste it into the \"" + part.label + "\" box." : "Could not copy. Use Copy report.");
           });
         });
         $("report-note").appendChild(document.createTextNode(" "));
         $("report-note").appendChild(b);
-      }
+      });
     });
+  }
+
+  $("report-open").addEventListener("pointerdown", function () { prepare(); });
+  $("report-open").addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter" || ev.key === " ") prepare();
+  });
+  $("report-open").addEventListener("click", function (ev) {
+    if (report === null || $("report-what").value.trim().length === 0) { ev.preventDefault(); return; }
+    var p = prepared || prepare();
+    prepared = null;
+    announce(p);
   });
 
   $("report-copy").addEventListener("click", function () {
@@ -3601,7 +3628,16 @@ var ReportModel = (function () {
     });
   });
 
-  $("report-what").addEventListener("input", refresh);
+  // The link is rebuilt a moment after typing stops, not at every key; the buttons' state is
+  // cheap and follows at once. (Pressing Open builds it afresh anyway.)
+  var rebuildTimer = null;
+  function refreshSoon() {
+    buttons();
+    clearTimeout(rebuildTimer);
+    rebuildTimer = setTimeout(refresh, 200);
+  }
+
+  $("report-what").addEventListener("input", refreshSoon);
   $("report-inc-config").addEventListener("change", refresh);
   $("report-inc-logs").addEventListener("change", refresh);
 
