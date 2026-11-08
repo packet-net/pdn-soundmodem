@@ -59,6 +59,7 @@ internal sealed class ConfigApi
     /// <summary>One mixer change at a time; see the wait in <see cref="MixerAsync"/>.</summary>
     private readonly SemaphoreSlim _mixerGate = new(1, 1);
     private readonly string _ephemeralPath;
+    private readonly ConfigHistory _history;
     private readonly Func<string> _runningJson;
     private readonly Action _requestRestart;
     private readonly bool _ephemeralInForce;
@@ -79,6 +80,7 @@ internal sealed class ConfigApi
     /// <param name="runningJson">The configuration this process is running, as JSON.</param>
     /// <param name="ephemeralInForce">Whether this process started from an ephemeral change.</param>
     /// <param name="requestRestart">Asks the daemon to shut down for systemd to bring back.</param>
+    /// <param name="time">The clock, for the times on earlier versions; the system's if null.</param>
     /// <param name="openAudioControls">
     /// Whether <c>/api/mixer</c> answers without a key, from
     /// <c>"waterfall"."enableAudioControls"</c>. It opens that one endpoint and nothing else.
@@ -86,8 +88,9 @@ internal sealed class ConfigApi
     public ConfigApi(
         string key, string configPath, string ephemeralPath,
         Func<string> runningJson, bool ephemeralInForce, Action requestRestart,
-        bool openAudioControls = false, bool openConfiguration = true)
+        bool openAudioControls = false, bool openConfiguration = true, TimeProvider? time = null)
     {
+        _history = new ConfigHistory(ephemeralPath, time ?? TimeProvider.System);
         _openAudioControls = openAudioControls;
         _openConfiguration = openConfiguration;
         _key = key;
@@ -792,10 +795,13 @@ internal sealed class ConfigApi
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
         if (path is not ("/api/config" or "/api/proposals" or "/api/txtest" or "/api/txlease" or "/api/mixer"
-            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio" or "/api/config/schema" or ConfigPage.Path))
+            or "/api/rig" or "/api/rig/tune" or "/api/keepaudio" or "/api/config/schema" or ConfigPage.Path)
+            && !path.StartsWith("/api/config/history", StringComparison.Ordinal))
         {
             return false;
         }
+
+        bool isConfig = path is "/api/config" || path.StartsWith("/api/config/history", StringComparison.Ordinal);
 
         // The configuration page and the description it draws its form from hold no secret and
         // change nothing, so they are served to anyone who can reach the listener. The page asks
@@ -832,7 +838,7 @@ internal sealed class ConfigApi
         // open - these are private home networks"). Open to a person on the network, that is,
         // not to any web page their browser happens to have open: a POST from a page this
         // station did not serve is refused, as the open mixer's is.
-        bool openConfig = _key.Length == 0 && _openConfiguration && path is "/api/config";
+        bool openConfig = _key.Length == 0 && _openConfiguration && isConfig;
         if (openConfig)
         {
             if (!ByOwnName(context.Request))
@@ -878,6 +884,12 @@ internal sealed class ConfigApi
             // an interactive login that does not exist.
             await RespondAsync(context, 401, "unauthorized: present the configured api key as "
                 + "\"Authorization: Bearer KEY\" or \"X-API-Key: KEY\"").ConfigureAwait(false);
+            return true;
+        }
+
+        if (path.StartsWith("/api/config/history", StringComparison.Ordinal))
+        {
+            await GuardedAsync(context, () => HistoryAsync(context, path)).ConfigureAwait(false);
             return true;
         }
 
@@ -966,6 +978,58 @@ internal sealed class ConfigApi
                     + "POST to replace it").ConfigureAwait(false);
                 return true;
         }
+    }
+
+    /// <summary>
+    /// <c>GET /api/config/history</c>, the versions the station has been applied on, and
+    /// <c>GET /api/config/history/ID</c>, one of them with its secrets redacted as
+    /// <c>GET /api/config</c> redacts the running one.
+    /// </summary>
+    private async Task HistoryAsync(HttpListenerContext context, string path)
+    {
+        if (context.Request.HttpMethod != "GET")
+        {
+            await RespondAsync(context, 405, "GET to list the earlier versions, GET /api/config/history/ID "
+                + "to read one; POST one back to /api/config to go back to it").ConfigureAwait(false);
+            return;
+        }
+
+        const string prefix = "/api/config/history";
+        string rest = path[prefix.Length..].Trim('/');
+        if (rest.Length == 0)
+        {
+            var versions = new JsonArray();
+            foreach (ConfigHistory.Version v in _history.List())
+            {
+                versions.Add(new JsonObject
+                {
+                    ["id"] = v.Id,
+                    ["time"] = v.Time.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                    ["kind"] = v.Persisted ? "saved" : "one-run",
+                });
+            }
+
+            await RespondJsonAsync(context, 200,
+                new JsonObject { ["versions"] = versions }.ToJsonString(Pretty)).ConfigureAwait(false);
+            return;
+        }
+
+        string? document = _history.Read(rest);
+        ConfigHistory.Version? version = document is null ? null : _history.List().FirstOrDefault(v => v.Id == rest);
+        if (document is null || version is null)
+        {
+            await RespondAsync(context, 404, $"no earlier version \"{rest}\"").ConfigureAwait(false);
+            return;
+        }
+
+        await RespondJsonAsync(context, 200, $$"""
+            {
+              "id": {{JsonSerializer.Serialize(version.Id)}},
+              "time": {{JsonSerializer.Serialize(version.Time.ToString("O", System.Globalization.CultureInfo.InvariantCulture))}},
+              "kind": {{JsonSerializer.Serialize(version.Persisted ? "saved" : "one-run")}},
+              "config": {{Redact(document)}}
+            }
+            """).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1213,6 +1277,16 @@ internal sealed class ConfigApi
             await RespondAsync(context, 500, $"could not write {target}: {e.Message}{extra}")
                 .ConfigureAwait(false);
             return;
+        }
+
+        try
+        {
+            _history.Record(body, persist);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // The apply has happened; losing a roll-back point is worth a line, not a failure.
+            Console.Error.WriteLine($"api: WARNING - could not keep this version for roll-back ({e.Message})");
         }
 
         Console.WriteLine(persist

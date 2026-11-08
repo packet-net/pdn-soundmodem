@@ -70,6 +70,11 @@ internal static class ConfigSchema
 
                 AddHelp(key, keyPath, canonical[type]);
                 key["name"] = DisplayName(property, key);
+                if (ConfigKeys.For(type.Name, key["name"]!.GetValue<string>()) is { } keyInfo)
+                {
+                    ConfigKeys.AddTo(key, keyInfo);
+                }
+
                 keys.Add(key);
             }
 
@@ -80,6 +85,8 @@ internal static class ConfigSchema
         {
             ["root"] = nameof(DaemonConfig),
             ["hidden"] = ConfigApi.Hidden,
+            ["areas"] = ConfigKeys.AreasJson(),
+            ["deviceKinds"] = new JsonArray([.. ConfigKeys.DeviceKinds.Select(k => (JsonNode)k)]),
             ["types"] = types,
         };
     }
@@ -178,7 +185,7 @@ internal static class ConfigSchema
             key["items"] = items;
         }
 
-        if (Choices(type, property.Name) is { } choices)
+        if (Choices(type, property.Name, property.DeclaringType) is { } choices)
         {
             key["choices"] = choices;
         }
@@ -193,7 +200,7 @@ internal static class ConfigSchema
 
     /// <summary>Values the code itself knows a key takes. Offered, not enforced: the daemon's
     /// validation is the one that decides, and a plugin mode is not in the catalogue.</summary>
-    private static JsonArray? Choices(Type type, string name)
+    private static JsonArray? Choices(Type type, string name, Type? owner)
     {
         Type bare = Nullable.GetUnderlyingType(type) ?? type;
         if (bare.IsEnum)
@@ -201,7 +208,10 @@ internal static class ConfigSchema
             return [.. Enum.GetNames(bare).Select(n => (JsonNode)n)];
         }
 
-        if (bare == typeof(string) && string.Equals(name, "mode", StringComparison.OrdinalIgnoreCase))
+        // Only a modem's mode is a catalogue name; a Flex slice mode or an SDRconnect stream type
+        // is a different list that the code does not hold.
+        if (bare == typeof(string) && string.Equals(name, "mode", StringComparison.OrdinalIgnoreCase)
+            && owner == typeof(ModemConfig))
         {
             return [.. ModemCatalog.KnownModes.Append("ardop").Select(n => (JsonNode)n)];
         }
@@ -211,7 +221,14 @@ internal static class ConfigSchema
             return ["usb", "lsb", "fm"];
         }
 
-        return null;
+        return (owner?.Name, name.ToLowerInvariant()) switch
+        {
+            ("PttConfig", "type") => ["serial", "cm108", "rigctld"],
+            ("PttConfig", "line") => ["rts", "dtr"],
+            ("PublishConfig", "frames") => ["always", "watched"],
+            ("IqPipeConfig", "format") => ["cu8", "cs8", "cs16", "cf32"],
+            _ => null,
+        };
     }
 
     /// <summary>
