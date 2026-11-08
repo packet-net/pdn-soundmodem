@@ -17,6 +17,9 @@ namespace Packet.SoundModem.Daemon;
 /// </remarks>
 internal static class MonitorStartup
 {
+    /// <summary>How long after a change has been answered the site starts going down for it.</summary>
+    internal static readonly TimeSpan RestartAfterAnswer = TimeSpan.FromMilliseconds(300);
+
     /// <summary>The file a monitor run came from, for the settings page.</summary>
     /// <param name="ConfigPath">The file the run was asked to read.</param>
     /// <param name="RunningJson">What this process is running, verbatim, which may be a one-run
@@ -248,7 +251,18 @@ internal static class MonitorStartup
             apiKey, file.ConfigPath, ConfigApi.EphemeralPathFor(file.ConfigPath),
             runningJson: () => file.RunningJson,
             ephemeralInForce: file.EphemeralInForce,
-            requestRestart: requestRestart,
+            requestRestart: () => _ = Task.Run(async () =>
+            {
+                // Off the request's own thread, and a moment later. Asked inline, the shutdown (the
+                // cancellation's continuations, then the host and its listener being taken down)
+                // runs on the thread that is still inside the request that asked for it, over the
+                // very connection it is answering, and the browser polling for the site to come
+                // back can be mid-request on the listener as it goes. Letting the answer reach the
+                // browser first, and taking the site down from a thread of its own, keeps the
+                // teardown from racing the request that started it.
+                await Task.Delay(RestartAfterAnswer).ConfigureAwait(false);
+                requestRestart();
+            }),
             openConfiguration: false);
         if (recent is not null)
         {

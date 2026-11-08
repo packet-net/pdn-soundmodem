@@ -73,111 +73,140 @@ public sealed class MonitorConfigPageBrowserTests : IClassFixture<ConfigPageBrow
     [Fact(Timeout = 600_000)]
     public async Task The_Monitor_Page_Loads_Behind_The_Key_And_A_Change_Runs_Once()
     {
-        RequireBrowser();
-        _site = await Site.StartAsync(_scratch.FullName, Key);
+        await WithDaemonLogAsync(async () =>
+        {
+            RequireBrowser();
+            _site = await Site.StartAsync(_scratch.FullName, Key);
 
-        // The journal says where the page is.
-        await _site.WaitForLogAsync("settings page at");
+            // The journal says where the page is.
+            await _site.WaitForLogAsync("settings page at");
 
-        _context = await _browser.Instance!.NewContextAsync();
-        _context.SetDefaultTimeout(StepMs);
-        IPage page = await _context.NewPageAsync();
-        await page.GotoAsync(_site.Url("config"));
+            _context = await _browser.Instance!.NewContextAsync();
+            _context.SetDefaultTimeout(StepMs);
+            IPage page = await _context.NewPageAsync();
+            await page.GotoAsync(_site.Url("config"));
 
-        await Assertions.Expect(page.Locator("#login")).ToBeVisibleAsync(new() { Timeout = StepMs });
-        await page.Locator("#key").FillAsync(Key);
-        await page.Locator("#login button").ClickAsync();
+            await Assertions.Expect(page.Locator("#login")).ToBeVisibleAsync(new() { Timeout = StepMs });
+            await page.Locator("#key").FillAsync(Key);
+            await page.Locator("#login button").ClickAsync();
 
-        // The site's overview, in the site's own words, and none of the station's areas.
-        await Assertions.Expect(page.Locator("#site-about")).ToContainTextAsync("This is a monitor site", new() { Timeout = StepMs });
-        await Assertions.Expect(page.Locator("#overview-monitor-modems")).ToContainTextAsync("7.050300 MHz", new() { Timeout = StepMs });
-        await Assertions.Expect(page.Locator("#nav-radio")).ToHaveCountAsync(0);
-        await Assertions.Expect(page.Locator("#nav-monitor-uplinks")).ToBeVisibleAsync();
+            // The site's overview, in the site's own words, and none of the station's areas.
+            await Assertions.Expect(page.Locator("#site-about")).ToContainTextAsync("This is a monitor site", new() { Timeout = StepMs });
+            await Assertions.Expect(page.Locator("#overview-monitor-modems")).ToContainTextAsync("7.050300 MHz", new() { Timeout = StepMs });
+            await Assertions.Expect(page.Locator("#nav-radio")).ToHaveCountAsync(0);
+            await Assertions.Expect(page.Locator("#nav-monitor-uplinks")).ToBeVisibleAsync();
 
-        // The modems have cards, and the band strip is drawn from the plan the site would make.
-        await page.Locator("#nav-monitor-modems").ClickAsync();
-        await Assertions.Expect(page.Locator("#f-monitor_modems_0__rfFrequency")).ToHaveValueAsync("7.050300", new() { Timeout = StepMs });
-        await Assertions.Expect(page.Locator("#strip-svg .blk[data-sub='0']")).ToBeVisibleAsync(new() { Timeout = StepMs });
+            // The modems have cards, and the band strip is drawn from the plan the site would make.
+            await page.Locator("#nav-monitor-modems").ClickAsync();
+            await Assertions.Expect(page.Locator("#f-monitor_modems_0__rfFrequency")).ToHaveValueAsync("7.050300", new() { Timeout = StepMs });
+            await Assertions.Expect(page.Locator("#strip-svg .blk[data-sub='0']")).ToBeVisibleAsync(new() { Timeout = StepMs });
 
-        // A change to the page's title, tried for one run.
-        await page.Locator("#nav-monitor-site").ClickAsync();
-        ILocator title = page.Locator("#f-waterfall_title");
-        await title.FillAsync("changed once");
-        await Assertions.Expect(page.Locator("#try")).ToBeEnabledAsync(new() { Timeout = StepMs });
-        string before = File.ReadAllText(_site.ConfigPath);
-        await page.Locator("#try").ClickAsync();
-        await Assertions.Expect(page.Locator("#result")).ToContainTextAsync("is back", new() { Timeout = RestartMs });
+            // A change to the page's title, tried for one run.
+            await page.Locator("#nav-monitor-site").ClickAsync();
+            ILocator title = page.Locator("#f-waterfall_title");
+            await title.FillAsync("changed once");
+            await Assertions.Expect(page.Locator("#try")).ToBeEnabledAsync(new() { Timeout = StepMs });
+            string before = File.ReadAllText(_site.ConfigPath);
+            await page.Locator("#try").ClickAsync();
+            await Assertions.Expect(page.Locator("#result")).ToContainTextAsync("is back", new() { Timeout = RestartMs });
 
-        await _site.WaitForStartsAsync(2);
-        File.ReadAllText(_site.ConfigPath).Should().Be(before, "a one-run change never touches the file");
+            await _site.WaitForStartsAsync(2);
+            File.ReadAllText(_site.ConfigPath).Should().Be(before, "a one-run change never touches the file");
 
-        // The restarted site is running it, and says so.
-        await page.ReloadAsync();
-        await page.Locator("#nav-monitor-site").ClickAsync();
-        await Assertions.Expect(page.Locator("#f-waterfall_title")).ToHaveValueAsync("changed once", new() { Timeout = StepMs });
-        await Assertions.Expect(page.Locator("#source")).ToContainTextAsync("one-run", new() { Timeout = StepMs });
+            // The restarted site is running it, and says so.
+            await page.ReloadAsync();
+            await page.Locator("#nav-monitor-site").ClickAsync();
+            await Assertions.Expect(page.Locator("#f-waterfall_title")).ToHaveValueAsync("changed once", new() { Timeout = StepMs });
+            await Assertions.Expect(page.Locator("#source")).ToContainTextAsync("one-run", new() { Timeout = StepMs });
+        });
     }
 
     [Fact(Timeout = 600_000)]
     public async Task A_Token_Is_Made_In_The_Page_Shown_Once_And_Only_Its_Hash_Is_Saved()
     {
-        RequireBrowser();
-        _site = await Site.StartAsync(_scratch.FullName, Key);
-        IPage page = await OpenAsync();
+        await WithDaemonLogAsync(async () =>
+        {
+            RequireBrowser();
+            _site = await Site.StartAsync(_scratch.FullName, Key);
+            IPage page = await OpenAsync();
 
-        await page.Locator("#nav-monitor-uplinks").ClickAsync();
-        await page.Locator("#add-f-monitor_uplinks").ClickAsync();
-        await page.Locator("#f-monitor_uplinks_0__callsign").FillAsync("gb7rdg-2");
-        await page.Locator("#f-monitor_uplinks_0__callsign").PressAsync("Tab");
-        // The page address follows the callsign, in capitals as the command line makes it.
-        await Assertions.Expect(page.Locator("#f-monitor_uplinks_0__slug")).ToHaveValueAsync("gb7rdg-2", new() { Timeout = StepMs });
-        await Assertions.Expect(page.Locator("#f-monitor_uplinks_0__callsign")).ToHaveValueAsync("GB7RDG-2", new() { Timeout = StepMs });
+            await page.Locator("#nav-monitor-uplinks").ClickAsync();
+            await page.Locator("#add-f-monitor_uplinks").ClickAsync();
+            await page.Locator("#f-monitor_uplinks_0__callsign").FillAsync("gb7rdg-2");
+            await page.Locator("#f-monitor_uplinks_0__callsign").PressAsync("Tab");
+            // The page address follows the callsign, in capitals as the command line makes it.
+            await Assertions.Expect(page.Locator("#f-monitor_uplinks_0__slug")).ToHaveValueAsync("gb7rdg-2", new() { Timeout = StepMs });
+            await Assertions.Expect(page.Locator("#f-monitor_uplinks_0__callsign")).ToHaveValueAsync("GB7RDG-2", new() { Timeout = StepMs });
 
-        await page.Locator("#token-make-f-monitor_uplinks_0_").ClickAsync();
-        ILocator shown = page.Locator("#newtoken-text-f-monitor_uplinks_0_");
-        await Assertions.Expect(shown).ToBeVisibleAsync(new() { Timeout = StepMs });
-        string token = (await shown.TextContentAsync())!;
-        token.Should().MatchRegex("^pdnsm_[A-Za-z0-9_-]{43}$");
-        await Assertions.Expect(page.Locator("#newtoken-f-monitor_uplinks_0_")).ToContainTextAsync("only time it is shown");
+            await page.Locator("#token-make-f-monitor_uplinks_0_").ClickAsync();
+            ILocator shown = page.Locator("#newtoken-text-f-monitor_uplinks_0_");
+            await Assertions.Expect(shown).ToBeVisibleAsync(new() { Timeout = StepMs });
+            string token = (await shown.TextContentAsync())!;
+            token.Should().MatchRegex("^pdnsm_[A-Za-z0-9_-]{43}$");
+            await Assertions.Expect(page.Locator("#newtoken-f-monitor_uplinks_0_")).ToContainTextAsync("only time it is shown");
 
-        // The field holds the fingerprint the daemon would compute.
-        await Assertions.Expect(page.Locator("#f-monitor_uplinks_0__tokenSha256")).ToHaveValueAsync(
-            UplinkToken.Hash(token), new() { Timeout = StepMs });
+            // The field holds the fingerprint the daemon would compute.
+            await Assertions.Expect(page.Locator("#f-monitor_uplinks_0__tokenSha256")).ToHaveValueAsync(
+                UplinkToken.Hash(token), new() { Timeout = StepMs });
 
-        await Assertions.Expect(page.Locator("#save")).ToBeEnabledAsync(new() { Timeout = StepMs });
-        await page.Locator("#save").ClickAsync();
-        await Assertions.Expect(page.Locator("#result")).ToContainTextAsync("is back", new() { Timeout = RestartMs });
-        await _site.WaitForStartsAsync(2);
+            await Assertions.Expect(page.Locator("#save")).ToBeEnabledAsync(new() { Timeout = StepMs });
+            await page.Locator("#save").ClickAsync();
+            await Assertions.Expect(page.Locator("#result")).ToContainTextAsync("is back", new() { Timeout = RestartMs });
+            await _site.WaitForStartsAsync(2);
 
-        JsonNode entry = _site.ReadConfig()["monitor"]!["uplinks"]![0]!;
-        entry["callsign"]!.GetValue<string>().Should().Be("GB7RDG-2");
-        entry["slug"]!.GetValue<string>().Should().Be("gb7rdg-2");
-        entry["tokenSha256"]!.GetValue<string>().Should().Be(UplinkToken.Hash(token));
-        File.ReadAllText(_site.ConfigPath).Should().NotContain(token, "the site keeps only the hash");
-        _site.Log.Should().NotContain(token);
+            JsonNode entry = _site.ReadConfig()["monitor"]!["uplinks"]![0]!;
+            entry["callsign"]!.GetValue<string>().Should().Be("GB7RDG-2");
+            entry["slug"]!.GetValue<string>().Should().Be("gb7rdg-2");
+            entry["tokenSha256"]!.GetValue<string>().Should().Be(UplinkToken.Hash(token));
+            File.ReadAllText(_site.ConfigPath).Should().NotContain(token, "the site keeps only the hash");
+            _site.Log.Should().NotContain(token);
 
-        // Gone from the page once it has been applied and reloaded: it cannot be shown again.
-        await page.ReloadAsync();
-        await page.Locator("#nav-monitor-uplinks").ClickAsync();
-        await Assertions.Expect(page.Locator("#f-monitor_uplinks_0__callsign")).ToBeVisibleAsync(new() { Timeout = StepMs });
-        await Assertions.Expect(page.Locator("#newtoken-f-monitor_uplinks_0_")).ToHaveCountAsync(0);
-        (await page.ContentAsync()).Should().NotContain(token);
+            // Gone from the page once it has been applied and reloaded: it cannot be shown again.
+            await page.ReloadAsync();
+            await page.Locator("#nav-monitor-uplinks").ClickAsync();
+            await Assertions.Expect(page.Locator("#f-monitor_uplinks_0__callsign")).ToBeVisibleAsync(new() { Timeout = StepMs });
+            await Assertions.Expect(page.Locator("#newtoken-f-monitor_uplinks_0_")).ToHaveCountAsync(0);
+            (await page.ContentAsync()).Should().NotContain(token);
+        });
     }
 
     [Fact(Timeout = 600_000)]
     public async Task A_Monitor_With_No_Key_Serves_No_Page_At_All()
     {
-        RequireBrowser();
-        _site = await Site.StartAsync(_scratch.FullName, key: null);
-        await _site.WaitForLogAsync("no settings page");
-
-        using var client = new HttpClient();
-        foreach (string path in (string[])["config", "api/config", "api/config/schema"])
+        await WithDaemonLogAsync(async () =>
         {
-            (await client.GetAsync(_site.Url(path))).StatusCode.Should().Be(HttpStatusCode.NotFound, path);
-        }
+            RequireBrowser();
+            _site = await Site.StartAsync(_scratch.FullName, key: null);
+            await _site.WaitForLogAsync("no settings page");
 
-        (await client.GetAsync(_site.Url(""))).StatusCode.Should().Be(HttpStatusCode.OK, "the picker is unaffected");
+            using var client = new HttpClient();
+            foreach (string path in (string[])["config", "api/config", "api/config/schema"])
+            {
+                (await client.GetAsync(_site.Url(path))).StatusCode.Should().Be(HttpStatusCode.NotFound, path);
+            }
+
+            (await client.GetAsync(_site.Url(""))).StatusCode.Should().Be(HttpStatusCode.OK, "the picker is unaffected");
+        });
+    }
+
+    /// <summary>
+    /// Runs a test body, and when it fails leads the message with the daemon's last lines (stderr
+    /// included, which is where a crash says why) and the whole log after, so a CI summary that
+    /// shows only the first lines of a failure shows the cause.
+    /// </summary>
+    private async Task WithDaemonLogAsync(Func<Task> body)
+    {
+        try
+        {
+            await body();
+        }
+        catch (Exception e) when (_site is not null)
+        {
+            throw new InvalidOperationException(
+                $"daemon (exit {_site.LastExit}, {_site.Starts} start(s)); its last lines:\n{_site.Tail()}\n"
+                + $"--- the whole log:\n{_site.Log}\n--- the failure:\n{e}",
+                e);
+        }
     }
 
     private async Task<IPage> OpenAsync()
@@ -215,6 +244,13 @@ public sealed class MonitorConfigPageBrowserTests : IClassFixture<ConfigPageBrow
         public string ConfigPath { get; }
 
         public int Starts => Volatile.Read(ref _starts);
+
+        /// <summary>The exit code of the last run, or int.MinValue while it has not exited.</summary>
+        public int LastExit => _lastExit;
+
+        /// <summary>The last lines of the log, first in a failure message: CI's summary of a
+        /// failure shows its first few lines and no more.</summary>
+        public string Tail() => string.Join('\n', Log.Split('\n', StringSplitOptions.RemoveEmptyEntries).TakeLast(12));
 
         public string Log
         {

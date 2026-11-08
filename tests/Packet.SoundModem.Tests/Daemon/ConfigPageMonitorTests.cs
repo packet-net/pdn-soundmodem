@@ -194,6 +194,46 @@ public partial class ConfigPageTests
     }
 
     [Fact]
+    public async Task A_Sites_Restart_Is_Asked_For_After_The_Answer_Has_Gone()
+    {
+        string mine = Path.Combine(_dir, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(mine);
+        string config = Path.Combine(mine, "soundmodem.json");
+        File.WriteAllText(config, SiteFile.Replace("\"waterfall\"", $"\"api\": {{ \"key\": \"{SiteKey}\" }}, \"waterfall\""));
+
+        var asked = new TaskCompletionSource<(DateTime At, int Thread)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Func<HttpListenerContext, string, Task<bool>> inner = MonitorStartup.ConfigHandlerFor(
+            SiteKey, new MonitorStartup.MonitorFile(config, File.ReadAllText(config), false),
+            () => asked.TrySetResult((DateTime.UtcNow, Environment.CurrentManagedThreadId)))!;
+
+        using var listener = new HttpListener();
+        string prefix = $"http://127.0.0.1:{FreePorts.Next()}/";
+        listener.Prefixes.Add(prefix);
+        listener.Start();
+        Task serving = Task.Run(async () =>
+        {
+            HttpListenerContext context = await listener.GetContextAsync();
+            await inner(context, context.Request.Url!.AbsolutePath);
+        });
+
+        using var client = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, prefix + "api/config")
+        {
+            Content = new StringContent(SiteFile.Replace("A site", "Another")
+                .Replace("\"waterfall\"", $"\"api\": {{ \"key\": \"{SiteKey}\" }}, \"waterfall\"")),
+        };
+        request.Headers.Add("X-API-Key", SiteKey);
+        HttpResponseMessage answer = await client.SendAsync(request);
+        DateTime answered = DateTime.UtcNow;
+        answer.StatusCode.Should().Be(HttpStatusCode.OK);
+        await serving;
+
+        (DateTime at, _) = await asked.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        at.Should().BeOnOrAfter(answered, "the browser has its answer before the site starts going down");
+        listener.Stop();
+    }
+
+    [Fact]
     public async Task The_Band_Plan_Of_A_Monitors_Modems_Is_Served_For_The_Strip()
     {
         await using var site = await SiteHost.StartAsync(_dir, SiteKey);
