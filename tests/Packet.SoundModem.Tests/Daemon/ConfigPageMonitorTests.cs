@@ -103,6 +103,24 @@ public partial class ConfigPageTests
     }
 
     [Fact]
+    public async Task The_Report_A_Problem_Dialog_Works_On_A_Monitor_Behind_The_Key_Only()
+    {
+        await using var keyed = await SiteHost.StartAsync(_dir, SiteKey);
+        (await keyed.Client.GetAsync(keyed.Url("api/report"))).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, keyed.Url("api/report"));
+        request.Headers.Add("X-API-Key", SiteKey);
+        HttpResponseMessage answer = await keyed.Client.SendAsync(request);
+        answer.StatusCode.Should().Be(HttpStatusCode.OK);
+        string body = await answer.Content.ReadAsStringAsync();
+        JsonNode.Parse(body)!["deviceKind"]!.GetValue<string>().Should().Be("monitor");
+        body.Should().NotContain(SiteKey, "the key is blanked in a report");
+
+        await using var keyless = await SiteHost.StartAsync(_dir, key: "");
+        (await keyless.Client.GetAsync(keyless.Url("api/report"))).StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
     public async Task A_Monitor_Does_Not_Serve_The_Stations_Other_Endpoints_Even_With_The_Key()
     {
         await using var site = await SiteHost.StartAsync(_dir, SiteKey);

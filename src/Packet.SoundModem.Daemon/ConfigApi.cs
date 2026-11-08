@@ -1277,7 +1277,7 @@ internal sealed class ConfigApi
             ["version"] = Packet.SoundModem.Waterfall.DaemonVersion.Version,
             ["commit"] = commit,
             ["release"] = Packet.SoundModem.Waterfall.DaemonVersion.IsRelease,
-            ["deviceKind"] = DeviceKinds.Of(device).Name,
+            ["deviceKind"] = At(stored, "monitor") is not null ? ConfigKeys.MonitorKind : DeviceKinds.Of(device).Name,
             ["uptimeSeconds"] = (long)Math.Max(0, (_time.GetUtcNow() - _started).TotalSeconds),
             ["config"] = JsonNode.Parse(Redact(running)),
             ["logLines"] = log,

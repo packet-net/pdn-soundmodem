@@ -198,9 +198,10 @@
   .rxlist > p { padding: 10px 12px; font-size: 13.5px; }
   .rx { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--edge); }
   .rx:first-child { border-top: 0; }
-  .rx .who { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .rx .who { flex: 1; min-width: 0; }
+  .rx .who b, .rx .who small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rx .who b { font-weight: 600; font-family: var(--mono); font-size: 13px; }
-  .rx .who small { display: block; color: var(--muted); font-size: 12.5px; }
+  .rx .who small { color: var(--muted); font-size: 12.5px; }
   .rx .btn.on { border-color: var(--amber); color: var(--amber); }
   #receivers-filter { width: 100%; }
   .token-row { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; padding: 0 16px 14px; font-size: 13px; }
@@ -2757,8 +2758,10 @@ var ConfigModel = (function () {
     shown.forEach(function (r) {
       var row = el("div", "rx");
       var who = el("div", "who");
-      who.appendChild(el("b", null, r.host));
-      if (r.who) who.appendChild(el("small", null, r.who));
+      var hostName = el("b", null, r.host);
+      hostName.title = r.host;
+      who.appendChild(hostName);
+      if (r.who) { var place = el("small", null, r.who); place.title = r.who; who.appendChild(place); }
       row.appendChild(who);
       [["allow", "Allow"], ["deny", "Never"]].forEach(function (c) {
         var on = M.hostListed(siteList(c[0]), r.host);

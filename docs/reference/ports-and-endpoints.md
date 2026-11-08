@@ -480,7 +480,7 @@ A `monitor` section turns the process into a site on `waterfall.port`, which mus
 | `/r/<slug>/`, `/r/<slug>/links`, `/r/<slug>/ws` | as the station page | that receiver's station page, links pane and WebSocket, built on the first request |
 | `/uplink` | WebSocket | above |
 | `/config` | `GET`, `HEAD` | the settings page, only when the file has an `api.key` |
-| `/api/config`, `/api/config/schema`, `/api/config/plan`, `/api/config/history`, `/api/config/history/ID` | as on a station | the same configuration API a station has, only when the file has an `api.key`, and then every request but the page and `schema` must present it. The site's root only, never under `/r/<slug>/` |
+| `/api/config`, `/api/config/schema`, `/api/config/plan`, `/api/config/history`, `/api/config/history/ID`, `/api/report` | as on a station | the same configuration API a station has, only when the file has an `api.key`, and then every request but the page and `schema` must present it. The site's root only, never under `/r/<slug>/` |
 | anything else | | 404 |
 
 A site has no open configuration: with no `api.key` the five configuration paths are a 404 whatever `bind` is. `/api/config/discover` (which looks at this machine's hardware), the rig, the transmitter and the mixer are not served on a site at all, key or not. A change POSTed to `/api/config` is checked with the checks start-up makes, including that every modem has an `rfFrequency`, and applied by exiting 1 for systemd to restart, as on a station.

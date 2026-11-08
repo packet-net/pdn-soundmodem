@@ -238,9 +238,9 @@ internal sealed class MonitorHost : IAsyncDisposable
     }
 
     /// <summary>Whether a path is one the settings page uses: the page, its description of the
-    /// settings, the configuration itself, the band plan and the earlier versions.</summary>
+    /// settings, the configuration itself, the band plan, the earlier versions and the "Report a problem" dialog's report.</summary>
     internal static bool IsConfigPath(string path) =>
-        path is ConfigPage.Path or "/api/config" or "/api/config/schema" or "/api/config/plan"
+        path is ConfigPage.Path or "/api/config" or "/api/config/schema" or "/api/config/plan" or "/api/report"
         || path.StartsWith("/api/config/history", StringComparison.Ordinal);
 
     /// <summary>

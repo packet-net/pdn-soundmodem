@@ -22,7 +22,9 @@ internal static class MonitorStartup
     /// <param name="RunningJson">What this process is running, verbatim, which may be a one-run
     /// change and not the file.</param>
     /// <param name="EphemeralInForce">Whether the run is on a one-run change.</param>
-    internal sealed record MonitorFile(string ConfigPath, string RunningJson, bool EphemeralInForce);
+    /// <param name="Recent">The recent console output, for the report dialog; null for none.</param>
+    internal sealed record MonitorFile(
+        string ConfigPath, string RunningJson, bool EphemeralInForce, RecentOutput? Recent = null);
 
     /// <summary>Runs the monitor. Returns the process exit code.</summary>
     /// <param name="config">The file, already loaded and checked.</param>
@@ -169,7 +171,8 @@ internal static class MonitorStartup
                 // change uses: exit 2 would mean the new file is wrong.
                 restartRequested = true;
                 cancellation.Cancel();
-            });
+            },
+            file?.Recent);
         if (configHandler is not null
             && Environment.GetEnvironmentVariable("INVOCATION_ID") is null)
         {
@@ -234,19 +237,25 @@ internal static class MonitorStartup
     /// <param name="file">The file this run came from, or null for a run with no page to offer.</param>
     /// <param name="requestRestart">What a change that has been validated and written does next.</param>
     internal static Func<System.Net.HttpListenerContext, string, Task<bool>>? ConfigHandlerFor(
-        string apiKey, MonitorFile? file, Action requestRestart)
+        string apiKey, MonitorFile? file, Action requestRestart, RecentOutput? recent = null)
     {
         if (file is null || string.IsNullOrEmpty(apiKey))
         {
             return null;
         }
 
-        return new ConfigApi(
+        var api = new ConfigApi(
             apiKey, file.ConfigPath, ConfigApi.EphemeralPathFor(file.ConfigPath),
             runningJson: () => file.RunningJson,
             ephemeralInForce: file.EphemeralInForce,
             requestRestart: requestRestart,
-            openConfiguration: false).HandleAsync;
+            openConfiguration: false);
+        if (recent is not null)
+        {
+            api.ServeReport(recent);
+        }
+
+        return api.HandleAsync;
     }
 
     /// <summary>
