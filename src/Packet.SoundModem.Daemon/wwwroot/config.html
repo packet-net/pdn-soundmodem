@@ -217,6 +217,47 @@
     @keyframes pulse { 50% { opacity: .35; } }
   }
 
+
+  /* ---------------------------------------------------------- guided setup */
+  body.setup-mode nav.areas, body.setup-mode #source { display: none; }
+  body.setup-mode .layout { grid-template-columns: 1fr; }
+  body.setup-mode #pending { display: none !important; }
+  body.setup-mode main { max-width: 760px; margin: 0 auto; width: 100%; padding-bottom: 80px; }
+  .steps { display: flex; gap: 0; margin: 0 0 30px; list-style: none; flex-wrap: wrap; }
+  .steps li { flex: 1; min-width: 92px; font-size: 13px; color: var(--muted); padding-top: 9px; border-top: 3px solid var(--edge); margin-right: 4px; }
+  .steps li.done { border-top-color: var(--good); color: var(--ink); }
+  .steps li.now { border-top-color: var(--amber); color: var(--ink); font-weight: 600; }
+  .steps li.skip { opacity: .5; font-style: italic; }
+  .steps li button { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-align: left; text-decoration: underline; text-decoration-color: var(--edge); }
+  .steps li button:hover { color: var(--amber); }
+  .setup h1 { font-size: 26px; }
+  .setup .field { margin: 10px 0; }
+  .setup .option .field { margin: 0; }
+  .setup .summary { display: grid; grid-template-columns: 130px 1fr; gap: 6px 16px; padding: 14px 16px; border: 1px solid var(--edge); border-radius: 7px; background: var(--panel); margin-bottom: 14px; }
+  .setup .summary dt { color: var(--muted); }
+  .setup .summary dd { overflow-wrap: anywhere; }
+  .tryit { margin-top: 10px; padding: 12px 14px; border: 1px solid var(--edge); border-radius: 6px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+  .tryit .good { color: var(--good); }
+  .tryit .bad { color: var(--bad); }
+  .tryit .warn { color: var(--warn); }
+  .stepnav { display: flex; justify-content: space-between; margin-top: 30px; gap: 12px; }
+  .elsewhere { margin-top: 18px; font-size: 13.5px; color: var(--muted); }
+  .setup .modemrow { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border: 1px solid var(--edge); border-radius: 7px; margin-bottom: 8px; background: var(--panel); }
+  .setup .modemrow .swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .setup .modemrow .who { flex: 1; min-width: 0; }
+  .setup .modemrow .who small { display: block; color: var(--muted); font-size: 13px; }
+  .setup .stepnote.warn { color: var(--warn); }
+  .setup small.muted { color: var(--muted); font-size: 12.5px; }
+  .setup .stepnote { color: var(--muted); font-size: 13.5px; margin: 6px 0 14px; max-width: 62ch; }
+  .meter { position: relative; height: 18px; background: #0c1016; border: 1px solid var(--edge); border-radius: 3px; overflow: hidden; margin: 8px 0 6px; }
+  .meter .zone { position: absolute; top: 0; bottom: 0; background: rgba(90,200,120,.30); }
+  .meter .hot { position: absolute; top: 0; bottom: 0; right: 0; background: rgba(226,80,60,.30); }
+  .meter .bar { position: absolute; left: 0; top: 3px; bottom: 3px; width: 0; background: #7fd8a0; }
+  .meter .bar.quiet { background: #6f7d8c; }
+  .meter .bar.loud { background: #e2503c; }
+  .meter .rms { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.55); }
+  .levelread { font-family: var(--mono); font-size: 13px; }
+
   @media (max-width: 760px) {
     .strip { padding: 12px 12px 8px; }
     .layout { grid-template-columns: 1fr; }
@@ -227,15 +268,20 @@
     .area > div { grid-column: 1 / -1; grid-row: 2; }
     .edit { grid-column: 2; grid-row: 1; }
     main { padding-bottom: 260px; }
+    body.setup-mode main { padding-bottom: 60px; }
+    .steps li { min-width: 70px; font-size: 12px; }
+    .setup .summary { grid-template-columns: 1fr; gap: 0; }
+    .setup .summary dd { margin-bottom: 8px; }
     #pending .btn { flex: 1; }
   }
 </style>
 </head>
 <body>
 <header class="top">
-  <div class="wordmark"><b>pdn-soundmodem</b> <span>settings</span></div>
+  <div class="wordmark"><b>pdn-soundmodem</b> <span id="mode-word">settings</span></div>
   <span id="source"></span>
   <div class="right">
+    <a href="#overview" id="skip-setup" hidden>Skip setup and edit settings directly</a>
     <button type="button" class="ghost" id="edit-text" hidden>Edit as text</button>
     <a href="./" id="station-link">Station page</a>
   </div>
@@ -1324,6 +1370,223 @@ var ConfigModel = (function () {
     set(doc, "ptt", ptt);
   }
 
+
+  // ---------------------------------------------------------------- guided setup
+  // The six steps of the first-time setup, and what each one writes. The page draws the steps;
+  // which are skipped for which kind of radio, when a step is complete and what a choice writes
+  // are decided here, so the tests can run them.
+
+  var SETUP_STEPS = [
+    { id: "radio", title: "Your radio" },
+    { id: "card", title: "Sound card" },
+    { id: "keying", title: "Keying" },
+    { id: "modes", title: "Modes" },
+    { id: "software", title: "Your software" },
+    { id: "try", title: "Try it" }
+  ];
+
+  // What kind of audio device "device" names: a card, a FlexRadio or a web receiver.
+  function deviceFamily(doc) {
+    var d = get(doc, "device");
+    if (typeof d === "string") {
+      var l = d.toLowerCase();
+      if (l.indexOf("flex:") === 0) return "flex";
+      if (l.indexOf("ubersdr:") === 0) return "ubersdr";
+      // Receivers setup does not build: it leaves the device as it is.
+      if (/^(openwebrx|rtltcp|sdrconnect|iqcard|iqpipe):/.test(l)) return "other";
+    }
+    return "card";
+  }
+
+  // The kind of radio a document is set up for: "fm" or "ssb" (a sound card into a radio), "flex"
+  // or "ubersdr".
+  function setupKindOf(doc) {
+    var k = deviceFamily(doc);
+    if (k !== "card") return k;
+    var s = get(doc, "sideband");
+    return typeof s === "string" && s.toLowerCase() === "fm" ? "fm" : "ssb";
+  }
+
+  // The steps for a kind, each with whether it is skipped. A web receiver has no sound card and
+  // no transmitter; a FlexRadio has no sound card but does key (itself). A kind not chosen yet
+  // skips nothing.
+  function setupSteps(kind) {
+    return SETUP_STEPS.map(function (s) {
+      var skipped = (s.id === "card" && (kind === "flex" || kind === "ubersdr" || kind === "other"))
+        || (s.id === "keying" && (kind === "ubersdr" || kind === "other"));
+      return { id: s.id, title: s.title, skipped: skipped };
+    });
+  }
+
+  function setupNext(kind, id) {
+    var steps = setupSteps(kind), at = -1, i;
+    for (i = 0; i < steps.length; i++) if (steps[i].id === id) at = i;
+    for (i = at + 1; i < steps.length; i++) if (!steps[i].skipped) return steps[i].id;
+    return null;
+  }
+
+  function setupPrev(kind, id) {
+    var steps = setupSteps(kind), at = steps.length, i;
+    for (i = 0; i < steps.length; i++) if (steps[i].id === id) at = i;
+    for (i = at - 1; i >= 0; i--) if (!steps[i].skipped) return steps[i].id;
+    return null;
+  }
+
+  // A document with what setup chooses taken out, for a station that has never been set up: the
+  // shipped example's choices are placeholders, not a decision, so setup starts from nothing and
+  // keeps the rest (the page's port, the access key).
+  function setupClearChoices(doc) {
+    ["device", "captureDevice", "playbackDevice", "ptt", "rig", "modems", "sideband", "flex", "ubersdr"]
+      .forEach(function (name) { remove(doc, name); });
+  }
+
+  // Chooses the kind of radio. A sound-card kind takes a Flex or a web receiver device out, and a
+  // Flex or web receiver kind takes out a device of the wrong kind; the receiver itself is picked
+  // beside it afterwards, with pickRadio. FM is a kind of radio (sideband), not a device.
+  function setupPickKind(doc, kind) {
+    var have = deviceFamily(doc);
+    var want = kind === "flex" || kind === "ubersdr" ? kind : "card";
+    if (have !== want) {
+      remove(doc, "device");
+      remove(doc, "flex");
+      remove(doc, "ubersdr");
+    }
+    var side = get(doc, "sideband");
+    if (kind === "fm") set(doc, "sideband", "fm");
+    else if (typeof side === "string" && side.toLowerCase() === "fm") remove(doc, "sideband");
+  }
+
+  // Whether a step has what it needs for Next. flags.keying: a way of keying has been chosen.
+  function setupComplete(doc, kind, id, flags) {
+    flags = flags || {};
+    var modems = get(doc, "modems");
+    if (id === "radio") {
+      if (!kind) return false;
+      return kind === "flex" || kind === "ubersdr" ? deviceFamily(doc) === kind : true;
+    }
+    if (id === "card") return deviceFamily(doc) === "card" && isSet(get(doc, "device"));
+    if (id === "keying") return flags.keying === true;
+    if (id === "modes") return (Array.isArray(modems) && modems.length > 0) || isSet(get(doc, "ardop"));
+    if (id === "software") return setupKissProblem(doc) === "";
+    return true;
+  }
+
+  function setupKissPort(doc) {
+    var p = get(doc, "kissPort");
+    return typeof p === "number" ? p : 8105;
+  }
+
+  function setupKissProblem(doc) {
+    var p = setupKissPort(doc);
+    return p >= 1 && p <= 65535 && Math.floor(p) === p ? "" : "The port is a whole number from 1 to 65535.";
+  }
+
+  // Whether the KISS port is open beyond this machine. No bind, or a loopback one, is this
+  // machine only.
+  function setupNetwork(doc) {
+    var b = get(doc, "bind");
+    if (!isSet(b)) return false;
+    b = String(b).toLowerCase();
+    return !(b === "127.0.0.1" || b === "::1" || b === "localhost");
+  }
+
+  // Writes the KISS port and who may reach it. Returns "" or the reason it wrote nothing. The
+  // default bind (this machine only) is left out of the file; a network bind someone already
+  // chose, such as one interface's address, is kept.
+  function setupWriteSoftware(doc, portText, network) {
+    var t = String(portText).trim();
+    if (!/^\d+$/.test(t) || parseInt(t, 10) < 1 || parseInt(t, 10) > 65535) {
+      return "The port is a whole number from 1 to 65535.";
+    }
+    set(doc, "kissPort", parseInt(t, 10));
+    if (network) { if (!setupNetwork(doc)) set(doc, "bind", "*"); }
+    else remove(doc, "bind");
+    return "";
+  }
+
+  // What to point other software at, in words: where the KISS port is, from the page's hostname.
+  function setupSoftwareWords(doc, hostname) {
+    var network = setupNetwork(doc);
+    var port = setupKissPort(doc);
+    var host = network ? (hostname && hostname !== "localhost" ? hostname : "this machine's address") : "127.0.0.1";
+    return { host: host, port: port, network: network,
+      text: "Point LinBPQ, a Dire Wolf client or any other KISS over TCP software at " + host + " port " + port
+        + (network ? "." : ". Only programs on this machine can reach it.") };
+  }
+
+  // What opening the KISS port to the network really opens: every listener, not just KISS.
+  function setupNetworkWarning(doc) {
+    var api = get(doc, "api");
+    var keyed = isSet(api) && isSet(get(api, "key"));
+    return "This opens every listener on this machine to your network: the KISS port, the station page with its transmit test, and this settings page. "
+      + (keyed ? "Anyone on the network who has the access key can change settings and key the radio."
+               : "This station has no access key, so anyone on the network can change its settings and key the radio. Set an access key first.");
+  }
+
+  // The kinds of mode the "what do you want to talk to?" step suggests first for a kind of radio.
+  function setupGroupOrder(kind) {
+    var fm = ["p1200", "p9600", "nino", "ofdmfm"];
+    var hf = ["hf300", "hffast", "hfdata", "ardop"];
+    return kind === "fm" ? { suggested: fm, rest: hf } : { suggested: hf, rest: fm };
+  }
+
+  function sameChoices(a, b) {
+    return ["device", "captureDevice", "playbackDevice", "ptt", "rig"].every(function (name) {
+      return JSON.stringify(get(a, name) === undefined ? null : get(a, name))
+        === JSON.stringify(get(b, name) === undefined ? null : get(b, name));
+    });
+  }
+
+  // Whether "Key the radio for 2 seconds" can run, and if not why, in plain words. The test keys
+  // the station as it is running, so it can only test settings the station already has: what the
+  // person has chosen in setup but not saved is not what would be keyed.
+  function keyTestState(loaded, doc, tx) {
+    if (!tx) return { ok: false, why: "Asking the station whether it can key the radio..." };
+    if (tx.available !== true) {
+      var why = tx && tx.refusal ? " The station says: " + tx.refusal + "." : "";
+      return { ok: false, why: "The station cannot key the radio yet." + why
+        + " Once setup is saved the test is on the last screen." };
+    }
+    if (!sameChoices(loaded, doc)) {
+      return { ok: false, why: "The test keys the radio the way the station is set up now, and you have changed that. "
+        + "Save and start first; the same test is on the last screen." };
+    }
+    return { ok: true, why: "" };
+  }
+
+  // The lines of the summary on the last step: [label, words].
+  function setupSummary(schema, doc, kind, found) {
+    var rows = [];
+    var kinds = { fm: "A sound card into an FM radio", ssb: "A sound card into an SSB radio",
+      flex: "A FlexRadio", ubersdr: "A web receiver (UberSDR)", other: "A receiver set up in the settings" };
+    rows.push(["Radio", kinds[kind] || "Not chosen"]);
+    var dev = get(doc, "device");
+    var card = kind === "fm" || kind === "ssb" ? cardOfDevice(dev, section(found, "soundCards")) : null;
+    // A card is named, with its device string as the small print; anything else is its string.
+    rows.push([kind === "flex" ? "FlexRadio" : kind === "ubersdr" || kind === "other" ? "Receiver" : "Sound card",
+      card ? card.name : isSet(dev) ? String(dev) : "Not chosen", card ? String(dev) : ""]);
+    var ptt = get(doc, "ptt");
+    var keying;
+    if (kind === "ubersdr" || kind === "other") keying = "Receive only, nothing is transmitted";
+    else if (kind === "flex") keying = "The FlexRadio keys itself";
+    else if (!ptt || typeof ptt !== "object") keying = "The radio's VOX, or nothing";
+    else {
+      var type = String(get(ptt, "type") || "serial").toLowerCase();
+      keying = type === "cm108" ? "The sound card's PTT pin, " + get(ptt, "device")
+        : type === "serial" ? "A serial port, " + get(ptt, "device")
+        : type === "rigctld" ? "Hamlib's rigctld" : type;
+    }
+    rows.push(["Keying", keying]);
+    var modems = get(doc, "modems");
+    var names = (Array.isArray(modems) ? modems : []).map(function (m) {
+      var info = modeInfo(schema, get(m, "mode"));
+      return info ? info.name : String(get(m, "mode"));
+    });
+    rows.push(["Modes", names.length ? names.join(", ") : "None yet"]);
+    rows.push(["Your software", "KISS port " + setupKissPort(doc) + ", " + (setupNetwork(doc) ? "reachable from your network" : "this machine only")]);
+    return rows;
+  }
+
   var HIDDEN = "(set, not shown)";
 
   return {
@@ -1340,6 +1603,10 @@ var ConfigModel = (function () {
     stripCaption: stripCaption, colourOf: colourOf,
     cardOfDevice: cardOfDevice, radioChoices: radioChoices, uberChoices: uberChoices, pickRadio: pickRadio, radioRemovals: radioRemovals, radioNote: radioNote,
     keyingChoices: keyingChoices, keyingPicked: keyingPicked, pickKeying: pickKeying,
+    setupSteps: setupSteps, setupNext: setupNext, setupPrev: setupPrev, setupKindOf: setupKindOf, setupClearChoices: setupClearChoices,
+    setupPickKind: setupPickKind, setupComplete: setupComplete, setupWriteSoftware: setupWriteSoftware, setupKissPort: setupKissPort,
+    setupNetwork: setupNetwork, setupSoftwareWords: setupSoftwareWords, setupGroupOrder: setupGroupOrder, keyTestState: keyTestState,
+    setupSummary: setupSummary, setupNetworkWarning: setupNetworkWarning, setupDeviceKind: deviceFamily,
     setHidden: function (h) { HIDDEN = h; }
   };
 })();
@@ -1351,6 +1618,7 @@ var ConfigModel = (function () {
   var M = ConfigModel;
   var DOCS = "https://github.com/packet-net/pdn-soundmodem/blob/main/docs/reference/";
   var KEY_STORE = "pdn-soundmodem-config-key";
+  var SKIP_STORE = "pdn-soundmodem-skip-setup:" + location.host;   // per station, and kept
 
   var BLURB = {
     radio: "The radio or receiver this station listens through, and the sound card or stream that carries its audio.",
@@ -1425,6 +1693,7 @@ var ConfigModel = (function () {
     }).then(function (answer) {
       if (!answer) return;
       instance = answer.instance || null;
+      neverConfigured = !!(answer.setup && answer.setup.neverConfigured);
       loaded = answer.running || {};
       doc = clone(loaded);
       plan.data = null;
@@ -1446,6 +1715,7 @@ var ConfigModel = (function () {
       history.stale = true;
       found = { state: "idle", data: null, error: "", seq: found.seq + 1 };
       pickRemoved = [];
+      if (neverConfigured && !location.hash && !localStorage.getItem(SKIP_STORE) && !setup.active) location.hash = "#setup";
       render();
       fetchHistory().then(function () { renderNav(); });
     }).catch(function (e) {
@@ -1484,7 +1754,7 @@ var ConfigModel = (function () {
   // ---------------------------------------------------------------- routes
   function route() {
     var id = location.hash.replace(/^#/, "");
-    if (id === "history" || id === "text" || id === "overview") return id;
+    if (id === "history" || id === "text" || id === "overview" || id === "setup") return id;
     var list = schema ? schema.areas : [];
     for (var i = 0; i < list.length; i++) if (list[i].id === id) return id;
     return "overview";
@@ -1533,12 +1803,12 @@ var ConfigModel = (function () {
     });
   }
 
-  function option(id, picked, title, detail, onPick, note) {
+  function option(id, picked, title, detail, onPick, note, group) {
     var label = el("label", "option" + (picked ? " picked" : ""));
     label.id = "option-" + id;
     var radio = el("input");
     radio.type = "radio";
-    radio.name = "found-choice";
+    radio.name = group || "found-choice";
     radio.id = "pick-" + id;
     radio.checked = picked;
     radio.addEventListener("change", function () { if (radio.checked) onPick(); });
@@ -1556,7 +1826,8 @@ var ConfigModel = (function () {
   function paintFound() {
     var box = $("found");
     if (!box || !doc) return;
-    var keying = route() === "keying";
+    var inSetup = route() === "setup";
+    var keying = route() === "keying" || (inSetup && setup.step === "keying");
     box.textContent = "";
     var lead = el("div", "lead");
     lead.appendChild(el("span", "pulse" + (found.state === "loading" ? " working" : "")));
@@ -1579,14 +1850,23 @@ var ConfigModel = (function () {
         box.appendChild(p);
       }
     });
-    if (keying) paintKeying(box, d); else paintRadio(box, d);
+    if (inSetup && setup.step === "radio") paintRadio(box, d, setup.kind);
+    else if (inSetup && setup.step === "card") paintRadio(box, d, "soundcard");
+    else if (keying) paintKeying(box, d);
+    else paintRadio(box, d);
   }
 
-  function paintRadio(box, d) {
+  function paintRadio(box, d, only) {
     var device = M.get(doc, "device");
     var choices = M.radioChoices(d);
-    if (choices.length === 0) {
-      box.appendChild(el("div", "none", "No sound cards or FlexRadios were found. Type the device below."));
+    if (only) {
+      var want = only === "flex" ? "flex" : only === "soundcard" ? "soundcard" : null;
+      choices = want ? choices.filter(function (c) { return c.kind === want; }) : [];
+    }
+    if (choices.length === 0 && (!only || only === "soundcard" || only === "flex")) {
+      box.appendChild(el("div", "none", only === "flex" ? "No FlexRadio was found on this network. Check it is on and on the same network, then look again."
+        : only === "soundcard" ? "No sound card was found. Plug it in and look again, or type its name below."
+        : "No sound cards or FlexRadios were found. Type the device below."));
     }
     choices.forEach(function (c) {
       box.appendChild(option(c.id, device === c.device, c.title, c.detail, function () {
@@ -1594,10 +1874,13 @@ var ConfigModel = (function () {
         edited(true, "pick-" + c.id);
       }, M.radioNote(doc, c)));
     });
-    var ubers = M.uberChoices(d);
+    var ubers = !only || only === "ubersdr" ? M.uberChoices(d) : [];
+    if (ubers.length === 0 && only === "ubersdr") {
+      box.appendChild(el("div", "none", "No list of public receivers could be fetched from here. Look again, or finish setup and type an ubersdr: device in the settings."));
+    }
     if (ubers.length > 0) {
       var row = el("div", "field");
-      row.appendChild(el("div", "group", "Or listen to a web receiver from the public UberSDR list"));
+      row.appendChild(el("div", "group", only === "ubersdr" ? "Choose a receiver from the public UberSDR list" : "Or listen to a web receiver from the public UberSDR list"));
       var wrap = el("div", "input");
       var pick = el("select");
       pick.id = "uber-pick";
@@ -1628,9 +1911,11 @@ var ConfigModel = (function () {
   function paintKeying(box, d) {
     var choices = M.keyingChoices(d, doc);
     var picked = M.keyingPicked(choices, doc);
+    if (route() === "setup" && !setup.keying) picked = null;
     var ptt = M.get(doc, "ptt") || {};
     choices.forEach(function (c) {
       var opt = option(c.id, picked === c.id, c.title, c.detail, function () {
+        setup.keying = true;
         M.pickKeying(doc, c, {});
         edited(true, "pick-" + c.id);
       });
@@ -1655,6 +1940,7 @@ var ConfigModel = (function () {
         var now = c.extra === "gpio" ? String(M.get(ptt, "gpio") || 3) : String(M.get(ptt, "line") || "rts").toLowerCase();
         sel.value = now;
         sel.addEventListener("change", function () {
+          setup.keying = true;
           M.pickKeying(doc, c, c.extra === "gpio" ? { gpio: parseInt(sel.value, 10) } : { line: sel.value });
           edited(true, id);
         });
@@ -1673,6 +1959,15 @@ var ConfigModel = (function () {
     errors = {};
     var at = route();
     lastArea = at;
+    var inSetup = at === "setup";
+    if (inSetup && !setup.active) enterSetup();
+    if (!inSetup && setup.active && setup.phase === "steps") leaveSetup();
+    document.body.classList.toggle("setup-mode", inSetup);
+    $("mode-word").textContent = inSetup ? "setup" : "settings";
+    $("skip-setup").hidden = !(inSetup && setup.phase === "steps");
+    $("edit-text").hidden = inSetup;
+    if (!(inSetup && (setup.phase === "done" || (setup.phase === "steps" && setup.step === "keying")))) closeStation();
+    else openStation();
     $("edit-text").textContent = at === "text" ? "Back to the settings" : "Edit as text";
     $("edit-text").classList.toggle("on", at === "text");
     renderNav();
@@ -1715,6 +2010,7 @@ var ConfigModel = (function () {
     nav.appendChild(el("hr"));
     link("advanced", "Advanced", 0, bad === "advanced");
     link("history", "Earlier versions", history.list ? history.list.length : 0);
+    link("setup", "Run setup again");
   }
 
   function renderMain(at) {
@@ -1728,8 +2024,9 @@ var ConfigModel = (function () {
     if (at === "overview") drawOverview(root);
     else if (at === "history") drawHistory(root);
     else if (at === "text") drawText(root);
+    else if (at === "setup") drawSetup(root);
     else drawArea(root, at);
-    if (at === "modes") { paintPlan(); schedulePlan(true); }
+    if (at === "modes" || (at === "setup" && setup.step === "modes" && setup.phase === "steps")) { paintPlan(); schedulePlan(true); }
   }
 
   // ---------------------------------------------------------------- overview
@@ -2046,7 +2343,7 @@ var ConfigModel = (function () {
 
   // Asks the station where the modems would sit, a moment after the last change.
   function schedulePlan(now) {
-    if (!schema || !doc || route() !== "modes") return;
+    if (!schema || !doc || !(route() === "modes" || (route() === "setup" && setup.step === "modes"))) return;
     clearTimeout(plan.timer);
     var seq = ++plan.seq;
     var strip = $("strip");
@@ -2958,8 +3255,10 @@ var ConfigModel = (function () {
       if (box) box.classList.remove("invalid");
     });
     var banner = $("issue-banner");
+    if (route() === "setup") paintSetupCheck();
     if (!banner) return;
     banner.hidden = true;
+    if (route() === "setup") return;
     if (check.state !== "bad") return;
     var target = check.path ? $("e-" + idFor(check.path)) : null;
     if (target && target.hidden) {
@@ -3152,6 +3451,7 @@ var ConfigModel = (function () {
         if (!state.back) { tryAgain(); return; }
         busy = false;
         return load().then(function () {
+          if (setup.active && setup.phase === "restarting") { setup.phase = "done"; render(); }
           result("good", "The station is back, running on the new configuration"
             + (persist ? "." : " until its next restart."));
         });
@@ -3161,6 +3461,7 @@ var ConfigModel = (function () {
     function tryAgain() {
       if (Date.now() - started > 120000) {
         busy = false;
+        if (setup.active && setup.phase === "restarting") { setup.phase = "steps"; setup.error = "The station has not come back after two minutes. Its journal says why: journalctl -u pdn-soundmodem"; render(); }
         result("bad", "The station has not come back after two minutes. Its journal says why: journalctl -u pdn-soundmodem");
       } else {
         waitForRestart(started, persist);
@@ -3172,7 +3473,770 @@ var ConfigModel = (function () {
   $("save").addEventListener("click", function () { apply(true); });
 
   window.addEventListener("beforeunload", function (e) {
-    if (doc && loaded && changedCount() > 0 && !busy) { e.preventDefault(); e.returnValue = ""; }
+    // Inside setup, only what the person has chosen since it opened is worth a warning: the
+    // emptied placeholders of a new station are not a change they made.
+    var changed = setup.active && setup.phase === "steps" && setup.start
+      ? JSON.stringify(doc) !== JSON.stringify(setup.start) : changedCount() > 0;
+    if (doc && loaded && changed && !busy) { e.preventDefault(); e.returnValue = ""; }
+  });
+
+  // ---------------------------------------------------------------- guided setup
+  // /config#setup: six steps over the same pending document, check and apply as the rest of the
+  // page. Nothing is written until "Save and start". What each step writes is decided in the
+  // model (M.setup*); this draws it.
+  var neverConfigured = false;   // what the station said at the last read
+  var setup = null;
+  var keyTest = { state: "idle", text: "" };
+
+  function newSetup() {
+    return { active: false, step: "radio", kind: null, keying: false, phase: "steps", error: "", moved: null, showAll: false };
+  }
+  setup = newSetup();
+
+  // A station that has never been configured (its file is the shipped example or empty) starts
+  // from nothing, because the example's choices are placeholders; anything else starts from what
+  // it has, and nothing a running station has is ever cleared.
+  function enterSetup() {
+    setup = newSetup();
+    setup.active = true;
+    setup.before = clone(doc);
+    keyTest = { state: "idle", text: "" };
+    station.levelSeen = false;
+    if (neverConfigured && M.diff(loaded, doc).length === 0) {
+      M.setupClearChoices(doc);
+    } else {
+      setup.kind = M.setupKindOf(doc);
+      setup.keying = true;
+    }
+    setup.start = clone(doc);
+    pickRemoved = [];
+    if (found.state === "idle") look(false);
+    scheduleCheck();
+  }
+
+  // Leaving setup any way but saving puts the document back as it was when setup opened, so a
+  // half-made choice is never a pending change.
+  function leaveSetup() {
+    doc = clone(setup.before);
+    setup.active = false;
+    pickRemoved = [];
+    scheduleCheck();
+  }
+
+  var STEP_TITLE = { radio: "your radio", card: "sound card", keying: "keying", modes: "choose modes", software: "your software", "try": "try it" };
+
+  function goStep(id) {
+    setup.step = id;
+    setup.error = "";
+    render();
+    window.scrollTo(0, 0);
+  }
+
+  function setupFlags() { return { keying: setup.keying }; }
+
+  function drawSetup(root) {
+    var wrap = el("div", "setup");
+    wrap.id = "setup";
+    root.appendChild(wrap);
+    var steps = M.setupSteps(setup.kind);
+    var at = 0;
+    steps.forEach(function (s, i) { if (s.id === setup.step) at = i; });
+    var bar = el("ol", "steps");
+    bar.id = "setup-steps";
+    bar.setAttribute("aria-label", "Setup steps");
+    steps.forEach(function (s, i) {
+      var li = el("li", s.skipped ? "skip" : i < at ? "done" : i === at ? "now" : "");
+      li.id = "step-item-" + s.id;
+      if (i === at) li.setAttribute("aria-current", "step");
+      if (s.skipped) li.title = "Not needed for this kind of radio";
+      if (i < at && !s.skipped && setup.phase === "steps") {
+        var b = el("button", null, s.title);
+        b.type = "button";
+        b.id = "step-" + s.id;
+        b.addEventListener("click", function () { goStep(s.id); });
+        li.appendChild(b);
+      } else {
+        li.appendChild(document.createTextNode(s.title));
+      }
+      bar.appendChild(li);
+    });
+    wrap.appendChild(bar);
+
+    if (setup.phase === "saving" || setup.phase === "restarting") { drawSetupWaiting(wrap); return; }
+    if (setup.phase === "done") { drawSetupDone(wrap); return; }
+
+    var draw = { radio: drawStepRadio, card: drawStepCard, keying: drawStepKeying, modes: drawStepModes,
+      software: drawStepSoftware, "try": drawStepTry }[setup.step];
+    draw(wrap);
+
+    var nav = el("div", "stepnav");
+    var prev = M.setupPrev(setup.kind, setup.step);
+    var next = M.setupNext(setup.kind, setup.step);
+    if (prev) {
+      var back = el("button", "btn", "Back to " + STEP_TITLE[prev]);
+      back.type = "button";
+      back.id = "setup-back";
+      back.addEventListener("click", function () { goStep(prev); });
+      nav.appendChild(back);
+    } else {
+      nav.appendChild(el("span"));
+    }
+    if (next) {
+      var go = el("button", "btn primary", "Next: " + STEP_TITLE[next]);
+      go.type = "button";
+      go.id = "setup-next";
+      go.disabled = !M.setupComplete(doc, setup.kind, setup.step, setupFlags());
+      go.addEventListener("click", function () { goStep(next); });
+      nav.appendChild(go);
+    }
+    wrap.appendChild(nav);
+    wrap.appendChild(el("p", "elsewhere", "Nothing is changed until the last step. You can come back to any step from the settings page later."));
+  }
+
+  function foundBox(wrap) {
+    var box = el("div", "found");
+    box.id = "found";
+    wrap.appendChild(box);
+    paintFound();
+    if (found.state === "idle") look(false);
+  }
+
+  // ---- 1. Your radio
+  function drawStepRadio(wrap) {
+    wrap.appendChild(el("h1", null, "What kind of radio is this station?"));
+    if (setup.kind === "other") {
+      wrap.appendChild(el("p", "lede", "This station listens through " + String(M.get(doc, "device")) + "; change it in settings."));
+      var go = el("a", "btn", "Open the radio settings");
+      go.href = "#radio";
+      go.id = "setup-other-settings";
+      wrap.appendChild(go);
+      return;
+    }
+    wrap.appendChild(el("p", "lede", "This decides which of the next steps are needed."));
+    var kinds = [
+      ["fm", "A sound card into an FM radio", "Most VHF and UHF packet and APRS: a radio on 144 or 430 MHz with a data or microphone lead to a USB sound card or a CM108 interface."],
+      ["ssb", "A sound card into an SSB radio", "HF packet and data: a radio on upper sideband, with a USB sound card or the radio's own USB audio."],
+      ["flex", "A FlexRadio on your network", "The audio comes from the radio over the network and the radio keys itself."],
+      ["ubersdr", "A web receiver (UberSDR)", "Listen only. No radio of your own is needed and nothing is transmitted."]
+    ];
+    kinds.forEach(function (k) {
+      wrap.appendChild(option("kind-" + k[0], setup.kind === k[0], k[1], k[2], function () {
+        setup.kind = k[0];
+        M.setupPickKind(doc, k[0]);
+        if (k[0] === "ubersdr") setup.keying = true;
+        edited(true, "pick-kind-" + k[0]);
+      }, "", "setup-kind"));
+    });
+    if (setup.kind === "flex" || setup.kind === "ubersdr") {
+      foundBox(wrap);
+      if (setup.kind === "ubersdr") {
+        var urow = el("div", "field");
+        var ulab = el("label", null, "Or type a receiver, a host or an ubersdr: device");
+        ulab.htmlFor = "setup-uber-device";
+        urow.appendChild(ulab);
+        var uwrap = el("div", "input");
+        var uin = el("input");
+        uin.id = "setup-uber-device";
+        uin.placeholder = "ubersdr:m9psy-1.instance.ubersdr.org";
+        var ucur = String(M.get(doc, "device") || "");
+        uin.value = ucur.toLowerCase().indexOf("ubersdr:") === 0 ? ucur : "";
+        uin.addEventListener("change", function () {
+          var v = uin.value.trim();
+          if (v === "") return;
+          if (v.toLowerCase().indexOf("ubersdr:") !== 0) v = "ubersdr:" + v;
+          M.pickRadio(doc, { device: v, section: { name: "ubersdr", value: { mode: "iq48" } }, ownKeying: true, kind: "ubersdr" });
+          edited(true, "setup-uber-device");
+        });
+        uwrap.appendChild(uin);
+        urow.appendChild(uwrap);
+        wrap.appendChild(urow);
+      }
+      if (setup.kind === "flex") {
+        var row = el("div", "field");
+        var lab = el("label", null, "Or type the radio's address");
+        lab.htmlFor = "setup-flex-ip";
+        row.appendChild(lab);
+        var wrapIn = el("div", "input");
+        var inp = el("input");
+        inp.id = "setup-flex-ip";
+        inp.placeholder = "192.168.1.50";
+        var cur = String(M.get(doc, "device") || "");
+        inp.value = cur.toLowerCase().indexOf("flex:") === 0 ? cur.slice(5) : "";
+        inp.addEventListener("change", function () {
+          var v = inp.value.trim();
+          if (v === "") return;
+          M.pickRadio(doc, { device: "flex:" + v, section: { name: "flex", value: {} }, ownKeying: true, kind: "flex" });
+          edited(true, "setup-flex-ip");
+        });
+        wrapIn.appendChild(inp);
+        row.appendChild(wrapIn);
+        wrap.appendChild(row);
+      }
+    }
+  }
+
+  // ---- 2. Sound card
+  function drawStepCard(wrap) {
+    wrap.appendChild(el("h1", null, "Which sound card does the radio connect to?"));
+    wrap.appendChild(el("p", "lede", "This is the audio in and out of the radio."));
+    foundBox(wrap);
+    var row = el("div", "field");
+    var lab = el("label", null, "Or type the sound card's name");
+    lab.htmlFor = "setup-device";
+    row.appendChild(lab);
+    var wrapIn = el("div", "input");
+    var inp = el("input");
+    inp.id = "setup-device";
+    inp.placeholder = "plughw:CARD=Device,DEV=0";
+    var cur = M.get(doc, "device");
+    inp.value = typeof cur === "string" ? cur : "";
+    inp.addEventListener("change", function () {
+      var v = inp.value.trim();
+      if (v === "") M.remove(doc, "device"); else M.set(doc, "device", v);
+      edited(true, "setup-device");
+    });
+    wrapIn.appendChild(inp);
+    row.appendChild(wrapIn);
+    wrap.appendChild(row);
+  }
+
+  // ---- 3. Keying
+  function drawStepKeying(wrap) {
+    wrap.appendChild(el("h1", null, "How does this station key the radio?"));
+    wrap.appendChild(el("p", "lede", "Packet needs the radio to transmit when the modem talks. These are the ways this machine could do that."));
+    if (setup.kind === "flex") {
+      wrap.appendChild(el("p", "stepnote", "A FlexRadio keys itself, so there is nothing to choose here."));
+      setup.keying = true;
+    } else {
+      foundBox(wrap);
+    }
+    var box = el("div", "tryit");
+    box.id = "keytest";
+    wrap.appendChild(box);
+    paintKeyTest();
+  }
+
+  // The "Key the radio for 2 seconds" box. It keys the station as it is running, behind a confirm,
+  // by the station page's own route: the txtest message over the page socket, which is open to
+  // the same pages as the station page's own button and opens nothing new.
+  function paintKeyTest() {
+    var box = $("keytest");
+    if (!box) return;
+    box.textContent = "";
+    var st = M.keyTestState(loaded, doc, station.tx);
+    if (!st.ok) {
+      var why = el("span", "warn", st.why);
+      why.id = "keytest-why";
+      box.appendChild(why);
+      return;
+    }
+    if (keyTest.state === "confirm") {
+      var ask = el("span", null, "This transmits a steady tone for 2 seconds. Check the radio is on a frequency you may use, with an antenna or a dummy load connected.");
+      ask.id = "keytest-ask";
+      box.appendChild(ask);
+      var yes = el("button", "btn primary", "Yes, key it");
+      yes.type = "button";
+      yes.id = "keytest-yes";
+      yes.addEventListener("click", runKeyTest);
+      box.appendChild(yes);
+      var no = el("button", "btn", "Cancel");
+      no.type = "button";
+      no.id = "keytest-cancel";
+      no.addEventListener("click", function () { keyTest = { state: "idle", text: "" }; paintKeyTest(); });
+      box.appendChild(no);
+      return;
+    }
+    var go = el("button", "btn", "Key the radio for 2 seconds");
+    go.type = "button";
+    go.id = "keytest-go";
+    go.disabled = keyTest.state === "running";
+    go.addEventListener("click", function () { keyTest = { state: "confirm", text: "" }; paintKeyTest(); });
+    box.appendChild(go);
+    if (keyTest.text) {
+      var r = el("span", keyTest.state === "bad" ? "bad" : "good", keyTest.text);
+      r.id = "keytest-result";
+      box.appendChild(r);
+      if (keyTest.detail) {
+        var d = el("small", "muted", keyTest.detail);
+        d.id = "keytest-detail";
+        box.appendChild(d);
+      }
+    }
+  }
+
+  function runKeyTest() {
+    clearTimeout(keyTest.timer);
+    if (!station.ws || station.ws.readyState !== 1) {
+      keyTest = { state: "bad", text: "Not connected to the station yet. Try again in a moment." };
+      paintKeyTest();
+      return;
+    }
+    keyTest = { state: "running", text: "Keying the radio..." };
+    keyTest.timer = setTimeout(function () {
+      if (keyTest.state !== "running") return;
+      keyTest = { state: "bad", text: "The station did not answer. Its journal says what it did: journalctl -u pdn-soundmodem" };
+      paintKeyTest();
+    }, 75000);   // longer than the runner's 60 s wait for a clear channel
+    station.ws.send(JSON.stringify({ type: "txtest", twoTone: false, toneHz: 1000, seconds: 2 }));
+    paintKeyTest();
+  }
+
+  // What the station says became of a test (the page socket's txtest message).
+  function onKeyStatus(msg) {
+    // Only a test this page started: another tab's, or none, is not this page's to report.
+    if (keyTest.state !== "running") return;
+    if (msg.state === "running") { keyTest = { state: "running", text: "Keying the radio...", timer: keyTest.timer }; }
+    else if (msg.state === "done") {
+      clearTimeout(keyTest.timer);
+      keyTest = { state: "good", text: "Keyed and released. Did the radio's TX light come on?", detail: "The station says: " + msg.text };
+    } else if (msg.state === "refused" || msg.state === "failed") {
+      clearTimeout(keyTest.timer);
+      keyTest = { state: "bad", text: "The station did not key the radio: " + (msg.text || "it gave no reason; its journal says why: journalctl -u pdn-soundmodem") };
+    } else return;
+    paintKeyTest();
+  }
+
+  // ---- the station page's socket, for the key test and the level meter
+  // Opened only while setup needs it (the keying step and the screen after the restart). The
+  // first message is the station's config, which says whether a test can run at all.
+  var station = { ws: null, tx: null, levelSeen: false, stale: 0, retry: 0 };
+
+  function stationNeeded() {
+    return route() === "setup" && setup.active && (setup.phase === "done" || (setup.phase === "steps" && setup.step === "keying"));
+  }
+
+  function openStation() {
+    if (station.ws) return;
+    var scheme = location.protocol === "https:" ? "wss" : "ws";
+    var base = location.pathname.replace(/[^\/]*$/, "");
+    var ws;
+    try { ws = new WebSocket(scheme + "://" + location.host + base + "ws"); } catch (e) { return; }
+    station.ws = ws;
+    ws.onmessage = function (e) {
+      if (typeof e.data !== "string") return;
+      var m;
+      try { m = JSON.parse(e.data); } catch (x) { return; }
+      if (!m) return;
+      if (m.type === "config") {
+        station.tx = !m.txTest ? { available: false, refusal: "this page has no transmit test here" }
+          : { available: !m.txTest.refusal, refusal: m.txTest.refusal || "" };
+        paintKeyTest();
+      } else if (m.type === "txtest") onKeyStatus(m);
+      else if (m.type === "level") paintLevel(m);
+    };
+    ws.onclose = function () {
+      if (station.ws !== ws) return;
+      station.ws = null;
+      station.tx = null;
+      paintKeyTest();
+      clearTimeout(station.retry);
+      station.retry = setTimeout(function () { if (stationNeeded()) openStation(); }, 2000);
+    };
+  }
+
+  function closeStation() {
+    clearTimeout(station.stale);
+    clearTimeout(station.retry);
+    if (station.ws) {
+      var ws = station.ws;
+      station.ws = null;
+      ws.onclose = null;
+      try { ws.close(); } catch (e) { /* already closed */ }
+    }
+    station.tx = null;
+  }
+
+  // ---- 4. Modes
+  function drawStepModes(wrap) {
+    wrap.appendChild(el("h1", null, "What do you want to talk to?"));
+    wrap.appendChild(el("p", "lede", "Each choice adds a modem that listens and transmits in its own place on the band. You can add more than one."));
+    var list = modemList();
+    var holder = el("div");
+    holder.id = "modems";
+    if (list.length > 0) holder.appendChild(drawStrip());
+    list.forEach(function (m, i) {
+      var info = M.modeInfo(schema, M.get(m, "mode"));
+      var row = el("div", "modemrow");
+      row.id = "setup-modem-" + i;
+      var sw = el("span", "swatch");
+      sw.style.background = M.colourOf(i);
+      row.appendChild(sw);
+      var who = el("div", "who");
+      who.appendChild(el("b", null, info ? info.name : String(M.get(m, "mode"))));
+      who.appendChild(el("small", null, info ? "Talks to " + info.talksTo : ""));
+      row.appendChild(who);
+      var rm = el("button", "btn small", "Remove");
+      rm.type = "button";
+      rm.id = "setup-remove-" + i;
+      rm.addEventListener("click", function () {
+        list.splice(i, 1);
+        if (list.length === 0) M.remove(doc, "modems");
+        edited(true);
+      });
+      row.appendChild(rm);
+      holder.appendChild(row);
+    });
+    wrap.appendChild(holder);
+
+    var n = { path: "modems" };
+    var card = el("div", "card");
+    card.id = "picker";
+    var head = el("div", "head");
+    head.appendChild(el("span", "name", picker.group ? "Which one?" : list.length ? "Add another" : "Pick what you want to talk to"));
+    card.appendChild(head);
+    var body = el("div", "body");
+    var choices = el("div", "choices");
+    var order = M.setupGroupOrder(setup.kind);
+    var tunableOnly = placedByDial();
+    var ids = order.suggested.concat(setup.showAll ? order.rest : []);
+    if (!picker.group) {
+      ids.forEach(function (gid) {
+        var g = schema.modes.groups.filter(function (x) { return x.id === gid; })[0];
+        if (!g || M.modesOfGroup(schema, g.id, tunableOnly).length === 0) return;
+        choices.appendChild(choice("group-" + g.id, g.title, g.blurb, function () {
+          var modes = M.modesOfGroup(schema, g.id, tunableOnly);
+          if (modes.length === 1) { addModem(n, modes[0].mode); return; }
+          picker.group = g.id;
+          render();
+        }));
+      });
+      if (!setup.showAll) {
+        choices.appendChild(choice("show-all", "Something else", "Show every kind of mode", function () { setup.showAll = true; render(); }));
+      }
+    } else {
+      var nino = picker.group === "nino";
+      M.modesOfGroup(schema, picker.group, tunableOnly).forEach(function (m) {
+        var title = nino ? "NinoTNC mode " + m.ninoMode : m.name;
+        var text = nino ? m.name : "Talks to " + m.talksTo;
+        choices.appendChild(choice("mode-" + m.mode, title, text, function () { addModem(n, m.mode); }));
+      });
+      choices.appendChild(choice("back", "Back", "Choose something else to talk to", function () { picker.group = null; render(); }));
+    }
+    body.appendChild(choices);
+    card.appendChild(body);
+    wrap.appendChild(card);
+  }
+
+  // ---- 5. Your software
+  function drawStepSoftware(wrap) {
+    wrap.appendChild(el("h1", null, "How will your software connect?"));
+    wrap.appendChild(el("p", "lede", "Your node or BBS software talks to this station over a KISS port, which is a plain TCP connection."));
+    var row = el("div", "field");
+    var lab = el("label", null, "KISS port");
+    lab.htmlFor = "setup-kiss-port";
+    row.appendChild(lab);
+    var wrapIn = el("div", "input");
+    var inp = el("input");
+    inp.id = "setup-kiss-port";
+    inp.inputMode = "numeric";
+    inp.value = String(M.setupKissPort(doc));
+    wrapIn.appendChild(inp);
+    row.appendChild(wrapIn);
+    var err = el("div", "err");
+    err.id = "setup-kiss-error";
+    err.hidden = true;
+    row.appendChild(err);
+    wrap.appendChild(row);
+    var words = el("p", "stepnote");
+    words.id = "setup-kiss-words";
+    function say() { words.textContent = M.setupSoftwareWords(doc, location.hostname).text; }
+    inp.addEventListener("input", function () {
+      var problem = M.setupWriteSoftware(doc, inp.value, M.setupNetwork(doc));
+      err.textContent = problem;
+      err.hidden = problem === "";
+      if (problem === "") { say(); scheduleCheck(); }
+      var next = $("setup-next");
+      if (next) next.disabled = problem !== "";
+    });
+    var network = M.setupNetwork(doc);
+    wrap.appendChild(option("bind-local", !network, "This machine only", "Only programs on this computer can connect. Choose this if LinBPQ or your other software runs here.", function () {
+      M.setupWriteSoftware(doc, inp.value, false);
+      edited(true, "pick-bind-local");
+    }, "", "setup-bind"));
+    wrap.appendChild(option("bind-network", network, "Other computers on my network too", "Choose this if your software runs on another machine.", function () {
+      M.setupWriteSoftware(doc, inp.value, true);
+      edited(true, "pick-bind-network");
+    }, "", "setup-bind"));
+    say();
+    wrap.appendChild(words);
+    if (network) {
+      var warn = el("p", "stepnote warn");
+      warn.id = "setup-network-warning";
+      warn.appendChild(document.createTextNode(M.setupNetworkWarning(doc) + " "));
+      var how = el("a", null, "How to set an access key");
+      how.href = DOCS + "config.md#api";
+      how.target = "_blank";
+      how.rel = "noopener";
+      warn.appendChild(how);
+      wrap.appendChild(warn);
+    }
+    wrap.appendChild(el("p", "stepnote", "Every modem you chose shares this one port."));
+  }
+
+  // ---- 6. Try it
+  function drawStepTry(wrap) {
+    wrap.appendChild(el("h1", null, "Ready to try it?"));
+    wrap.appendChild(el("p", "lede", "This is what will be set up. Nothing has been changed yet."));
+    var dl = el("dl", "summary");
+    dl.id = "setup-summary";
+    M.setupSummary(schema, doc, setup.kind, found.data).forEach(function (r) {
+      dl.appendChild(el("dt", null, r[0]));
+      var dd = el("dd", null, r[1]);
+      if (r[2]) { dd.appendChild(document.createElement("br")); dd.appendChild(el("small", "muted", r[2])); }
+      dl.appendChild(dd);
+    });
+    wrap.appendChild(dl);
+    if (pickRemoved.length > 0) {
+      wrap.appendChild(el("p", "stepnote", "Choosing that radio removed: " + pickRemoved.join(", ") + "."));
+    }
+    var notice = setupNotice();
+    if (notice) {
+      var np = el("p", "stepnote");
+      np.id = "setup-notice";
+      np.appendChild(notice);
+      wrap.appendChild(np);
+    }
+    if (setup.error) {
+      var e = el("p", "stepnote bad", setup.error);
+      e.id = "setup-error";
+      wrap.appendChild(e);
+    }
+    var box = el("div", "tryit");
+    var chk = el("button", "btn", "Check");
+    chk.type = "button";
+    chk.id = "setup-check";
+    chk.addEventListener("click", checkNow);
+    box.appendChild(chk);
+    var status = el("span");
+    status.id = "setup-check-status";
+    box.appendChild(status);
+    var fix = el("button", "btn small", "");
+    fix.type = "button";
+    fix.id = "setup-fix";
+    fix.hidden = true;
+    box.appendChild(fix);
+    wrap.appendChild(box);
+    var save = el("button", "btn primary", "Save and start");
+    save.type = "button";
+    save.id = "setup-save";
+    save.style.marginTop = "14px";
+    save.addEventListener("click", saveSetup);
+    wrap.appendChild(save);
+    paintSetupCheck();
+  }
+
+  // Which step a refusal about a setting belongs to.
+  function stepFor(path) {
+    var area = M.areaOf(schema, path);
+    if (area === "radio") return setup.kind === "flex" || setup.kind === "ubersdr" ? "radio" : "card";
+    return { keying: "keying", modes: "modes", software: "software" }[area] || null;
+  }
+
+  function paintSetupCheck() {
+    var status = $("setup-check-status");
+    if (!status || setup.step !== "try") return;
+    var save = $("setup-save"), chk = $("setup-check"), fix = $("setup-fix");
+    var text = "Not checked yet. Press Check to ask the station whether it would start on this.";
+    var cls = "";
+    if (check.state === "waiting" || check.state === "checking") { text = "Checking..."; }
+    else if (check.state === "ok") { text = "Looks good: the station would start on this."; cls = "good"; }
+    else if (check.state === "bad") { text = "The station would not start on this: " + check.problem; cls = "bad"; }
+    status.textContent = text;
+    status.className = cls;
+    chk.disabled = check.state === "checking" || busy;
+    save.disabled = check.state !== "ok" || busy;
+    var step = check.state === "bad" && check.path ? stepFor(check.path) : null;
+    fix.hidden = !step;
+    if (step) {
+      fix.textContent = "Go to " + STEP_TITLE[step];
+      fix.onclick = function () { goStep(step); };
+    }
+  }
+
+  // Asks the station now rather than after the usual pause.
+  function checkNow() {
+    clearTimeout(checkTimer);
+    check = { state: "waiting", seq: check.seq + 1, problem: "", path: null };
+    paintSetupCheck();
+    runCheck(check.seq);
+  }
+
+  // What saving does to this page, for setup: nothing worth saying when it stays at the address
+  // it is open at (opening the KISS port to the network leaves the page where it was, at the
+  // same host and port), so the restart can be waited for.
+  function setupNotice() {
+    var move = M.pageMove(loaded, doc, location.hostname, location.protocol);
+    if (move && move.kind === "moved" && move.url === location.protocol + "//" + location.host + "/config") return null;
+    return pageNotice();
+  }
+
+  function saveSetup() {
+    // A finished setup always has its KISS port written, even left at the default: that is
+    // also what tells it apart from the shipped example, which has none.
+    // Only the port: the bind is written when its option is picked, so it was in the document
+    // that was checked, and saving never changes it.
+    M.set(doc, "kissPort", M.setupKissPort(doc));
+    var notice = setupNotice();
+    busy = true;
+    setup.phase = "saving";
+    setup.error = "";
+    render();
+    post("?persist=true").then(function (r) {
+      if (r.status !== 200) {
+        busy = false;
+        setup.phase = "steps";
+        setup.error = M.problemText(r.text);
+        render();
+        return;
+      }
+      setup.phase = "restarting";
+      // A page that is about to be somewhere else cannot wait on the restart.
+      setup.moved = notice;
+      render();
+      if (!notice) waitForRestart(Date.now(), true);
+    }).catch(function (e) {
+      busy = false;
+      setup.phase = "steps";
+      setup.error = "Could not reach the station: " + e.message;
+      render();
+    });
+  }
+
+  function drawSetupWaiting(wrap) {
+    wrap.appendChild(el("h1", null, "Starting the station..."));
+    var p = el("p", "lede", "Saved. The station is restarting on your settings, which takes a few seconds.");
+    p.id = "setup-waiting";
+    wrap.appendChild(p);
+    if (setup.moved) {
+      var n = el("p", "stepnote");
+      n.appendChild(setup.moved);
+      wrap.appendChild(n);
+    }
+  }
+
+  // ---- after the restart: the level meter, the key test and the station page
+  function drawSetupDone(wrap) {
+    wrap.appendChild(el("h1", null, "The station is running"));
+    var lede = el("p", "lede", "It is up on your settings and saved to the file.");
+    lede.id = "setup-done";
+    wrap.appendChild(lede);
+
+    // The meter appears when the station sends a reading, as the station page's does: only a
+    // station with a sound card and a way to set levels (an access key, or
+    // waterfall.enableAudioControls) sends any, and a Flex or a web receiver never does.
+    var card = el("div", "card");
+    card.id = "setup-levelbox";
+    card.hidden = !station.levelSeen;
+    var body = el("div", "body");
+    var inner = el("div");
+    inner.appendChild(el("b", null, "Input level"));
+    var m = el("div", "meter");
+    m.id = "setup-meter";
+    var zone = el("div", "zone"), hot = el("div", "hot");
+    zone.style.left = pct(-18) + "%";
+    zone.style.width = (pct(-9) - pct(-18)) + "%";
+    hot.style.width = (100 - pct(-6)) + "%";
+    var bar = el("div", "bar"), rms = el("div", "rms");
+    bar.id = "setup-bar";
+    rms.id = "setup-rms";
+    [zone, hot, bar, rms].forEach(function (x) { m.appendChild(x); });
+    inner.appendChild(m);
+    var read = el("div", "levelread", "");
+    read.id = "setup-level";
+    inner.appendChild(read);
+    inner.appendChild(el("p", "stepnote", "Aim for received signals to peak in the green band, -18 to -9 dBFS, and never into the red. With nothing on the channel the bar should sit low."));
+    body.appendChild(inner);
+    card.appendChild(body);
+    wrap.appendChild(card);
+
+    var none = el("p", "stepnote", "No level readings have arrived from this station. Levels are set on the station page, once an access key is set or \"waterfall\".\"enableAudioControls\" is on.");
+    none.id = "setup-nolevel";
+    none.hidden = station.levelSeen;
+    wrap.appendChild(none);
+
+    var gain = el("div", "field");
+    gain.id = "setup-gain-row";
+    gain.hidden = true;
+    var gl = el("label", null, "Sound card input gain");
+    gl.htmlFor = "setup-gain";
+    gain.appendChild(gl);
+    var slider = el("input");
+    slider.type = "range";
+    slider.id = "setup-gain";
+    gain.appendChild(slider);
+    var gr = el("div", "levelread");
+    gr.id = "setup-gain-read";
+    gain.appendChild(gr);
+    wrap.appendChild(gain);
+    loadGain(slider, gr, gain);
+
+    if (setup.kind !== "ubersdr" && setup.kind !== "other") {
+      var box = el("div", "tryit");
+      box.id = "keytest";
+      wrap.appendChild(box);
+      paintKeyTest();
+    }
+    var links = el("div", "stepnav");
+    var st = el("a", "btn primary", "Open the station page");
+    st.href = "./";
+    st.id = "setup-station-link";
+    var more = el("a", "btn", "Go to the settings");
+    more.href = "#overview";
+    more.id = "setup-settings-link";
+    links.appendChild(more);
+    links.appendChild(st);
+    wrap.appendChild(links);
+  }
+
+  function pct(db) { return Math.max(0, Math.min(100, (db + 60) * 100 / 60)); }
+
+  // One reading, on the station page's scale: green -18 to -9, red from -6. The first one shows
+  // the meter. A bar is trusted for a second after its last reading, as on the station page
+  // (MIX_STALE_MS), and emptied when none comes.
+  function paintLevel(m) {
+    station.levelSeen = true;
+    var box = $("setup-levelbox");
+    if (!box) return;
+    box.hidden = false;
+    $("setup-nolevel").hidden = true;
+    var bar = $("setup-bar");
+    bar.style.width = pct(m.peak) + "%";
+    bar.classList.toggle("loud", !!m.clip || m.peak >= -6);
+    bar.classList.toggle("quiet", !m.clip && m.peak < -30);
+    $("setup-rms").style.left = pct(m.rms) + "%";
+    $("setup-level").textContent = m.peak.toFixed(1) + " dBFS"
+      + (m.clip ? ", clipping: turn the input gain down" : m.peak >= -6 ? ", too loud" : m.peak < -30 ? ", quiet" : "");
+    clearTimeout(station.stale);
+    station.stale = setTimeout(function () {
+      var b = $("setup-bar");
+      if (b) { b.style.width = "0%"; b.classList.remove("loud", "quiet"); $("setup-level").textContent = "no reading"; }
+    }, 1000);
+  }
+
+  // The sound card's input gain, from /api/mixer, hidden where the station has no card to mix.
+  function loadGain(slider, read, row) {
+    api("api/mixer").then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
+      var c = s && s.available !== false ? s.capture : null;
+      if (!c || !c.dbRange || c.decibels === null || c.decibels === undefined) return;
+      slider.min = c.dbRange.min;
+      slider.max = c.dbRange.max;
+      slider.step = 1;
+      slider.value = c.decibels;
+      read.textContent = Number(c.decibels).toFixed(1) + " dB";
+      row.hidden = false;
+      slider.addEventListener("change", function () {
+        api("api/mixer", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ captureGainDb: Number(slider.value) }) })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (a) { if (a && a.capture && a.capture.decibels !== null) read.textContent = Number(a.capture.decibels).toFixed(1) + " dB"; });
+      });
+    }).catch(function () { /* no mixer: the meter alone */ });
+  }
+
+  $("skip-setup").addEventListener("click", function () {
+    // Remembered for this station. The link itself changes the hash, and leaving setup puts the
+    // document back as it was (see leaveSetup).
+    try { localStorage.setItem(SKIP_STORE, "1"); } catch (e) { /* private mode: asked again next time */ }
   });
 
   // ---------------------------------------------------------------- edit as text

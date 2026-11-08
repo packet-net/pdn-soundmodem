@@ -1774,6 +1774,11 @@ if (benchTxTest is null
         Console.WriteLine(fixtureNotice);
     }
 
+    if (ConfigSetup.StartUpNotice() is { } exampleNotice)
+    {
+        Console.WriteLine(exampleNotice);
+    }
+
     // One line, because this is the station's sound card in reach of whoever can reach the page,
     // and an operator who has forgotten the flag is set should be told at every start-up.
     if (openAudioControls)
