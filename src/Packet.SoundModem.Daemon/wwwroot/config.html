@@ -3,164 +3,208 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pdn-soundmodem configuration</title>
+<title>pdn-soundmodem settings</title>
 <style>
   :root {
     --bg: #0a0d11;
     --panel: #11161d;
+    --raised: #161d26;
     --edge: #1e2632;
     --ink: #d9e2ea;
-    --muted: #7c8894;
+    --muted: #8793a0;
     --amber: #f5a83c;
-    --bad: #ff9a7a;
+    --trace: #56c8dd;
     --good: #7fd18b;
+    --warn: #ffb86b;
+    --bad: #ff9a7a;
     --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
     --sans: system-ui, "Segoe UI", sans-serif;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { color-scheme: dark; }
   * { scrollbar-width: thin; scrollbar-color: #2a3441 #0d1117; }
-  body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); }
   a { color: var(--amber); text-decoration: none; }
   a:hover { text-decoration: underline; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:disabled { cursor: default; }
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
   code { font-family: var(--mono); font-size: 12.5px; color: #e8c88f; }
+  [hidden] { display: none !important; }
 
-  header {
-    position: sticky; top: 0; z-index: 2;
-    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
-    padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--edge);
-  }
+  header.top { display: flex; align-items: center; gap: 16px; padding: 10px 18px; flex-wrap: wrap;
+               background: var(--panel); border-bottom: 1px solid var(--edge); }
   .wordmark { font-family: var(--mono); font-size: 14px; white-space: nowrap; }
   .wordmark b { color: var(--amber); font-weight: 600; }
   .wordmark span { color: var(--muted); }
-  #source { color: var(--muted); font-size: 12.5px; }
-  .tabs { display: flex; gap: 4px; margin-left: auto; }
-  .tabs button { background: none; border: 1px solid var(--edge); color: var(--muted);
-                 padding: 4px 12px; border-radius: 4px; cursor: pointer; font: inherit; }
-  .tabs button.on { color: var(--ink); border-color: var(--amber); }
+  #source { color: var(--muted); font-size: 13.5px; }
+  header .right { margin-left: auto; display: flex; gap: 14px; align-items: center; font-size: 13.5px; }
+  .ghost { background: none; border: 1px solid var(--edge); border-radius: 5px; padding: 4px 11px; font-size: 13.5px; }
+  .ghost:hover:not(:disabled) { border-color: var(--muted); }
+  .ghost.on { border-color: var(--amber); }
 
-  main { max-width: 980px; margin: 0 auto; padding: 14px 14px 120px; }
+  .layout { display: grid; grid-template-columns: 230px 1fr; min-height: calc(100vh - 54px); }
+  nav.areas { border-right: 1px solid var(--edge); padding: 16px 10px; display: flex; flex-direction: column; gap: 2px; }
+  nav.areas a { color: var(--ink); padding: 7px 10px; border-radius: 5px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  nav.areas a:hover { background: var(--raised); text-decoration: none; }
+  nav.areas a.on { background: var(--raised); box-shadow: inset 2px 0 0 var(--amber); }
+  nav.areas small { color: var(--muted); font-size: 12px; }
+  nav.areas .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--bad); display: inline-block; }
+  nav.areas hr { border: 0; border-top: 1px solid var(--edge); margin: 10px 4px; }
+
+  main { padding: 26px clamp(16px, 4vw, 44px) 190px; max-width: 960px; min-width: 0; }
+  h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 4px; }
+  .lede { color: var(--muted); max-width: 62ch; margin-bottom: 24px; }
+  .muted { color: var(--muted); }
+
+  #loading { color: var(--muted); padding: 30px 18px; }
   #login { max-width: 420px; margin: 60px auto; padding: 20px; background: var(--panel);
            border: 1px solid var(--edge); border-radius: 6px; }
-  #login p { color: var(--muted); margin-bottom: 12px; line-height: 1.45; }
+  #login p { color: var(--muted); margin-bottom: 12px; }
   #login input { width: 100%; margin-bottom: 10px; }
   #login .bad { color: var(--bad); }
 
   input, select, textarea {
-    background: #0d1117; color: var(--ink); border: 1px solid var(--edge); border-radius: 4px;
-    padding: 5px 7px; font: inherit; font-family: var(--mono); font-size: 13px;
+    background: none; color: var(--ink); border: 0; padding: 7px 9px; font: inherit;
   }
-  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--amber); }
-  input.invalid, textarea.invalid { border-color: var(--bad); }
-  button.act { background: #1a2230; color: var(--ink); border: 1px solid var(--edge);
-               padding: 6px 14px; border-radius: 4px; cursor: pointer; font: inherit; }
-  button.act:hover:not(:disabled) { border-color: var(--amber); }
-  button.act:disabled { opacity: .45; cursor: default; }
-  button.act.primary { border-color: var(--amber); color: var(--amber); }
-  button.small { padding: 2px 8px; font-size: 12px; }
+  #login input { background: #0d1117; border: 1px solid var(--edge); border-radius: 5px; }
+  input:focus, select:focus, textarea:focus { outline: none; }
+  select option { background: #0d1117; }
 
-  details.section { background: var(--panel); border: 1px solid var(--edge); border-radius: 6px;
-                    margin-bottom: 10px; }
-  details.section > summary { cursor: pointer; padding: 9px 12px; list-style: none;
-                              display: flex; align-items: baseline; gap: 10px; }
-  details.section > summary::-webkit-details-marker { display: none; }
-  details.section > summary::before { content: "+"; color: var(--muted); font-family: var(--mono); width: 10px; }
-  details.section[open] > summary::before { content: "-"; }
-  details.section > summary .name { font-family: var(--mono); font-weight: 600; }
-  details.section > summary .state { color: var(--muted); font-size: 12px; }
-  details.section > summary .state.set { color: var(--good); }
-  .body { padding: 4px 12px 12px 32px; }
-  .summary-help { color: var(--muted); font-size: 12.5px; line-height: 1.4; margin: 0 0 8px; }
+  .btn { border-radius: 5px; padding: 7px 15px; border: 1px solid var(--edge); background: var(--raised); font-size: 14px; }
+  .btn.primary { background: var(--amber); color: #1a1205; border-color: var(--amber); font-weight: 600; }
+  .btn:hover:not(:disabled) { border-color: var(--muted); }
+  .btn:disabled { opacity: .45; }
+  .btn.small { padding: 3px 10px; font-size: 13px; }
 
-  .field { display: grid; grid-template-columns: 210px 1fr; gap: 4px 14px; padding: 7px 0;
-           border-top: 1px solid #161d27; }
-  .field:first-child { border-top: none; }
-  .field > label { font-family: var(--mono); font-size: 13px; padding-top: 6px; word-break: break-all; }
+  /* ---------------------------------------------------------- overview */
+  .area { border-top: 1px solid var(--edge); padding: 18px 0 20px; display: grid;
+          grid-template-columns: 190px 1fr auto; gap: 6px 22px; align-items: start; }
+  .area h2 { font-size: 16px; font-weight: 600; }
+  .area p { max-width: 62ch; overflow-wrap: anywhere; }
+  .area p + p { margin-top: 4px; }
+  .area .sub { color: var(--muted); font-size: 13.5px; }
+  .edit { border: 1px solid var(--edge); border-radius: 5px; padding: 4px 12px; font-size: 13.5px; color: var(--ink); }
+  .edit:hover { border-color: var(--amber); color: var(--amber); text-decoration: none; }
+
+  /* ---------------------------------------------------------- an area */
+  .card { border: 1px solid var(--edge); border-radius: 6px; margin-bottom: 14px; background: var(--panel); }
+  .card > .head { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border-bottom: 1px solid var(--edge); flex-wrap: wrap; }
+  .card > .head .name { font-weight: 600; }
+  .card > .head .spacer { flex: 1; }
+  .card > .head .state { color: var(--muted); font-size: 13px; }
+  .card > .intro { padding: 10px 16px 0; color: var(--muted); font-size: 13px; }
+  .card > .body { padding: 14px 16px 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px 22px; }
+  .card > .absent { padding: 12px 16px; color: var(--muted); font-size: 13.5px; }
+  .card .card { margin: 0; background: #0e131a; grid-column: 1 / -1; }
+  .card > .body > div:not(.field) { grid-column: 1 / -1; }
+  .card .note { grid-column: 1 / -1; color: var(--warn); font-size: 13px; }
+  .inactive-note { padding: 8px 16px 0; color: var(--warn); font-size: 13px; }
+
+  .field { min-width: 0; }
+  .field.wide { grid-column: 1 / -1; }
+  .field > label { display: block; font-size: 14px; margin-bottom: 4px; }
   .field > label.changed::after { content: " *"; color: var(--amber); }
-  .field .control { display: flex; gap: 6px; align-items: flex-start; }
-  .field .control input, .field .control select { flex: 1; min-width: 0; }
-  .field .control textarea { flex: 1; min-height: 54px; resize: vertical; }
-  .field .help { grid-column: 2; color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+  .input { display: flex; align-items: center; background: #0d1117; border: 1px solid var(--edge); border-radius: 5px; }
+  .input:focus-within { border-color: var(--amber); }
+  .input input, .input select { flex: 1; min-width: 0; font-family: var(--mono); font-size: 13.5px; }
+  .input textarea { flex: 1; min-width: 0; min-height: 70px; resize: vertical; font-family: var(--mono); font-size: 13px; }
+  .input .unit { color: var(--muted); padding: 0 10px; font-size: 13px; white-space: nowrap; }
+  .input.invalid { border-color: var(--bad); }
+  .input .clear { background: none; border: 0; color: var(--muted); padding: 0 10px; font-size: 13px; }
+  .input .clear:hover { color: var(--amber); }
+  .field .keyname { margin-top: 3px; font-size: 12px; color: var(--muted); }
+  .field .keyname code { font-size: 11.5px; color: var(--muted); }
+  .field .help { color: var(--muted); font-size: 12.5px; line-height: 1.4; margin-top: 4px; overflow-wrap: anywhere; }
   .field .help .dflt { color: #9aa6b2; }
-  .field .err { grid-column: 2; color: var(--bad); font-size: 12.5px; }
-  @media (max-width: 640px) {
-    .field { grid-template-columns: 1fr; }
-    .field .help, .field .err { grid-column: 1; }
-  }
+  .field .err { color: var(--bad); font-size: 13px; margin-top: 4px; }
 
-  .card { border: 1px solid var(--edge); border-radius: 5px; margin: 8px 0; }
-  .card > .card-head { display: flex; align-items: center; gap: 10px; padding: 6px 10px;
-                       background: #0e131a; border-bottom: 1px solid var(--edge); }
-  .card > .card-head .title { font-family: var(--mono); font-size: 13px; flex: 1; }
-  .card > .fields { padding: 2px 10px 6px; }
-  .nested { margin: 6px 0; }
-  .nested > .nested-head { font-family: var(--mono); font-size: 13px; padding: 6px 0 2px;
-                           display: flex; gap: 10px; align-items: center; }
-  .nested > .fields { border-left: 2px solid var(--edge); padding-left: 12px; }
-  .absent { color: var(--muted); font-size: 12.5px; padding: 4px 0; }
-  .unknown { color: var(--amber); font-size: 12.5px; padding: 6px 0; }
+  details.more { grid-column: 1 / -1; font-size: 13.5px; }
+  details.more > summary { cursor: pointer; color: var(--muted); }
+  details.more > summary:hover { color: var(--ink); }
+  details.more[open] > summary { margin-bottom: 14px; }
+  details.more > .inner { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px 22px; }
+  details.more.page { margin-top: 18px; padding: 0; }
+  details.more.page > .inner { display: block; }
+  .unknown { grid-column: 1 / -1; color: var(--warn); font-size: 13px; }
 
-  #json { width: 100%; min-height: 70vh; font-size: 13px; line-height: 1.45; }
-  #json-bar { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
-  #json-bar .note { color: var(--muted); font-size: 12.5px; }
+  .add { width: 100%; padding: 12px; border: 1px dashed var(--edge); border-radius: 6px; background: none; color: var(--muted); margin-bottom: 14px; }
+  .add:hover { color: var(--amber); border-color: var(--amber); }
 
-  footer {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 2;
-    background: var(--panel); border-top: 1px solid var(--edge); padding: 9px 14px;
-  }
-  footer .row { max-width: 980px; margin: 0 auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  #changes { color: var(--muted); font-size: 12.5px; flex: 1; min-width: 200px;
-             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #result { max-width: 980px; margin: 6px auto 0; font-size: 13px; line-height: 1.4;
-            white-space: pre-wrap; font-family: var(--mono); }
-  #result:empty { display: none; }
+  .issue { margin-bottom: 18px; padding: 8px 11px; border-left: 2px solid var(--bad); background: #1b1210; font-size: 13.5px; max-width: 70ch; }
+  .issue b { color: var(--bad); font-weight: 600; }
+
+  /* ---------------------------------------------------------- earlier versions */
+  .version { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 0; border-top: 1px solid var(--edge); }
+  .version .when { flex: 1; min-width: 220px; }
+  .version .when small { display: block; color: var(--muted); font-size: 13px; }
+  .look { flex-basis: 100%; }
+  .look pre { background: #0d1117; border: 1px solid var(--edge); border-radius: 5px; padding: 10px 12px; max-height: 360px; overflow: auto; font: 12.5px/1.45 var(--mono); }
+  .look p { font-size: 13.5px; margin-bottom: 8px; }
+
+  /* ---------------------------------------------------------- edit as text */
+  #json { width: 100%; min-height: 62vh; background: #0d1117; border: 1px solid var(--edge); border-radius: 6px; font: 13px/1.45 var(--mono); padding: 10px 12px; }
+  #json.invalid { border-color: var(--bad); }
+  #json-bar { display: flex; gap: 12px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
+
+  /* ---------------------------------------------------------- pending changes */
+  #pending { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; background: var(--panel); border-top: 1px solid var(--edge);
+             padding: 12px 18px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  #pending .what { flex: 1; min-width: 240px; font-size: 14px; overflow-wrap: anywhere; }
+  #pending .what small { display: block; color: var(--muted); font-size: 13px; }
+  #changes.bad { color: var(--bad); }
+  #result { font-size: 14px; }
   #result.bad { color: var(--bad); }
   #result.good { color: var(--good); }
-  [hidden] { display: none !important; }
+  #result:empty { display: none; }
+
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.areas { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--edge); padding: 8px; }
+    nav.areas a { white-space: nowrap; }
+    nav.areas hr { display: none; }
+    .area { grid-template-columns: 1fr auto; }
+    .area > div { grid-column: 1 / -1; grid-row: 2; }
+    .edit { grid-column: 2; grid-row: 1; }
+    main { padding-bottom: 260px; }
+    #pending .btn { flex: 1; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <div class="wordmark"><b>pdn-soundmodem</b> <span>configuration</span></div>
-  <a href="./">station page</a>
+<header class="top">
+  <div class="wordmark"><b>pdn-soundmodem</b> <span>settings</span></div>
   <span id="source"></span>
-  <div class="tabs" id="tabs" hidden>
-    <button type="button" id="tab-form" class="on">Form</button>
-    <button type="button" id="tab-json">JSON</button>
+  <div class="right">
+    <button type="button" class="ghost" id="edit-text" hidden>Edit as text</button>
+    <a href="./" id="station-link">Station page</a>
   </div>
 </header>
 
-<main>
-  <div id="loading" class="absent">Loading the configuration...</div>
+<div id="loading">Loading the configuration...</div>
 
-  <form id="login" hidden>
-    <p>This station has an <code>api.key</code>. Enter it to read and change the configuration.</p>
-    <input type="password" id="key" autocomplete="current-password" placeholder="api key" autofocus>
-    <p id="login-error" class="bad" hidden></p>
-    <button class="act primary" type="submit">Unlock</button>
-  </form>
+<form id="login" hidden>
+  <p>This station has an <code>api.key</code>. Enter it to read and change the configuration.</p>
+  <input type="password" id="key" autocomplete="current-password" placeholder="api key" autofocus>
+  <p id="login-error" class="bad" hidden></p>
+  <button class="btn primary" type="submit">Unlock</button>
+</form>
 
-  <div id="form-view" hidden></div>
+<div class="layout" id="shell" hidden>
+  <nav class="areas" id="nav" aria-label="Settings areas"></nav>
+  <main id="form-view"></main>
+</div>
 
-  <div id="json-view" hidden>
-    <div id="json-bar">
-      <button class="act small" type="button" id="json-copy">Copy</button>
-      <span class="note">Paste a whole configuration here; comments and trailing commas are fine. It replaces the form when you go back to it, or when you check or apply.</span>
-    </div>
-    <textarea id="json" spellcheck="false"></textarea>
+<div id="pending" role="region" aria-label="Changes not yet applied" hidden>
+  <div class="what">
+    <div id="changes"></div>
+    <small id="changes-note"></small>
+    <div id="result"></div>
   </div>
-</main>
-
-<footer id="footer" hidden>
-  <div class="row">
-    <span id="changes">No changes</span>
-    <button class="act" type="button" id="revert">Revert</button>
-    <button class="act" type="button" id="check">Check</button>
-    <button class="act" type="button" id="try" title="Restarts the station on this configuration. The next restart after that goes back to the file.">Try until next restart</button>
-    <button class="act primary" type="button" id="save" title="Writes the config file and restarts the station.">Save to file</button>
-  </div>
-  <div id="result"></div>
-</footer>
+  <button type="button" class="btn" id="revert">Discard</button>
+  <button type="button" class="btn" id="try" title="Restarts the station on this configuration. The next restart after that goes back to the file.">Try until next restart</button>
+  <button type="button" class="btn primary" id="save" title="Writes the config file, whose comments are not kept, and restarts the station.">Save and restart</button>
+</div>
 
 <!-- The form's model: everything about turning a configuration into fields and fields back into
      a configuration, with no DOM in it. The tests run this block on its own (ConfigPageTests), so
@@ -293,12 +337,59 @@ var ConfigModel = (function () {
     return value;
   }
 
+  // Whether a value counts as "set" in the file: present, and not null, an empty list or an
+  // empty string. A section is set when the file has it, even as {}.
+  function isSet(value) {
+    if (value === undefined || value === null) return false;
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === "string") return value !== "";
+    return true;
+  }
+
+  // The kind of audio device a document names: the part of "device" before the colon when the
+  // daemon knows it as a prefix, "null" for the null device, else a sound card ("alsa").
+  function deviceKind(schema, doc) {
+    var d = get(doc, "device");
+    if (typeof d !== "string" || d === "") return "alsa";
+    var lower = d.toLowerCase();
+    if (lower === "null") return "null";
+    var at = lower.indexOf(":");
+    if (at > 0) {
+      var prefix = lower.slice(0, at);
+      var kinds = schema.deviceKinds || [];
+      if (prefix !== "alsa" && kinds.indexOf(prefix) >= 0) return prefix;
+    }
+    return "alsa";
+  }
+
+  // Whether a key's "when" rule says it is worth drawing. Any one of the tests is enough. A key
+  // with no rule always is.
+  function applies(when, ctx, parent) {
+    if (!when) return true;
+    if (when.deviceKind && when.deviceKind.indexOf(deviceKind(ctx.schema, ctx.doc)) >= 0) return true;
+    if (when.set) {
+      for (var i = 0; i < when.set.length; i++) {
+        if (isSet(valueAt(ctx.doc, when.set[i]))) return true;
+      }
+    }
+    if (when.sibling) {
+      var v = get(parent, when.sibling.key);
+      if (!isSet(v)) v = when.sibling["default"];
+      if (v !== undefined && v !== null && when.sibling["in"].indexOf(String(v).toLowerCase()) >= 0) return true;
+    }
+    return false;
+  }
+
   // The fields for one object of type typeName: a tree the page draws as it is.
   //   field:   a scalar, scalar array or raw JSON key, with its path and text
   //   section: an object key; present says whether the document has it
   //   list:    an array of objects, one entry per element
   //   unknown: keys the document has that this daemon does not know; they are kept
-  function plan(schema, typeName, obj, path) {
+  // Every node says whether the key is set (set), whether its "when" rule applies (applies), and
+  // so whether to draw it (shown): a key the file sets is always drawn, so nothing in a file is
+  // hidden from the person editing it; inactive marks one drawn though its rule does not apply.
+  function plan(schema, typeName, obj, path, ctx) {
+    ctx = ctx || { schema: schema, doc: obj };
     var type = schema.types[typeName];
     var nodes = [];
     var known = {};
@@ -310,25 +401,34 @@ var ConfigModel = (function () {
       // An old name of a key is drawn only where a file still uses it.
       // So is raw JSON, which is a retired section ("mailcast") kept only so it is not lost.
       if ((key.aliasOf || key.kind === "json") && value === undefined) continue;
+      var set = isSet(value);
+      var fits = applies(key.when, ctx, obj);
+      var shown = fits || set;
+      var node;
       if (key.kind === "object" && key.ref) {
         var present = value !== undefined && value !== null && typeof value === "object";
-        nodes.push({ node: "section", path: p, key: key, present: present,
-                     children: plan(schema, key.ref, present ? value : {}, p) });
+        node = { node: "section", path: p, key: key, present: present,
+                 children: plan(schema, key.ref, present ? value : {}, p, ctx) };
       } else if (key.kind === "array" && key.items && key.items.ref) {
         var items = [];
         var arr = Array.isArray(value) ? value : [];
         for (var j = 0; j < arr.length; j++) {
           items.push({ path: p + "[" + j + "]",
-                       children: plan(schema, key.items.ref, arr[j] || {}, p + "[" + j + "]") });
+                       children: plan(schema, key.items.ref, arr[j] || {}, p + "[" + j + "]", ctx) });
         }
-        nodes.push({ node: "list", path: p, key: key, items: items });
+        node = { node: "list", path: p, key: key, items: items };
       } else if (isScalarKind(key.kind) || key.kind === "json"
                  || (key.kind === "array" && key.items && isScalarKind(key.items.kind))) {
-        nodes.push({ node: "field", path: p, key: key, text: toText(key, value),
-                     secretSet: !!key.secret && value === HIDDEN });
+        node = { node: "field", path: p, key: key, text: toText(key, value),
+                 secretSet: !!key.secret && value === HIDDEN };
       } else {
-        nodes.push({ node: "unsupported", path: p, key: key });
+        node = { node: "unsupported", path: p, key: key };
       }
+      node.set = set;
+      node.applies = fits;
+      node.shown = shown;
+      node.inactive = shown && !fits;
+      nodes.push(node);
     }
     var extra = [];
     if (obj && typeof obj === "object") {
@@ -336,7 +436,7 @@ var ConfigModel = (function () {
         if (Object.prototype.hasOwnProperty.call(obj, k) && !known[k.toLowerCase()]) extra.push(k);
       }
     }
-    if (extra.length > 0) nodes.push({ node: "unknown", path: path, names: extra });
+    if (extra.length > 0) nodes.push({ node: "unknown", path: path, names: extra, shown: true });
     return nodes;
   }
 
@@ -431,6 +531,221 @@ var ConfigModel = (function () {
     return obj;
   }
 
+  // ---------------------------------------------------------------- areas and words
+
+  // The top-level nodes of a document, sorted into the page's areas. Each area has its fields
+  // (plain values), its sections (objects and lists) and, in "advanced", the keys this version
+  // does not know. A node says shown; one not shown is still listed, so a test can see that every
+  // key has somewhere to be drawn.
+  function areas(schema, doc) {
+    var out = {};
+    var order = schema.areas || [];
+    for (var i = 0; i < order.length; i++) {
+      out[order[i].id] = { id: order[i].id, title: order[i].title, fields: [], sections: [], unknown: [] };
+    }
+    var nodes = plan(schema, schema.root, doc, "");
+    nodes.forEach(function (n) {
+      if (n.node === "unknown") { out.advanced.unknown.push(n); return; }
+      var id = n.key.area || "advanced";
+      if (!out[id]) out[id] = { id: id, title: id, fields: [], sections: [], unknown: [] };
+      (n.node === "field" ? out[id].fields : out[id].sections).push(n);
+    });
+    return out;
+  }
+
+  function labelOf(key) { return key.label || key.name; }
+
+  // The plain name of one entry of a list: "modem", from the key's item or its label.
+  function itemOf(key) { return key.item || labelOf(key).toLowerCase(); }
+
+  function capital(text) { return text.charAt(0).toUpperCase() + text.slice(1); }
+
+  // The key's name as the reference page spells it, without list positions: modems[].identify.
+  function docPath(path) { return path.replace(/\[\d+\]/g, "[]"); }
+
+  // What to call the setting at a path, in words: its label, "Modem 2: Frequency" for a list
+  // entry's, "Filter lower edge (UberSDR receiver)" for one in a section that makes it clearer.
+  function describePath(schema, path) {
+    if (path === "(whole file)") return "the whole file";
+    var parts = splitPath(path);
+    var typeName = schema.root;
+    var list = "";
+    var top = null;
+    var label = path;
+    var depth = 0;
+    for (var i = 0; i < parts.length; i++) {
+      var part = parts[i];
+      if (typeof part === "number") {
+        list = capital(itemOf(top)) + " " + (part + 1);
+        label = list;
+        continue;
+      }
+      var keys = schema.types[typeName] ? schema.types[typeName].keys : [];
+      var key = null;
+      for (var j = 0; j < keys.length; j++) {
+        if (keys[j].name.toLowerCase() === part.toLowerCase()) { key = keys[j]; break; }
+      }
+      if (!key) return path;
+      if (top === null) top = key;
+      depth++;
+      label = labelOf(key);
+      if (key.kind === "object" && key.ref) typeName = key.ref;
+      else if (key.kind === "array" && key.items && key.items.ref) typeName = key.items.ref;
+      if (i + 1 < parts.length && typeof parts[i + 1] === "number") top = key;
+    }
+    if (list !== "" && label !== list) return list + ": " + label;
+    if (depth > 1 && list === "" && top && label.toLowerCase().indexOf(labelOf(top).toLowerCase()) < 0) {
+      return label + " (" + labelOf(top) + ")";
+    }
+    return label;
+  }
+
+  // The part of a refusal worth showing. The daemon words its refusals for a journal: a first line
+  // saying which file, the problem, then what to do about a file that will not start. A page that
+  // is only checking a proposal wants the problem.
+  function problemText(text) {
+    var lines = String(text).replace(/\r/g, "").split("\n");
+    if (/^configuration error in /.test(lines[0] || "")) {
+      var out = [];
+      for (var i = 1; i < lines.length; i++) {
+        var t = lines[i].trim();
+        if (t === "") break;
+        out.push(t);
+      }
+      if (out.length > 0) return out.join(" ");
+    }
+    return String(text).trim();
+  }
+
+  // Finds the setting a refusal is about, by the key names it quotes: "waterfall"."port" is
+  // waterfall.port, a bare "txAmplitude" after "modem 1" is that modem's, and a message that
+  // names no key but says "unknown mode" under "modem 0" is that modem's mode. Returns
+  // { path, problem }, with path null when nothing in the message matches a key of this schema.
+  function locateIssue(schema, doc, text) {
+    var problem = problemText(text);
+    var modem = /\bmodem (\d+)\b/i.exec(problem);
+    var modemAt = null;
+    if (modem) {
+      var list = get(doc, "modems");
+      if (Array.isArray(list)) {
+        for (var m = 0; m < list.length; m++) {
+          if (list[m] && Number(get(list[m], "subChannel") === undefined ? 0 : get(list[m], "subChannel")) === Number(modem[1])) { modemAt = m; break; }
+        }
+      }
+    }
+
+    function find(typeName, name) {
+      var keys = schema.types[typeName] ? schema.types[typeName].keys : [];
+      for (var j = 0; j < keys.length; j++) {
+        if (keys[j].name.toLowerCase() === name.toLowerCase()) return keys[j];
+      }
+      return null;
+    }
+
+    function resolve(names) {
+      var typeName = schema.root;
+      var path = "";
+      for (var i = 0; i < names.length; i++) {
+        var key = find(typeName, names[i]);
+        if (!key) return null;
+        path = path === "" ? key.name : path + "." + key.name;
+        if (key.kind === "object" && key.ref) typeName = key.ref;
+        else if (key.kind === "array" && key.items && key.items.ref) typeName = key.items.ref;
+        else if (i < names.length - 1) return null;
+      }
+      return path;
+    }
+
+    function inModem(name) {
+      return modemAt !== null && find("ModemConfig", name) ? "modems[" + modemAt + "]." + find("ModemConfig", name).name : null;
+    }
+
+    var quoted = problem.match(/"[A-Za-z][A-Za-z0-9.]*"(?:\."[A-Za-z][A-Za-z0-9]*")*/g) || [];
+    for (var q = 0; q < quoted.length; q++) {
+      var names = quoted[q].replace(/"/g, "").split(".");
+      var path = (names.length === 1 && inModem(names[0])) || resolve(names);
+      if (path) return { path: path, problem: problem };
+    }
+    if (modemAt !== null) {
+      var words = problem.match(/[A-Za-z][A-Za-z0-9]*/g) || [];
+      for (var w = 0; w < words.length; w++) {
+        if (words[w].toLowerCase() === "modem" || words[w].toLowerCase() === "modems") continue;
+        var found = inModem(words[w]);
+        if (found) return { path: found, problem: problem };
+      }
+    }
+    return { path: null, problem: problem };
+  }
+
+  // The area a path belongs to: the area of its top-level key.
+  function areaOf(schema, path) {
+    var parts = splitPath(path);
+    var keys = schema.types[schema.root].keys;
+    for (var i = 0; i < keys.length; i++) {
+      if (parts.length > 0 && typeof parts[0] === "string" && keys[i].name.toLowerCase() === parts[0].toLowerCase()) {
+        return keys[i].area || "advanced";
+      }
+    }
+    return "advanced";
+  }
+
+  // The settings that differ between two documents, as words for the pending-changes bar: each
+  // label once, however many keys under it changed.
+  function changedLabels(schema, a, b) {
+    var seen = {};
+    var out = [];
+    diff(a, b).forEach(function (path) {
+      var label = describePath(schema, path);
+      if (!seen[label]) { seen[label] = true; out.push(label); }
+    });
+    return out;
+  }
+
+  function valueWords(key, value) {
+    if (key.secret) return "set";
+    if (Array.isArray(value)) return value.length + (value.length === 1 ? " entry" : " entries");
+    if (value === true) return "on";
+    if (value === false) return "off";
+    var text = scalarText(value);
+    return key.unit ? text + " " + key.unit : text;
+  }
+
+  // A plain sentence or two for the overview: what an area has set, with nothing worked out
+  // from what the settings mean. (Sentences that do are for a later phase.)
+  function summary(schema, doc, areaId) {
+    var group = areas(schema, doc)[areaId];
+    if (!group) return [];
+    var facts = [];
+    var more = [];
+    group.fields.forEach(function (n) {
+      if (!n.set) return;
+      var value = valueAt(doc, n.path);
+      var line = labelOf(n.key) + ": " + valueWords(n.key, value);
+      if (n.key.advanced && areaId !== "advanced") more.push(labelOf(n.key));
+      else facts.push(line);
+    });
+    group.sections.forEach(function (n) {
+      if (n.node === "list") {
+        if (n.items.length === 0) return;
+        var names = n.items.map(function (item) {
+          var entry = valueAt(doc, item.path) || {};
+          return get(entry, "mode") || get(entry, "callsign") || get(entry, "path") || get(entry, "port") || "";
+        }).filter(function (x) { return x !== ""; });
+        facts.push(labelOf(n.key) + ": " + n.items.length + (names.length > 0 ? " (" + names.join(", ") + ")" : ""));
+      } else if (n.present) {
+        facts.push(labelOf(n.key) + " is set up");
+      }
+    });
+    var out = [];
+    if (facts.length === 0 && more.length === 0) {
+      out.push("Nothing is set here, so the station uses its defaults.");
+    } else {
+      if (facts.length > 0) out.push(facts.slice(0, 5).join(". ") + "." + (facts.length > 5 ? " And " + (facts.length - 5) + " more." : ""));
+      if (more.length > 0) out.push("Also set: " + more.join(", ") + ".");
+    }
+    return out;
+  }
+
   function newItem() { return {}; }
 
   var HIDDEN = "(set, not shown)";
@@ -440,6 +755,9 @@ var ConfigModel = (function () {
     toText: toText, fromText: fromText, stripJsonc: stripJsonc, parseDocument: parseDocument,
     plan: plan, writeField: writeField, valueAt: valueAt, splitPath: splitPath,
     parentOf: parentOf, diff: diff, fullDocument: fullDocument, newItem: newItem,
+    isSet: isSet, deviceKind: deviceKind, areas: areas, labelOf: labelOf, itemOf: itemOf,
+    docPath: docPath, describePath: describePath, problemText: problemText,
+    locateIssue: locateIssue, areaOf: areaOf, changedLabels: changedLabels, summary: summary,
     setHidden: function (h) { HIDDEN = h; }
   };
 })();
@@ -452,13 +770,28 @@ var ConfigModel = (function () {
   var DOCS = "https://github.com/packet-net/pdn-soundmodem/blob/main/docs/reference/";
   var KEY_STORE = "pdn-soundmodem-config-key";
 
+  var BLURB = {
+    radio: "The radio or receiver this station listens through, and the sound card or stream that carries its audio.",
+    keying: "How the station keys the radio, and how it knows the channel is busy.",
+    modes: "Each modem listens and transmits on its own frequency inside what the radio can hear.",
+    software: "The ports your node and BBS software connect to.",
+    sharing: "The station page, who may change settings, what is kept, and whether this station is shown on a public monitor.",
+    advanced: "Settings most stations never touch.",
+    monitor: "This file runs a monitor site rather than a station."
+  };
+
   var schema = null;     // what /api/config/schema served
   var loaded = null;     // the configuration as the station served it
   var doc = null;        // the configuration being edited
   var errors = {};       // path -> reason, for fields whose text is not a value
-  var view = "form";
+  var textInvalid = false;
   var instance = null;   // which daemon process answered the last read
   var busy = false;
+  var check = { state: "idle", seq: 0, problem: "", path: null };
+  var checkTimer = null;
+  var moreOpen = {};     // details that were open, by path
+  var history = { list: null, stale: true, docs: {} };
+  var lastArea = "overview";
 
   var $ = function (id) { return document.getElementById(id); };
 
@@ -473,6 +806,15 @@ var ConfigModel = (function () {
   }
 
   function clone(v) { return v === undefined ? undefined : JSON.parse(JSON.stringify(v)); }
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function idFor(path) { return "f-" + path.replace(/[^A-Za-z0-9]/g, "_"); }
 
   // ---------------------------------------------------------------- loading
   function load() {
@@ -502,14 +844,18 @@ var ConfigModel = (function () {
       loaded = answer.running || {};
       doc = clone(loaded);
       errors = {};
+      textInvalid = false;
+      check = { state: "idle", seq: check.seq + 1, problem: "", path: null };
       $("source").textContent = answer.source === "ephemeral"
         ? "running a one-run change; the next restart goes back to " + answer.configPath
         : answer.configPath;
       $("login").hidden = true;
       $("loading").hidden = true;
-      $("tabs").hidden = false;
-      $("footer").hidden = false;
-      show(view);
+      $("shell").hidden = false;
+      $("edit-text").hidden = false;
+      history.stale = true;
+      render();
+      fetchHistory().then(function () { renderNav(); });
     }).catch(function (e) {
       $("loading").hidden = false;
       $("loading").textContent = "Could not load the configuration: " + e.message;
@@ -518,6 +864,8 @@ var ConfigModel = (function () {
 
   function showLogin(message) {
     $("loading").hidden = true;
+    $("shell").hidden = true;
+    $("pending").hidden = true;
     $("login").hidden = false;
     $("login-error").hidden = !message;
     $("login-error").textContent = message;
@@ -530,57 +878,173 @@ var ConfigModel = (function () {
     load();
   });
 
-  // ---------------------------------------------------------------- views
-  function show(which) {
-    if (which === "form" && view === "json" && !takeJson()) return;
-    view = which;
-    $("tab-form").classList.toggle("on", which === "form");
-    $("tab-json").classList.toggle("on", which === "json");
-    $("form-view").hidden = which !== "form";
-    $("json-view").hidden = which !== "json";
-    if (which === "form") render();
-    else $("json").value = JSON.stringify(doc, null, 2);
-    updateChanges();
+  function fetchHistory() {
+    history.stale = false;
+    return api("api/config/history").then(function (r) {
+      return r.ok ? r.json() : { versions: [] };
+    }).then(function (a) {
+      history.list = a.versions || [];
+    }).catch(function () {
+      history.list = history.list || [];
+    });
   }
 
-  // The JSON tab's text becomes the document. False, with the reason shown, if it is not one.
-  function takeJson() {
-    if (view !== "json") return true;
-    try {
-      doc = M.parseDocument($("json").value);
-      errors = {};
-      $("json").classList.remove("invalid");
-      return true;
-    } catch (e) {
-      $("json").classList.add("invalid");
-      result("bad", "The JSON is not a configuration: " + e.message);
-      return false;
+  // ---------------------------------------------------------------- routes
+  function route() {
+    var id = location.hash.replace(/^#/, "");
+    if (id === "history" || id === "text" || id === "overview") return id;
+    var list = schema ? schema.areas : [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return id;
+    return "overview";
+  }
+
+  window.addEventListener("hashchange", function () {
+    if (!doc) return;
+    if (lastArea === "text" && textInvalid && route() !== "text") {
+      location.hash = "#text";
+      result("bad", "The text is not valid JSON yet. Fix it, or discard the changes, before leaving.");
+      return;
+    }
+    if (route() === "history") history.stale = true;
+    render();
+    window.scrollTo(0, 0);
+  });
+
+  $("edit-text").addEventListener("click", function () {
+    location.hash = route() === "text" ? "#overview" : "#text";
+  });
+
+  // ---------------------------------------------------------------- the shell
+  function render() {
+    if (!schema || !doc) return;
+    errors = {};
+    var at = route();
+    lastArea = at;
+    $("edit-text").textContent = at === "text" ? "Back to the settings" : "Edit as text";
+    $("edit-text").classList.toggle("on", at === "text");
+    renderNav();
+    renderMain(at);
+    paintIssue();
+    renderPending();
+    drawnShape = shape();
+  }
+
+  function present(areaId) {
+    // The monitor area is for monitor sites; a station never sees it.
+    return areaId !== "monitor" || M.isSet(M.get(doc, "monitor"));
+  }
+
+  function issueArea() {
+    return check.state === "bad" && check.path ? M.areaOf(schema, check.path) : null;
+  }
+
+  function renderNav() {
+    var nav = $("nav");
+    var at = route();
+    nav.textContent = "";
+    function link(id, text, count, bad) {
+      var a = el("a");
+      a.id = "nav-" + id;
+      a.href = "#" + id;
+      if (at === id) a.className = "on";
+      a.appendChild(el("span", null, text));
+      if (bad) { var dot = el("span", "dot"); dot.title = "Needs attention"; a.appendChild(dot); }
+      else if (count) a.appendChild(el("small", null, String(count)));
+      nav.appendChild(a);
+    }
+    var bad = issueArea();
+    link("overview", "Overview");
+    schema.areas.forEach(function (a) {
+      if (a.id === "advanced" || !present(a.id)) return;
+      var n = a.id === "modes" ? ((M.get(doc, "modems") || []).length) : 0;
+      link(a.id, a.title, n, bad === a.id);
+    });
+    nav.appendChild(el("hr"));
+    link("advanced", "Advanced", 0, bad === "advanced");
+    link("history", "Earlier versions", history.list ? history.list.length : 0);
+  }
+
+  function renderMain(at) {
+    var root = $("form-view");
+    root.querySelectorAll("details").forEach(function (d) { if (d.dataset.path) moreOpen[d.dataset.path] = d.open; });
+    root.textContent = "";
+    var banner = el("div", "issue");
+    banner.id = "issue-banner";
+    banner.hidden = true;
+    root.appendChild(banner);
+    if (at === "overview") drawOverview(root);
+    else if (at === "history") drawHistory(root);
+    else if (at === "text") drawText(root);
+    else drawArea(root, at);
+  }
+
+  // ---------------------------------------------------------------- overview
+  function drawOverview(root) {
+    root.appendChild(el("h1", null, "Your station"));
+    root.appendChild(el("p", "lede", "What this station is set up to do, in one place. Each area opens the settings behind it."));
+    schema.areas.forEach(function (a) {
+      if (!present(a.id)) return;
+      var row = el("div", "area");
+      row.id = "overview-" + a.id;
+      row.appendChild(el("h2", null, a.title));
+      var body = el("div");
+      M.summary(schema, doc, a.id).forEach(function (line, i) { body.appendChild(el("p", i === 0 ? null : "sub", line)); });
+      row.appendChild(body);
+      var change = el("a", "edit", "Change");
+      change.id = "change-" + a.id;
+      change.href = "#" + a.id;
+      row.appendChild(change);
+      root.appendChild(row);
+    });
+  }
+
+  // ---------------------------------------------------------------- an area
+  function drawArea(root, areaId) {
+    var group = M.areas(schema, doc)[areaId];
+    var title = group ? group.title : areaId;
+    root.appendChild(el("h1", null, title));
+    root.appendChild(el("p", "lede", BLURB[areaId] || ""));
+    if (!group) return;
+    var all = areaId === "advanced";
+    var shown = function (n) { return n.shown; };
+    var fields = group.fields.filter(shown);
+    var sections = group.sections.filter(shown);
+    var basicFields = fields.filter(function (n) { return all || !n.key.advanced; });
+    var moreFields = fields.filter(function (n) { return !all && n.key.advanced; });
+    var basicSections = sections.filter(function (n) { return all || !n.key.advanced; });
+    var moreSections = sections.filter(function (n) { return !all && n.key.advanced; });
+
+    if (basicFields.length === 0 && basicSections.length === 0 && moreFields.length === 0
+        && moreSections.length === 0 && group.unknown.length === 0) {
+      root.appendChild(el("p", "muted", "Nothing here applies to this station."));
+      return;
+    }
+    if (basicFields.length > 0) root.appendChild(fieldsCard(basicFields));
+    basicSections.forEach(function (n) { root.appendChild(drawNode(n)); });
+    group.unknown.forEach(function (n) {
+      root.appendChild(el("p", "muted", "Not settings this version knows, kept as they are: " + n.names.join(", ")
+        + ". Edit as text shows them."));
+    });
+
+    if (moreFields.length > 0 || moreSections.length > 0) {
+      var more = el("details", "more page");
+      more.dataset.path = "more:" + areaId;
+      if (moreOpen["more:" + areaId]) more.open = true;
+      more.appendChild(el("summary", null, "More settings"));
+      var inner = el("div", "inner");
+      if (moreFields.length > 0) inner.appendChild(fieldsCard(moreFields));
+      moreSections.forEach(function (n) { inner.appendChild(drawNode(n)); });
+      more.appendChild(inner);
+      root.appendChild(more);
     }
   }
 
-  $("tab-form").addEventListener("click", function () { show("form"); });
-  $("tab-json").addEventListener("click", function () { show("json"); });
-  $("json").addEventListener("input", function () {
-    try { doc = M.parseDocument($("json").value); $("json").classList.remove("invalid"); updateChanges(); }
-    catch (e) { $("json").classList.add("invalid"); }
-  });
-  $("json-copy").addEventListener("click", function () {
-    var text = $("json").value;
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(text).then(function () { result("good", "Copied."); });
-    } else {
-      $("json").select();
-      document.execCommand("copy");
-      result("good", "Copied.");
-    }
-  });
-
-  // ---------------------------------------------------------------- the form
-  function el(tag, cls, text) {
-    var e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (text !== undefined) e.textContent = text;
-    return e;
+  function fieldsCard(nodes) {
+    var card = el("div", "card");
+    var body = el("div", "body");
+    nodes.forEach(function (n) { body.appendChild(drawNode(n)); });
+    card.appendChild(body);
+    return card;
   }
 
   // The reference page's sentences are markdown: code spans and links, nothing else.
@@ -604,161 +1068,163 @@ var ConfigModel = (function () {
     if (last < text.length) target.appendChild(document.createTextNode(text.slice(last)));
   }
 
-  function help(key) {
+  function help(k) {
     var h = el("div", "help");
-    if (key.help) markdown(h, key.help);
-    var d = key.docDefault !== undefined && key.docDefault !== "" ? key.docDefault
-      : key.default !== undefined && key.default !== null ? "`" + JSON.stringify(key.default) + "`" : "";
+    if (k.help) markdown(h, k.help);
+    var d = k.docDefault !== undefined && k.docDefault !== "" ? k.docDefault
+      : k.default !== undefined && k.default !== null ? "`" + JSON.stringify(k.default) + "`" : "";
     // The reference writes "absent: `device`" for "when the key is not there, device".
     if (d && d !== "absent") {
       var absent = /^absent(?:: |; )(.*)$/.exec(d);
-      var span = el("span", "dflt", (key.help ? " " : "") + (absent ? "If not set: " : "Default: "));
+      var span = el("span", "dflt", (k.help ? " " : "") + (absent ? "If not set: " : "Default: "));
       h.appendChild(span);
       markdown(span, absent ? absent[1] : d);
     }
     return h;
   }
 
-  function render() {
-    // Every field is drawn again from the document, so text that was not a value is gone and
-    // its complaint with it.
-    errors = {};
-    var root = $("form-view");
-    var open = {};
-    root.querySelectorAll("details[open]").forEach(function (d) { open[d.dataset.path] = true; });
-    root.textContent = "";
-    var nodes = M.plan(schema, schema.root, doc, "");
-
-    // Top-level settings that are plain values first, as one section: they are the station's
-    // basics (device, ports, bind), and a section each would bury them.
-    var basics = nodes.filter(function (n) { return n.node === "field" || n.node === "unknown"; });
-    var basicsBox = section("Station", "", basics.length + " settings", true, open[""] !== false);
-    basics.forEach(function (n) { basicsBox.body.appendChild(drawNode(n)); });
-    root.appendChild(basicsBox.box);
-
-    nodes.forEach(function (n) {
-      if (n.node === "field" || n.node === "unknown") return;
-      var state = n.node === "list" ? n.items.length + (n.items.length === 1 ? " entry" : " entries")
-        : n.present ? "set" : "not set";
-      var box = section(n.key.name, n.path, state, n.node === "list" ? n.items.length > 0 : n.present, open[n.path]);
-      if (n.key.help) {
-        var p = el("p", "summary-help");
-        markdown(p, n.key.help);
-        box.body.appendChild(p);
-      }
-      box.body.appendChild(drawNode(n, true));
-      root.appendChild(box.box);
-    });
-  }
-
-  function section(name, path, state, isSet, isOpen) {
-    var box = el("details", "section");
-    box.dataset.path = path;
-    if (isOpen) box.open = true;
-    var summary = el("summary");
-    summary.appendChild(el("span", "name", name));
-    summary.appendChild(el("span", "state" + (isSet ? " set" : ""), state));
-    box.appendChild(summary);
-    var body = el("div", "body");
-    box.appendChild(body);
-    return { box: box, body: body };
-  }
-
-  function drawNode(n, top) {
+  function drawNode(n) {
     switch (n.node) {
       case "field": return drawField(n);
-      case "section": return drawSection(n, top);
+      case "section": return drawSection(n);
       case "list": return drawList(n);
       case "unknown": {
         var u = el("div", "unknown");
         u.textContent = "Not settings this version knows, kept as they are: " + n.names.join(", ")
-          + ". The JSON tab shows them.";
+          + ". Edit as text shows them.";
         return u;
       }
-      default: return el("div", "unknown", n.path + ": this page cannot draw a " + n.key.kind + "; use the JSON tab");
+      default: return el("div", "unknown", n.path + ": this page cannot draw a " + n.key.kind + "; use Edit as text");
     }
   }
 
-  function fields(nodes) {
-    var box = el("div", "fields");
-    nodes.forEach(function (c) { box.appendChild(drawNode(c)); });
-    return box;
+  // The children of a section or list entry: plain fields, then sections, then the advanced ones
+  // behind "More".
+  function fillBody(body, nodes, path) {
+    var shown = nodes.filter(function (n) { return n.shown; });
+    var basic = shown.filter(function (n) { return !n.key || !n.key.advanced; });
+    var more = shown.filter(function (n) { return n.key && n.key.advanced; });
+    basic.forEach(function (n) { body.appendChild(drawNode(n)); });
+    if (more.length > 0) {
+      var d = el("details", "more");
+      d.dataset.path = "more:" + path;
+      if (moreOpen["more:" + path]) d.open = true;
+      d.appendChild(el("summary", null, "More"));
+      var inner = el("div", "inner");
+      more.forEach(function (n) { inner.appendChild(drawNode(n)); });
+      d.appendChild(inner);
+      body.appendChild(d);
+    }
   }
 
-  function drawSection(n, top) {
-    var wrap = el("div", top ? "" : "nested");
-    if (!top) {
-      var head = el("div", "nested-head");
-      head.appendChild(el("span", null, n.key.name));
-      wrap.appendChild(head);
-      if (n.key.help) { var h = el("div", "summary-help"); markdown(h, n.key.help); wrap.appendChild(h); }
-      var headButton = el("button", "act small", n.present ? "Remove" : "Add");
-      headButton.type = "button";
-      headButton.addEventListener("click", function () { toggleSection(n); });
-      head.appendChild(headButton);
-      if (n.present) wrap.appendChild(fields(n.children));
-      return wrap;
+  function sectionHead(card, n, title, buttons) {
+    var head = el("div", "head");
+    head.appendChild(el("span", "name", title));
+    if (n) { var kn = el("code", null, M.docPath(n.path)); head.appendChild(kn); }
+    head.appendChild(el("span", "spacer"));
+    buttons.forEach(function (b) { head.appendChild(b); });
+    card.appendChild(head);
+  }
+
+  function smallButton(id, text, onClick) {
+    var b = el("button", "btn small", text);
+    b.type = "button";
+    b.id = id;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  function drawSection(n) {
+    var id = idFor(n.path);
+    var card = el("div", "card");
+    var buttons = [];
+    buttons.push(n.present
+      ? smallButton("remove-" + id, "Remove", function () { toggleSection(n); })
+      : smallButton("add-" + id, "Set up", function () { toggleSection(n); }));
+    sectionHead(card, n, M.labelOf(n.key), buttons);
+    if (n.key.help) {
+      var intro = el("div", "intro");
+      markdown(intro, n.key.help);
+      card.appendChild(intro);
     }
+    if (n.inactive) {
+      card.appendChild(el("div", "inactive-note", "This does not apply to the current audio device. It is kept as it is."));
+    }
+    var err = el("div", "err");
+    err.id = "e-" + id;
+    err.hidden = true;
+    err.style.padding = "6px 16px 0";
+    card.appendChild(err);
     if (!n.present) {
-      var absent = el("div", "absent", "Not in the file, so this part of the station runs on its defaults or is off. ");
-      var add = el("button", "act small", "Add " + n.key.name);
-      add.type = "button";
-      add.addEventListener("click", function () { toggleSection(n); });
-      absent.appendChild(add);
-      wrap.appendChild(absent);
-      return wrap;
+      var absent = el("div", "absent", "Not set up");
+      var d = n.key.docDefault;
+      var m = d && /^absent(?:: |; )(.*)$/.exec(d);
+      if (m) { absent.appendChild(document.createTextNode(": ")); markdown(absent, m[1]); }
+      absent.appendChild(document.createTextNode("."));
+      card.appendChild(absent);
+      return card;
     }
-    wrap.appendChild(fields(n.children));
-    var remove = el("button", "act small", "Remove " + n.key.name);
-    remove.type = "button";
-    remove.addEventListener("click", function () { toggleSection(n); });
-    wrap.appendChild(remove);
-    return wrap;
+    var body = el("div", "body");
+    fillBody(body, n.children, n.path);
+    card.appendChild(body);
+    return card;
+  }
+
+  function atPath(path) {
+    var at = M.parentOf(doc, path, true);
+    return { at: at, current: typeof at.last === "number" ? at.obj[at.last] : M.get(at.obj, at.last) };
   }
 
   function toggleSection(n) {
-    var at = M.parentOf(doc, n.path, true);
-    var current = typeof at.last === "number" ? at.obj[at.last] : M.get(at.obj, at.last);
-    if (current !== undefined && current !== null) M.remove(at.obj, at.last);
-    else M.set(at.obj, at.last, {});
-    render();
-    updateChanges();
+    var s = atPath(n.path);
+    if (s.current !== undefined && s.current !== null) M.remove(s.at.obj, s.at.last);
+    else M.set(s.at.obj, s.at.last, {});
+    edited(true);
   }
 
   function drawList(n) {
     var wrap = el("div");
+    var noun = M.itemOf(n.key);
+    var id = idFor(n.path);
+    if (n.items.length === 0) {
+      wrap.appendChild(el("p", "muted", "No " + M.labelOf(n.key).toLowerCase() + " yet. "
+        + (n.key.help || "")));
+    }
     n.items.forEach(function (item, i) {
       var card = el("div", "card");
-      var head = el("div", "card-head");
-      var title = n.key.name + "[" + i + "]";
       var entry = M.valueAt(doc, item.path) || {};
+      var title = noun.charAt(0).toUpperCase() + noun.slice(1) + " " + (i + 1);
       var mode = M.get(entry, "mode"), call = M.get(entry, "callsign"), sub = M.get(entry, "subChannel");
-      if (sub !== undefined) title += "  sub-channel " + sub;
-      if (mode !== undefined) title += "  " + mode;
-      if (call !== undefined) title += "  " + call;
-      head.appendChild(el("span", "title", title));
-      var del = el("button", "act small", "Remove");
-      del.type = "button";
-      del.addEventListener("click", function () {
+      var bits = [];
+      if (mode !== undefined) bits.push(mode);
+      if (call !== undefined) bits.push(call);
+      if (sub !== undefined) bits.push("sub-channel " + sub);
+      if (bits.length > 0) title += ": " + bits.join(", ");
+      var del = smallButton("remove-" + idFor(item.path), "Remove", function () {
         var arr = M.valueAt(doc, n.path);
         arr.splice(i, 1);
-        render();
-        updateChanges();
+        edited(true);
       });
-      head.appendChild(del);
-      card.appendChild(head);
-      card.appendChild(fields(item.children));
+      sectionHead(card, null, title, [del]);
+      var err = el("div", "err");
+      err.id = "e-" + idFor(item.path);
+      err.hidden = true;
+      err.style.padding = "6px 16px 0";
+      card.appendChild(err);
+      var body = el("div", "body");
+      fillBody(body, item.children, item.path);
+      card.appendChild(body);
       wrap.appendChild(card);
     });
-    var add = el("button", "act small", "Add an entry to " + n.key.name);
+    var add = el("button", "add", "Add a " + noun);
     add.type = "button";
+    add.id = "add-" + id;
     add.addEventListener("click", function () {
-      var at = M.parentOf(doc, n.path, true);
-      var arr = typeof at.last === "number" ? at.obj[at.last] : M.get(at.obj, at.last);
-      if (!Array.isArray(arr)) { arr = []; M.set(at.obj, at.last, arr); }
+      var s = atPath(n.path);
+      var arr = s.current;
+      if (!Array.isArray(arr)) { arr = []; M.set(s.at.obj, s.at.last, arr); }
       arr.push(M.newItem());
-      render();
-      updateChanges();
+      edited(true);
     });
     wrap.appendChild(add);
     return wrap;
@@ -767,77 +1233,85 @@ var ConfigModel = (function () {
   var listId = 0;
 
   function drawField(n) {
-    var key = n.key;
-    var row = el("div", "field");
-    var label = el("label", null, key.name);
-    var id = "f-" + n.path.replace(/[^A-Za-z0-9]/g, "_");
+    var k = n.key;
+    var id = idFor(n.path);
+    var wide = k.kind === "json" || k.kind === "array";
+    var row = el("div", "field" + (wide ? " wide" : ""));
+    var label = el("label", null, M.labelOf(k));
     label.htmlFor = id;
     row.appendChild(label);
-    var control = el("div", "control");
+    var box = el("div", "input");
     var input;
 
-    if (key.kind === "boolean") {
+    if (k.kind === "boolean") {
       input = el("select");
-      var dflt = key.default === true ? "true" : key.default === false ? "false" : "";
-      [["", "not set" + (dflt ? " (" + dflt + ")" : "")], ["true", "true"], ["false", "false"]].forEach(function (o) {
+      var dflt = k.default === true ? "yes" : k.default === false ? "no" : "";
+      [["", "Default" + (dflt ? " (" + dflt + ")" : "")], ["true", "Yes"], ["false", "No"]].forEach(function (o) {
         var opt = el("option", null, o[1]);
         opt.value = o[0];
         input.appendChild(opt);
       });
       input.value = n.text;
-    } else if (key.kind === "json" || key.kind === "array") {
+    } else if (k.kind === "json" || k.kind === "array") {
       input = el("textarea");
       input.value = n.text;
       input.spellcheck = false;
-      input.placeholder = key.kind === "array" ? "one per line" : "JSON";
+      input.placeholder = k.kind === "array" ? "one per line" : "JSON";
     } else {
       input = el("input");
-      input.type = key.secret ? "password" : "text";
+      input.type = k.secret ? "password" : "text";
       input.value = n.text;
       input.spellcheck = false;
       input.autocomplete = "off";
-      if (key.secret) {
+      if (k.secret) {
         input.autocomplete = "new-password";
         input.placeholder = n.secretSet ? "set, not shown: type a new one to replace it" : "not set";
-      } else if (key.default !== undefined && key.default !== null && key.default !== "") {
-        input.placeholder = String(key.default);
+      } else if (k.default !== undefined && k.default !== null && k.default !== "") {
+        input.placeholder = String(k.default);
       }
-      if (key.kind === "integer" || key.kind === "number") input.inputMode = key.kind === "integer" ? "numeric" : "decimal";
-      if (key.choices) {
+      if (k.kind === "integer" || k.kind === "number") input.inputMode = k.kind === "integer" ? "numeric" : "decimal";
+      if (k.choices) {
         var list = el("datalist");
         list.id = "choices-" + (listId++);
-        key.choices.forEach(function (c) { var o = el("option"); o.value = c; list.appendChild(o); });
-        control.appendChild(list);
+        k.choices.forEach(function (c) { var o = el("option"); o.value = c; list.appendChild(o); });
+        box.appendChild(list);
         input.setAttribute("list", list.id);
       }
     }
     input.id = id;
-    control.appendChild(input);
+    box.appendChild(input);
+    if (k.unit) box.appendChild(el("span", "unit", k.unit));
 
-    if (key.secret && n.secretSet) {
-      var clear = el("button", "act small", "Clear");
+    if (k.secret && n.secretSet) {
+      var clear = el("button", "clear", "Clear");
       clear.type = "button";
       clear.title = "Remove this key from the file";
       clear.addEventListener("click", function () {
         var at = M.parentOf(doc, n.path, false);
         if (at) M.remove(at.obj, at.last);
-        render();
-        updateChanges();
+        edited(true);
       });
-      control.appendChild(clear);
+      box.appendChild(clear);
     }
-    row.appendChild(control);
-    row.appendChild(help(key));
+    row.appendChild(box);
+    var kn = el("div", "keyname");
+    kn.appendChild(el("code", null, M.docPath(n.path)));
+    row.appendChild(kn);
+    row.appendChild(help(k));
     var err = el("div", "err");
+    err.id = "e-" + id;
     err.hidden = true;
     row.appendChild(err);
 
     var original = n.text;
-    if (JSON.stringify(M.valueAt(loaded, n.path)) !== JSON.stringify(M.valueAt(doc, n.path))) label.classList.add("changed");
+    var differs = function () {
+      return JSON.stringify(M.valueAt(loaded, n.path)) !== JSON.stringify(M.valueAt(doc, n.path));
+    };
+    if (differs()) label.classList.add("changed");
     var onEdit = function () {
       // Text the field already showed is left alone: a value the operator did not touch keeps
       // exactly the form the file had (a 7.0e6, an explicit null, an empty list).
-      var reason = input.value === original ? null : M.writeField(doc, n.path, key, input.value);
+      var reason = input.value === original ? null : M.writeField(doc, n.path, k, input.value);
       if (reason) { errors[n.path] = reason; } else { delete errors[n.path]; }
       if (input.value === original && errors[n.path] === undefined) {
         // Back to where it started: put the original value back too.
@@ -845,81 +1319,208 @@ var ConfigModel = (function () {
         var was = M.valueAt(loaded, n.path);
         if (was === undefined) M.remove(at.obj, at.last); else M.set(at.obj, at.last, clone(was));
       }
-      input.classList.toggle("invalid", !!reason);
+      box.classList.toggle("invalid", !!reason);
       err.hidden = !reason;
       err.textContent = reason ? "Should be " + reason + "." : "";
-      label.classList.toggle("changed", JSON.stringify(M.valueAt(loaded, n.path)) !== JSON.stringify(M.valueAt(doc, n.path)));
-      updateChanges();
+      label.classList.toggle("changed", differs());
+      edited(false);
     };
-    input.addEventListener(key.kind === "boolean" ? "change" : "input", onEdit);
+    input.addEventListener(k.kind === "boolean" ? "change" : "input", onEdit);
+    // A change to what applies (the audio device, the keying method) changes what is drawn; that
+    // waits for the field to be left, so typing is never interrupted.
+    input.addEventListener("change", function () {
+      if (shape() !== drawnShape) edited(true, id);
+    });
     return row;
   }
 
-  // ---------------------------------------------------------------- applying
-  function updateChanges() {
-    if (!doc || !loaded) return;
-    var changed = M.diff(loaded, doc);
-    var bad = Object.keys(errors);
-    $("changes").textContent = bad.length > 0
-      ? bad.length + (bad.length === 1 ? " field needs" : " fields need") + " fixing: " + bad.join(", ")
-      : changed.length === 0 ? "No changes"
-      : changed.length + (changed.length === 1 ? " change: " : " changes: ") + changed.join(", ");
-    $("changes").title = $("changes").textContent;
-    var blocked = busy || bad.length > 0;
-    $("check").disabled = blocked;
-    $("try").disabled = blocked || changed.length === 0;
-    $("save").disabled = blocked;
-    $("revert").disabled = busy || changed.length === 0;
+  // ---------------------------------------------------------------- edits and checks
+  var drawnShape = "";
+
+  // Which keys the page would draw for the document now, so an edit that adds or removes one is
+  // noticed.
+  function shape() {
+    var out = [];
+    (function walk(nodes) {
+      nodes.forEach(function (n) {
+        if (n.node === "unknown") return;
+        out.push(n.path + (n.shown ? "+" : "-") + (n.present ? "p" : ""));
+        if (n.node === "section" && n.present) walk(n.children);
+        if (n.node === "list") n.items.forEach(function (i) { walk(i.children); });
+      });
+    })(M.plan(schema, schema.root, doc, ""));
+    return out.join(",");
+  }
+
+  // Something in the document changed. Draws the page again when the change adds or removes
+  // something to draw (redraw), keeping the focus where it was.
+  function edited(redraw, focusId) {
+    result("", "");
+    if (redraw) {
+      var keep = focusId || (document.activeElement && document.activeElement.id);
+      render();
+      if (keep && $(keep)) $(keep).focus();
+    }
+    scheduleCheck();
+  }
+
+  function changedCount() { return M.diff(loaded, doc).length; }
+
+  // Asks the station whether it would start on the document, about 700 ms after the last change.
+  function scheduleCheck() {
+    clearTimeout(checkTimer);
+    var seq = check.seq + 1;
+    if (changedCount() === 0 || Object.keys(errors).length > 0 || textInvalid) {
+      check = { state: "idle", seq: seq, problem: "", path: null };
+      paintIssue();
+      renderPending();
+      renderNav();
+      return;
+    }
+    check = { state: "waiting", seq: seq, problem: "", path: null };
+    paintIssue();
+    renderPending();
+    renderNav();
+    checkTimer = setTimeout(function () { runCheck(seq); }, 700);
+  }
+
+  function runCheck(seq) {
+    check.state = "checking";
+    renderPending();
+    post("?check=true").then(function (r) {
+      if (seq !== check.seq) return;
+      if (r.status === 200) {
+        check = { state: "ok", seq: seq, problem: "", path: null };
+      } else if (r.status === 401) {
+        load();
+        return;
+      } else {
+        var found = M.locateIssue(schema, doc, r.text);
+        check = { state: "bad", seq: seq, problem: found.problem, path: found.path };
+      }
+      paintIssue();
+      renderPending();
+      renderNav();
+    }).catch(function (e) {
+      if (seq !== check.seq) return;
+      check = { state: "bad", seq: seq, problem: "Could not reach the station to check this: " + e.message, path: null };
+      paintIssue();
+      renderPending();
+    });
+  }
+
+  // Shows the station's refusal under the field it is about; one that names no field this page
+  // draws is shown at the top of the page instead.
+  function paintIssue() {
+    document.querySelectorAll(".issue-here").forEach(function (e) {
+      e.classList.remove("issue-here");
+      e.hidden = true;
+      e.textContent = "";
+      var box = e.parentElement.classList.contains("field") && e.parentElement.querySelector(".input");
+      if (box) box.classList.remove("invalid");
+    });
+    var banner = $("issue-banner");
+    if (!banner) return;
+    banner.hidden = true;
+    if (check.state !== "bad") return;
+    var target = check.path ? $("e-" + idFor(check.path)) : null;
+    if (target && target.hidden) {
+      target.textContent = check.problem;
+      target.hidden = false;
+      target.classList.add("issue-here");
+      var box = target.parentElement.classList.contains("field") && target.parentElement.querySelector(".input");
+      if (box) box.classList.add("invalid");
+      for (var p = target.parentElement; p; p = p.parentElement) if (p.tagName === "DETAILS") p.open = true;
+      return;
+    }
+    banner.textContent = "";
+    banner.appendChild(el("b", null, "The station would not start on this. "));
+    banner.appendChild(document.createTextNode(check.problem));
+    banner.hidden = false;
   }
 
   function result(kind, text) {
     $("result").className = kind;
     $("result").textContent = text;
+    renderPending();
   }
 
-  $("revert").addEventListener("click", function () {
-    doc = clone(loaded);
-    errors = {};
-    result("", "");
-    show(view);
-  });
+  function renderPending() {
+    if (!doc || !loaded) return;
+    var count = changedCount();
+    var labels = M.changedLabels(schema, loaded, doc);
+    var bad = Object.keys(errors).map(function (p) { return M.describePath(schema, p); });
+    if (textInvalid) bad.push("the text");
+    var res = $("result").textContent;
+    var text = "", note = "", cls = "";
+    var canApply = false;
+    if (busy) {
+      text = "";
+    } else if (bad.length > 0) {
+      text = bad.length + (bad.length === 1 ? " field needs" : " fields need") + " fixing: " + bad.join(", ");
+      cls = "bad";
+    } else if (count > 0) {
+      var list = labels.length > 6 ? labels.slice(0, 5).join(", ") + " and " + (labels.length - 5) + " more" : labels.join(", ");
+      var head = labels.length + (labels.length === 1 ? " change" : " changes") + " not applied yet: " + list + ".";
+      if (check.state === "bad") {
+        text = "1 problem to fix before applying: " + check.problem;
+        cls = "bad";
+        note = head;
+      } else {
+        text = head;
+        if (check.state === "ok") {
+          canApply = true;
+          note = "Looks good: the station would start on this. Applying restarts it for a few seconds.";
+        } else {
+          note = "Checking...";
+        }
+      }
+    }
+    $("changes").textContent = text;
+    $("changes").className = cls;
+    $("changes-note").textContent = note;
+    $("changes-note").hidden = note === "";
+    $("pending").hidden = !(count > 0 || res !== "" || busy);
+    $("revert").disabled = busy || count === 0;
+    $("try").disabled = !canApply || busy;
+    $("save").disabled = !canApply || busy;
+  }
 
+  // ---------------------------------------------------------------- applying
   function post(query) {
-    if (!takeJson()) return Promise.resolve(null);
-    busy = true;
-    updateChanges();
     return api("api/config" + query, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(doc, null, 2)
     }).then(function (r) {
       return r.text().then(function (t) { return { status: r.status, text: t }; });
-    }).finally(function () {
-      busy = false;
-      updateChanges();
     });
   }
 
-  $("check").addEventListener("click", function () {
-    result("", "Checking...");
-    post("?check=true").then(function (r) {
-      if (!r) return;
-      if (r.status === 200) result("good", "The station would start on this. Nothing has been changed.");
-      else result("bad", r.text.trim());
-    });
+  $("revert").addEventListener("click", function () {
+    doc = clone(loaded);
+    textInvalid = false;
+    result("", "");
+    drawnShape = shape();
+    scheduleCheck();
+    render();
   });
 
   function apply(persist) {
-    if (persist && !confirm("Write this to the config file and restart the station?\n\nComments in the file are not kept.")) return;
+    busy = true;
     result("", persist ? "Saving..." : "Applying...");
     post(persist ? "?persist=true" : "").then(function (r) {
-      if (!r) return;
-      if (r.status !== 200) { result("bad", r.text.trim()); return; }
+      if (r.status !== 200) {
+        busy = false;
+        result("bad", M.problemText(r.text));
+        return;
+      }
       result("good", (persist ? "Saved to the file. " : "In force until the next restart. ")
         + "The station is restarting...");
-      busy = true;
-      updateChanges();
       waitForRestart(Date.now(), persist);
+    }).catch(function (e) {
+      busy = false;
+      result("bad", "Could not reach the station: " + e.message);
     });
   }
 
@@ -946,7 +1547,6 @@ var ConfigModel = (function () {
     function tryAgain() {
       if (Date.now() - started > 120000) {
         busy = false;
-        updateChanges();
         result("bad", "The station has not come back after two minutes. Its journal says why: journalctl -u pdn-soundmodem");
       } else {
         waitForRestart(started, persist);
@@ -958,8 +1558,115 @@ var ConfigModel = (function () {
   $("save").addEventListener("click", function () { apply(true); });
 
   window.addEventListener("beforeunload", function (e) {
-    if (doc && loaded && M.diff(loaded, doc).length > 0 && !busy) { e.preventDefault(); e.returnValue = ""; }
+    if (doc && loaded && changedCount() > 0 && !busy) { e.preventDefault(); e.returnValue = ""; }
   });
+
+  // ---------------------------------------------------------------- edit as text
+  function drawText(root) {
+    root.appendChild(el("h1", null, "Edit as text"));
+    root.appendChild(el("p", "lede", "The whole configuration as JSON, to copy or paste, or to read out when someone is helping you from afar. "
+      + "Comments and trailing commas are fine. What you type here is checked like any other change."));
+    var bar = el("div");
+    bar.id = "json-bar";
+    var copy = el("button", "btn small", "Copy");
+    copy.type = "button";
+    copy.id = "json-copy";
+    bar.appendChild(copy);
+    root.appendChild(bar);
+    var area = el("textarea");
+    area.id = "json";
+    area.spellcheck = false;
+    area.value = JSON.stringify(doc, null, 2);
+    root.appendChild(area);
+    textInvalid = false;
+    area.addEventListener("input", function () {
+      try {
+        doc = M.parseDocument(area.value);
+        textInvalid = false;
+        area.classList.remove("invalid");
+      } catch (e) {
+        textInvalid = true;
+        area.classList.add("invalid");
+      }
+      result("", "");
+      scheduleCheck();
+    });
+    copy.addEventListener("click", function () {
+      var text = area.value;
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(function () { result("good", "Copied."); });
+      } else {
+        area.select();
+        document.execCommand("copy");
+        result("good", "Copied.");
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------- earlier versions
+  function kindWords(v) {
+    return v.kind === "saved" ? "Saved to the config file" : "Tried until the next restart";
+  }
+
+  function getVersion(id) {
+    if (history.docs[id]) return Promise.resolve(history.docs[id]);
+    return api("api/config/history/" + encodeURIComponent(id)).then(function (r) {
+      if (!r.ok) return r.text().then(function (t) { throw new Error(t); });
+      return r.json();
+    }).then(function (v) { history.docs[id] = v; return v; });
+  }
+
+  function drawHistory(root) {
+    root.appendChild(el("h1", null, "Earlier versions"));
+    root.appendChild(el("p", "lede", "Each time a change is applied, the station keeps a copy of it, the last 20. "
+      + "Going back to one loads it here as a pending change; you check and apply it like any other."));
+    if (history.list === null || history.stale) {
+      root.appendChild(el("p", "muted", "Loading..."));
+      fetchHistory().then(function () { if (route() === "history") render(); });
+      return;
+    }
+    if (history.list.length === 0) {
+      root.appendChild(el("p", "muted", "Nothing yet. A copy is kept each time a change is applied."));
+      return;
+    }
+    history.list.forEach(function (v) {
+      var row = el("div", "version");
+      row.id = "version-" + v.id;
+      var when = el("div", "when");
+      when.appendChild(el("span", null, new Date(v.time).toLocaleString()));
+      when.appendChild(el("small", null, kindWords(v)));
+      row.appendChild(when);
+      var look = el("div", "look");
+      look.hidden = true;
+      look.id = "look-body-" + v.id;
+      row.appendChild(smallButton("look-" + v.id, "Look", function () {
+        if (!look.hidden) { look.hidden = true; return; }
+        look.hidden = false;
+        look.textContent = "Loading...";
+        getVersion(v.id).then(function (full) {
+          look.textContent = "";
+          var diffs = M.changedLabels(schema, doc, full.config);
+          look.appendChild(el("p", null, diffs.length === 0
+            ? "The same as the configuration now."
+            : "Differs from the configuration now in " + diffs.length + (diffs.length === 1 ? " setting: " : " settings: ") + diffs.join(", ") + "."));
+          look.appendChild(el("pre", null, JSON.stringify(full.config, null, 2)));
+        }).catch(function (e) { look.textContent = "Could not read this version: " + e.message; });
+      }));
+      row.appendChild(smallButton("restore-" + v.id, "Go back to this", function () {
+        getVersion(v.id).then(function (full) {
+          doc = clone(full.config);
+          textInvalid = false;
+          location.hash = "#overview";
+          drawnShape = shape();
+          render();
+          scheduleCheck();
+          if (changedCount() === 0) result("good", "That is the same as the configuration now, so there is nothing to change.");
+        }).catch(function (e) { result("bad", "Could not read this version: " + e.message); });
+      }));
+      row.appendChild(look);
+      root.appendChild(row);
+    });
+  }
 
   load();
 })();
