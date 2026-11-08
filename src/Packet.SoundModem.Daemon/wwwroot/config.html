@@ -209,6 +209,8 @@
   .option .detail .mono { color: var(--ink); font-family: var(--mono); font-size: 12.5px; }
   .option .extra { grid-column: 2; margin-top: 6px; display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
   .option .extra .field { min-width: 150px; }
+  .option .note { color: var(--warn); font-size: 13px; }
+  .found .hint { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
   .found .group { color: var(--muted); font-size: 12.5px; margin: 12px 0 6px; }
   @media (prefers-reduced-motion: no-preference) {
     .found .pulse.working { animation: pulse 1.2s ease-in-out infinite; }
@@ -1109,22 +1111,73 @@ var ConfigModel = (function () {
     });
   }
 
-  // A receiver on the public list, or a Flex, has no transmitter this station keys: the settings
-  // that name one are refused beside it, so picking it takes them out.
+  // What choosing a Flex or an UberSDR takes out of the document, as a list of {words, apply}: the
+  // reference refuses these settings beside such a device, so leaving them would give a
+  // configuration the station will not start on. A Flex keys itself and an UberSDR has no
+  // transmitter. Only what is set is listed. Every one is said beside the choice and again in the
+  // pending bar, because publish and identify are real work to lose.
+  function radioRemovals(doc, choice) {
+    var out = [];
+    if (!choice.ownKeying) return out;
+    function drop(name, words) {
+      if (isSet(get(doc, name))) out.push({ words: words, apply: function () { remove(doc, name); } });
+    }
+    drop("ptt", "the push to talk setting");
+    drop("rig", "the rig control section");
+    drop("captureDevice", "the separate receive sound card");
+    drop("playbackDevice", "the separate transmit sound card");
+    var alsa = get(doc, "alsa");
+    if (alsa && typeof alsa === "object" && isSet(get(alsa, "mixer"))) {
+      out.push({ words: "the sound card mixer levels", apply: function () {
+        remove(alsa, "mixer");
+        if (Object.keys(alsa).length === 0) remove(doc, "alsa");
+      } });
+    }
+    if (choice.kind === "ubersdr") {
+      drop("publish", "publishing to the monitor");
+      var modems = get(doc, "modems");
+      if (Array.isArray(modems)) {
+        modems.forEach(function (m, i) {
+          if (m && typeof m === "object" && isSet(get(m, "identify"))) {
+            out.push({ words: "the identification on modem " + (i + 1), apply: function () { remove(m, "identify"); } });
+          }
+        });
+      }
+      if (String(get(doc, "sideband") || "").toLowerCase() === "fm") {
+        out.push({ words: "the FM kind of radio (a web receiver is SSB)", apply: function () { remove(doc, "sideband"); } });
+      }
+    }
+    return out;
+  }
+
+  // The sentence said beside a choice about what picking it takes out or leaves, or "".
+  function radioNote(doc, choice) {
+    var removals = radioRemovals(doc, choice);
+    if (removals.length > 0) {
+      return "Choosing this removes: " + removals.map(function (r) { return r.words; }).join(", ") + ".";
+    }
+    if (!choice.ownKeying) {
+      var cap = get(doc, "captureDevice"), play = get(doc, "playbackDevice");
+      var parts = [];
+      if (isSet(cap) && cap !== choice.device) parts.push("receive stays on " + cap);
+      if (isSet(play) && play !== choice.device) parts.push("transmit stays on " + play);
+      if (parts.length > 0) {
+        return "This sets the main audio device only: " + parts.join(" and ") + ". Clear the separate sound cards under More settings to use this card for both.";
+      }
+    }
+    return "";
+  }
+
+  // Picks a radio: writes the device and its section and takes out what the reference refuses
+  // beside it. Returns the words for what was removed, for the pending bar.
   function pickRadio(doc, choice) {
+    var removals = radioRemovals(doc, choice);
     set(doc, "device", choice.device);
     if (choice.section && !isSet(get(doc, choice.section.name))) {
       set(doc, choice.section.name, JSON.parse(JSON.stringify(choice.section.value)));
     }
-    if (choice.ownKeying) {
-      remove(doc, "ptt");
-      remove(doc, "rig");
-      var alsa = get(doc, "alsa");
-      if (alsa && typeof alsa === "object") {
-        remove(alsa, "mixer");
-        if (Object.keys(alsa).length === 0) remove(doc, "alsa");
-      }
-    }
+    removals.forEach(function (r) { r.apply(); });
+    return removals.map(function (r) { return r.words; });
   }
 
   function baseName(path) { return path.replace(/^.*\//, ""); }
@@ -1140,7 +1193,8 @@ var ConfigModel = (function () {
       out.push({ id: "ptt-cm108-" + baseName(h.path), type: "cm108", device: h.path,
         title: h.soundCard ? "The sound card's own PTT pin" : "A CM108 PTT pin",
         detail: h.name + (same ? ", the same card you picked for audio," : "") + " at " + h.path
-          + ". Most CM108 interfaces key on GPIO 3." + (h.canOpen ? "" : " This service cannot open it yet; see the udev note in the reference."),
+          + ". Most CM108 interfaces key on GPIO 3. The number in /dev/hidrawN can change after a replug or a reboot when other HID devices are plugged in, so check it if keying stops working."
+          + (h.canOpen ? "" : " This service cannot open it yet; see the udev note in the reference."),
         extra: "gpio" });
     });
     section(found, "serialPorts").forEach(function (p) {
@@ -1208,7 +1262,7 @@ var ConfigModel = (function () {
     keyDelta: keyDelta, nudged: nudged, freeCentre: freeCentre, nextSubChannel: nextSubChannel,
     newModem: newModem, modeInfo: modeInfo, modesOfGroup: modesOfGroup, stripLayout: stripLayout,
     stripCaption: stripCaption, colourOf: colourOf,
-    cardOfDevice: cardOfDevice, radioChoices: radioChoices, uberChoices: uberChoices, pickRadio: pickRadio,
+    cardOfDevice: cardOfDevice, radioChoices: radioChoices, uberChoices: uberChoices, pickRadio: pickRadio, radioRemovals: radioRemovals, radioNote: radioNote,
     keyingChoices: keyingChoices, keyingPicked: keyingPicked, pickKeying: pickKeying,
     setHidden: function (h) { HIDDEN = h; }
   };
@@ -1315,6 +1369,7 @@ var ConfigModel = (function () {
       $("edit-text").hidden = false;
       history.stale = true;
       found = { state: "idle", data: null, error: "", seq: found.seq + 1 };
+      pickRemoved = [];
       render();
       fetchHistory().then(function () { renderNav(); });
     }).catch(function (e) {
@@ -1379,6 +1434,7 @@ var ConfigModel = (function () {
   // What /api/config/discover says the machine has, offered as choices above the fields. A choice
   // only fills the fields in; they stay as they were to type into.
   var found = { state: "idle", data: null, error: "", seq: 0 };
+  var pickRemoved = [];  // what the last pick of a radio took out, said in the pending bar
 
   function look(fresh) {
     var seq = ++found.seq;
@@ -1401,7 +1457,7 @@ var ConfigModel = (function () {
     });
   }
 
-  function option(id, picked, title, detail, onPick) {
+  function option(id, picked, title, detail, onPick, note) {
     var label = el("label", "option" + (picked ? " picked" : ""));
     label.id = "option-" + id;
     var radio = el("input");
@@ -1413,6 +1469,11 @@ var ConfigModel = (function () {
     label.appendChild(radio);
     label.appendChild(el("b", null, title));
     label.appendChild(el("span", "detail", detail));
+    if (note) {
+      var n = el("span", "detail note", note);
+      n.id = "note-" + id;
+      label.appendChild(n);
+    }
     return label;
   }
 
@@ -1453,9 +1514,9 @@ var ConfigModel = (function () {
     }
     choices.forEach(function (c) {
       box.appendChild(option(c.id, device === c.device, c.title, c.detail, function () {
-        M.pickRadio(doc, c);
+        pickRemoved = M.pickRadio(doc, c);
         edited(true, "pick-" + c.id);
-      }));
+      }, M.radioNote(doc, c)));
     });
     var ubers = M.uberChoices(d);
     if (ubers.length > 0) {
@@ -1476,11 +1537,14 @@ var ConfigModel = (function () {
       pick.addEventListener("change", function () {
         var c = ubers.filter(function (u) { return u.id === pick.value; })[0];
         if (!c) return;
-        M.pickRadio(doc, c);
+        pickRemoved = M.pickRadio(doc, c);
         edited(true, "uber-pick");
       });
       wrap.appendChild(pick);
       row.appendChild(wrap);
+      var uberNote = el("div", "hint", "Choosing a web receiver removes any push to talk, rig control, sound card mixer, separate sound cards, publishing and identification, and an FM radio kind, which it cannot use.");
+      uberNote.id = "uber-note";
+      row.appendChild(uberNote);
       box.appendChild(row);
     }
   }
@@ -2842,6 +2906,9 @@ var ConfigModel = (function () {
     if (restoredFrom && restoredSecrets.length > 0) {
       out.push(document.createTextNode(secretSentence(restoredSecrets)));
     }
+    if (pickRemoved.length > 0) {
+      out.push(document.createTextNode("Choosing that radio removed: " + pickRemoved.join(", ") + "."));
+    }
     if (M.becomesMonitor(loaded, doc)) {
       out.push(document.createTextNode("This makes the station a monitor site. A monitor does not serve this "
         + "configuration page, so after the restart it will not answer here; to get it back, remove the "
@@ -2899,6 +2966,7 @@ var ConfigModel = (function () {
     doc = clone(loaded);
     restoredFrom = null;
     restoredSecrets = [];
+    pickRemoved = [];
     textInvalid = false;
     result("", "");
     drawnShape = shape();

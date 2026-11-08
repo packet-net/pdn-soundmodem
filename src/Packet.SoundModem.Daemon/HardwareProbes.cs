@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Linux;
+using Packet.SoundModem.UberSdr;
 using M0LTE.Flex;
 
 namespace Packet.SoundModem.Daemon;
@@ -123,13 +124,19 @@ internal sealed class SysfsProbes(IDeviceTree tree, IMixerReader mixers) : ISoun
         foreach (string entry in tree.List("/sys/class/tty"))
         {
             bool usbName = entry.StartsWith("ttyUSB", StringComparison.Ordinal) || entry.StartsWith("ttyACM", StringComparison.Ordinal);
-            if (!usbName && !entry.StartsWith("ttyS", StringComparison.Ordinal))
+            if (!usbName && !entry.StartsWith("ttyS", StringComparison.Ordinal) && !entry.StartsWith("ttyAMA", StringComparison.Ordinal))
             {
                 continue;
             }
 
-            // Most ttyS entries are placeholders the kernel makes for ports that are not there;
-            // a real one has a device behind it.
+            // The 8250 driver makes a ttyS entry, with a device link, for every port it might
+            // have (ttyS0 to ttyS31 on a typical PC); one that is not there has a UART type of 0.
+            // USB adapters have no such file.
+            if (tree.Read($"/sys/class/tty/{entry}/type") == "0")
+            {
+                continue;
+            }
+
             string? device = tree.Resolve($"/sys/class/tty/{entry}/device");
             if (device is null)
             {
@@ -188,16 +195,30 @@ internal sealed class SysfsProbes(IDeviceTree tree, IMixerReader mixers) : ISoun
     }
 }
 
-/// <summary>The probes on a machine that is not Linux: they say so, in words, rather than fail.</summary>
-internal sealed class UnsupportedProbes : ISoundCardProbe, IHidProbe, ISerialProbe
+/// <summary>
+/// Probes that all say why they cannot look, in words: a machine that is not Linux, or a test
+/// fixture file that cannot be read. Each section reports it and the page carries on.
+/// </summary>
+internal sealed class FailingProbes(string why) : ISoundCardProbe, IHidProbe, ISerialProbe, IRigctldProbe, IFlexProbe, IUberSdrProbe
 {
-    private const string Why = "this is only looked for on Linux; type the value by hand";
+    /// <summary>The probes on a machine that is not Linux.</summary>
+    internal static FailingProbes NotLinux() => new("this is only looked for on Linux; type the value by hand");
 
-    IReadOnlyList<FoundCard> ISoundCardProbe.Find() => throw new NotSupportedException("Sound cards: " + Why);
+    public string Address => "localhost:4532";
 
-    IReadOnlyList<FoundHid> IHidProbe.Find() => throw new NotSupportedException("PTT pins: " + Why);
+    IReadOnlyList<FoundCard> ISoundCardProbe.Find() => throw new NotSupportedException("Sound cards: " + why);
 
-    IReadOnlyList<FoundSerial> ISerialProbe.Find() => throw new NotSupportedException("Serial ports: " + Why);
+    IReadOnlyList<FoundHid> IHidProbe.Find() => throw new NotSupportedException("PTT pins: " + why);
+
+    IReadOnlyList<FoundSerial> ISerialProbe.Find() => throw new NotSupportedException("Serial ports: " + why);
+
+    Task<bool> IRigctldProbe.AnswersAsync(CancellationToken cancellation) => throw new NotSupportedException("rigctld: " + why);
+
+    Task<IReadOnlyList<FoundFlex>> IFlexProbe.FindAsync(TimeSpan listen, CancellationToken cancellation) =>
+        throw new NotSupportedException("FlexRadios: " + why);
+
+    Task<IReadOnlyList<FoundUberSdr>> IUberSdrProbe.FindAsync(CancellationToken cancellation) =>
+        throw new NotSupportedException("UberSDR: " + why);
 }
 
 /// <summary>One short connect to rigctld's port. Nothing is sent.</summary>
@@ -267,6 +288,15 @@ internal sealed class UdpFlexProbe : IFlexProbe
 /// <summary>The public UberSDR directory, through the client the monitor uses.</summary>
 internal sealed class DirectoryUberSdrProbe : IUberSdrProbe
 {
+    /// <summary>
+    /// The <c>ubersdr:</c> device string for an endpoint. The bare host form means HTTPS, so a
+    /// receiver that is not on TLS has to be written as the URL an operator would paste.
+    /// </summary>
+    internal static string DeviceString(UberSdrEndpoint endpoint) =>
+        endpoint.Ssl
+            ? $"ubersdr:{endpoint}"
+            : $"ubersdr:http://{endpoint.Host}:{endpoint.Port.ToString(CultureInfo.InvariantCulture)}/";
+
     public async Task<IReadOnlyList<FoundUberSdr>> FindAsync(CancellationToken cancellation)
     {
         // Receivers that can tune 3.5 to 29.7 MHz: the directory's own filter, and a width most
@@ -290,7 +320,7 @@ internal sealed class DirectoryUberSdrProbe : IUberSdrProbe
         return snapshot.Receivers
             .Select(r => new FoundUberSdr(
                 r.Host,
-                $"ubersdr:{r.Endpoint}",
+                DeviceString(r.Endpoint),
                 r.Name.Length > 0 ? r.Name : r.Callsign,
                 r.Location,
                 r.Offered))

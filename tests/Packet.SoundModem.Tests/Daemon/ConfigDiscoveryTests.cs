@@ -314,4 +314,83 @@ public partial class ConfigPageTests
 
         silent.Should().Be("Nothing is answering on localhost:4532 now. Choose this if you start rigctld yourself.||Answering on localhost:4532 now.");
     }
+
+    [Fact]
+    public void Picking_An_Ubersdr_Also_Takes_Out_Everything_The_Reference_Refuses_Beside_It_And_Says_So()
+    {
+        const string before = """
+            {"device": "plughw:CARD=Device,DEV=0", "captureDevice": "plughw:CARD=A,DEV=0", "playbackDevice": "plughw:CARD=B,DEV=0",
+             "sideband": "fm", "publish": {"url": "x"}, "ptt": {"type": "serial"},
+             "modems": [ {"mode": "bpsk300"}, {"mode": "bpsk300", "subChannel": 1, "identify": {"callsign": "M0LTE"}} ]}
+            """;
+        Engine js = Model();
+        js.SetValue("foundJson", FoundJson);
+        js.SetValue("docJson", before);
+        string answer = js.Evaluate("""
+            (function () {
+              var M = ConfigModel, found = JSON.parse(foundJson), doc = JSON.parse(docJson);
+              var c = M.uberChoices(found)[0];
+              var note = M.radioNote(doc, c);
+              var removed = M.pickRadio(doc, c);
+              return JSON.stringify({ note: note, removed: removed, doc: doc });
+            })()
+            """).AsString();
+        JsonNode result = JsonNode.Parse(answer)!;
+        JsonObject doc = result["doc"]!.AsObject();
+
+        foreach (string gone in new[] { "captureDevice", "playbackDevice", "sideband", "publish", "ptt" })
+        {
+            doc.ContainsKey(gone).Should().BeFalse(gone);
+        }
+
+        doc["modems"]![1]!.AsObject().ContainsKey("identify").Should().BeFalse();
+        doc["modems"]![1]!["subChannel"]!.GetValue<int>().Should().Be(1, "only the identify went");
+        doc["device"]!.GetValue<string>().Should().Be("ubersdr:m9psy-1.instance.ubersdr.org");
+        result["note"]!.GetValue<string>().Should().StartWith("Choosing this removes:")
+            .And.Contain("publishing to the monitor").And.Contain("identification on modem 2");
+        result["removed"]!.AsArray().Should().HaveCount(6);
+    }
+
+    [Fact]
+    public void Picking_A_Flex_Takes_Out_The_Separate_Cards_But_Keeps_Publish_And_Identify()
+    {
+        JsonNode doc = Picked("""
+            {"captureDevice": "plughw:CARD=A,DEV=0", "playbackDevice": "plughw:CARD=B,DEV=0", "publish": {"url": "x"},
+             "modems": [ {"mode": "bpsk300", "identify": {"callsign": "M0LTE"}} ]}
+            """, "M.pickRadio(doc, M.radioChoices(found)[2]);");
+
+        doc.AsObject().ContainsKey("captureDevice").Should().BeFalse();
+        doc.AsObject().ContainsKey("playbackDevice").Should().BeFalse();
+        doc.AsObject().ContainsKey("publish").Should().BeTrue("a Flex may publish");
+        doc["modems"]![0]!.AsObject().ContainsKey("identify").Should().BeTrue();
+    }
+
+    [Fact]
+    public void Picking_A_Card_While_A_Separate_Card_Is_Set_Says_That_Direction_Stays_Where_It_Is()
+    {
+        Engine js = Model();
+        js.SetValue("foundJson", FoundJson);
+
+        string note = js.Evaluate("""
+            (function () {
+              var M = ConfigModel, found = JSON.parse(foundJson);
+              var c = M.radioChoices(found)[0];
+              var plain = M.radioNote({ device: "default" }, c);
+              var split = M.radioNote({ device: "default", captureDevice: "plughw:CARD=PCH,DEV=0" }, c);
+              return plain + "||" + split;
+            })()
+            """).AsString();
+
+        note.Should().StartWith("||This sets the main audio device only: receive stays on plughw:CARD=PCH,DEV=0.");
+    }
+
+    [Fact]
+    public void The_Cm108_Choice_Warns_That_The_Hidraw_Number_Can_Move()
+    {
+        Engine js = Model();
+        js.SetValue("foundJson", FoundJson);
+
+        js.Evaluate("ConfigModel.keyingChoices(JSON.parse(foundJson), {})[0].detail").AsString()
+            .Should().Contain("/dev/hidrawN can change after a replug or a reboot");
+    }
 }

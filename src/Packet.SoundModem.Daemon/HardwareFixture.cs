@@ -23,6 +23,26 @@ internal static class HardwareFixture
     /// <summary>A discovery over the machine the file describes.</summary>
     internal static HardwareDiscovery Load(string path)
     {
+        try
+        {
+            return Read(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or IndexOutOfRangeException or FormatException)
+        {
+            // Every section says so, rather than every request being a 500.
+            var broken = new FailingProbes($"the discovery fixture {path} cannot be read ({e.Message})");
+            return new HardwareDiscovery(broken, broken, broken, broken, broken, broken);
+        }
+    }
+
+    /// <summary>The line the daemon journals at start-up when a fixture is in force, else null.</summary>
+    internal static string? StartUpNotice() =>
+        Environment.GetEnvironmentVariable(Variable) is { Length: > 0 } path
+            ? $"api: discovery is showing the machine written in {path} ({Variable}), not this machine"
+            : null;
+
+    private static HardwareDiscovery Read(string path)
+    {
         var tree = new WrittenDeviceTree();
         var mixers = new Dictionary<string, MixerNames>(StringComparer.Ordinal);
         bool answering = false;

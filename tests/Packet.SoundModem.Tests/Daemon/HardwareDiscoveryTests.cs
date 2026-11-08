@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Daemon;
 using Packet.SoundModem.Linux.Tests;
+using Packet.SoundModem.UberSdr;
 
 namespace Packet.SoundModem.Tests.Daemon;
 
@@ -107,8 +108,12 @@ public sealed class HardwareDiscoveryTests
             .Link("/sys/devices/platform/serial8250/tty/ttyS0/device", "/sys/devices/platform/serial8250")
             .File("/sys/devices/platform/serial8250/uevent", "")
             .Node("/dev/ttyS0")
-            .Link("/sys/class/tty/ttyS1", "/sys/devices/virtual/tty/ttyS1")
-            .File("/sys/devices/virtual/tty/ttyS1/uevent", "");
+            .File("/sys/devices/platform/serial8250/tty/ttyS0/type", "4")
+            // As the kernel lays out an 8250 port that is not there: a device link all the same,
+            // and a UART type of 0.
+            .Link("/sys/class/tty/ttyS1", "/sys/devices/platform/serial8250/tty/ttyS1")
+            .Link("/sys/devices/platform/serial8250/tty/ttyS1/device", "/sys/devices/platform/serial8250")
+            .File("/sys/devices/platform/serial8250/tty/ttyS1/type", "0");
 
         IReadOnlyList<FoundSerial> ports = ((ISerialProbe)Probes(tree)).Find();
 
@@ -116,6 +121,109 @@ public sealed class HardwareDiscoveryTests
         port.Path.Should().Be("/dev/ttyS0");
         port.Usb.Should().BeFalse();
         port.Name.Should().Be("Built-in serial port");
+    }
+
+    [Fact]
+    public void The_Pis_Pl011_Uart_Is_Listed()
+    {
+        FakeDeviceTree tree = new FakeDeviceTree()
+            .Link("/sys/class/tty/ttyAMA0", "/sys/devices/platform/soc/fe201000.serial/tty/ttyAMA0")
+            .Link("/sys/devices/platform/soc/fe201000.serial/tty/ttyAMA0/device", "/sys/devices/platform/soc/fe201000.serial")
+            .File("/sys/devices/platform/soc/fe201000.serial/tty/ttyAMA0/type", "3")
+            .Node("/dev/ttyAMA0");
+
+        ((ISerialProbe)Probes(tree)).Find().Should().ContainSingle().Which.Path.Should().Be("/dev/ttyAMA0");
+    }
+
+    [Fact]
+    public void An_Ubersdr_Not_On_Tls_Is_Written_As_A_Url_And_Parses_Back_To_Where_It_Is()
+    {
+        string plain = DirectoryUberSdrProbe.DeviceString(new UberSdrEndpoint("sdr.example.org", 8080, Ssl: false));
+        string tls = DirectoryUberSdrProbe.DeviceString(new UberSdrEndpoint("sdr.example.org", 443, Ssl: true));
+        string tlsOdd = DirectoryUberSdrProbe.DeviceString(new UberSdrEndpoint("sdr.example.org", 8443, Ssl: true));
+
+        plain.Should().Be("ubersdr:http://sdr.example.org:8080/");
+        UberSdrDevice.Parse(plain).Should().Be(new UberSdrEndpoint("sdr.example.org", 8080, Ssl: false));
+        tls.Should().Be("ubersdr:sdr.example.org");
+        UberSdrDevice.Parse(tls).Should().Be(new UberSdrEndpoint("sdr.example.org", 443, Ssl: true));
+        UberSdrDevice.Parse(tlsOdd).Should().Be(new UberSdrEndpoint("sdr.example.org", 8443, Ssl: true));
+    }
+
+    [Fact]
+    public async Task A_Look_At_The_Same_Moment_Shares_The_One_In_Flight()
+    {
+        var release = new TaskCompletionSource<IReadOnlyList<FoundFlex>>();
+        var started = new TaskCompletionSource();
+        var flex = new SlowFlex(release.Task, started);
+        HardwareDiscovery discovery = Discovery(Shack(), flex: null, uber: null, time: null, flexProbe: flex, flexListen: TimeSpan.FromSeconds(30));
+
+        Task<JsonObject> first = discovery.DescribeAsync(true, CancellationToken.None);
+        await started.Task;
+        Task<JsonObject> second = discovery.DescribeAsync(true, CancellationToken.None);
+        release.SetResult([Flex]);
+        await Task.WhenAll(first, second);
+
+        flex.Calls.Should().Be(1, "the second look joined the first");
+    }
+
+    [Fact]
+    public async Task A_Failed_Slow_Lookup_Is_Not_Remembered()
+    {
+        int calls = 0;
+        var flex = new FakeFlex(() => ++calls == 1 ? throw new InvalidOperationException("no network yet") : [Flex]);
+        HardwareDiscovery discovery = Discovery(Shack(), flex);
+
+        JsonObject first = await discovery.DescribeAsync(false, CancellationToken.None);
+        JsonObject second = await discovery.DescribeAsync(false, CancellationToken.None);
+
+        first["flexRadios"]!["problem"].Should().NotBeNull();
+        second["flexRadios"]!["problem"].Should().BeNull("a failure is tried again, not cached");
+        second["flexRadios"]!["items"]!.AsArray().Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task A_Missing_Or_Malformed_Fixture_Gives_A_Problem_In_Every_Section_And_No_Exception()
+    {
+        string dir = Directory.CreateTempSubdirectory("pdnsm-fixture").FullName;
+        try
+        {
+            string bad = Path.Combine(dir, "bad.txt");
+            File.WriteAllText(bad, "link\tonly-one-field\n");
+
+            foreach (string path in new[] { Path.Combine(dir, "missing.txt"), bad })
+            {
+                JsonObject found = await HardwareFixture.Load(path).DescribeAsync(true, CancellationToken.None);
+
+                foreach (string section in new[] { "soundCards", "hidDevices", "serialPorts", "flexRadios", "uberSdr" })
+                {
+                    found[section]!["problem"]!.GetValue<string>().Should().Contain("discovery fixture", section);
+                }
+
+                found["rigctld"]!["problem"]!.GetValue<string>().Should().Contain("discovery fixture");
+            }
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void The_Journal_Says_When_A_Fixture_Stands_In_For_The_Machine()
+    {
+        string? before = Environment.GetEnvironmentVariable(HardwareFixture.Variable);
+        try
+        {
+            Environment.SetEnvironmentVariable(HardwareFixture.Variable, null);
+            HardwareFixture.StartUpNotice().Should().BeNull();
+
+            Environment.SetEnvironmentVariable(HardwareFixture.Variable, "/tmp/m.txt");
+            HardwareFixture.StartUpNotice().Should().Contain("not this machine").And.Contain("/tmp/m.txt");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(HardwareFixture.Variable, before);
+        }
     }
 
     [Fact]
@@ -181,17 +289,30 @@ public sealed class HardwareDiscoveryTests
     private static readonly FoundFlex Flex = new("Shack Flex", "FLEX-6400", "1234-5678", "10.45.0.76");
     private static readonly FoundUberSdr Uber = new("m9psy-1.instance.ubersdr.org", "ubersdr:m9psy-1.instance.ubersdr.org", "M9PSY", "Reading", true);
 
+    private sealed class SlowFlex(Task<IReadOnlyList<FoundFlex>> answer, TaskCompletionSource started) : IFlexProbe
+    {
+        public int Calls;
+
+        public Task<IReadOnlyList<FoundFlex>> FindAsync(TimeSpan listen, CancellationToken cancellation)
+        {
+            Interlocked.Increment(ref Calls);
+            started.TrySetResult();
+            return answer;
+        }
+    }
+
     private static HardwareDiscovery Discovery(
-        FakeDeviceTree tree, FakeFlex? flex = null, FakeUber? uber = null, TimeProvider? time = null)
+        FakeDeviceTree tree, FakeFlex? flex = null, FakeUber? uber = null, TimeProvider? time = null,
+        IFlexProbe? flexProbe = null, TimeSpan? flexListen = null)
     {
         SysfsProbes sysfs = Probes(tree);
         return new HardwareDiscovery(
             sysfs, sysfs, sysfs, new FakeRig(false),
-            flex ?? new FakeFlex(() => [Flex]),
+            flexProbe ?? flex ?? new FakeFlex(() => [Flex]),
             uber ?? new FakeUber(() => Task.FromResult<IReadOnlyList<FoundUberSdr>>([Uber])),
             time,
             fastLimit: TimeSpan.FromMilliseconds(300), slowLimit: TimeSpan.FromMilliseconds(300),
-            flexListen: TimeSpan.FromMilliseconds(10));
+            flexListen: flexListen ?? TimeSpan.FromMilliseconds(10));
     }
 
     [Fact]
@@ -248,7 +369,7 @@ public sealed class HardwareDiscoveryTests
     [Fact]
     public async Task A_Machine_That_Is_Not_Linux_Says_So_In_Words_For_The_Local_Sections_Only()
     {
-        var unsupported = new UnsupportedProbes();
+        FailingProbes unsupported = FailingProbes.NotLinux();
         var discovery = new HardwareDiscovery(
             unsupported, unsupported, unsupported, new FakeRig(false), new FakeFlex(() => [Flex]),
             new FakeUber(() => Task.FromResult<IReadOnlyList<FoundUberSdr>>([])));

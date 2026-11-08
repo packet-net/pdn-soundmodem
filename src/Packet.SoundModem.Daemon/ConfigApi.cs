@@ -1330,10 +1330,6 @@ internal sealed class ConfigApi
     private static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true };
 
     /// <summary>
-    /// <c>POST /api/config/plan</c>: where each modem of a proposed configuration would sit,
-    /// worked out by the band planning start-up uses, and nothing applied.
-    /// </summary>
-    /// <summary>
     /// <c>GET /api/config/discover</c>: what this machine has that a setting could name. Read-only;
     /// <c>?fresh=1</c> skips the 30 second memory of the slow lookups.
     /// </summary>
@@ -1352,6 +1348,10 @@ internal sealed class ConfigApi
         await RespondJsonAsync(context, 200, found.ToJsonString(Pretty)).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// <c>POST /api/config/plan</c>: where each modem of a proposed configuration would sit,
+    /// worked out by the band planning start-up uses, and nothing applied.
+    /// </summary>
     private async Task PlanAsync(HttpListenerContext context)
     {
         if (context.Request.HttpMethod != "POST")

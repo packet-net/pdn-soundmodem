@@ -127,6 +127,7 @@ internal sealed class HardwareDiscovery
     private readonly TimeSpan _slow;
     private readonly TimeSpan _flexListen;
     private readonly object _gate = new();
+    private Task<JsonObject>? _running;
     private Section<FoundFlex>? _flexCache;
     private Section<FoundUberSdr>? _uberCache;
 
@@ -157,7 +158,7 @@ internal sealed class HardwareDiscovery
 
         (ISoundCardProbe cards, IHidProbe hid, ISerialProbe serial) = OperatingSystem.IsLinux()
             ? Linux()
-            : (new UnsupportedProbes(), new UnsupportedProbes(), new UnsupportedProbes());
+            : (FailingProbes.NotLinux(), FailingProbes.NotLinux(), FailingProbes.NotLinux());
         return new HardwareDiscovery(
             cards, hid, serial, new TcpRigctldProbe("localhost", 4532), new UdpFlexProbe(),
             new DirectoryUberSdrProbe());
@@ -174,7 +175,35 @@ internal sealed class HardwareDiscovery
     /// <summary>Looks, and describes what was found.</summary>
     /// <param name="fresh">Ignore the remembered Flex and UberSDR answers.</param>
     /// <param name="cancellation">Cancels the whole look.</param>
-    public async Task<JsonObject> DescribeAsync(bool fresh, CancellationToken cancellation)
+    public Task<JsonObject> DescribeAsync(bool fresh, CancellationToken cancellation)
+    {
+        // One look at a time: a second request (a double-clicked "Look again", two open pages)
+        // takes the one in flight rather than starting its own Flex listen and directory fetch.
+        Task<JsonObject> running;
+        lock (_gate)
+        {
+            running = _running ??= RunAsync(fresh);
+        }
+
+        return running.WaitAsync(cancellation);
+    }
+
+    private async Task<JsonObject> RunAsync(bool fresh)
+    {
+        try
+        {
+            return await LookAsync(fresh, CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _running = null;
+            }
+        }
+    }
+
+    private async Task<JsonObject> LookAsync(bool fresh, CancellationToken cancellation)
     {
         Task<Section<FoundCard>> cards = Bounded(() => Task.Run(_cards.Find, cancellation), _fast, cancellation);
         Task<Section<FoundHid>> hid = Bounded(() => Task.Run(_hid.Find, cancellation), _fast, cancellation);
@@ -233,9 +262,13 @@ internal sealed class HardwareDiscovery
         }
 
         Section<T> section = await Bounded(() => probe(cancellation), limit, cancellation).ConfigureAwait(false);
-        lock (_gate)
+        // Only an answer is remembered: a failure (no network a moment ago) is tried again next time.
+        if (section.Problem is null)
         {
-            write(section);
+            lock (_gate)
+            {
+                write(section);
+            }
         }
 
         return section;
