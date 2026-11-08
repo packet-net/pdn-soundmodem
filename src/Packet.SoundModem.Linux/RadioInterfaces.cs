@@ -333,7 +333,7 @@ internal static class SysfsDiscovery
     /// which udev keeps pointing at the same device however the numbering falls out; the node
     /// itself when there is no such link.
     /// </summary>
-    private static string StableSerialName(IDeviceTree tree, string node)
+    internal static string StableSerialName(IDeviceTree tree, string node)
     {
         foreach (string link in tree.List("/dev/serial/by-id"))
         {
@@ -347,7 +347,7 @@ internal static class SysfsDiscovery
         return node;
     }
 
-    private static (ushort Vendor, ushort Product)? HidIds(string? uevent)
+    internal static (ushort Vendor, ushort Product)? HidIds(string? uevent)
     {
         foreach (string line in (uevent ?? string.Empty).Split('\n'))
         {
@@ -368,10 +368,10 @@ internal static class SysfsDiscovery
         return null;
     }
 
-    private static ushort? Hex(string? text) =>
+    internal static ushort? Hex(string? text) =>
         ushort.TryParse(text, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ushort value) ? value : null;
 
-    private static string? Parent(string path)
+    internal static string? Parent(string path)
     {
         int slash = path.LastIndexOf('/');
         return slash <= 0 ? null : path[..slash];

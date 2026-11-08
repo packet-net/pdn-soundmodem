@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.Playwright;
 using Packet.SoundModem.Daemon;
+using Packet.SoundModem.Linux.Tests;
 
 namespace Packet.SoundModem.Tests.Daemon;
 
@@ -341,6 +342,90 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         double rf = file["modems"]![1]!["rfFrequency"]!.GetValue<double>();
         (rf % 100).Should().Be(0);
         Math.Abs(rf - 7050800).Should().BeGreaterThanOrEqualTo(300, "beside the first modem, not on it");
+    }
+
+    /// <summary>
+    /// The Radio and audio and Keying areas offer what the machine has. The daemon is given a
+    /// written machine (a CM108 interface with its hidraw, and a serial adapter) through its
+    /// discovery fixture, which is the only seam: it is a real daemon, so a fake object cannot be
+    /// handed to it, and nothing on the machine running the test is looked at.
+    /// </summary>
+    [Fact(Timeout = 600_000)]
+    public async Task A_Sound_Card_And_A_Ptt_Pin_Picked_From_What_Was_Found_Are_Saved_In_The_File()
+    {
+        RequireBrowser();
+        string machine = new FakeDeviceTree()
+            .Cm108(card: 1, hidraw: 1)
+            .UsbSerial(0, "/sys/devices/pci0000:00/0000:00:14.0/usb3/3-3", "0403", "6001", "FTDI", "FT232R USB UART", byId: null)
+            .Describe()
+            + "mixer\tDevice\tMic\tSpeaker\n";
+        _station = await Station.StartAsync(_scratch.FullName, key: null, machine: machine);
+        IPage page = await OpenConfigAsync();
+
+        await GoToAsync(page, "radio");
+        await Assertions.Expect(page.Locator("#option-card-Device")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#option-card-Device")).ToContainTextAsync("plughw:CARD=Device,DEV=0", new() { Timeout = StepMs });
+        await page.Locator("#pick-card-Device").CheckAsync();
+        await Assertions.Expect(page.Locator("#f-device")).ToHaveValueAsync("plughw:CARD=Device,DEV=0", new() { Timeout = StepMs });
+
+        // Typing by hand is still possible: the field is the same field.
+        await Assertions.Expect(page.Locator("#f-device")).ToBeEditableAsync(new() { Timeout = StepMs });
+
+        await GoToAsync(page, "keying");
+        await Assertions.Expect(page.Locator("#option-ptt-cm108-hidraw1")).ToContainTextAsync("the same card you picked for audio", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#option-ptt-serial-ttyUSB0")).ToContainTextAsync("FTDI FT232R USB UART", new() { Timeout = StepMs });
+        await page.Locator("#pick-ptt-cm108-hidraw1").CheckAsync();
+        await Assertions.Expect(page.Locator("#extra-ptt-cm108-hidraw1")).ToHaveValueAsync("3", new() { Timeout = StepMs });
+        await page.Locator("#extra-ptt-cm108-hidraw1").SelectOptionAsync("1");
+        await Assertions.Expect(page.Locator("#f-ptt_gpio")).ToHaveValueAsync("1", new() { Timeout = StepMs });
+
+        // The pending bar is the page's own count of what is about to be written.
+        await Assertions.Expect(page.Locator("#save")).ToBeEnabledAsync(new() { Timeout = StepMs });
+        await page.Locator("#save").ClickAsync();
+
+        // The restart onto a sound card this machine does not have cannot finish, so the test
+        // waits for the file, which is written before the restart.
+        await _station.WaitForLogAsync("configuration written");
+        JsonNode file = _station.ReadConfig();
+        file["device"]!.GetValue<string>().Should().Be("plughw:CARD=Device,DEV=0");
+        file["ptt"]!["type"]!.GetValue<string>().Should().Be("cm108");
+        file["ptt"]!["device"]!.GetValue<string>().Should().Be("/dev/hidraw1");
+        file["ptt"]!["gpio"]!.GetValue<int>().Should().Be(1);
+        file["notASettingYet"]!.GetValue<int>().Should().Be(7, "what the page never showed is kept");
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task Look_Again_Asks_The_Station_For_A_Fresh_Look()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null, machine: "");
+        IPage page = await NewPageAsync();
+        var asked = new List<string>();
+        page.Request += (_, request) =>
+        {
+            if (request.Url.Contains("api/config/discover", StringComparison.Ordinal))
+            {
+                lock (asked)
+                {
+                    asked.Add(request.Url);
+                }
+            }
+        };
+        await page.GotoAsync(_station.Url("config"));
+        await Assertions.Expect(page.Locator("#overview-radio")).ToBeVisibleAsync(new() { Timeout = StepMs });
+
+        await GoToAsync(page, "radio");
+        await Assertions.Expect(page.Locator("#found .none")).ToContainTextAsync("No sound cards", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#look-again")).ToBeEnabledAsync(new() { Timeout = StepMs });
+        await page.Locator("#look-again").ClickAsync();
+
+        await Assertions.Expect(page.Locator("#look-again")).ToBeEnabledAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#found .none")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        lock (asked)
+        {
+            asked.Should().HaveCount(2);
+            asked[1].Should().EndWith("?fresh=1");
+        }
     }
 
     [Fact(Timeout = 600_000)]
@@ -716,6 +801,8 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         private int _lastExit = int.MinValue;
         private Task _supervising = Task.CompletedTask;
 
+        private string? _machine;
+
         private Station(string dir, int port, string configPath)
         {
             _dir = dir;
@@ -750,7 +837,9 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         public JsonNode ReadConfig() => JsonNode.Parse(File.ReadAllText(ConfigPath), null,
             new System.Text.Json.JsonDocumentOptions { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true })!;
 
-        public static async Task<Station> StartAsync(string dir, string? key, string? modems = null)
+        /// <param name="machine">A machine for /api/config/discover to find, in the daemon's fixture
+        /// format (HardwareFixture), or null for the machine the test runs on.</param>
+        public static async Task<Station> StartAsync(string dir, string? key, string? modems = null, string? machine = null)
         {
             int port = FreePorts.Next();
             int kiss = FreePorts.Next();
@@ -773,6 +862,12 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                 """);
 
             var station = new Station(dir, port, configPath);
+            if (machine is not null)
+            {
+                station._machine = Path.Combine(dir, "machine.txt");
+                File.WriteAllText(station._machine, machine);
+            }
+
             Directory.CreateDirectory(station.StateDirectory);
             station._supervising = station.SuperviseAsync();
             try
@@ -867,6 +962,10 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                 info.Environment["STATE_DIRECTORY"] = StateDirectory;
                 // As under systemd, so the daemon does not warn that nothing will restart it.
                 info.Environment["INVOCATION_ID"] = "config-page-browser-tests";
+                if (_machine is not null)
+                {
+                    info.Environment[HardwareFixture.Variable] = _machine;
+                }
 
                 var process = new Process { StartInfo = info };
                 process.OutputDataReceived += (_, e) => Append(e.Data);

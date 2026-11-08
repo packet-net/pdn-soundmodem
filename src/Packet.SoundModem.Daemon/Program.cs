@@ -1769,6 +1769,11 @@ if (benchTxTest is null
     waterfallServer.ApiHandler = configApi.HandleAsync;
     waterfallServer.ServesConfigPage = apiKey.Length > 0 || waterfallConfig?.Public != true;
 
+    if (HardwareFixture.StartUpNotice() is { } fixtureNotice)
+    {
+        Console.WriteLine(fixtureNotice);
+    }
+
     // One line, because this is the station's sound card in reach of whoever can reach the page,
     // and an operator who has forgotten the flag is set should be told at every start-up.
     if (openAudioControls)
