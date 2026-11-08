@@ -1550,14 +1550,14 @@ public partial class ConfigPageTests : IDisposable
         private readonly string _base;
         private readonly Task _serving;
 
-        public Station(string dir, string key, bool openConfiguration = true, TimeProvider? time = null, HardwareDiscovery? discovery = null, RecentOutput? recent = null, string apiExtra = "")
+        public Station(string dir, string key, bool openConfiguration = true, TimeProvider? time = null, HardwareDiscovery? discovery = null, string? configText = null, RecentOutput? recent = null, string apiExtra = "")
         {
             string mine = Path.Combine(dir, Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(mine);
             ConfigPath = Path.Combine(mine, "soundmodem.json");
             PendingPath = Path.Combine(mine, "pending.json");
             string api = (key.Length > 0 ? $$""", "api": { "key": "{{key}}" }""" : "") + apiExtra;
-            File.WriteAllText(ConfigPath, $$"""
+            File.WriteAllText(ConfigPath, configText ?? $$"""
                 {
                   // the station's own file
                   "device": "null",

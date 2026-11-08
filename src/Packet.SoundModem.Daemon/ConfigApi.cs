@@ -1078,7 +1078,8 @@ internal sealed class ConfigApi
                       "source": {{(_ephemeralInForce ? "\"ephemeral\"" : "\"file\"")}},
                       "instance": "{{Instance}}",
                       "configPath": {{JsonSerializer.Serialize(_configPath)}},
-                      "running": {{Redact(_runningJson())}}
+                      "running": {{Redact(_runningJson())}},
+                      "setup": { "neverConfigured": {{(ConfigSetup.NeverConfigured(_runningJson()) ? "true" : "false")}} }
                     }
                     """).ConfigureAwait(false);
                 return true;
