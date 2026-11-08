@@ -175,6 +175,7 @@ check "config is root:pdn-soundmodem 0660" "[ \"\$(stat -c '%U:%G %a' /etc/pdn-s
 check "starter pipe lives in the state dir"  "[ -p /var/lib/pdn-soundmodem/starter-air ]"
 apt-get install -y -qq curl >/dev/null 2>&1 || true
 before=$(sha256sum /etc/pdn-soundmodem/soundmodem.json)
+started_before_save=$(systemctl show pdn-soundmodem.service -p ExecMainStartTimestampMonotonic --value 2>/dev/null)
 code=$(curl -s -o /tmp/persist.out -w '%{http_code}' -X POST --data-binary @/etc/pdn-soundmodem/soundmodem.json \
        'http://127.0.0.1:8107/api/config?persist=true' 2>/dev/null)
 [ "$code" = "200" ] && ok "a persist POST from loopback succeeds on a fresh install" \
@@ -183,10 +184,14 @@ code=$(curl -s -o /tmp/persist.out -w '%{http_code}' -X POST --data-binary @/etc
                     || bad "the saved file differs from the document posted"
 back=no
 for _ in $(seq 1 20); do
-  systemctl is-active --quiet pdn-soundmodem.service && { back=yes; break; }
+  after=$(systemctl show pdn-soundmodem.service -p ExecMainStartTimestampMonotonic --value 2>/dev/null)
+  if [ -n "$after" ] && [ "$after" != "$started_before_save" ] && systemctl is-active --quiet pdn-soundmodem.service; then
+    back=yes; break
+  fi
   sleep 1
 done
-[ "$back" = yes ] && ok "the service is back up after the save" || bad "the service did not come back within 20 s of the save"
+[ "$back" = yes ] && ok "the service restarted and is back up after the save" \
+                  || bad "the service did not restart and come back within 20 s of the save"
 
 echo
 echo "== start =="

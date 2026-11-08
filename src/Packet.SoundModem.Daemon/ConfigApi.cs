@@ -935,6 +935,15 @@ internal sealed class ConfigApi
             found.Add("iqpipe.command");
         }
 
+        // ALSA reads a PCM or control name as a small program: its "file" plugin runs a name that
+        // begins with a pipe as a command, and "ladspa" and "hooks" load shared libraries. So a
+        // name that is not plainly a card is code too.
+        HashSet<string> hadNames = UnsafeAlsaNames(running);
+        if (UnsafeAlsaNames(proposed).Any(n => !hadNames.Contains(n)))
+        {
+            found.Add("an ALSA device name");
+        }
+
         var had = new HashSet<string>(
             (running?.ModemPlugins ?? []).Select(p => p.Path), StringComparer.Ordinal);
         if ((proposed.ModemPlugins ?? []).Any(p => !string.IsNullOrWhiteSpace(p.Path) && !had.Contains(p.Path)))
@@ -943,6 +952,57 @@ internal sealed class ConfigApi
         }
 
         return found;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex SafeAlsaName = new(
+        @"^(default|null|(hw|plughw|sysdefault|dsnoop|dmix|front|iec958)(:[A-Za-z0-9,=_.\-]*)?)$",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Every name in the configuration that reaches ALSA (<c>device</c> when it is a sound card,
+    /// the card after <c>iqcard:</c>, <c>captureDevice</c>, <c>playbackDevice</c> and
+    /// <c>alsa.mixer.card</c>) that is not plainly a card: <c>default</c>, <c>null</c>, or hw,
+    /// plughw, sysdefault, dsnoop, dmix, front or iec958 optionally followed by a colon and
+    /// letters, digits and <c>, = _ . -</c>. The other device kinds (flex, ubersdr, openwebrx,
+    /// rtltcp, sdrconnect, iqpipe, pipe) never reach ALSA: they are hosts, URLs and FIFO paths.
+    /// </summary>
+    internal static HashSet<string> UnsafeAlsaNames(DaemonConfig? config)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        if (config is null)
+        {
+            return names;
+        }
+
+        void Consider(string? device)
+        {
+            if (string.IsNullOrEmpty(device))
+            {
+                return;
+            }
+
+            DeviceKind kind = DeviceKinds.Of(device);
+            string name = device;
+            if (kind == DeviceKinds.IqCard)
+            {
+                name = device[IqCardDeviceKind.Prefix.Length..].Trim();
+            }
+            else if (kind != DeviceKinds.Alsa)
+            {
+                return;
+            }
+
+            if (!SafeAlsaName.IsMatch(name))
+            {
+                names.Add(name);
+            }
+        }
+
+        Consider(config.Device);
+        Consider(config.CaptureDevice);
+        Consider(config.PlaybackDevice);
+        Consider(config.Alsa?.Mixer?.Card);
+        return names;
     }
 
     /// <summary>

@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Jint;
 using Packet.SoundModem.Daemon;
+using Packet.SoundModem.Linux.Tests;
 
 namespace Packet.SoundModem.Tests.Daemon;
 
@@ -1370,6 +1371,90 @@ public partial class ConfigPageTests : IDisposable
         HttpResponseMessage answer = await PostAsync(station, "api/config?check=true", body, "X-Forwarded-For");
 
         answer.StatusCode.Should().Be(HttpStatusCode.Forbidden, await answer.Content.ReadAsStringAsync());
+    }
+
+    // ALSA reads a name beginning with a pipe as a command ("file"), and "ladspa" and "hooks" load
+    // shared libraries, so a device name that is not plainly a card is code too.
+    private const string Modems = "\"modems\": [{\"subChannel\": 0, \"mode\": \"afsk1200\"}]";
+
+    public static TheoryData<string, string> AlsaNamesThatRunCode() => new()
+    {
+        { "device", """{"device": "file:'|touch /tmp/x',raw", __M__}""" },
+        { "device", """{"device": "plug:{ pcm.!default { type ladspa } }", __M__}""" },
+        { "device", """{"device": "hooks:x", __M__}""" },
+        { "device", """{"device": "'quoted'", __M__}""" },
+        { "device", """{"device": "plughw:CARD=Device,DEV=0 ", __M__}""" },
+        { "captureDevice", """{"device": "default", "captureDevice": "file:'|id',raw", __M__}""" },
+        { "playbackDevice", """{"device": "default", "playbackDevice": "ladspa:x", __M__}""" },
+        { "iqcard", """{"device": "iqcard:file:'|id',raw", __M__}""" },
+        { "mixer card", """{"device": "default", "alsa": {"mixer": {"card": "file:'|id',raw"}}, __M__}""" },
+    };
+
+    [Theory]
+    [MemberData(nameof(AlsaNamesThatRunCode))]
+    public async Task An_Unplain_Alsa_Name_Is_Code_And_Only_The_Station_Itself_Can_Set_It(string where, string template)
+    {
+        string body = template.Replace("__M__", Modems, StringComparison.Ordinal);
+        using var station = new Station(_dir, key: "");
+
+        HttpResponseMessage lan = await PostAsync(station, "api/config?check=true", body, "X-Forwarded-For");
+        HttpResponseMessage here = await PostAsync(station, "api/config?check=true", body, null);
+
+        lan.StatusCode.Should().Be(HttpStatusCode.Forbidden, where);
+        (await lan.Content.ReadAsStringAsync()).Should().Be(CodeMessage);
+        here.StatusCode.Should().NotBe(HttpStatusCode.Forbidden, where);
+    }
+
+    [Theory]
+    [InlineData("""{"device": "plughw:CARD=Device,DEV=0", __M__}""")]
+    [InlineData("""{"device": "default", "captureDevice": "plughw:CARD=Device,DEV=0", "playbackDevice": "hw:1,0", __M__}""")]
+    [InlineData("""{"device": "iqcard:plughw:CARD=Device,DEV=0", __M__}""")]
+    [InlineData("""{"device": "null", "alsa": {"mixer": {"card": "hw:CARD=Device"}}, __M__}""")]
+    [InlineData("""{"device": "sysdefault:CARD=PCH", __M__}""")]
+    [InlineData("""{"device": "pipe:/var/lib/pdn-soundmodem/a,/var/lib/pdn-soundmodem/a", __M__}""")]
+    [InlineData("""{"device": "flex:10.0.0.9", __M__}""")]
+    public async Task Plain_Card_Names_And_Other_Device_Kinds_Are_Accepted_From_Anywhere(string template)
+    {
+        string body = template.Replace("__M__", Modems, StringComparison.Ordinal);
+        using var station = new Station(_dir, key: "");
+
+        HttpResponseMessage lan = await PostAsync(station, "api/config?check=true", body, "X-Forwarded-For");
+
+        lan.StatusCode.Should().NotBe(HttpStatusCode.Forbidden, await lan.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task An_Unplain_Alsa_Name_The_Station_Already_Has_Can_Stay_But_Not_Change()
+    {
+        const string name = "file:'|id',raw";
+        using var station = new Station(_dir, key: "", configText: "{\"device\": \"" + name + "\", " + Modems + "}");
+
+        (await PostAsync(station, "api/config?check=true", "{\"device\": \"" + name + "\", \"waterfall\": {\"port\": 8107}, " + Modems + "}", "X-Forwarded-For"))
+            .StatusCode.Should().NotBe(HttpStatusCode.Forbidden);
+        (await PostAsync(station, "api/config?check=true", "{\"device\": \"file:'|id2',raw\", " + Modems + "}", "X-Forwarded-For"))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await PostAsync(station, "api/config?check=true", "{\"device\": \"default\", " + Modems + "}", "X-Forwarded-For"))
+            .StatusCode.Should().NotBe(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public void Every_Card_Setup_Offers_Is_A_Plain_Name()
+    {
+        // The discovery fixture's cards, as setup would write them into a document.
+        string machine = new FakeDeviceTree()
+            .Cm108(card: 1, hidraw: 1)
+            .Describe();
+        foreach (string line in machine.Split('\n'))
+        {
+            string[] cells = line.Split('\t');
+            if (cells.Length > 1 && cells[1].Contains("CARD=", StringComparison.Ordinal))
+            {
+                var config = new DaemonConfig { Device = cells[1] };
+                ConfigApi.UnsafeAlsaNames(config).Should().BeEmpty(cells[1]);
+            }
+        }
+
+        ConfigApi.UnsafeAlsaNames(new DaemonConfig { Device = "plughw:CARD=Device,DEV=0" }).Should().BeEmpty();
     }
 
     [Fact]
