@@ -191,6 +191,7 @@ bool mailcastSectionLeft = false;
 CarrierSenseConfig? carrierSenseConfig = null;
 AlsaConfig? alsaConfig = null;
 PagingConfig? paging = null;
+S5066Config? s5066Config = null;
 FlexConfig? flexConfig = null;
 UberSdrConfig? uberSdrConfig = null;
 OpenWebRxConfig? openWebRxConfig = null;
@@ -284,6 +285,7 @@ if (configPath is not null)
     carrierSenseConfig = config.CarrierSense;
     alsaConfig = config.Alsa;
     paging = config.Paging;
+    s5066Config = config.S5066;
     flexConfig = config.Flex;
     uberSdrConfig = config.UberSdr;
     openWebRxConfig = config.OpenWebRx;
@@ -561,8 +563,12 @@ using var updateCheck = new UpdateCheck(TimeProvider.System, stationJournal.Writ
 // A leftover "mailcast" section still counts as an MS110D modem here, as the removed receiver did,
 // so a station whose other settings were written for the 48 kHz channel (publish.audioRate, say)
 // starts exactly as before.
+// An "s5066" section counts the same way: its MS110D modem runs at 9600 Hz, which only the 48 kHz
+// channel divides.
 if (!StationFactory.TryResolveDspRate(
-        mailcastSectionLeft ? [.. modems, new ModemConfig { Mode = MailcastRetired.RateMode }] : modems,
+        mailcastSectionLeft || s5066Config is not null
+            ? [.. modems, new ModemConfig { Mode = MailcastRetired.RateMode }]
+            : modems,
         stationJournal, out int DspRate))
 {
     return 2;
@@ -1359,7 +1365,6 @@ if (benchTxTest is null && waterfallConfig is not null)
 
 await using var waterfallLifetime = waterfallServer;
 
-
 // The signal survey: watch the whole passband for transmissions this station cannot read, and
 // keep the ones worth looking at later (issue #206). Off unless configured - it writes audio to
 // disk unattended for as long as the station runs.
@@ -1724,7 +1729,6 @@ if (pttSpec is not null)
 
 // One bind for every listener - KISS, per-modem ports, waterfall, paging and ARDOP.
 System.Net.IPAddress listenAddress = DaemonConfig.ParseBind(bindAddress)!;
-
 
 
 // Set when the radio's session dies, so the exit code says "retry me" rather than "I am done".
@@ -2330,6 +2334,58 @@ await using var ardopLifetime = ardopServer;
 int serviceTxSubChannel = modems.Any(m => m.SubChannel == 0)
     ? 0
     : modems.Count > 0 ? modems.Min(m => m.SubChannel) : 0;
+
+// A STANAG 5066 node, only when the file has an "s5066" section; without one nothing here runs,
+// opens or prints. Built before the audio starts, like the ARDOP TNC, because its modem listens
+// on a channel receive tap.
+S5066Station? s5066Station = null;
+if (benchTxTest is null && s5066Config is not null)
+{
+    if (channel.ReceiveOnlyReason is not null)
+    {
+        Console.Error.WriteLine(
+            "s5066: WARNING - this station cannot transmit, so the node only listens and no link will complete");
+    }
+
+    try
+    {
+        // Every burst into the journal and the frame log, both ways, as ARDOP's frames are: the
+        // node transmits audio rather than frames, so the channel raises nothing for it. Filed
+        // under the service sub-channel, like the test tone: the node is not a KISS modem.
+        int s5066Sub = serviceTxSubChannel;
+        s5066Station = S5066Station.Start(
+            channel, s5066Config, listenAddress, Console.WriteLine,
+            sent: burst =>
+            {
+                stationJournal.Write($"tx[{s5066Sub}] s5066 {burst.Waveform} {burst.Bytes.Length} bytes");
+                frameLog?.RecordTransmitted(
+                    s5066Sub, burst.Bytes, "s5066", audioHz: null, rfHz: null,
+                    modeName: $"STANAG 5066 {burst.Waveform}");
+            },
+            heard: burst =>
+            {
+                stationJournal.Write(
+                    $"rx[{s5066Sub}] s5066 {burst.Waveform} {burst.Bytes.Length} bytes"
+                    + (burst.SnrDb is double snr ? $", SNR {snr:F1} dB" : "")
+                    + (burst.Ended == M0LTE.S5066.Core.Runtime.BurstEndReason.Eom ? "" : ", cut short"));
+                frameLog?.Record(
+                    s5066Sub, burst.Bytes,
+                    new FrameQuality("s5066", burst.Bytes.Length, CorrectedBytes: null, CrcValid: null, SnrDb: burst.SnrDb),
+                    audioHz: null, rfHz: null, modeName: $"STANAG 5066 {burst.Waveform}");
+            });
+    }
+    catch (System.Net.Sockets.SocketException bindFailed)
+    {
+        Console.Error.WriteLine($"s5066: cannot listen on port {s5066Config.Port}: {bindFailed.Message}");
+        return 2;
+    }
+
+    string s5066Shown = Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString();
+    Console.WriteLine(
+        $"s5066 sis tcp: {s5066Shown}:{s5066Station.SisEndpoint.Port} (node {s5066Station.Address}, "
+        + $"MIL-STD-188-110D on the {DspRate} Hz channel, busy input from the channel's carrier sense)");
+}
+await using var s5066Lifetime = s5066Station;
 
 Packet.SoundModem.Pocsag.PagingTcpServer? pagingServer = null;
 if (benchTxTest is null && paging is not null)

@@ -20,6 +20,8 @@
     <!-- The frame log's store. -->
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
+    <!-- The STANAG 5066 node an "s5066" section starts (S5066Station). -->
+    <PackageReference Include="M0LTE.S5066.Host" />
   </ItemGroup>
 
   <ItemGroup>

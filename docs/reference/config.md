@@ -50,7 +50,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | `captureRate` | int | `48000` | ALSA capture and playback rate in Hz; the modem decimates to its DSP rate. |
 | `kissPort` | int | `8105` | The shared KISS TCP port carrying every packet modem by sub-channel nibble. |
 | `kissMaxFrameBytes` | int | `8192` | The most bytes one KISS frame from a host may carry, on every KISS port. A longer frame is dropped and the journal says so. |
-| `bind` | string | `"127.0.0.1"` | The address every listener binds to: KISS, per-modem ports, the station page, paging and ARDOP. `"*"` or `"0.0.0.0"` for all interfaces. |
+| `bind` | string | `"127.0.0.1"` | The address every listener binds to: KISS, per-modem ports, the station page, paging, ARDOP and the STANAG 5066 SIS port. `"*"` or `"0.0.0.0"` for all interfaces. |
 | `sideband` | string | `"usb"` | What kind of radio this is, `"usb"`, `"lsb"` or `"fm"`, for turning `rfFrequency` into audio. See [Band placement](#band-placement-sideband-dialfrequency-and-rffrequency). |
 | `dialFrequency` | number | chosen by the modem | Pins the dial in Hz instead of letting the band plan choose one. See [Band placement](#band-placement-sideband-dialfrequency-and-rffrequency). |
 | `modems` | array | one `afsk1200` on sub-channel 0; none when a top-level `ardop` section is present | The modems sharing the audio channel. |
@@ -63,6 +63,7 @@ In the order `DaemonConfig` declares them. `sideband`, `dialFrequency` and each 
 | `alsa` | object | absent: levels left alone | The sound card's mixer levels. |
 | `paging` | object | absent: off | The POCSAG paging endpoint. |
 | `ardop` | object | absent: off | Legacy way to start the ARDOP virtual TNC; a modem entry with `"mode": "ardop"` is the current form. |
+| `s5066` | object | absent: off | A STANAG 5066 node on this channel, serving its SIS port. See [`s5066`](#s5066). |
 | `flex` | object | absent: defaults | Slice parameters for a headless FlexRadio. |
 | `rig` | object | absent: no rig control | A radio controlled through Hamlib's rigctld: the band plan's dial, a rigctld PTT and tuning windows. |
 | `mailcast` | object | absent | Retired. The built-in mailcast receiver was removed; a leftover section is ignored with one journal line. See [`mailcast`](#mailcast). |
@@ -392,6 +393,24 @@ A test asked for through `POST /api/txtest` can follow its tone with a channel-s
 - Legacy. A modem entry with `"mode": "ardop"` does the same and can also carry `frequency`, `rfFrequency`, `port` and `bandwidth`. Given only this section, the modem folds it into an `ardop` entry on the lowest free sub-channel at start-up. With no `modems` beside it the file gets no default `afsk1200` and no KISS port, so `{ "ardop": {} }` is an ARDOP-only station.
 - Refused beside an `ardop` modem entry, see [`modems`](#modems). The `--ardop PORT` flag wins over this section when both are given, and is refused beside an `ardop` modem entry: `ARDOP is configured twice - as a modem and with --ardop/"ardop". Keep the modem entry.`
 - With this section present the port check does not compare `kissPort` against the ARDOP ports, a hold-over from when ARDOP excluded the packet modems, so a `port` equal to `kissPort` beside packet modems passes validation and fails when the KISS listener binds.
+
+## `s5066`
+
+```json
+{ "s5066": { "port": 5066, "node": { "local_address": "0.0.1.1", "csma": { "mode": "jitter" },
+  "cas": { "max_links": 4, "link_request_retries": 5, "break_retries": 3 } } } }
+```
+
+| Key | Type | Default | What it is |
+|---|---|---|---|
+| `port` | int | `5066` | The SIS (Subnetwork Interface) TCP port, on the `bind` address. |
+| `node` | object | required | The node's own settings in M0LTE.S5066's names, merged over its defaults: `local_address`, `groups`, `prng_seed`, `csma`, `sis`, `dts`, `drc` and `cas`. |
+
+- Present means on; absent, nothing about it starts, opens or prints. The node sends MIL-STD-188-110D through this station's sound card and PTT, so the channel runs at 48 kHz, as it does for an `ms110d-*` modem. Its busy input is the channel's carrier sense, not counting this station's own transmissions. Each burst goes out behind the channel's TXDELAY of silence, as a packet modem's does.
+- `node` is passed to M0LTE.S5066 as written. Refused when the file is read: no `node`; a `host` key in it (this station is the host); a key M0LTE.S5066 does not know or a value it will not take, as `"s5066"."node": <key>: <reason>`; no `local_address`, `csma.mode`, `cas.max_links`, `cas.link_request_retries` or `cas.break_retries`, which the standard leaves without a default; with `csma.mode` `"slotted"`, a `csma.node_slot_position` missing or outside 1 to `csma.num_cont_slots`; and a `drc.default_speed` the 110D modem cannot send. M0LTE.S5066 makes these checks itself and words the reasons.
+- Refused beside ARDOP (both run their own channel access) and in a monitor's file. The port is claimed as `the STANAG 5066 SIS port`, see [`kissPort` and `bind`](#kissport-and-bind).
+- Each burst sent or heard is journalled as `tx[N] s5066 wn6 short 120 bytes` or `rx[N] s5066 wn6 short 128 bytes, SNR 18.0 dB` and written to the frame log with mode `s5066`, filed under the service sub-channel (the lowest configured, 0 where there is one).
+- Start-up prints `s5066 sis tcp: <address>:<port> (node <address>, ...)`; node messages carry the prefix `s5066:`. A receive-only station prints `s5066: WARNING - this station cannot transmit, ...` and the node only listens. [STANAG 5066](../16-stanag-5066.md) is the guide.
 
 ## `flex`
 

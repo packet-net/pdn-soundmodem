@@ -19,6 +19,7 @@ pdn-soundmodem is a software TNC for Linux. It turns a sound card, a FlexRadio o
 13. [13-decode-a-recording.md](13-decode-a-recording.md): get the frames out of a WAV file with the source-tree tools.
 14. [14-mailcast.md](14-mailcast.md): receive GB7RDG's 40 m bulletins into your own LinBPQ or FBB with pdn-mailcast-receiver, and move across from the removed built-in receiver.
 15. [15-sdr-through-a-pipe.md](15-sdr-through-a-pipe.md): receive through your own RTL-SDR, SDRplay, Airspy or HackRF, with `rtl_sdr` or `rx_sdr` writing IQ into the modem.
+16. [16-stanag-5066.md](16-stanag-5066.md): run a STANAG 5066 node on the station and point a SIS client at it.
 
 The two hardware pages are what to build to wire a CM108 interface to a radio: [hardware/tait-tm8100-cm108.md](hardware/tait-tm8100-cm108.md) for a Tait TM8100 on FM, and [hardware/yaesu-ft450d-cm108.md](hardware/yaesu-ft450d-cm108.md) for a Yaesu FT-450D's DATA jack on HF.
 
