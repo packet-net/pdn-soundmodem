@@ -908,6 +908,80 @@ internal sealed class ConfigApi
         return null;
     }
 
+    /// <summary>
+    /// The settings that make the station run a command or load an assembly: <c>iqpipe.command</c>
+    /// (run through <c>/bin/sh -c</c>) and each <c>modemPlugins[].path</c> (an assembly loaded into
+    /// the daemon). Nothing else in the configuration executes anything: the other paths name
+    /// files the station reads or writes, devices, and hosts, not programs. Checked by
+    /// <see cref="CodeSettingsNeedingAKey"/>.
+    /// </summary>
+    internal const string CodeSettingsNeedKeyMessage =
+        "Setting this needs an access key: set api.key first, or edit the file on the machine";
+
+    /// <summary>
+    /// The settings in <paramref name="proposedJson"/> that add or change something which runs a
+    /// command or loads code, against <paramref name="runningJson"/>; empty when there are none.
+    /// A value already in the running configuration is left alone, and removing one is allowed.
+    /// Without an access key the configuration API is open to anyone who can reach the port, so
+    /// these must not be settable through it (they are code execution as the service user).
+    /// </summary>
+    internal static List<string> CodeSettingsNeedingAKey(string proposedJson, string runningJson)
+    {
+        var found = new List<string>();
+        var lenient = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
+        JsonNode? proposed;
+        JsonNode? running;
+        try
+        {
+            proposed = JsonNode.Parse(proposedJson, null, lenient);
+            running = string.IsNullOrWhiteSpace(runningJson) ? null : JsonNode.Parse(runningJson, null, lenient);
+        }
+        catch (JsonException)
+        {
+            // Not a document the loader will accept either; its own refusal is the better answer.
+            return found;
+        }
+
+        string? command = Member(Member(proposed, "iqpipe"), "command")?.ToString();
+        if (!string.IsNullOrWhiteSpace(command)
+            && command != Member(Member(running, "iqpipe"), "command")?.ToString())
+        {
+            found.Add("iqpipe.command");
+        }
+
+        var had = new HashSet<string>(StringComparer.Ordinal);
+        if (Member(running, "modemPlugins") is JsonArray old)
+        {
+            foreach (JsonNode? entry in old)
+            {
+                if (Member(entry, "path")?.ToString() is { } path)
+                {
+                    had.Add(path);
+                }
+            }
+        }
+
+        if (Member(proposed, "modemPlugins") is JsonArray now)
+        {
+            foreach (JsonNode? entry in now)
+            {
+                if (Member(entry, "path")?.ToString() is { Length: > 0 } path && !had.Contains(path))
+                {
+                    found.Add("modemPlugins");
+                    break;
+                }
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>A member of an object by name in any case; null if absent or not an object.</summary>
+    private static JsonNode? Member(JsonNode? node, string name) =>
+        node is JsonObject o
+            ? o.FirstOrDefault(p => string.Equals(p.Key, name, StringComparison.OrdinalIgnoreCase)).Value
+            : null;
+
     private static bool HasMonitorSection(string json)
     {
         try
@@ -1766,6 +1840,14 @@ internal sealed class ConfigApi
             return;
         }
 
+        // With no access key this API answers anyone who can reach the port, so it must not be a
+        // way to run a command or load an assembly as the service user (#782 review).
+        if (_key.Length == 0 && CodeSettingsNeedingAKey(body, _runningJson()).Count > 0)
+        {
+            await RespondAsync(context, 403, CodeSettingsNeedKeyMessage).ConfigureAwait(false);
+            return;
+        }
+
         // ?check=true validates and stops there: the configuration page's Check button, and a
         // way for anything else to ask "would this start?" without the restart that answers it.
         bool check = string.Equals(
@@ -1819,13 +1901,12 @@ internal sealed class ConfigApi
         catch (Exception e) when (e is IOException or UnauthorizedAccessException
                                     or ArgumentException or NotSupportedException)
         {
-            string extra = persist
-                ? " The shipped unit sets ProtectSystem=full, which makes /etc read-only to the "
-                  + "service: add ReadWritePaths=/etc/pdn-soundmodem to persist from here, or "
-                  + "apply without ?persist=true."
-                : "";
-            await RespondAsync(context, 500, $"could not write {target}: {e.Message}{extra}")
-                .ConfigureAwait(false);
+            string why = persist
+                ? $"the service cannot write {target}: {e.Message} The file must be writable by the "
+                  + "service's group (the package sets root:pdn-soundmodem, mode 0660) and the unit "
+                  + "needs ReadWritePaths=/etc/pdn-soundmodem; or apply without ?persist=true."
+                : $"could not write {target}: {e.Message}";
+            await RespondAsync(context, 500, why).ConfigureAwait(false);
             return;
         }
 

@@ -236,8 +236,12 @@ EOF
 # start it on install, restart it on upgrade. The template's instances are the operator's:
 # never enabled or started by the package, but a running one is restarted on upgrade
 # (it is running the old binary), stopped on remove and un-enabled on purge, the same as
-# the plain unit. The seeded config is a starter on the null sound device, so the first
+# the plain unit. The seeded config is a starter on a private pipe device, so the first
 # start after a fresh install succeeds on any machine and serves the setup page on port 8107.
+# packaging/old-example.json is the starter's predecessor, byte for byte (it named a sound card
+# and a PTT device most machines lack): an install still holding exactly that has never been
+# edited, so postinst swaps it for the new one. Its checksum is put into postinst below.
+OLD_EXAMPLE_SHA256="$(sha256sum "$HERE/old-example.json" | awk '{print $1}')"
 
 cat > "$STAGE/root/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
@@ -245,6 +249,7 @@ set -e
 
 EXAMPLE=/usr/share/pdn-soundmodem/soundmodem.example.json
 CONFIG=/etc/pdn-soundmodem/soundmodem.json
+OLD_EXAMPLE_SHA256=@OLD_EXAMPLE_SHA256@
 
 case "$1" in
   configure)
@@ -253,9 +258,22 @@ case "$1" in
     fi
     if [ ! -e "$CONFIG" ] && [ -f "$EXAMPLE" ]; then
         cp "$EXAMPLE" "$CONFIG"
-        chmod 0644 "$CONFIG"
         echo "pdn-soundmodem: seeded $CONFIG from the example."
+    elif [ -f "$CONFIG" ] && [ -f "$EXAMPLE" ] && command -v sha256sum >/dev/null \
+         && [ "$(sha256sum "$CONFIG" | awk '{print $1}')" = "$OLD_EXAMPLE_SHA256" ]; then
+        # Never edited: the previous starter, which could not start on most machines.
+        cp "$EXAMPLE" "$CONFIG"
+        echo "pdn-soundmodem: replaced the unedited old example in $CONFIG with the new starter."
     fi
+    # The config pages save to these files as the service user, so the service's group may
+    # write them (and, at 0660, nobody else may read an api.key out of them). On install and
+    # upgrade, for the plain unit's file and every instance's.
+    for _f in /etc/pdn-soundmodem/*.json; do
+        if [ -f "$_f" ]; then
+            chown root:pdn-soundmodem "$_f"
+            chmod 0660 "$_f"
+        fi
+    done
     # Apply the hidraw rule to interfaces already plugged in, so CM108 PTT works without a
     # re-plug. Skipped where udev is not running (a container, a chroot).
     if [ -d /run/udev ] && command -v udevadm >/dev/null; then
@@ -310,6 +328,7 @@ fi
 
 exit 0
 EOF
+sed -i "s/@OLD_EXAMPLE_SHA256@/$OLD_EXAMPLE_SHA256/" "$STAGE/root/DEBIAN/postinst"
 
 cat > "$STAGE/root/DEBIAN/prerm" <<'EOF'
 #!/bin/sh

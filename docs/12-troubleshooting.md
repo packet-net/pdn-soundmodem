@@ -154,6 +154,8 @@ cannot serve the waterfall on 127.0.0.1:8107
 
 A KISS port that is taken is less tidy: the station aborts with `Unhandled exception. System.Net.Sockets.SocketException (98): Address already in use` and a stack trace, and systemd retries it every five seconds. `ss -ltnp | grep 8105` finds the holder. The usual holder is another instance of the modem.
 
+On a fresh install the starter config uses ports 8107 (the station page) and 8105 (KISS) on every interface. If something else already holds one, the starter does not start and, for 8107, stays stopped, because the journal shows the message above (`cannot serve the waterfall on *:8107`). Find the holder with `ss -ltnp | grep 8107`, then either stop it or change `waterfall.port` (or `kissPort`) in `/etc/pdn-soundmodem/soundmodem.json` and `sudo systemctl restart pdn-soundmodem`.
+
 ### Exit 1: hardware that is not there
 
 A file that is structurally fine but names a sound card, a PTT line or a radio that will not open gets a message rather than a stack trace, and the service keeps trying:

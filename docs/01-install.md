@@ -74,9 +74,9 @@ Then look at what the service said:
 journalctl -u pdn-soundmodem -n 30
 ```
 
-The service is enabled and started on install, running a starter config that uses a null sound device, so it starts on any machine but hears nothing. The journal shows it up, with a warning that the station page and the KISS port listen on every interface.
+The service is enabled and started on install, running a starter config that uses a private pipe in place of a sound card, so it starts on any machine but hears nothing. The journal shows it up, with a warning that the station page and the KISS port listen on every interface.
 
-Open `http://<machine>:8107/config` in a browser, with `<machine>` the name or address of this machine, and follow the guided setup. The starter opens that page to your whole network with no key, so set an `api.key` once you are set up. Prefer a text editor? [02-first-station.md](02-first-station.md) covers the file route too.
+Open `http://<machine>:8107/config` in a browser, with `<machine>` the name or address of this machine, and follow the guided setup. The starter opens that page to your whole network with no key; on its software step you choose who may reach the KISS port and can add an access key. Prefer a text editor? [02-first-station.md](02-first-station.md) covers the file route too.
 
 ## If it did not
 
@@ -101,7 +101,7 @@ sudo systemctl enable --now pdn-soundmodem@vhf
 journalctl -u pdn-soundmodem@vhf -f
 ```
 
-Each file has to name its own sound card and its own PTT line, and claim its own ports. The [files reference](reference/files.md#more-than-one-modem) has the rules for both.
+Each file has to name its own sound card and its own PTT line, and claim its own ports. The starter you copied uses `kissPort` 8105, `waterfall.port` 8107 and `bind: "*"`, which clash with the plain service, and its pipe device is the plain service's own: in the copy, change `kissPort`, `waterfall.port` and `bind`, and give `device` your sound card. The [files reference](reference/files.md#more-than-one-modem) has the rules for both.
 
 ## Upgrading
 

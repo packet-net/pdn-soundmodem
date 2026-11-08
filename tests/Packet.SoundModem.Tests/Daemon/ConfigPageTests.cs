@@ -1263,6 +1263,85 @@ public partial class ConfigPageTests : IDisposable
         result[5]!["url"]!.GetValue<string>().Should().Be("http://localhost:8107/config");
     }
 
+    // ---------------------------------------------------------------- code settings need a key
+
+    private const string WithCommand = """{"device": "iqpipe:", "iqpipe": {"command": "rx_sdr -F CF32 -s {rate} -f 7050000 -", "format": "cf32", "rate": 250000}, "modems": [{"subChannel": 0, "mode": "afsk1200"}]}""";
+
+    [Theory]
+    [InlineData("api/config?check=true")]
+    [InlineData("api/config")]
+    [InlineData("api/config?persist=true")]
+    public async Task Without_A_Key_A_Command_Cannot_Be_Set_Through_The_Page(string url)
+    {
+        using var station = new Station(_dir, key: "");
+        string before = File.ReadAllText(station.ConfigPath);
+
+        HttpResponseMessage answer = await station.Client.PostAsync(station.Url(url), new StringContent(WithCommand, Encoding.UTF8));
+
+        answer.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await answer.Content.ReadAsStringAsync()).Should().Contain("Setting this needs an access key: set api.key first, or edit the file on the machine");
+        File.ReadAllText(station.ConfigPath).Should().Be(before);
+        station.Restarts.Should().Be(0);
+        File.Exists(station.PendingPath).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Without_A_Key_A_Plugin_Cannot_Be_Loaded_Through_The_Page()
+    {
+        using var station = new Station(_dir, key: "");
+        const string plugin = """{"device": "null", "modemPlugins": [{"path": "/tmp/evil.dll"}], "modems": [{"subChannel": 0, "mode": "afsk1200"}]}""";
+
+        HttpResponseMessage answer = await station.Client.PostAsync(station.Url("api/config?check=true"), new StringContent(plugin, Encoding.UTF8));
+
+        answer.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Without_A_Key_The_Running_Command_Stays_And_Can_Be_Removed_But_Not_Changed()
+    {
+        using var station = new Station(_dir, key: "", configText: WithCommand);
+
+        // The same value, with a different setting changed: untouched, so allowed.
+        string same = WithCommand.Replace("\"afsk1200\"", "\"bpsk300\"", StringComparison.Ordinal);
+        (await station.Client.PostAsync(station.Url("api/config?check=true"), new StringContent(same, Encoding.UTF8))).StatusCode
+            .Should().Be(HttpStatusCode.OK);
+
+        // A different command is a change.
+        string changed = WithCommand.Replace("7050000", "7060000", StringComparison.Ordinal);
+        (await station.Client.PostAsync(station.Url("api/config?check=true"), new StringContent(changed, Encoding.UTF8))).StatusCode
+            .Should().Be(HttpStatusCode.Forbidden);
+
+        // Removing it is allowed.
+        const string removed = """{"device": "null", "modems": [{"subChannel": 0, "mode": "afsk1200"}]}""";
+        (await station.Client.PostAsync(station.Url("api/config?check=true"), new StringContent(removed, Encoding.UTF8))).StatusCode
+            .Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Without_A_Key_A_Document_Restored_From_History_Cannot_Bring_A_Command_Back()
+    {
+        using var station = new Station(_dir, key: "", configText: WithCommand);
+        const string removed = """{"device": "null", "modems": [{"subChannel": 0, "mode": "afsk1200"}]}""";
+        (await station.Client.PostAsync(station.Url("api/config?persist=true"), new StringContent(removed, Encoding.UTF8))).StatusCode
+            .Should().Be(HttpStatusCode.OK);
+        string id = JsonNode.Parse(await station.Client.GetStringAsync(station.Url("api/config/history")))!["versions"]![0]!["id"]!.GetValue<string>();
+        HttpResponseMessage answer = await station.Client.PostAsync(station.Url($"api/config?persist=true&restoreFrom={id}"), new StringContent(WithCommand, Encoding.UTF8));
+
+        answer.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        File.ReadAllText(station.ConfigPath).Should().NotContain("rx_sdr");
+    }
+
+    [Fact]
+    public async Task With_A_Key_A_Command_Can_Be_Set_Through_The_Page()
+    {
+        using var station = new Station(_dir, key: "the-key");
+        station.Client.DefaultRequestHeaders.Add("X-API-Key", "the-key");
+
+        HttpResponseMessage answer = await station.Client.PostAsync(station.Url("api/config?check=true"), new StringContent(WithCommand, Encoding.UTF8));
+
+        answer.StatusCode.Should().Be(HttpStatusCode.OK, await answer.Content.ReadAsStringAsync());
+    }
+
     // ---------------------------------------------------------------- roll-back and secrets
 
     [Fact]

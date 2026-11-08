@@ -12,13 +12,13 @@ What the Debian package installs, what pdn-soundmodem reads and writes on disk, 
 | `/usr/lib/systemd/system/pdn-soundmodem.service` | The systemd unit. Enabled and started on install, restarted on upgrade |
 | `/usr/lib/systemd/system/pdn-soundmodem@.service` | The template unit. `pdn-soundmodem@NAME` runs `/etc/pdn-soundmodem/NAME.json` with `/var/lib/pdn-soundmodem/NAME/` as its state directory. Never enabled by the package |
 | `/etc/systemd/system/multi-user.target.wants/pdn-soundmodem.service` | The enable symlink, created by postinst on first install. Not shipped in the package |
-| `/usr/share/pdn-soundmodem/soundmodem.example.json` | The starter config, a copy of [`soundmodem.example.json`](../../soundmodem.example.json) from the repository: null sound device, one `afsk1200` modem, station page on every interface. The file postinst seeds from |
+| `/usr/share/pdn-soundmodem/soundmodem.example.json` | The starter config, a copy of [`soundmodem.example.json`](../../soundmodem.example.json) from the repository: private pipe device, one `afsk1200` modem, station page on every interface. The file postinst seeds from |
 | `/etc/pdn-soundmodem/` | Shipped as an empty directory, so it outlives a remove and purge has to delete it by hand |
 | `/etc/pdn-soundmodem/soundmodem.json` | The station's config. Seeded by postinst from the example if absent, owned by root, mode 0644. Not a dpkg-owned file |
 | `/var/lib/pdn-soundmodem/` | The state directory. Created by systemd from `StateDirectory=` at each start, owned by the service user, mode 0750. A template instance's is `NAME/` inside it |
 | `/usr/share/doc/pdn-soundmodem/copyright`, `changelog.Debian.gz` | Licence and changelog |
 
-The seeded config names `default` as the sound card and a CM108 interface on `/dev/hidraw0`, so the first start after a fresh install fails until the file is edited; `systemctl status pdn-soundmodem` says why. The package depends on `libc6`, `libgcc-s1`, `libstdc++6`, `libasound2` (or `libasound2t64`) and `adduser`, section `hamradio`.
+The seeded config is a starter: a private pipe in `/var/lib/pdn-soundmodem` in place of a sound card, one `afsk1200` modem, no PTT, and the station page on port 8107 and KISS on 8105 on every interface. It starts on any machine and listens to nothing; `http://<machine>:8107/config` sets it up. The package makes `/etc/pdn-soundmodem/*.json` owned by `root:pdn-soundmodem` with mode 0660 on install and upgrade, so the station page can save to it. The package depends on `libc6`, `libgcc-s1`, `libstdc++6`, `libasound2` (or `libasound2t64`) and `adduser`, section `hamradio`.
 
 ## What the modem reads
 

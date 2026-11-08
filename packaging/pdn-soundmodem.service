@@ -2,8 +2,9 @@
 Description=pdn-soundmodem headless soundcard packet modem
 Documentation=https://github.com/packet-net/pdn-soundmodem
 After=sound.target network.target
-# The modem needs a real sound device and PTT line named in the config; there are no
-# useful defaults. Fail the condition rather than crash-loop if the file is missing.
+# The packaged config is a starter that runs on any machine and listens to nothing, until
+# it is set up from the station page. Fail the condition rather than crash-loop if the file
+# is missing.
 ConditionPathExists=/etc/pdn-soundmodem/soundmodem.json
 
 [Service]

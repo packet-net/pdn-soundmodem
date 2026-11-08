@@ -48,8 +48,8 @@ public partial class ConfigPageTests
     [InlineData("{}", true)]
     [InlineData("// only a comment\n{ }", true)]
     // The shipped example, whatever its spacing, comments and the case of its keys.
-    [InlineData("{ \"Device\": \"null\", \"BIND\": \"*\", \"MODEMS\": [ { \"mode\": \"afsk1200\", \"subChannel\": 0 } ], \"waterfall\": { \"port\": 8107 } /* x */ }", true)]
-    [InlineData("{ \"device\": \"null\", \"bind\": \"*\", \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\" } ], \"waterfall\": { \"port\": 8108 } }", false)]
+    [InlineData("{ \"Device\": \"pipe:/var/lib/pdn-soundmodem/starter-air,/var/lib/pdn-soundmodem/starter-air\", \"BIND\": \"*\", \"MODEMS\": [ { \"mode\": \"afsk1200\", \"subChannel\": 0 } ], \"waterfall\": { \"port\": 8107 } /* x */ }", true)]
+    [InlineData("{ \"device\": \"pipe:/var/lib/pdn-soundmodem/starter-air,/var/lib/pdn-soundmodem/starter-air\", \"bind\": \"*\", \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\" } ], \"waterfall\": { \"port\": 8108 } }", false)]
     [InlineData("{ \"Device\": \"default\", \"MODEMS\": [ { \"mode\": \"afsk1200\", \"subChannel\": 0 } ], \"ptt\": { \"device\": \"/dev/hidraw0\", \"type\": \"cm108\" }, \"waterfall\": { \"port\": 8107 } /* x */ }", true)]
     // Nothing else counts: not plumbing alone, not a device alone, not a station that runs.
     [InlineData("{ \"waterfall\": { \"port\": 8107 }, \"kissPort\": 9000, \"bind\": \"*\" }", false)]
@@ -201,6 +201,44 @@ public partial class ConfigPageTests
         Complete("{}", "\"fm\"", "software").Should().Be("true", "the default port is fine");
         Complete("""{"ardop":{}}""", "\"ssb\"", "modes").Should().Be("true", "an ARDOP-only station has nothing to add");
         Complete("""{"device":"rtltcp:host"}""", "\"other\"", "radio").Should().Be("true", "its device is left as it is");
+    }
+
+    [Fact]
+    public void On_A_Station_Never_Configured_Who_May_Reach_The_Port_Must_Be_Chosen()
+    {
+        string Complete(string flags) =>
+            Evaluate("{}", $$"""return String(M.setupComplete(doc, "fm", "software", {{flags}}));""");
+
+        Complete("{softwareChosen: false}").Should().Be("false", "the starter's own open bind is not a choice");
+        Complete("{softwareChosen: true}").Should().Be("true");
+        Complete("{}").Should().Be("true", "a station that was set up keeps what it has");
+
+        Evaluate("""{"device":"x","bind":"*","modems":[]}""", """M.setupClearChoices(doc); return JSON.stringify(doc);""")
+            .Should().Be("{}", "the starter's bind is cleared with its other placeholders");
+    }
+
+    [Fact]
+    public void Choosing_This_Machine_Only_From_Another_Computer_Is_Warned_About()
+    {
+        string Warn(string doc, string host) => Evaluate(doc, $$"""return M.setupLocalOnlyWarning(doc, "{{host}}");""");
+
+        Warn("{}", "radio1.lan").Should().Contain("another computer").And.Contain("only be reached from the station itself");
+        Warn("{}", "10.0.0.5").Should().NotBeEmpty();
+        Warn("{}", "localhost").Should().BeEmpty();
+        Warn("{}", "127.0.0.1").Should().BeEmpty();
+        Warn("""{"bind":"*"}""", "radio1.lan").Should().BeEmpty("the network was chosen");
+    }
+
+    [Fact]
+    public void The_Access_Key_Is_Written_To_Api_Key_And_A_Made_One_Is_Strong()
+    {
+        Evaluate("{}", """M.setupWriteKey(doc, " abc "); return JSON.stringify(doc);""").Should().Be("""{"api":{"key":"abc"}}""");
+        Evaluate("""{"api":{"key":"abc"}}""", """M.setupWriteKey(doc, ""); return JSON.stringify(doc);""").Should().Be("{}");
+        Evaluate("""{"api":{"key":"abc","x":1}}""", """M.setupWriteKey(doc, ""); return JSON.stringify(doc);""").Should().Be("""{"api":{"x":1}}""");
+
+        string key = Evaluate("{}", """return M.setupMakeKey(Array.from({length: 24}, function (_, i) { return (i * 37 + 11) & 255; }));""");
+        key.Should().HaveLength(32).And.MatchRegex("^[A-Za-z0-9_-]+$");
+        Evaluate("{}", """return M.setupMakeKey(new Array(24).fill(255));""").Should().Be(new string('_', 32));
     }
 
     [Fact]
