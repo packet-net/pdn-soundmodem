@@ -10,7 +10,7 @@ Every key the modem reads from its configuration file, with type, default and on
 | Format | JSON. `//` and `/* */` comments and trailing commas are accepted. Keys match case-insensitively, so `kissPort`, `KissPort` and `kissport` are the same key. |
 | Applying a change | Restart the service, or use the configuration page at `/config` on the station page, which checks a change and restarts for you. The file is read once at start-up. |
 | Written by the modem | Never, with one exception: `POST /api/config?persist=true` replaces it on an operator's explicit instruction. The configuration page's Save to file is that call. It writes JSON without comments. |
-| Seeded from | `/usr/share/pdn-soundmodem/soundmodem.example.json`, copied in by the package on first install. |
+| Seeded from | `/usr/share/pdn-soundmodem/soundmodem.example.json`, copied in by the package on first install. The starter uses the `null` sound device, one `afsk1200` modem and `"bind": "*"` with the station page on 8107, so it runs on any machine and opens setup at `/config`. |
 
 An empty object `{}` is a valid file. It gives a station on ALSA device `default` at 48000 Hz capture, one `afsk1200` modem on sub-channel 0 at 1700 Hz, KISS on `127.0.0.1:8105`, no PTT line (the radio's VOX or nothing), the transmitter test enabled, id-beacon listening and frequency matching on, and no browser page, frame log or other service.
 

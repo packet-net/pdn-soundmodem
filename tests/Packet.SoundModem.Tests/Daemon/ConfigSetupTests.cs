@@ -32,6 +32,15 @@ public partial class ConfigPageTests
         ConfigSetup.NeverConfigured(RepoFile("soundmodem.example.json")).Should().BeTrue();
     }
 
+    [Fact]
+    public void The_Example_Earlier_Packages_Shipped_Still_Counts_As_Never_Configured()
+    {
+        // Installs seeded before the starter config hold this; their owners never set anything up.
+        ConfigSetup.NeverConfigured(ConfigSetup.LegacyExample).Should().BeTrue();
+        ConfigSetup.NeverConfigured("{ \"device\": \"default\", \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\" } ], \"ptt\": { \"type\": \"cm108\", \"device\": \"/dev/hidraw1\" }, \"waterfall\": { \"port\": 8107 } }")
+            .Should().BeFalse("one value changed is a station somebody set up");
+    }
+
     private const string FmDone = "{ \"device\": \"default\", \"sideband\": \"fm\", \"kissPort\": 8105, \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\" } ], \"ptt\": { \"type\": \"cm108\", \"device\": \"/dev/hidraw0\" }, \"waterfall\": { \"port\": 8107 } }";
 
     [Theory]
@@ -39,6 +48,8 @@ public partial class ConfigPageTests
     [InlineData("{}", true)]
     [InlineData("// only a comment\n{ }", true)]
     // The shipped example, whatever its spacing, comments and the case of its keys.
+    [InlineData("{ \"Device\": \"null\", \"BIND\": \"*\", \"MODEMS\": [ { \"mode\": \"afsk1200\", \"subChannel\": 0 } ], \"waterfall\": { \"port\": 8107 } /* x */ }", true)]
+    [InlineData("{ \"device\": \"null\", \"bind\": \"*\", \"modems\": [ { \"subChannel\": 0, \"mode\": \"afsk1200\" } ], \"waterfall\": { \"port\": 8108 } }", false)]
     [InlineData("{ \"Device\": \"default\", \"MODEMS\": [ { \"mode\": \"afsk1200\", \"subChannel\": 0 } ], \"ptt\": { \"device\": \"/dev/hidraw0\", \"type\": \"cm108\" }, \"waterfall\": { \"port\": 8107 } /* x */ }", true)]
     // Nothing else counts: not plumbing alone, not a device alone, not a station that runs.
     [InlineData("{ \"waterfall\": { \"port\": 8107 }, \"kissPort\": 9000, \"bind\": \"*\" }", false)]

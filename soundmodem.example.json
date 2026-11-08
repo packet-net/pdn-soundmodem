@@ -1,9 +1,11 @@
 {
+  // A starter: it runs, but it listens to nothing (the sound device is "null").
+  // To set the station up, open http://<this machine>:8107/config in a browser.
   // Every setting: https://github.com/packet-net/pdn-soundmodem/blob/main/docs/reference/config.md
-  "device": "default",
+  "device": "null",
+  "bind": "*",
   "modems": [
     { "subChannel": 0, "mode": "afsk1200" }
   ],
-  "ptt": { "type": "cm108", "device": "/dev/hidraw0" },
   "waterfall": { "port": 8107 }
 }

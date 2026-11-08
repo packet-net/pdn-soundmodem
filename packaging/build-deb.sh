@@ -218,10 +218,10 @@ Description: Headless soundcard packet-radio modem (KISS TCP)
  (classic G3RUH and IL2P) and FX.25, with native DCD, p-persistent CSMA,
  serial/CM108 PTT and a multi-client KISS-over-TCP server.
  .
- Ships a systemd unit, enabled and started on install. The modem has no useful
- defaults, so edit /etc/pdn-soundmodem/soundmodem.json for your sound device and
- PTT and then "systemctl restart pdn-soundmodem"; until you do, the service will
- fail to start and "systemctl status pdn-soundmodem" will say why.
+ Ships a systemd unit, enabled and started on install with a starter config that
+ listens to nothing. Open http://THIS-MACHINE:8107/config in a browser to set the
+ station up, or edit /etc/pdn-soundmodem/soundmodem.json for your sound device and
+ PTT and then "systemctl restart pdn-soundmodem".
  .
  A second modem on the same machine is a second config file and a template
  instance: /etc/pdn-soundmodem/NAME.json and "systemctl enable --now
@@ -236,11 +236,8 @@ EOF
 # start it on install, restart it on upgrade. The template's instances are the operator's:
 # never enabled or started by the package, but a running one is restarted on upgrade
 # (it is running the old binary), stopped on remove and un-enabled on purge, the same as
-# the plain unit. Note the consequence - the seeded config
-# names a sound device and PTT line that will not exist on most machines, so the first
-# start after a fresh install is expected to fail until an admin edits it. That is the
-# Debian-conventional posture and a deliberate choice; `systemctl status` after install
-# is the intended way to find out what needs configuring.
+# the plain unit. The seeded config is a starter on the null sound device, so the first
+# start after a fresh install succeeds on any machine and serves the setup page on port 8107.
 
 cat > "$STAGE/root/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
@@ -265,9 +262,9 @@ case "$1" in
         udevadm control --reload-rules >/dev/null 2>&1 || true
         udevadm trigger --subsystem-match=hidraw --action=change >/dev/null 2>&1 || true
     fi
-    echo "pdn-soundmodem: edit $CONFIG for your sound device and PTT, then"
-    echo "                systemctl restart pdn-soundmodem. Until then the service will"
-    echo "                fail to start - systemctl status pdn-soundmodem says why."
+    echo "pdn-soundmodem: it runs a starter config that listens to nothing. Open"
+    echo "                http://THIS-MACHINE:8107/config to set the station up, or edit"
+    echo "                $CONFIG and systemctl restart pdn-soundmodem."
     echo "                A second modem is /etc/pdn-soundmodem/NAME.json and"
     echo "                systemctl enable --now pdn-soundmodem@NAME."
     ;;

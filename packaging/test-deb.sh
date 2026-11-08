@@ -144,13 +144,15 @@ verify=$(systemd-analyze verify pdn-soundmodem@second.service 2>&1)
 [ -z "$verify" ] && ok "template verifies as an instance" || bad "template verify: $verify"
 state=$(systemctl is-enabled pdn-soundmodem.service 2>&1)
 [ "$state" = "enabled" ] && ok "enabled on install" || bad "expected enabled on install, got '$state'"
-# postinst starts it too. There is no sound card in here so it will not stay up, but
-# systemd must have actually executed it - assert on a timestamp systemd only sets once
+# postinst starts it too. The seeded starter config uses the null sound device, so it must
+# stay up with no sound card or radio; systemd must have actually executed it - assert on a timestamp systemd only sets once
 # the main process has run. (`journalctl | grep -q .` is NOT a valid check here: it
 # matches the literal "-- No entries --" line and so passes when nothing ever started.)
 started=$(systemctl show pdn-soundmodem.service -p ExecMainStartTimestamp --value 2>/dev/null)
 [ -n "$started" ] && ok "postinst started it ($started)" \
                   || bad "postinst did not start the unit - ExecMainStartTimestamp empty"
+sleep 3
+check "the seeded starter config keeps the service running" "systemctl is-active --quiet pdn-soundmodem.service"
 
 echo
 echo "== start =="
