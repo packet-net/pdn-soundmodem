@@ -648,6 +648,153 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
 
     // ---------------------------------------------------------------- steps
 
+    [Fact(Timeout = 600_000)]
+    public async Task Report_A_Problem_Builds_The_Github_Link_And_Copies_The_Report_On_Plain_Http()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null);
+        IPage page = await NewReportPageAsync();
+        await page.GotoAsync(_station.Url("config#report"));
+
+        // The station page's link goes to /config#report, which opens the dialog.
+        await Assertions.Expect(page.Locator("#report")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#report-pre-config")).ToContainTextAsync("bpsk300", new() { Timeout = StepMs });
+        (await page.EvaluateAsync<bool>("window.isSecureContext")).Should().BeFalse("the test stands in for a station on plain http");
+
+        // Nothing can be sent until the user has said what went wrong.
+        await Assertions.Expect(page.Locator("#report-open")).ToHaveAttributeAsync("aria-disabled", "true", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#report-copy")).ToBeDisabledAsync(new() { Timeout = StepMs });
+
+        await page.Locator("#report-what").FillAsync("Nothing decodes after the change");
+        await Assertions.Expect(page.Locator("#report-copy")).ToBeEnabledAsync(new() { Timeout = StepMs });
+        // The link is rebuilt a moment after typing stops.
+        await Assertions.Expect(page.Locator("#report-open")).ToHaveAttributeAsync("href",
+            new System.Text.RegularExpressions.Regex("what-happened=Nothing"), new() { Timeout = StepMs });
+        string href = (await page.Locator("#report-open").GetAttributeAsync("href"))!;
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri(href).Query);
+        href.Should().StartWith("https://github.com/packet-net/pdn-soundmodem/issues/new?template=problem.yml&");
+        query["what-happened"].Should().Be("Nothing decodes after the change");
+        query["configuration"].Should().Contain("bpsk300").And.NotContain("the-station-key");
+        query["logs"].Should().NotBeNullOrEmpty("the daemon wrote its start-up lines");
+        query["version"].Should().NotBeNullOrEmpty();
+        query["device-kind"].Should().Be("pipe");
+
+        // Unticking a part takes it out of the link.
+        await page.Locator("#report-inc-logs").UncheckAsync();
+        await Assertions.Expect(page.Locator("#report-open")).Not.ToHaveAttributeAsync("href",
+            new System.Text.RegularExpressions.Regex("logs="), new() { Timeout = StepMs });
+
+        // Clicking the link opens GitHub in a new tab; the test reads where it was going.
+        await page.EvaluateAsync("""
+            document.addEventListener("click", function (e) {
+              var a = e.target.closest("a[target=_blank]");
+              if (a) { window.__opened = a.href; e.preventDefault(); }
+            }, true);
+            """);
+        await page.Locator("#report-open").ClickAsync();
+        (await page.EvaluateAsync<string>("window.__opened")).Should().Contain("template=problem.yml");
+        await Assertions.Expect(page.Locator("#report-note")).ToContainTextAsync("Opened GitHub", new() { Timeout = StepMs });
+
+        // Copy report, by the select-and-copy fallback, because the clipboard API is not offered here.
+        await page.Locator("#report-copy").ClickAsync();
+        await Assertions.Expect(page.Locator("#report-note")).ToContainTextAsync("Copied", new() { Timeout = StepMs });
+        string copied = await page.EvaluateAsync<string>("navigator.clipboard.readText()");
+        copied.Should().Contain("## What went wrong").And.Contain("Nothing decodes after the change")
+            .And.Contain("bpsk300").And.NotContain("## Recent log lines", "it was unticked");
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task Report_A_Problem_Leaves_A_Link_That_Is_Too_Long_To_The_Clipboard()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null);
+        IPage page = await NewReportPageAsync();
+        string lines = string.Join(",", Enumerable.Range(0, 400).Select(i => $"\"12:00:00 console line number {i} of a busy station\""));
+        await page.RouteAsync("**/api/report", route => route.FulfillAsync(new()
+        {
+            ContentType = "application/json",
+            Body = "{\"version\":\"0.103.0\",\"commit\":null,\"release\":true,\"deviceKind\":\"alsa\",\"uptimeSeconds\":60,"
+                + "\"config\":{\"device\":\"null\"},\"logLines\":[" + lines + "],\"logLimit\":400}",
+        }));
+        await page.GotoAsync(_station.Url("config#report"));
+        await Assertions.Expect(page.Locator("#report-size-logs")).ToContainTextAsync("400 lines", new() { Timeout = StepMs });
+        await page.Locator("#report-what").FillAsync("it is slow");
+        await page.EvaluateAsync("""
+            document.addEventListener("click", function (e) {
+              var a = e.target.closest("a[target=_blank]");
+              if (a) { window.__opened = a.href; e.preventDefault(); }
+            }, true);
+            """);
+
+        await page.Locator("#report-open").ClickAsync();
+
+        string opened = await page.EvaluateAsync<string>("window.__opened");
+        opened.Length.Should().BeLessThanOrEqualTo(7500);
+        opened.Should().Contain("configuration=").And.NotContain("logs=");
+        await Assertions.Expect(page.Locator("#report-note")).ToContainTextAsync("too long", new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#report-note")).ToContainTextAsync("Recent log lines", new() { Timeout = StepMs });
+        string copied = await page.EvaluateAsync<string>("navigator.clipboard.readText()");
+        copied.Should().Contain("console line number 399").And.Contain("console line number 0 ");
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task Report_A_Problem_On_A_Station_With_A_Key_Asks_For_It_And_Shows_No_Secret()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, Key);
+        IPage page = await NewReportPageAsync();
+        await page.GotoAsync(_station.Url("config#report"));
+
+        await Assertions.Expect(page.Locator("#report-keybox")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await page.Locator("#report-keybox").FillAsync(Key);
+        await page.Locator("#report-unlock").ClickAsync();
+        await Assertions.Expect(page.Locator("#report-what")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#report-pre-config")).ToContainTextAsync("bpsk300", new() { Timeout = StepMs });
+
+        string shown = await page.Locator("#report").InnerTextAsync();
+        string everything = await page.EvaluateAsync<string>(
+            "Array.from(document.querySelectorAll('#report pre')).map(function (p) { return p.textContent; }).join('\\n')");
+        (shown + everything).Should().NotContain(Key);
+    }
+
+    [Fact(Timeout = 600_000)]
+    public async Task Report_A_Problem_And_Setup_Both_Open_From_Their_Own_Addresses()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null);
+        IPage page = await NewReportPageAsync();
+
+        await page.GotoAsync(_station.Url("config#setup"));
+        await Assertions.Expect(page.Locator("#setup")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#report")).Not.ToBeVisibleAsync(new() { Timeout = StepMs });
+
+        // The report dialog opens over setup from its header button, and closing it leaves setup there.
+        await page.Locator("#report-button").ClickAsync();
+        await Assertions.Expect(page.Locator("#report")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#report-pre-config")).ToContainTextAsync("bpsk300", new() { Timeout = StepMs });
+        await page.Locator("#report-close").ClickAsync();
+        await Assertions.Expect(page.Locator("#report")).Not.ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#setup")).ToBeVisibleAsync(new() { Timeout = StepMs });
+
+        // And /config#report opens the dialog on a fresh load.
+        await page.GotoAsync(_station.Url("config#report"));
+        await Assertions.Expect(page.Locator("#report")).ToBeVisibleAsync(new() { Timeout = StepMs });
+    }
+
+    private async Task<IPage> NewReportPageAsync()
+    {
+        _context = await _browser.Instance!.NewContextAsync(new()
+        {
+            Permissions = ["clipboard-read", "clipboard-write"],
+        });
+        _context.SetDefaultTimeout(StepMs);
+        _context.SetDefaultNavigationTimeout(StepMs);
+        // A station on plain http on a LAN is not a secure context, so the clipboard API is not
+        // offered to it; this makes the page believe it is on one.
+        await _context.AddInitScriptAsync("Object.defineProperty(window, 'isSecureContext', { value: false });");
+        return await _context.NewPageAsync();
+    }
+
     private async Task<IPage> NewPageAsync()
     {
         _context = await _browser.Instance!.NewContextAsync();

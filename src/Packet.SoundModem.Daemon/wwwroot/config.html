@@ -292,6 +292,24 @@
     .setup .summary dd { margin-bottom: 8px; }
     #pending .btn { flex: 1; }
   }
+
+  /* Report a problem (self-contained; see the dialog near the end of the body) */
+  dialog#report { background: var(--panel); color: var(--ink); border: 1px solid var(--edge); border-radius: 8px;
+                  padding: 20px; width: min(640px, calc(100vw - 24px)); max-height: calc(100vh - 24px); margin: auto; overflow-y: auto; }
+  dialog#report::backdrop { background: rgba(0, 0, 0, .6); }
+  #report h2 { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+  #report p { margin: 8px 0; }
+  #report textarea#report-what { width: 100%; margin-top: 4px; background: var(--bg); color: var(--ink); border: 1px solid var(--edge); border-radius: 5px; padding: 8px; font: inherit; resize: vertical; }
+  #report input[type=password] { background: var(--bg); color: var(--ink); border: 1px solid var(--edge); border-radius: 5px; padding: 6px 8px; font: inherit; margin-right: 6px; }
+  #report .part { border-top: 1px solid var(--edge); padding: 8px 0; }
+  #report .part small { color: var(--muted); }
+  #report summary { cursor: pointer; color: var(--muted); font-size: 13.5px; margin-top: 4px; }
+  #report pre { max-height: 11em; overflow: auto; background: var(--bg); border: 1px solid var(--edge); border-radius: 5px; padding: 8px; margin-top: 6px; font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  #report .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  #report .actions a.btn { display: inline-block; text-decoration: none; }
+  #report a[aria-disabled=true], #report button:disabled { opacity: .45; pointer-events: none; }
+  #report-note.good { color: var(--good); } #report-note.warn { color: var(--warn); } #report-note.bad { color: var(--bad); }
+  @media (max-width: 520px) { #report .actions .btn { flex: 1 1 100%; text-align: center; } }
 </style>
 </head>
 <body>
@@ -301,6 +319,7 @@
   <div class="right">
     <a href="#overview" id="skip-setup" hidden>Skip setup and edit settings directly</a>
     <button type="button" class="ghost" id="edit-text" hidden>Edit as text</button>
+    <button type="button" class="ghost" id="report-button">Report a problem</button>
     <a href="./" id="station-link">Station page</a>
   </div>
 </header>
@@ -4869,6 +4888,7 @@ var ConfigModel = (function () {
         navigator.clipboard.writeText(text).then(function () { result("good", "Copied."); });
       } else {
         area.select();
+        area.setSelectionRange(0, area.value.length); // iOS ignores select() alone
         document.execCommand("copy");
         result("good", "Copied.");
       }
@@ -4952,6 +4972,365 @@ var ConfigModel = (function () {
   }
 
   load();
+})();
+</script>
+
+<!-- Report a problem: a dialog that gathers /api/report and opens a pre-filled GitHub issue form
+     (.github/ISSUE_TEMPLATE/problem.yml) in the user's own browser. No token, no server-side
+     call to GitHub. Self-contained on purpose: this block, the header button and the style block
+     above are all of it. -->
+<dialog id="report" aria-labelledby="report-title">
+  <form method="dialog" id="report-form" onsubmit="return false">
+    <h2 id="report-title">Report a problem</h2>
+    <p class="muted">This opens a GitHub issue with the details below filled in, in your own browser. Nothing is sent until you press Submit there. No GitHub account? Copy the report instead.</p>
+
+    <div id="report-key" hidden>
+      <p>This station has an <code>api.key</code>. Enter it to read the report.</p>
+      <input type="password" id="report-keybox" autocomplete="current-password" placeholder="api key">
+      <button type="button" class="btn" id="report-unlock">Unlock</button>
+    </div>
+
+    <div id="report-body">
+      <label for="report-what"><b>What went wrong?</b></label>
+      <textarea id="report-what" rows="4" placeholder="What were you doing, and what happened?"></textarea>
+
+      <p class="muted" id="report-include-head">Included in the report. Untick anything you would rather not share; look at it first if you like.</p>
+      <div class="part">
+        <label><input type="checkbox" id="report-inc-version" checked disabled> Version and device <small id="report-size-version"></small></label>
+        <details><summary>Look at it</summary><pre id="report-pre-version"></pre></details>
+      </div>
+      <div class="part">
+        <label><input type="checkbox" id="report-inc-config" checked> Configuration, passwords and keys left out <small id="report-size-config"></small></label>
+        <details><summary>Look at it</summary><pre id="report-pre-config"></pre></details>
+      </div>
+      <div class="part">
+        <label><input type="checkbox" id="report-inc-logs" checked> Recent log lines <small id="report-size-logs"></small></label>
+        <details><summary>Look at it</summary><p class="muted"><small>Network addresses in these lines are masked (for example x.x.x.123). 127.0.0.1 and this station's own address are left as they are. Times are UTC.</small></p><pre id="report-pre-logs"></pre></details>
+      </div>
+    </div>
+
+    <p id="report-note" role="status"></p>
+    <div class="actions">
+      <a class="btn primary" id="report-open" href="#" target="_blank" rel="noopener noreferrer">Open on GitHub</a>
+      <button type="button" class="btn" id="report-copy">Copy report</button>
+      <button type="button" class="btn" id="report-close">Close</button>
+    </div>
+    <p class="muted" id="report-hint"></p>
+  </form>
+</dialog>
+
+<!-- The report's text and link: no DOM, so the tests run it on its own (ConfigPageTests). The ids
+     are the ones in .github/ISSUE_TEMPLATE/problem.yml, and a test holds the two together. -->
+<script id="report-model">
+var ReportModel = (function () {
+  "use strict";
+
+  var NEW_ISSUE = "https://github.com/packet-net/pdn-soundmodem/issues/new";
+  var TEMPLATE = "problem.yml";
+  // A link longer than this is not trusted to arrive: GitHub answers 414 somewhere above 8 KB.
+  var LIMIT = 7500;
+  var FIELD = { what: "what-happened", version: "version", device: "device-kind", config: "configuration", logs: "logs" };
+
+  function encode(text) {
+    return encodeURIComponent(text).replace(/%20/g, "+");
+  }
+
+  function uptimeWords(seconds) {
+    var m = Math.floor(seconds / 60);
+    if (m < 1) return "under a minute";
+    if (m < 60) return m + " min";
+    var h = Math.floor(m / 60);
+    if (h < 48) return h + " h " + (m % 60) + " min";
+    return Math.floor(h / 24) + " days " + (h % 24) + " h";
+  }
+
+  function versionText(r) {
+    var v = r.version + (r.release ? "" : " (dev build)");
+    if (r.commit) v += ", commit " + String(r.commit).slice(0, 12);
+    return v;
+  }
+
+  function deviceText(r) {
+    return r.deviceKind + ", up " + uptimeWords(r.uptimeSeconds || 0);
+  }
+
+  function configText(r) { return JSON.stringify(r.config, null, 2); }
+
+  function logText(r) { return (r.logLines || []).join("\n"); }
+
+  function titleFor(what) {
+    var first = String(what || "").trim().split(/\r?\n/)[0];
+    if (first.length > 70) first = first.slice(0, 70).replace(/\s+\S*$/, "") + "...";
+    return "Problem: " + first;
+  }
+
+  // The report as one block of text, for "Copy report".
+  // parts: { config: bool, logs: bool }
+  function plain(r, what, parts) {
+    var out = ["## What went wrong", "", String(what || "").trim(), "", "## Version", "",
+      versionText(r), "Device kind: " + deviceText(r)];
+    if (parts.config) out.push("", "## Configuration", "", "```json", configText(r), "```");
+    if (parts.logs) out.push("", "## Recent log lines", "", "```", logText(r), "```");
+    return out.join("\n") + "\n";
+  }
+
+  function link(fields) {
+    var q = ["template=" + TEMPLATE];
+    for (var i = 0; i < fields.length; i++) q.push(fields[i][0] + "=" + encode(fields[i][1]));
+    return NEW_ISSUE + "?" + q.join("&");
+  }
+
+  var LABEL = { "what-happened": "What happened?", "configuration": "Configuration", "logs": "Recent log lines" };
+  var NAME = { "what-happened": "description", "configuration": "configuration", "logs": "log lines" };
+
+  // The link for the issue form, and what had to be left out of it. Whatever the user has ticked
+  // goes in as long as the link stays under the limit: the description first (it is the one part
+  // GitHub requires), then the other parts smallest first, so that what does not fit, and has to
+  // be pasted by hand, is as little as possible. A part that would not fit is left out, and a
+  // smaller one after it can still go in. "left" is what was left out, largest first, each with
+  // the id and label of the form field it belongs in.
+  function build(r, what, parts) {
+    var text = String(what || "").trim();
+    var fields = [["title", titleFor(text)], [FIELD.version, versionText(r)], [FIELD.device, r.deviceKind]];
+    var optional = [];
+    if (parts.config) optional.push({ id: FIELD.config, text: configText(r) });
+    if (parts.logs) optional.push({ id: FIELD.logs, text: logText(r) });
+    var left = [];
+
+    var chosen = fields.slice();
+    var whatPart = { id: FIELD.what, text: text };
+    if (text.length > 0 && link(chosen.concat([[whatPart.id, whatPart.text]])).length <= LIMIT) {
+      chosen.push([whatPart.id, whatPart.text]);
+    } else if (text.length > 0) {
+      left.push(whatPart);
+    }
+
+    optional.sort(function (a, b) { return encode(a.text).length - encode(b.text).length; });
+    optional.forEach(function (p) {
+      var tryIt = chosen.concat([[p.id, p.text]]);
+      if (link(tryIt).length <= LIMIT) chosen = tryIt; else left.push(p);
+    });
+
+    left.sort(function (a, b) { return encode(b.text).length - encode(a.text).length; });
+    left.forEach(function (p) { p.label = LABEL[p.id]; p.name = NAME[p.id]; });
+    return { url: link(chosen), left: left, limit: LIMIT };
+  }
+
+  return { build: build, plain: plain, link: link, titleFor: titleFor, versionText: versionText,
+    deviceText: deviceText, configText: configText, logText: logText, uptimeWords: uptimeWords,
+    fields: FIELD, template: TEMPLATE, newIssue: NEW_ISSUE, limit: LIMIT };
+})();
+</script>
+
+<script id="report-ui">
+(function () {
+  "use strict";
+  var R = ReportModel;
+  var KEY_STORE = "pdn-soundmodem-config-key";
+  var $ = function (id) { return document.getElementById(id); };
+  var dlg = $("report");
+  var report = null;
+  var lastLeft = [];
+
+  function key() { return sessionStorage.getItem(KEY_STORE) || ""; }
+
+  function note(kind, text) {
+    var n = $("report-note");
+    n.className = kind || "";
+    n.textContent = text || "";
+  }
+
+  function sizeWords(text, lines) {
+    return "(" + (lines ? lines + " lines" : Math.max(1, Math.round(text.length / 1024)) + " KB") + ")";
+  }
+
+  function parts() {
+    return { config: $("report-inc-config").checked, logs: $("report-inc-logs").checked };
+  }
+
+  // The buttons follow the box at once; the link follows it and the ticks, a moment later when
+  // typing (see refreshSoon), so what is shown is what is sent.
+  function buttons() {
+    var ready = report !== null && $("report-what").value.trim().length > 0;
+    $("report-copy").disabled = !ready;
+    var open = $("report-open");
+    if (ready) open.removeAttribute("aria-disabled"); else open.setAttribute("aria-disabled", "true");
+    $("report-hint").textContent = report === null || ready ? "" : "Say what went wrong first; then the buttons work.";
+    return ready;
+  }
+
+  function refresh() {
+    var open = $("report-open");
+    open.href = buttons() ? R.build(report, $("report-what").value, parts()).url : "#";
+  }
+
+  function show(r) {
+    report = r;
+    $("report-pre-version").textContent = R.versionText(r) + "\nDevice kind: " + R.deviceText(r);
+    $("report-pre-config").textContent = R.configText(r);
+    $("report-pre-logs").textContent = R.logText(r) || "(the station has written nothing yet)";
+    $("report-size-config").textContent = sizeWords(R.configText(r));
+    var n = (r.logLines || []).length;
+    $("report-size-logs").textContent = sizeWords("", n);
+    $("report-body").hidden = false;
+    $("report-key").hidden = true;
+    refresh();
+  }
+
+  function fetchReport() {
+    note("", "Reading the station...");
+    var headers = {};
+    if (key()) headers["Authorization"] = "Bearer " + key();
+    return fetch("api/report", { headers: headers }).then(function (res) {
+      if (res.status === 401) {
+        sessionStorage.removeItem(KEY_STORE);
+        $("report-body").hidden = true;
+        $("report-key").hidden = false;
+        note("", "");
+        return null;
+      }
+      if (!res.ok) throw new Error("the station answered HTTP " + res.status);
+      return res.json();
+    }).then(function (r) {
+      if (r) { show(r); note("", ""); }
+    }).catch(function (e) {
+      note("bad", "Could not read the station's report: " + e.message + ". You can still describe the problem on GitHub by hand.");
+      $("report-body").hidden = false;
+      refresh();
+    });
+  }
+
+  // Clipboard: the async API needs a secure context, which a station on plain http on a LAN is
+  // not, so the fallback selects a text box and asks the browser to copy it, as the "Edit as
+  // text" Copy does. The box lives inside the dialog: a modal dialog leaves the rest of the page
+  // unable to take focus, and a copy only works from a box that can.
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).then(function () { return true; }, function () { return false; });
+    }
+    var area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.setAttribute("aria-hidden", "true");
+    area.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;";
+    dlg.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, area.value.length); // iOS ignores select() alone
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    dlg.removeChild(area);
+    return Promise.resolve(ok);
+  }
+
+  // The copy for a link that is too long is made when the mouse or pen is released over the
+  // button, before the click opens the new tab, which would take the focus and make the browser
+  // refuse the copy. Never on touch: a touch press is not a user activation in Chrome on phones,
+  // so there the click is the trigger. A keyboard press does it on key-down. Releasing off the
+  // button does nothing, so the clipboard is not overwritten by a press that was not a click. If
+  // the early copy did not work, the click tries again.
+  var prepared = null;
+
+  function prepare() {
+    if (report === null || $("report-what").value.trim().length === 0) return null;
+    var built = R.build(report, $("report-what").value, parts());
+    $("report-open").href = built.url;
+    var copied = built.left.length === 0 ? Promise.resolve(true) : copyText(built.left[0].text);
+    prepared = { built: built, copied: copied };
+    return prepared;
+  }
+
+  function announce(p) {
+    var built = p.built;
+    lastLeft = built.left;
+    if (built.left.length === 0) {
+      note("good", "Opened GitHub in a new tab. Check it over there, then press Submit.");
+      return;
+    }
+    var first = built.left[0];
+    p.copied.then(function (ok) {
+      var words = built.left.map(function (x) { return x.name; }).join(", ");
+      var msg = "Left out of the link because it was too long: " + words + ". ";
+      msg += ok ? "Copied the " + first.name + " to your clipboard: paste it into the \"" + first.label + "\" box."
+        : "Press Copy report instead, and paste what you need into the form.";
+      note(ok ? "warn" : "bad", msg);
+      Array.prototype.slice.call($("report-note").querySelectorAll("button")).forEach(function (old) { old.remove(); });
+      built.left.slice(1).forEach(function (part) {
+        var b = document.createElement("button");
+        b.type = "button"; b.className = "btn small";
+        b.textContent = "Copy the " + part.name;
+        b.addEventListener("click", function () {
+          copyText(part.text).then(function (done) {
+            note(done ? "good" : "bad", done ? "Copied the " + part.name + " to your clipboard: paste it into the \"" + part.label + "\" box." : "Could not copy. Use Copy report.");
+          });
+        });
+        $("report-note").appendChild(document.createTextNode(" "));
+        $("report-note").appendChild(b);
+      });
+    });
+  }
+
+  $("report-open").addEventListener("pointerup", function (ev) {
+    if (ev.pointerType === "touch" || ev.button !== 0) return;
+    prepare();
+  });
+  $("report-open").addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter" || ev.key === " ") prepare();
+  });
+  $("report-open").addEventListener("click", function (ev) {
+    if (report === null || $("report-what").value.trim().length === 0) { ev.preventDefault(); return; }
+    var p = prepared || prepare();
+    prepared = null;
+    if (p.built.left.length > 0) {
+      var first = p.built.left[0];
+      p.copied = p.copied.then(function (ok) { return ok ? true : copyText(first.text); });
+    }
+    announce(p);
+  });
+
+  $("report-copy").addEventListener("click", function () {
+    if (report === null) return;
+    copyText(R.plain(report, $("report-what").value, parts())).then(function (ok) {
+      note(ok ? "good" : "bad", ok ? "Copied. Paste it into an email or a message." : "Could not copy. Look at each part above and copy it by hand.");
+    });
+  });
+
+  // The link is rebuilt a moment after typing stops, not at every key; the buttons' state is
+  // cheap and follows at once. (Pressing Open builds it afresh anyway.)
+  var rebuildTimer = null;
+  function refreshSoon() {
+    buttons();
+    clearTimeout(rebuildTimer);
+    rebuildTimer = setTimeout(refresh, 200);
+  }
+
+  $("report-what").addEventListener("input", refreshSoon);
+  $("report-inc-config").addEventListener("change", refresh);
+  $("report-inc-logs").addEventListener("change", refresh);
+
+  $("report-unlock").addEventListener("click", function () {
+    sessionStorage.setItem(KEY_STORE, $("report-keybox").value);
+    fetchReport();
+  });
+
+  function openDialog() {
+    note("", "");
+    if (!dlg.open) dlg.showModal();
+    fetchReport();
+  }
+
+  function closeDialog() {
+    var wasAtLogin = !$("login").hidden;
+    if (dlg.open) dlg.close();
+    if (location.hash === "#report") history.replaceState(null, "", location.pathname + location.search);
+    // The key typed here is the page's key too: let the page use it.
+    if (wasAtLogin && key()) location.reload();
+  }
+
+  $("report-close").addEventListener("click", closeDialog);
+  dlg.addEventListener("cancel", function (ev) { ev.preventDefault(); closeDialog(); });
+  $("report-button").addEventListener("click", openDialog);
+  window.addEventListener("hashchange", function () { if (location.hash === "#report") openDialog(); });
+  if (location.hash === "#report") openDialog();
 })();
 </script>
 </body>

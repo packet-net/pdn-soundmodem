@@ -1,0 +1,48 @@
+name: Report a problem
+description: Something does not work, or does not behave the way you expected.
+title: "Problem: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. The easiest way to fill this in is the **Report a problem** button on your station's settings page: it opens this form with the version, your settings (passwords and keys left out) and the recent log lines already filled in. You can also fill it in by hand.
+
+        Please look over the settings and log lines before you send them. They are public on GitHub.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: In your own words, what went wrong, and what were you doing at the time?
+      placeholder: "For example: after I changed the mode to qpsk2400 the station stopped decoding."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+      description: Optional, but it helps.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown at the top of the station page, and filled in for you by the Report a problem button.
+      placeholder: "0.103.0"
+  - type: input
+    id: device-kind
+    attributes:
+      label: Radio or device
+      description: What the station listens through and keys, for example a CM108 sound card with an FM radio, a Flex, an UberSDR receiver.
+      placeholder: "CM108 sound card and a Tait TM8100"
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Configuration
+      description: The settings the station is running, with passwords and keys left out. The Report a problem button fills this in. Please check it before you send.
+      render: json
+  - type: textarea
+    id: logs
+    attributes:
+      label: Recent log lines
+      description: The last lines the station wrote to its console. The Report a problem button fills this in. Please check it before you send.
+      render: text
