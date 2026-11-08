@@ -229,6 +229,24 @@
     main { padding-bottom: 260px; }
     #pending .btn { flex: 1; }
   }
+
+  /* Report a problem (self-contained; see the dialog near the end of the body) */
+  dialog#report { background: var(--panel); color: var(--ink); border: 1px solid var(--edge); border-radius: 8px;
+                  padding: 20px; width: min(640px, calc(100vw - 24px)); max-height: calc(100vh - 24px); margin: auto; overflow-y: auto; }
+  dialog#report::backdrop { background: rgba(0, 0, 0, .6); }
+  #report h2 { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+  #report p { margin: 8px 0; }
+  #report textarea#report-what { width: 100%; margin-top: 4px; background: var(--bg); color: var(--ink); border: 1px solid var(--edge); border-radius: 5px; padding: 8px; font: inherit; resize: vertical; }
+  #report input[type=password] { background: var(--bg); color: var(--ink); border: 1px solid var(--edge); border-radius: 5px; padding: 6px 8px; font: inherit; margin-right: 6px; }
+  #report .part { border-top: 1px solid var(--edge); padding: 8px 0; }
+  #report .part small { color: var(--muted); }
+  #report summary { cursor: pointer; color: var(--muted); font-size: 13.5px; margin-top: 4px; }
+  #report pre { max-height: 11em; overflow: auto; background: var(--bg); border: 1px solid var(--edge); border-radius: 5px; padding: 8px; margin-top: 6px; font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  #report .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  #report .actions a.btn { display: inline-block; text-decoration: none; }
+  #report a[aria-disabled=true], #report button:disabled { opacity: .45; pointer-events: none; }
+  #report-note.good { color: var(--good); } #report-note.warn { color: var(--warn); } #report-note.bad { color: var(--bad); }
+  @media (max-width: 520px) { #report .actions .btn { flex: 1 1 100%; text-align: center; } }
 </style>
 </head>
 <body>
@@ -237,6 +255,7 @@
   <span id="source"></span>
   <div class="right">
     <button type="button" class="ghost" id="edit-text" hidden>Edit as text</button>
+    <button type="button" class="ghost" id="report-button">Report a problem</button>
     <a href="./" id="station-link">Station page</a>
   </div>
 </header>
@@ -3294,6 +3313,322 @@ var ConfigModel = (function () {
   }
 
   load();
+})();
+</script>
+
+<!-- Report a problem: a dialog that gathers /api/report and opens a pre-filled GitHub issue form
+     (.github/ISSUE_TEMPLATE/problem.yml) in the user's own browser. No token, no server-side
+     call to GitHub. Self-contained on purpose: this block, the header button and the style block
+     above are all of it. -->
+<dialog id="report" aria-labelledby="report-title">
+  <form method="dialog" id="report-form" onsubmit="return false">
+    <h2 id="report-title">Report a problem</h2>
+    <p class="muted">This opens a GitHub issue with the details below filled in, in your own browser. Nothing is sent until you press Submit there. No GitHub account? Copy the report instead.</p>
+
+    <div id="report-key" hidden>
+      <p>This station has an <code>api.key</code>. Enter it to read the report.</p>
+      <input type="password" id="report-keybox" autocomplete="current-password" placeholder="api key">
+      <button type="button" class="btn" id="report-unlock">Unlock</button>
+    </div>
+
+    <div id="report-body">
+      <label for="report-what"><b>What went wrong?</b></label>
+      <textarea id="report-what" rows="4" placeholder="What were you doing, and what happened?"></textarea>
+
+      <p class="muted" id="report-include-head">Included in the report. Untick anything you would rather not share; look at it first if you like.</p>
+      <div class="part">
+        <label><input type="checkbox" id="report-inc-version" checked disabled> Version and device <small id="report-size-version"></small></label>
+        <details><summary>Look at it</summary><pre id="report-pre-version"></pre></details>
+      </div>
+      <div class="part">
+        <label><input type="checkbox" id="report-inc-config" checked> Configuration, passwords and keys left out <small id="report-size-config"></small></label>
+        <details><summary>Look at it</summary><pre id="report-pre-config"></pre></details>
+      </div>
+      <div class="part">
+        <label><input type="checkbox" id="report-inc-logs" checked> Recent log lines <small id="report-size-logs"></small></label>
+        <details><summary>Look at it</summary><pre id="report-pre-logs"></pre></details>
+      </div>
+    </div>
+
+    <p id="report-note" role="status"></p>
+    <div class="actions">
+      <a class="btn primary" id="report-open" href="#" target="_blank" rel="noopener noreferrer">Open on GitHub</a>
+      <button type="button" class="btn" id="report-copy">Copy report</button>
+      <button type="button" class="btn" id="report-close">Close</button>
+    </div>
+    <p class="muted" id="report-hint"></p>
+  </form>
+</dialog>
+
+<!-- The report's text and link: no DOM, so the tests run it on its own (ConfigPageTests). The ids
+     are the ones in .github/ISSUE_TEMPLATE/problem.yml, and a test holds the two together. -->
+<script id="report-model">
+var ReportModel = (function () {
+  "use strict";
+
+  var NEW_ISSUE = "https://github.com/packet-net/pdn-soundmodem/issues/new";
+  var TEMPLATE = "problem.yml";
+  // A link longer than this is not trusted to arrive: GitHub answers 414 somewhere above 8 KB.
+  var LIMIT = 7500;
+  var FIELD = { what: "what-happened", version: "version", device: "device-kind", config: "configuration", logs: "logs" };
+
+  function encode(text) {
+    return encodeURIComponent(text).replace(/%20/g, "+");
+  }
+
+  function uptimeWords(seconds) {
+    var m = Math.floor(seconds / 60);
+    if (m < 1) return "under a minute";
+    if (m < 60) return m + " min";
+    var h = Math.floor(m / 60);
+    if (h < 48) return h + " h " + (m % 60) + " min";
+    return Math.floor(h / 24) + " days " + (h % 24) + " h";
+  }
+
+  function versionText(r) {
+    var v = r.version + (r.release ? "" : " (dev build)");
+    if (r.commit) v += ", commit " + String(r.commit).slice(0, 12);
+    return v;
+  }
+
+  function deviceText(r) {
+    return r.deviceKind + ", up " + uptimeWords(r.uptimeSeconds || 0);
+  }
+
+  function configText(r) { return JSON.stringify(r.config, null, 2); }
+
+  function logText(r) { return (r.logLines || []).join("\n"); }
+
+  function titleFor(what) {
+    var first = String(what || "").trim().split(/\r?\n/)[0];
+    if (first.length > 70) first = first.slice(0, 70).replace(/\s+\S*$/, "") + "...";
+    return "Problem: " + first;
+  }
+
+  // The report as one block of text, for "Copy report".
+  // parts: { config: bool, logs: bool }
+  function plain(r, what, parts) {
+    var out = ["## What went wrong", "", String(what || "").trim(), "", "## Version", "",
+      versionText(r), "Device kind: " + deviceText(r)];
+    if (parts.config) out.push("", "## Configuration", "", "```json", configText(r), "```");
+    if (parts.logs) out.push("", "## Recent log lines", "", "```", logText(r), "```");
+    return out.join("\n") + "\n";
+  }
+
+  function link(fields) {
+    var q = ["template=" + TEMPLATE];
+    for (var i = 0; i < fields.length; i++) q.push(fields[i][0] + "=" + encode(fields[i][1]));
+    return NEW_ISSUE + "?" + q.join("&");
+  }
+
+  // The link for the issue form, and what had to be left out of it. Long parts go first: the log
+  // lines, then the configuration. Whatever is left out is returned in "left", in the order the
+  // user is told to paste it, each with the id of the form field it belongs in.
+  function build(r, what, parts) {
+    var fields = [["title", titleFor(what)], [FIELD.what, String(what || "").trim()],
+      [FIELD.version, versionText(r)], [FIELD.device, r.deviceKind]];
+    var optional = [];
+    if (parts.config) optional.push({ id: FIELD.config, name: "configuration", text: configText(r) });
+    if (parts.logs) optional.push({ id: FIELD.logs, name: "log lines", text: logText(r) });
+
+    var left = [];
+    var kept = optional.slice();
+    var url;
+    function make() {
+      var all = fields.concat(kept.map(function (p) { return [p.id, p.text]; }));
+      return link(all);
+    }
+    url = make();
+    // Logs, then configuration: from the end of the list.
+    while (url.length > LIMIT && kept.length > 0) {
+      left.unshift(kept.pop());
+      url = make();
+    }
+    // The logs are the longer and the likelier to be wanted on the clipboard first.
+    left.sort(function (a, b) { return a.id === FIELD.logs ? -1 : b.id === FIELD.logs ? 1 : 0; });
+    return { url: url, left: left, limit: LIMIT };
+  }
+
+  return { build: build, plain: plain, link: link, titleFor: titleFor, versionText: versionText,
+    deviceText: deviceText, configText: configText, logText: logText, uptimeWords: uptimeWords,
+    fields: FIELD, template: TEMPLATE, newIssue: NEW_ISSUE, limit: LIMIT };
+})();
+</script>
+
+<script id="report-ui">
+(function () {
+  "use strict";
+  var R = ReportModel;
+  var KEY_STORE = "pdn-soundmodem-config-key";
+  var $ = function (id) { return document.getElementById(id); };
+  var dlg = $("report");
+  var report = null;
+  var lastLeft = [];
+
+  function key() { return sessionStorage.getItem(KEY_STORE) || ""; }
+
+  function note(kind, text) {
+    var n = $("report-note");
+    n.className = kind || "";
+    n.textContent = text || "";
+  }
+
+  function sizeWords(text, lines) {
+    return "(" + (lines ? lines + " lines" : Math.max(1, Math.round(text.length / 1024)) + " KB") + ")";
+  }
+
+  function parts() {
+    return { config: $("report-inc-config").checked, logs: $("report-inc-logs").checked };
+  }
+
+  // Both buttons and the link follow the box and the ticks, so what is shown is what is sent.
+  function refresh() {
+    var ready = report !== null && $("report-what").value.trim().length > 0;
+    $("report-copy").disabled = !ready;
+    var open = $("report-open");
+    if (ready) {
+      open.href = R.build(report, $("report-what").value, parts()).url;
+      open.removeAttribute("aria-disabled");
+    } else {
+      open.href = "#";
+      open.setAttribute("aria-disabled", "true");
+    }
+    $("report-hint").textContent = report === null ? "" : ready ? ""
+      : "Say what went wrong first; then the buttons work.";
+  }
+
+  function show(r) {
+    report = r;
+    $("report-pre-version").textContent = R.versionText(r) + "\nDevice kind: " + R.deviceText(r);
+    $("report-pre-config").textContent = R.configText(r);
+    $("report-pre-logs").textContent = R.logText(r) || "(the station has written nothing yet)";
+    $("report-size-config").textContent = sizeWords(R.configText(r));
+    var n = (r.logLines || []).length;
+    $("report-size-logs").textContent = sizeWords("", n);
+    $("report-body").hidden = false;
+    $("report-key").hidden = true;
+    refresh();
+  }
+
+  function fetchReport() {
+    note("", "Reading the station...");
+    var headers = {};
+    if (key()) headers["Authorization"] = "Bearer " + key();
+    return fetch("api/report", { headers: headers }).then(function (res) {
+      if (res.status === 401) {
+        sessionStorage.removeItem(KEY_STORE);
+        $("report-body").hidden = true;
+        $("report-key").hidden = false;
+        note("", "");
+        return null;
+      }
+      if (!res.ok) throw new Error("the station answered HTTP " + res.status);
+      return res.json();
+    }).then(function (r) {
+      if (r) { show(r); note("", ""); }
+    }).catch(function (e) {
+      note("bad", "Could not read the station's report: " + e.message + ". You can still describe the problem on GitHub by hand.");
+      $("report-body").hidden = false;
+      refresh();
+    });
+  }
+
+  // Clipboard: the async API needs a secure context, which a station on plain http on a LAN is
+  // not, so the fallback selects a text box and asks the browser to copy it, as the "Edit as
+  // text" Copy does. The box lives inside the dialog: a modal dialog leaves the rest of the page
+  // unable to take focus, and a copy only works from a box that can.
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).then(function () { return true; }, function () { return false; });
+    }
+    var area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.setAttribute("aria-hidden", "true");
+    area.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;";
+    dlg.appendChild(area);
+    area.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    dlg.removeChild(area);
+    return Promise.resolve(ok);
+  }
+
+  function place(p) {
+    return p.id === R.fields.config ? "Configuration" : "Recent log lines";
+  }
+
+  $("report-open").addEventListener("click", function (ev) {
+    if (report === null || $("report-what").value.trim().length === 0) { ev.preventDefault(); return; }
+    var built = R.build(report, $("report-what").value, parts());
+    this.href = built.url;
+    lastLeft = built.left;
+    if (built.left.length === 0) {
+      note("good", "Opened GitHub in a new tab. Check it over there, then press Submit.");
+      return;
+    }
+    // The link would be too long for GitHub. The browser still opens it (without the long parts);
+    // the first left-out part goes to the clipboard, and the other has its own button.
+    var first = built.left[0];
+    copyText(first.text).then(function (ok) {
+      var words = built.left.map(function (p) { return p.name; }).join(" and ");
+      var msg = "The " + words + (built.left.length > 1 ? " were" : " was") + " too long for a link, so "
+        + (built.left.length > 1 ? "they are" : "it is") + " not in the GitHub form. ";
+      msg += ok ? "The " + first.name + " is on your clipboard: paste it into the \"" + place(first) + "\" box."
+        : "Press Copy report instead, and paste what you need into the form.";
+      note(ok ? "warn" : "bad", msg);
+      var extra = $("report-extra");
+      if (extra) extra.remove();
+      if (built.left.length > 1) {
+        var b = document.createElement("button");
+        b.type = "button"; b.className = "btn small"; b.id = "report-extra";
+        b.textContent = "Copy the " + built.left[1].name;
+        b.addEventListener("click", function () {
+          copyText(built.left[1].text).then(function (done) {
+            note(done ? "good" : "bad", done ? "The " + built.left[1].name + " is on your clipboard: paste it into the \"" + place(built.left[1]) + "\" box." : "Could not copy. Use Copy report.");
+          });
+        });
+        $("report-note").appendChild(document.createTextNode(" "));
+        $("report-note").appendChild(b);
+      }
+    });
+  });
+
+  $("report-copy").addEventListener("click", function () {
+    if (report === null) return;
+    copyText(R.plain(report, $("report-what").value, parts())).then(function (ok) {
+      note(ok ? "good" : "bad", ok ? "Copied. Paste it into an email or a message." : "Could not copy. Look at each part above and copy it by hand.");
+    });
+  });
+
+  $("report-what").addEventListener("input", refresh);
+  $("report-inc-config").addEventListener("change", refresh);
+  $("report-inc-logs").addEventListener("change", refresh);
+
+  $("report-unlock").addEventListener("click", function () {
+    sessionStorage.setItem(KEY_STORE, $("report-keybox").value);
+    fetchReport();
+  });
+
+  function openDialog() {
+    note("", "");
+    if (!dlg.open) dlg.showModal();
+    fetchReport();
+  }
+
+  function closeDialog() {
+    var wasAtLogin = !$("login").hidden;
+    if (dlg.open) dlg.close();
+    if (location.hash === "#report") history.replaceState(null, "", location.pathname + location.search);
+    // The key typed here is the page's key too: let the page use it.
+    if (wasAtLogin && key()) location.reload();
+  }
+
+  $("report-close").addEventListener("click", closeDialog);
+  dlg.addEventListener("cancel", function (ev) { ev.preventDefault(); closeDialog(); });
+  $("report-button").addEventListener("click", openDialog);
+  window.addEventListener("hashchange", function () { if (location.hash === "#report") openDialog(); });
+  if (location.hash === "#report") openDialog();
 })();
 </script>
 </body>

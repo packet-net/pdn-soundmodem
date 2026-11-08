@@ -233,7 +233,9 @@ A sound card gets the starvation watch only, because a wired input can be silent
 
 ## Where to ask
 
-Open an issue at [github.com/packet-net/pdn-soundmodem/issues](https://github.com/packet-net/pdn-soundmodem/issues). Include the version line from the top of the journal, thirty lines of journal around the problem, your config file with any `publish.token` or `api.key` removed, and what radio and interface you are using. If it is a decode problem, a short WAV recording of the signal is worth more than any description of it.
+The quickest way is **Report a problem** in the header of the station's [settings page](07-station-page.md#the-configuration-page) (there is a link to it on the station page too). It gathers the version, your settings with passwords and keys left out, and the station's recent console lines, shows you all of it, and opens a pre-filled GitHub issue in your browser. **Copy report** gives you the same text if you would rather send it another way.
+
+Or open an issue by hand at [github.com/packet-net/pdn-soundmodem/issues](https://github.com/packet-net/pdn-soundmodem/issues). Include the version line from the top of the journal, thirty lines of journal around the problem, your config file with any `publish.token` or `api.key` removed, and what radio and interface you are using. If it is a decode problem, a short WAV recording of the signal is worth more than any description of it.
 
 ## Related
 
