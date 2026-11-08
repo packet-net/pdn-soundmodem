@@ -1,0 +1,9 @@
+{
+  // Every setting: https://github.com/packet-net/pdn-soundmodem/blob/main/docs/reference/config.md
+  "device": "default",
+  "modems": [
+    { "subChannel": 0, "mode": "afsk1200" }
+  ],
+  "ptt": { "type": "cm108", "device": "/dev/hidraw0" },
+  "waterfall": { "port": 8107 }
+}

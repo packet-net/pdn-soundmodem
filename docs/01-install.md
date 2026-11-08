@@ -1,6 +1,6 @@
 # Install
 
-At the end of this page pdn-soundmodem is installed on your machine, the service exists, and `/etc/pdn-soundmodem/soundmodem.json` is there waiting to be edited. The modem will not run until you edit it, and that is what [02-first-station.md](02-first-station.md) is for.
+At the end of this page pdn-soundmodem is installed on your machine, the service is running a starter config, and `/etc/pdn-soundmodem/soundmodem.json` is there waiting to be set up. The starter listens to nothing; [02-first-station.md](02-first-station.md) turns it into your station.
 
 ## Before you start
 
@@ -46,7 +46,7 @@ apt picks the build for your architecture, and pulls in the handful of system li
 | Path | What it is |
 |---|---|
 | `/usr/bin/pdn-soundmodem` | The program, a symlink into `/usr/lib/pdn-soundmodem/` |
-| `/etc/pdn-soundmodem/soundmodem.json` | Your config file, seeded from the shipped example if it was not already there |
+| `/etc/pdn-soundmodem/soundmodem.json` | Your config file, seeded from the shipped starter example if it was not already there |
 | `/usr/share/pdn-soundmodem/soundmodem.example.json` | The example the seed came from |
 | `/usr/lib/systemd/system/pdn-soundmodem.service` | The service, enabled and started on install |
 | `/usr/lib/systemd/system/pdn-soundmodem@.service` | The template service for a second modem on the same machine |
@@ -68,25 +68,15 @@ pdn-soundmodem --version
 pdn-soundmodem 0.69.0, commit 1cd85706f54a5bf84546dd2fbb04467992cdfcab
 ```
 
-Then look at what the service said. `systemctl status` shows only the last ten journal lines and this message is longer than that, so ask journald for more:
+Then look at what the service said:
 
 ```sh
 journalctl -u pdn-soundmodem -n 30
 ```
 
-The service is enabled and started on install, but it will not be running. The seeded config names a sound card called `default` and a CM108 interface on `/dev/hidraw0`, and one or both of those is wrong on nearly every machine. The message says which device it could not open and which setting names it:
+The service is enabled and started on install, running a starter config that uses a private pipe in place of a sound card, so it starts on any machine but hears nothing. The journal shows it up, with a warning that the station page and the KISS port listen on every interface.
 
-```
-cannot open the cm108 PTT device "/dev/hidraw0"
-  Access to the path '/dev/hidraw0' is denied.
-  Set by "ptt" in /etc/pdn-soundmodem/soundmodem.json
-```
-
-With no interface plugged in yet the middle line reads `Could not find file '/dev/hidraw0'.` instead.
-
-Below that come a few lines of advice about permissions, and a line saying the service will keep retrying in case the device is merely late appearing.
-
-Seeing that means the install is complete and the modem is waiting for a config it can use. Go to [02-first-station.md](02-first-station.md).
+Open `http://<machine>:8107/config` in a browser, with `<machine>` the name or address of this machine, and follow the guided setup. The starter opens that page to your whole network with no key; on its software step you choose who may reach the KISS port and can add an access key. Prefer a text editor? [02-first-station.md](02-first-station.md) covers the file route too.
 
 ## If it did not
 
@@ -111,7 +101,7 @@ sudo systemctl enable --now pdn-soundmodem@vhf
 journalctl -u pdn-soundmodem@vhf -f
 ```
 
-Each file has to name its own sound card and its own PTT line, and claim its own ports. The [files reference](reference/files.md#more-than-one-modem) has the rules for both.
+Each file has to name its own sound card and its own PTT line, and claim its own ports. The starter you copied uses `kissPort` 8105, `waterfall.port` 8107 and `bind: "*"`, which clash with the plain service, and its pipe device is the plain service's own: in the copy, change `kissPort`, `waterfall.port` and `bind`, and give `device` your sound card. The [files reference](reference/files.md#more-than-one-modem) has the rules for both.
 
 ## Upgrading
 

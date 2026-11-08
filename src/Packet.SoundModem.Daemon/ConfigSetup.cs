@@ -10,7 +10,7 @@ namespace Packet.SoundModem.Daemon;
 /// <remarks>
 /// <para><b>The definition, and nothing wider.</b> A station has never been configured when its
 /// running configuration file is <i>semantically equal to the shipped
-/// <c>soundmodem.example.json</c></i> (parsed, so comments, whitespace and key order do not
+/// <c>soundmodem.example.json</c> or to the older example in <see cref="LegacyExample"/></i> (parsed, so comments, whitespace and key order do not
 /// matter, and key names are compared in any case) or is empty (<c>{}</c>, or nothing at all).
 /// The packaging seeds <c>/etc/pdn-soundmodem/soundmodem.json</c> from the example on first
 /// install (<c>packaging/build-deb.sh</c>), so an untouched file is exactly that. Anything else
@@ -21,7 +21,7 @@ namespace Packet.SoundModem.Daemon;
 /// the file; a test checks the two are one. The only other source is the
 /// <c>PDN_SOUNDMODEM_EXAMPLE_CONFIG</c> environment variable, which names a file to compare with
 /// instead: a seam for tests that run the real daemon, which cannot start on the shipped example
-/// (it names a PTT device and a sound card the test machine has not got). An operator never sets
+/// (it opens its station page on every interface and KISS on a fixed port, which a test machine cannot have to itself). An operator never sets
 /// it.</para>
 /// </remarks>
 internal static class ConfigSetup
@@ -36,7 +36,22 @@ internal static class ConfigSetup
     };
 
     /// <summary>The definition above, applied to the text of a configuration file.</summary>
-    internal static bool NeverConfigured(string configJson) => NeverConfigured(configJson, ExampleText());
+    internal static bool NeverConfigured(string configJson) =>
+        NeverConfigured(configJson, ExampleText()) || NeverConfigured(configJson, LegacyExample);
+
+    /// <summary>The example earlier versions shipped: it named a sound card and a PTT device most
+    /// machines lack, so the service never started. A station still holding it was seeded by an
+    /// older package and never set up, so it counts as never configured too.</summary>
+    internal const string LegacyExample = """
+        {
+          "device": "default",
+          "modems": [
+            { "subChannel": 0, "mode": "afsk1200" }
+          ],
+          "ptt": { "type": "cm108", "device": "/dev/hidraw0" },
+          "waterfall": { "port": 8107 }
+        }
+        """;
 
     /// <summary>The definition, against a given example.</summary>
     internal static bool NeverConfigured(string configJson, string exampleJson)

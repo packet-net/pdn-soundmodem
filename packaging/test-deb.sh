@@ -79,8 +79,8 @@ echo "== the frame log opens (SQLite loads) =="
 # The frame log is where SQLite is first loaded, so a station without one never finds out its
 # SQLite cannot load. Opening it runs the schema, so a database with a frames table proves the
 # library resolved and works.
-# ALSA's null PCM is defined in libasound2-data's alsa.conf, which the Ubuntu image does not
-# pull in by itself; without it "null" does not exist and the modem stops for want of a device.
+# The tests below use ALSA's null PCM (the shipped starter does not: it uses a pipe). Its
+# definition is in libasound2-data's alsa.conf, which a minimal image may not have pulled in.
 apt-get install -y -qq libasound2-data >/dev/null 2>&1 || true
 printf '{ "device": "null", "kissPort": 18203, "frameLog": { "path": "/tmp/frames.db" } }\n' > /tmp/framelog.json
 /usr/bin/pdn-soundmodem --config /tmp/framelog.json > /tmp/framelog.out 2>&1 &
@@ -100,6 +100,22 @@ apt-get remove -y -qq pdn-soundmodem >/dev/null 2>&1
 check "binary gone after remove"        "[ ! -e /usr/lib/pdn-soundmodem/pdn-soundmodem ]"
 check "config survives remove"          "[ -f /etc/pdn-soundmodem/soundmodem.json ]"
 check "user survives remove"            "getent passwd pdn-soundmodem >/dev/null"
+
+echo
+echo "== an upgrade replaces an unedited old example, and leaves an edited file alone =="
+systemctl stop pdn-soundmodem.service >/dev/null 2>&1
+cp /w/old-example.json /etc/pdn-soundmodem/soundmodem.json
+chown root:root /etc/pdn-soundmodem/soundmodem.json; chmod 0644 /etc/pdn-soundmodem/soundmodem.json
+apt-get install -y -qq --reinstall "/debs/$DEB" >/dev/null 2>&1
+check "the unedited old example became the starter" "cmp -s /etc/pdn-soundmodem/soundmodem.json /usr/share/pdn-soundmodem/soundmodem.example.json"
+check "and is group-writable by the service"        "[ \"\$(stat -c '%U:%G %a' /etc/pdn-soundmodem/soundmodem.json)\" = 'root:pdn-soundmodem 660' ]"
+sed 's#/dev/hidraw0#/dev/hidraw1#' /w/old-example.json > /etc/pdn-soundmodem/soundmodem.json
+chown root:root /etc/pdn-soundmodem/soundmodem.json; chmod 0644 /etc/pdn-soundmodem/soundmodem.json
+cp /etc/pdn-soundmodem/soundmodem.json /tmp/edited.json
+apt-get install -y -qq --reinstall "/debs/$DEB" >/dev/null 2>&1
+check "an edited file is left alone"                "cmp -s /etc/pdn-soundmodem/soundmodem.json /tmp/edited.json"
+check "but still made group-writable"               "[ \"\$(stat -c '%U:%G %a' /etc/pdn-soundmodem/soundmodem.json)\" = 'root:pdn-soundmodem 660' ]"
+systemctl stop pdn-soundmodem.service >/dev/null 2>&1
 
 echo
 echo "== purge =="
@@ -144,13 +160,38 @@ verify=$(systemd-analyze verify pdn-soundmodem@second.service 2>&1)
 [ -z "$verify" ] && ok "template verifies as an instance" || bad "template verify: $verify"
 state=$(systemctl is-enabled pdn-soundmodem.service 2>&1)
 [ "$state" = "enabled" ] && ok "enabled on install" || bad "expected enabled on install, got '$state'"
-# postinst starts it too. There is no sound card in here so it will not stay up, but
-# systemd must have actually executed it - assert on a timestamp systemd only sets once
+# postinst starts it too. The seeded starter config uses a private pipe device, so it must
+# stay up with no sound card or radio; systemd must have actually executed it - assert on a timestamp systemd only sets once
 # the main process has run. (`journalctl | grep -q .` is NOT a valid check here: it
 # matches the literal "-- No entries --" line and so passes when nothing ever started.)
 started=$(systemctl show pdn-soundmodem.service -p ExecMainStartTimestamp --value 2>/dev/null)
 [ -n "$started" ] && ok "postinst started it ($started)" \
                   || bad "postinst did not start the unit - ExecMainStartTimestamp empty"
+sleep 3
+check "the seeded starter config keeps the service running" "systemctl is-active --quiet pdn-soundmodem.service"
+# The setup page saves to the config file as the service user, so the file is root:pdn-soundmodem
+# 0660, and a save from loopback (no key is set on the starter) must work on a fresh install.
+check "config is root:pdn-soundmodem 0660" "[ \"\$(stat -c '%U:%G %a' /etc/pdn-soundmodem/soundmodem.json)\" = 'root:pdn-soundmodem 660' ]"
+check "starter pipe lives in the state dir"  "[ -p /var/lib/pdn-soundmodem/starter-air ]"
+apt-get install -y -qq curl >/dev/null 2>&1 || true
+before=$(sha256sum /etc/pdn-soundmodem/soundmodem.json)
+started_before_save=$(systemctl show pdn-soundmodem.service -p ExecMainStartTimestampMonotonic --value 2>/dev/null)
+code=$(curl -s -o /tmp/persist.out -w '%{http_code}' -X POST --data-binary @/etc/pdn-soundmodem/soundmodem.json \
+       'http://127.0.0.1:8107/api/config?persist=true' 2>/dev/null)
+[ "$code" = "200" ] && ok "a persist POST from loopback succeeds on a fresh install" \
+                    || { bad "persist POST answered '$code': $(cat /tmp/persist.out 2>/dev/null)"; }
+[ "$before" = "$(sha256sum /etc/pdn-soundmodem/soundmodem.json)" ] && ok "the saved file is the document posted" \
+                    || bad "the saved file differs from the document posted"
+back=no
+for _ in $(seq 1 20); do
+  after=$(systemctl show pdn-soundmodem.service -p ExecMainStartTimestampMonotonic --value 2>/dev/null)
+  if [ -n "$after" ] && [ "$after" != "$started_before_save" ] && systemctl is-active --quiet pdn-soundmodem.service; then
+    back=yes; break
+  fi
+  sleep 1
+done
+[ "$back" = yes ] && ok "the service restarted and is back up after the save" \
+                  || bad "the service did not restart and come back within 20 s of the save"
 
 echo
 echo "== start =="
@@ -244,6 +285,7 @@ echo
 exit $FAIL
 SYSD
 
+cp "$HERE/old-example.json" "$WORK/old-example.json"
 chmod +x "$WORK"/*.sh
 RC=0
 

@@ -13,9 +13,9 @@ If you have no radio to hand, skip to [No radio to hand](#no-radio-to-hand) and 
 
 ## The easy way: the setup page
 
-If the station is running, open `http://localhost:8107/config` in a browser on the same machine. A station that has never been set up goes straight to a short guided setup: what kind of radio you have, which sound card, how to key it, what you want to talk to, and how your software connects. It lists the sound cards and PTT pins it finds on the machine, so you pick instead of typing, and nothing is changed until you press **Save and start** on the last screen. When it restarts it shows a level meter so you can set the input level. Later, **Run setup again** in the settings menu starts the same guide from your current settings.
+A fresh install is already running a starter config that listens to nothing, so the setup page is there from the first minute. Open `http://<machine>:8107/config` in a browser, with `<machine>` the machine's name or address (`localhost` if you are sitting at it). A station that has never been set up goes straight to a short guided setup: what kind of radio you have, which sound card, how to key it, what you want to talk to, and how your software connects. It lists the sound cards and PTT pins it finds on the machine, so you pick instead of typing, and nothing is changed until you press **Save and start** on the last screen. When it restarts it shows a level meter so you can set the input level. Later, **Run setup again** in the settings menu starts the same guide from your current settings.
 
-A fresh install may keep restarting until it is set up, because the config it starts with names a PTT device the machine may not have, so the page may not answer yet. If it does not, follow the rest of this page, which does the same job by editing the config by hand.
+The starter config opens that page to your whole network with no key, so finish setup soon. On the software step you choose who may reach the KISS port (nothing is chosen for you); if you pick other computers, the page offers an access key, or can make one for you and show it once, and writes it as `api.key`. Whatever the key, the page will only let a change add a command or a plugin to run when it is used on the station itself. Prefer to edit the file? The rest of this page does the same job by hand.
 
 ## Find the sound card
 
@@ -77,7 +77,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 ## Write the config
 
-Open `/etc/pdn-soundmodem/soundmodem.json` as root (`sudo nano` on Raspberry Pi OS and Ubuntu, `sudo vi` on a minimal Debian) and make it read like this, with your card and your PTT block in place of the seeded ones:
+Open `/etc/pdn-soundmodem/soundmodem.json` as root (`sudo nano` on Raspberry Pi OS and Ubuntu, `sudo vi` on a minimal Debian) and make it read like this, with your card and your PTT block in place of the starter's pipe device:
 
 ```json
 {

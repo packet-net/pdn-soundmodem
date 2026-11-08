@@ -218,10 +218,10 @@ Description: Headless soundcard packet-radio modem (KISS TCP)
  (classic G3RUH and IL2P) and FX.25, with native DCD, p-persistent CSMA,
  serial/CM108 PTT and a multi-client KISS-over-TCP server.
  .
- Ships a systemd unit, enabled and started on install. The modem has no useful
- defaults, so edit /etc/pdn-soundmodem/soundmodem.json for your sound device and
- PTT and then "systemctl restart pdn-soundmodem"; until you do, the service will
- fail to start and "systemctl status pdn-soundmodem" will say why.
+ Ships a systemd unit, enabled and started on install with a starter config that
+ listens to nothing. Open http://THIS-MACHINE:8107/config in a browser to set the
+ station up, or edit /etc/pdn-soundmodem/soundmodem.json for your sound device and
+ PTT and then "systemctl restart pdn-soundmodem".
  .
  A second modem on the same machine is a second config file and a template
  instance: /etc/pdn-soundmodem/NAME.json and "systemctl enable --now
@@ -236,11 +236,12 @@ EOF
 # start it on install, restart it on upgrade. The template's instances are the operator's:
 # never enabled or started by the package, but a running one is restarted on upgrade
 # (it is running the old binary), stopped on remove and un-enabled on purge, the same as
-# the plain unit. Note the consequence - the seeded config
-# names a sound device and PTT line that will not exist on most machines, so the first
-# start after a fresh install is expected to fail until an admin edits it. That is the
-# Debian-conventional posture and a deliberate choice; `systemctl status` after install
-# is the intended way to find out what needs configuring.
+# the plain unit. The seeded config is a starter on a private pipe device, so the first
+# start after a fresh install succeeds on any machine and serves the setup page on port 8107.
+# packaging/old-example.json is the starter's predecessor, byte for byte (it named a sound card
+# and a PTT device most machines lack): an install still holding exactly that has never been
+# edited, so postinst swaps it for the new one. Its checksum is put into postinst below.
+OLD_EXAMPLE_SHA256="$(sha256sum "$HERE/old-example.json" | awk '{print $1}')"
 
 cat > "$STAGE/root/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
@@ -248,6 +249,7 @@ set -e
 
 EXAMPLE=/usr/share/pdn-soundmodem/soundmodem.example.json
 CONFIG=/etc/pdn-soundmodem/soundmodem.json
+OLD_EXAMPLE_SHA256=@OLD_EXAMPLE_SHA256@
 
 case "$1" in
   configure)
@@ -256,8 +258,30 @@ case "$1" in
     fi
     if [ ! -e "$CONFIG" ] && [ -f "$EXAMPLE" ]; then
         cp "$EXAMPLE" "$CONFIG"
-        chmod 0644 "$CONFIG"
+        # Seeded in the state the loop below acts on, whatever the umask.
+        chown root:root "$CONFIG" 2>/dev/null || true
+        chmod 0644 "$CONFIG" 2>/dev/null || true
         echo "pdn-soundmodem: seeded $CONFIG from the example."
+    elif [ -f "$CONFIG" ] && [ -f "$EXAMPLE" ] && command -v sha256sum >/dev/null \
+         && [ "$(sha256sum "$CONFIG" | awk '{print $1}')" = "$OLD_EXAMPLE_SHA256" ]; then
+        # Never edited: the previous starter, which could not start on most machines.
+        cp "$EXAMPLE" "$CONFIG"
+        echo "pdn-soundmodem: replaced the unedited old example in $CONFIG with the new starter."
+    fi
+    # The config pages save to these files as the service user, so the service's group may
+    # write them (and, at 0660, nobody else may read an api.key out of them). Only files the old
+    # postinst left (regular, root:root, 0644) are touched; anything an admin set up otherwise
+    # stays as it is. Never fatal: a failure here must not half-configure the package.
+    if getent group pdn-soundmodem >/dev/null 2>&1; then
+        for _f in /etc/pdn-soundmodem/*.json; do
+            if [ -f "$_f" ] && [ ! -L "$_f" ] \
+               && [ "$(stat -c '%U:%G %a' "$_f" 2>/dev/null)" = "root:root 644" ]; then
+                chown root:pdn-soundmodem "$_f" 2>/dev/null && chmod 0660 "$_f" 2>/dev/null \
+                    || echo "pdn-soundmodem: could not make $_f writable by the service; leaving it"
+            fi
+        done
+    else
+        echo "pdn-soundmodem: no pdn-soundmodem group; leaving the config files' permissions alone"
     fi
     # Apply the hidraw rule to interfaces already plugged in, so CM108 PTT works without a
     # re-plug. Skipped where udev is not running (a container, a chroot).
@@ -265,9 +289,9 @@ case "$1" in
         udevadm control --reload-rules >/dev/null 2>&1 || true
         udevadm trigger --subsystem-match=hidraw --action=change >/dev/null 2>&1 || true
     fi
-    echo "pdn-soundmodem: edit $CONFIG for your sound device and PTT, then"
-    echo "                systemctl restart pdn-soundmodem. Until then the service will"
-    echo "                fail to start - systemctl status pdn-soundmodem says why."
+    echo "pdn-soundmodem: it runs a starter config that listens to nothing. Open"
+    echo "                http://THIS-MACHINE:8107/config to set the station up, or edit"
+    echo "                $CONFIG and systemctl restart pdn-soundmodem."
     echo "                A second modem is /etc/pdn-soundmodem/NAME.json and"
     echo "                systemctl enable --now pdn-soundmodem@NAME."
     ;;
@@ -313,6 +337,7 @@ fi
 
 exit 0
 EOF
+sed -i "s/@OLD_EXAMPLE_SHA256@/$OLD_EXAMPLE_SHA256/" "$STAGE/root/DEBIAN/postinst"
 
 cat > "$STAGE/root/DEBIAN/prerm" <<'EOF'
 #!/bin/sh

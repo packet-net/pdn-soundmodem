@@ -1769,7 +1769,7 @@ var ConfigModel = (function () {
   // shipped example's choices are placeholders, not a decision, so setup starts from nothing and
   // keeps the rest (the page's port, the access key).
   function setupClearChoices(doc) {
-    ["device", "captureDevice", "playbackDevice", "ptt", "rig", "modems", "sideband", "flex", "ubersdr"]
+    ["device", "captureDevice", "playbackDevice", "ptt", "rig", "modems", "sideband", "flex", "ubersdr", "bind"]
       .forEach(function (name) { remove(doc, name); });
   }
 
@@ -1790,6 +1790,9 @@ var ConfigModel = (function () {
   }
 
   // Whether a step has what it needs for Next. flags.keying: a way of keying has been chosen.
+  // flags.softwareChosen: false on a station that has never been set up until who may reach the
+  // KISS port has been picked (the starter opens everything to the network, which is not a
+  // choice anyone made); absent on any other station, whose current setting stands.
   function setupComplete(doc, kind, id, flags) {
     flags = flags || {};
     var modems = get(doc, "modems");
@@ -1800,7 +1803,7 @@ var ConfigModel = (function () {
     if (id === "card") return deviceFamily(doc) === "card" && isSet(get(doc, "device"));
     if (id === "keying") return flags.keying === true;
     if (id === "modes") return (Array.isArray(modems) && modems.length > 0) || isSet(get(doc, "ardop"));
-    if (id === "software") return setupKissProblem(doc) === "";
+    if (id === "software") return flags.softwareChosen !== false && setupKissProblem(doc) === "";
     return true;
   }
 
@@ -1845,6 +1848,51 @@ var ConfigModel = (function () {
     return { host: host, port: port, network: network,
       text: "Point LinBPQ, a Dire Wolf client or any other KISS over TCP software at " + host + " port " + port
         + (network ? "." : ". Only programs on this machine can reach it.") };
+  }
+
+  // The access key the software step offers, written to api.key; empty removes it (and an api
+  // section left empty by that).
+  function setupWriteKey(doc, text) {
+    var t = String(text).trim();
+    var api = get(doc, "api");
+    if (t === "") {
+      if (isSet(api)) {
+        remove(api, "key");
+        if (Object.keys(api).length === 0) remove(doc, "api");
+      }
+      return;
+    }
+    if (!isSet(api) || typeof api !== "object") { api = {}; set(doc, "api", api); }
+    set(api, "key", t);
+  }
+
+  // A strong random key from random bytes (the page passes crypto's): 24 bytes as 32 URL-safe
+  // characters, 192 bits.
+  function setupMakeKey(bytes) {
+    var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    var out = "";
+    var acc = 0;
+    var bits = 0;
+    for (var i = 0; i < bytes.length; i++) {
+      acc = (acc << 8) | bytes[i];
+      bits += 8;
+      while (bits >= 6) {
+        bits -= 6;
+        out += chars.charAt((acc >> bits) & 63);
+      }
+      acc &= (1 << bits) - 1;
+    }
+    if (bits > 0) out += chars.charAt((acc << (6 - bits)) & 63);
+    return out;
+  }
+
+  // The warning for choosing "this machine only" while browsing from somewhere else: afterwards
+  // this page can only be reached from the station itself. "" when it does not apply.
+  function setupLocalOnlyWarning(doc, hostname) {
+    if (setupNetwork(doc)) return "";
+    var h = String(hostname || "").toLowerCase();
+    if (h === "" || h === "localhost" || h === "::1" || h === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(h)) return "";
+    return "You are using this page from another computer. If you choose this machine only, afterwards this page, the station page and the KISS port can only be reached from the station itself, not from here.";
   }
 
   // What opening the KISS port to the network really opens: every listener, not just KISS.
@@ -1916,7 +1964,7 @@ var ConfigModel = (function () {
       return info ? info.name : String(get(m, "mode"));
     });
     rows.push(["Modes", names.length ? names.join(", ") : "None yet"]);
-    rows.push(["Your software", "KISS port " + setupKissPort(doc) + ", " + (setupNetwork(doc) ? "reachable from your network" : "this machine only")]);
+    rows.push(["Your software", "KISS port " + setupKissPort(doc) + ", " + (setupNetwork(doc) ? "reachable from your network" + (isSet(get(doc, "api")) && isSet(get(get(doc, "api"), "key")) ? ", with an access key" : ", no access key") : "this machine only")]);
     return rows;
   }
 
@@ -2646,7 +2694,7 @@ var ConfigModel = (function () {
     cardOfDevice: cardOfDevice, radioChoices: radioChoices, uberChoices: uberChoices, pickRadio: pickRadio, radioRemovals: radioRemovals, radioNote: radioNote,
     keyingChoices: keyingChoices, keyingPicked: keyingPicked, pickKeying: pickKeying,
     setupSteps: setupSteps, setupNext: setupNext, setupPrev: setupPrev, setupKindOf: setupKindOf, setupClearChoices: setupClearChoices,
-    setupPickKind: setupPickKind, setupComplete: setupComplete, setupWriteSoftware: setupWriteSoftware, setupKissPort: setupKissPort,
+    setupPickKind: setupPickKind, setupComplete: setupComplete, setupWriteSoftware: setupWriteSoftware, setupWriteKey: setupWriteKey, setupMakeKey: setupMakeKey, setupLocalOnlyWarning: setupLocalOnlyWarning, setupKissPort: setupKissPort,
     setupNetwork: setupNetwork, setupSoftwareWords: setupSoftwareWords, setupGroupOrder: setupGroupOrder, keyTestState: keyTestState,
     setupSummary: setupSummary, setupNetworkWarning: setupNetworkWarning, setupDeviceKind: deviceFamily,
     setHidden: function (h) { HIDDEN = h; }
@@ -4973,7 +5021,7 @@ var ConfigModel = (function () {
   var keyTest = { state: "idle", text: "" };
 
   function newSetup() {
-    return { active: false, step: "radio", kind: null, keying: false, phase: "steps", error: "", moved: null, showAll: false };
+    return { active: false, step: "radio", kind: null, keying: false, phase: "steps", error: "", moved: null, showAll: false, softwareChosen: null, madeKey: "" };
   }
   setup = newSetup();
 
@@ -4988,6 +5036,7 @@ var ConfigModel = (function () {
     station.levelSeen = false;
     if (neverConfigured && M.diff(loaded, doc).length === 0) {
       M.setupClearChoices(doc);
+      setup.softwareChosen = false;
     } else {
       setup.kind = M.setupKindOf(doc);
       setup.keying = true;
@@ -5016,7 +5065,7 @@ var ConfigModel = (function () {
     window.scrollTo(0, 0);
   }
 
-  function setupFlags() { return { keying: setup.keying }; }
+  function setupFlags() { return { keying: setup.keying, softwareChosen: setup.softwareChosen }; }
 
   function drawSetup(root) {
     var wrap = el("div", "setup");
@@ -5431,19 +5480,34 @@ var ConfigModel = (function () {
       err.hidden = problem === "";
       if (problem === "") { say(); scheduleCheck(); }
       var next = $("setup-next");
-      if (next) next.disabled = problem !== "";
+      if (next) next.disabled = problem !== "" || setup.softwareChosen === false;
     });
-    var network = M.setupNetwork(doc);
-    wrap.appendChild(option("bind-local", !network, "This machine only", "Only programs on this computer can connect. Choose this if LinBPQ or your other software runs here.", function () {
+    var chosen = setup.softwareChosen !== false;
+    var network = chosen && M.setupNetwork(doc);
+    wrap.appendChild(option("bind-local", chosen && !network, "This machine only", "Only programs on this computer can connect. Choose this if LinBPQ or your other software runs here.", function () {
       M.setupWriteSoftware(doc, inp.value, false);
+      setup.softwareChosen = true;
       edited(true, "pick-bind-local");
     }, "", "setup-bind"));
     wrap.appendChild(option("bind-network", network, "Other computers on my network too", "Choose this if your software runs on another machine.", function () {
       M.setupWriteSoftware(doc, inp.value, true);
+      setup.softwareChosen = true;
       edited(true, "pick-bind-network");
     }, "", "setup-bind"));
+    if (!chosen) {
+      var pick = el("p", "stepnote");
+      pick.id = "setup-bind-choose";
+      pick.textContent = "Choose one to carry on.";
+      wrap.appendChild(pick);
+    }
     say();
     wrap.appendChild(words);
+    var remote = chosen ? M.setupLocalOnlyWarning(doc, location.hostname) : "";
+    if (remote) {
+      var away = el("p", "stepnote warn", remote);
+      away.id = "setup-local-warning";
+      wrap.appendChild(away);
+    }
     if (network) {
       var warn = el("p", "stepnote warn");
       warn.id = "setup-network-warning";
@@ -5454,6 +5518,61 @@ var ConfigModel = (function () {
       how.rel = "noopener";
       warn.appendChild(how);
       wrap.appendChild(warn);
+
+      var kr = el("div", "field");
+      var kl = el("label", null, "Access key (recommended)");
+      kl.htmlFor = "setup-key";
+      kr.appendChild(kl);
+      var ki = el("div", "input");
+      var kin = el("input");
+      kin.id = "setup-key";
+      kin.type = "text";
+      kin.autocomplete = "off";
+      kin.spellcheck = false;
+      var haveApi = M.get(doc, "api");
+      kin.value = M.isSet(haveApi) && M.isSet(M.get(haveApi, "key")) ? String(M.get(haveApi, "key")) : "";
+      kin.addEventListener("input", function () {
+        M.setupWriteKey(doc, kin.value);
+        setup.madeKey = "";
+        scheduleCheck();
+      });
+      ki.appendChild(kin);
+      kr.appendChild(ki);
+      var make = el("button", "btn small", "Make one for me");
+      make.type = "button";
+      make.id = "setup-key-make";
+      make.addEventListener("click", function () {
+        var bytes = new Uint8Array(24);
+        window.crypto.getRandomValues(bytes);
+        var made = M.setupMakeKey(bytes);
+        M.setupWriteKey(doc, made);
+        setup.madeKey = made;
+        edited(true, "setup-key-make");
+      });
+      kr.appendChild(make);
+      wrap.appendChild(kr);
+      if (setup.madeKey) {
+        var box = el("div", "newtoken");
+        box.id = "setup-key-made";
+        box.appendChild(el("b", null, "Your access key"));
+        var code = el("code", "tokentext", setup.madeKey);
+        code.id = "setup-key-text";
+        box.appendChild(code);
+        box.appendChild(el("p", "tokenwarn", "This is the only time it is shown. Copy it now and keep it somewhere safe: this page asks for it after Save and start."));
+        var bar = el("div", "bar");
+        var say2 = el("span", "muted", "");
+        say2.id = "setup-key-say";
+        var copy = el("button", "btn small", "Copy");
+        copy.type = "button";
+        copy.id = "setup-key-copy";
+        copy.addEventListener("click", function () {
+          copyText(setup.madeKey, function (ok) { say2.textContent = ok ? "Copied." : "Select the key above and copy it by hand."; });
+        });
+        bar.appendChild(copy);
+        bar.appendChild(say2);
+        box.appendChild(bar);
+        wrap.appendChild(box);
+      }
     }
     wrap.appendChild(el("p", "stepnote", "Every modem you chose shares this one port."));
   }

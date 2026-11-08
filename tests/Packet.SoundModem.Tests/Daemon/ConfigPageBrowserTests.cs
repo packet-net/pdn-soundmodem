@@ -1011,11 +1011,23 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         // Your software.
         int port = FreePorts.Next();
         await ReplaceAsync(page, "#setup-kiss-port", port.ToString());
+        // Who may reach it is an explicit choice on a station that has never been set up.
+        await Assertions.Expect(page.Locator("#pick-bind-network")).Not.ToBeCheckedAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#pick-bind-local")).Not.ToBeCheckedAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#setup-next")).ToBeDisabledAsync(new() { Timeout = StepMs });
         await page.Locator("#pick-bind-network").CheckAsync();
         await Assertions.Expect(page.Locator("#setup-kiss-words")).ToContainTextAsync($"port {port}", new() { Timeout = StepMs });
         // The network option says what it really opens.
         await Assertions.Expect(page.Locator("#setup-network-warning")).ToContainTextAsync("settings page", new() { Timeout = StepMs });
         await Assertions.Expect(page.Locator("#setup-network-warning")).ToContainTextAsync("no access key", new() { Timeout = StepMs });
+        // An access key is offered, and one can be made, shown once, and is what gets saved.
+        await Assertions.Expect(page.Locator("#setup-key")).ToHaveValueAsync("", new() { Timeout = StepMs });
+        await page.Locator("#setup-key-make").ClickAsync();
+        await Assertions.Expect(page.Locator("#setup-key-made")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        await Assertions.Expect(page.Locator("#setup-key-copy")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        string madeKey = (await page.Locator("#setup-key-text").InnerTextAsync()).Trim();
+        madeKey.Length.Should().BeGreaterThanOrEqualTo(32);
+        await Assertions.Expect(page.Locator("#setup-key")).ToHaveValueAsync(madeKey, new() { Timeout = StepMs });
         await NextAsync(page, "try");
 
         // Try it.
@@ -1039,6 +1051,7 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         file["modems"]![0]!["mode"]!.GetValue<string>().Should().Be("afsk1200");
         file["kissPort"]!.GetValue<int>().Should().Be(port);
         file["bind"]!.GetValue<string>().Should().Be("*");
+        file["api"]!["key"]!.GetValue<string>().Should().Be(madeKey);
         file["notASettingYet"]!.GetValue<int>().Should().Be(7, "what setup never showed is kept");
     }
 
@@ -1065,6 +1078,7 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
         await page.Locator("#choice-mode-bpsk300").ClickAsync();
         await Assertions.Expect(page.Locator("#setup-modem-0")).ToBeVisibleAsync(new() { Timeout = StepMs });
         await NextAsync(page, "software");
+        await page.Locator("#pick-bind-local").CheckAsync();
         await NextAsync(page, "try");
         await page.Locator("#setup-check").ClickAsync();
         await Assertions.Expect(page.Locator("#setup-check-status")).ToContainTextAsync("Looks good", new() { Timeout = StepMs });

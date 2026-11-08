@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Jint;
 using Packet.SoundModem.Daemon;
+using Packet.SoundModem.Linux.Tests;
 
 namespace Packet.SoundModem.Tests.Daemon;
 
@@ -1261,6 +1262,226 @@ public partial class ConfigPageTests : IDisposable
         result[3]!["url"]!.GetValue<string>().Should().Be("http://192.168.1.5:8107/config");
         result[4]!["url"].Should().BeNull("loopback only cannot be reached from another machine");
         result[5]!["url"]!.GetValue<string>().Should().Be("http://localhost:8107/config");
+    }
+
+    // ---------------------------------------------------------------- code settings: on the station only
+
+    private const string WithCommand = """{"device": "iqpipe:", "iqpipe": {"command": "rx_sdr -F CF32 -s {rate} -f 7050000 -", "format": "cf32", "rate": 250000}, "modems": [{"subChannel": 0, "mode": "afsk1200"}]}""";
+    private const string Plain = """{"device": "null", "modems": [{"subChannel": 0, "mode": "afsk1200"}]}""";
+    private const string CodeMessage = "Settings that run programs or load code can only be changed on the station itself, or by editing the file";
+
+    // A request that came through a reverse proxy or tunnel on this machine: its address is
+    // loopback, but it carries the header the proxy adds.
+    private static Task<HttpResponseMessage> PostAsync(Station station, string url, string body, string? forwarded)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, station.Url(url)) { Content = new StringContent(body, Encoding.UTF8) };
+        if (forwarded is not null)
+        {
+            request.Headers.Add(forwarded, "203.0.113.9");
+        }
+
+        return station.Client.SendAsync(request);
+    }
+
+    [Theory]
+    [InlineData("api/config?check=true", "")]
+    [InlineData("api/config", "")]
+    [InlineData("api/config?persist=true", "")]
+    [InlineData("api/config?check=true", "the-key")]
+    [InlineData("api/config?persist=true", "the-key")]
+    public async Task A_Command_Cannot_Be_Set_From_Anywhere_But_The_Station_Itself(string url, string key)
+    {
+        using var station = new Station(_dir, key: key);
+        if (key.Length > 0)
+        {
+            station.Client.DefaultRequestHeaders.Add("X-API-Key", key);
+        }
+
+        string before = File.ReadAllText(station.ConfigPath);
+
+        HttpResponseMessage answer = await PostAsync(station, url, WithCommand, "X-Forwarded-For");
+
+        answer.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await answer.Content.ReadAsStringAsync()).Should().Be(CodeMessage);
+        File.ReadAllText(station.ConfigPath).Should().Be(before);
+        station.Restarts.Should().Be(0);
+        File.Exists(station.PendingPath).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("Forwarded")]
+    [InlineData("X-Forwarded-For")]
+    [InlineData("X-Forwarded-Host")]
+    [InlineData("X-Real-IP")]
+    [InlineData("CF-Connecting-IP")]
+    [InlineData("True-Client-IP")]
+    public async Task Any_Forwarding_Header_Makes_A_Loopback_Request_Not_On_The_Station(string header)
+    {
+        using var station = new Station(_dir, key: "");
+
+        (await PostAsync(station, "api/config?check=true", WithCommand, header)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task On_The_Station_Itself_A_Command_Can_Be_Set_With_Or_Without_A_Key()
+    {
+        using (var open = new Station(_dir, key: ""))
+        {
+            (await PostAsync(open, "api/config?check=true", WithCommand, null)).StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+
+        using var keyed = new Station(_dir, key: "the-key");
+        keyed.Client.DefaultRequestHeaders.Add("X-API-Key", "the-key");
+        (await PostAsync(keyed, "api/config?check=true", WithCommand, null)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task A_Plugin_Cannot_Be_Loaded_From_Anywhere_But_The_Station_Itself()
+    {
+        using var station = new Station(_dir, key: "");
+        const string plugin = """{"device": "null", "modemPlugins": [{"path": "/tmp/evil.dll"}], "modems": [{"subChannel": 0, "mode": "afsk1200"}]}""";
+
+        (await PostAsync(station, "api/config?check=true", plugin, "X-Forwarded-For")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await PostAsync(station, "api/config?check=true", plugin, null)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Keeping_Or_Removing_A_Running_Command_Is_Allowed_From_Anywhere_But_Changing_It_Is_Not()
+    {
+        using var station = new Station(_dir, key: "", configText: WithCommand);
+
+        string same = WithCommand.Replace("\"afsk1200\"", "\"bpsk300\"", StringComparison.Ordinal);
+        (await PostAsync(station, "api/config?check=true", same, "X-Forwarded-For")).StatusCode.Should().Be(HttpStatusCode.OK);
+        string changed = WithCommand.Replace("7050000", "7060000", StringComparison.Ordinal);
+        (await PostAsync(station, "api/config?check=true", changed, "X-Forwarded-For")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await PostAsync(station, "api/config?check=true", Plain, "X-Forwarded-For")).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Theory]
+    // The loader reads keys in any case and the last one wins, so a guard that looked at one
+    // spelling would be walked round by the other.
+    [InlineData("""{"iqpipe": {"format": "cf32", "rate": 250000}, "IqPipe": {"command": "id", "format": "cf32", "rate": 250000}, "device": "iqpipe:", "modems": [{"subChannel": 0, "mode": "afsk1200"}]}""")]
+    [InlineData("""{"device": "iqpipe:", "iqpipe": {"command": "", "Command": "id", "format": "cf32", "rate": 250000}, "modems": [{"subChannel": 0, "mode": "afsk1200"}]}""")]
+    [InlineData("""{"device": "null", "modemPlugins": [], "ModemPlugins": [{"path": "", "Path": "/tmp/evil.dll"}], "modems": [{"subChannel": 0, "mode": "afsk1200"}]}""")]
+    [InlineData("""{"device": "null", "MODEMPLUGINS": [{"PATH": "/tmp/evil.dll"}], "modems": [{"subChannel": 0, "mode": "afsk1200"}]}""")]
+    public async Task Keys_In_Other_Capitals_Do_Not_Get_Round_The_Guard(string body)
+    {
+        using var station = new Station(_dir, key: "");
+
+        HttpResponseMessage answer = await PostAsync(station, "api/config?check=true", body, "X-Forwarded-For");
+
+        answer.StatusCode.Should().Be(HttpStatusCode.Forbidden, await answer.Content.ReadAsStringAsync());
+    }
+
+    // ALSA reads a name beginning with a pipe as a command ("file"), and "ladspa" and "hooks" load
+    // shared libraries, so a device name that is not plainly a card is code too.
+    private const string Modems = "\"modems\": [{\"subChannel\": 0, \"mode\": \"afsk1200\"}]";
+
+    public static TheoryData<string, string> AlsaNamesThatRunCode() => new()
+    {
+        { "device", """{"device": "file:'|touch /tmp/x',raw", __M__}""" },
+        { "device", """{"device": "plug:{ pcm.!default { type ladspa } }", __M__}""" },
+        { "device", """{"device": "hooks:x", __M__}""" },
+        { "device", """{"device": "'quoted'", __M__}""" },
+        { "device", """{"device": "plughw:CARD=Device,DEV=0 ", __M__}""" },
+        { "captureDevice", """{"device": "default", "captureDevice": "file:'|id',raw", __M__}""" },
+        { "playbackDevice", """{"device": "default", "playbackDevice": "ladspa:x", __M__}""" },
+        { "iqcard", """{"device": "iqcard:file:'|id',raw", __M__}""" },
+        { "mixer card", """{"device": "default", "alsa": {"mixer": {"card": "file:'|id',raw"}}, __M__}""" },
+    };
+
+    [Theory]
+    [MemberData(nameof(AlsaNamesThatRunCode))]
+    public async Task An_Unplain_Alsa_Name_Is_Code_And_Only_The_Station_Itself_Can_Set_It(string where, string template)
+    {
+        string body = template.Replace("__M__", Modems, StringComparison.Ordinal);
+        using var station = new Station(_dir, key: "");
+
+        HttpResponseMessage lan = await PostAsync(station, "api/config?check=true", body, "X-Forwarded-For");
+        HttpResponseMessage here = await PostAsync(station, "api/config?check=true", body, null);
+
+        lan.StatusCode.Should().Be(HttpStatusCode.Forbidden, where);
+        (await lan.Content.ReadAsStringAsync()).Should().Be(CodeMessage);
+        here.StatusCode.Should().NotBe(HttpStatusCode.Forbidden, where);
+    }
+
+    [Theory]
+    [InlineData("""{"device": "plughw:CARD=Device,DEV=0", __M__}""")]
+    [InlineData("""{"device": "default", "captureDevice": "plughw:CARD=Device,DEV=0", "playbackDevice": "hw:1,0", __M__}""")]
+    [InlineData("""{"device": "iqcard:plughw:CARD=Device,DEV=0", __M__}""")]
+    [InlineData("""{"device": "null", "alsa": {"mixer": {"card": "hw:CARD=Device"}}, __M__}""")]
+    [InlineData("""{"device": "sysdefault:CARD=PCH", __M__}""")]
+    [InlineData("""{"device": "pipe:/var/lib/pdn-soundmodem/a,/var/lib/pdn-soundmodem/a", __M__}""")]
+    [InlineData("""{"device": "flex:10.0.0.9", __M__}""")]
+    public async Task Plain_Card_Names_And_Other_Device_Kinds_Are_Accepted_From_Anywhere(string template)
+    {
+        string body = template.Replace("__M__", Modems, StringComparison.Ordinal);
+        using var station = new Station(_dir, key: "");
+
+        HttpResponseMessage lan = await PostAsync(station, "api/config?check=true", body, "X-Forwarded-For");
+
+        lan.StatusCode.Should().NotBe(HttpStatusCode.Forbidden, await lan.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task An_Unplain_Alsa_Name_The_Station_Already_Has_Can_Stay_But_Not_Change()
+    {
+        const string name = "file:'|id',raw";
+        using var station = new Station(_dir, key: "", configText: "{\"device\": \"" + name + "\", " + Modems + "}");
+
+        (await PostAsync(station, "api/config?check=true", "{\"device\": \"" + name + "\", \"waterfall\": {\"port\": 8107}, " + Modems + "}", "X-Forwarded-For"))
+            .StatusCode.Should().NotBe(HttpStatusCode.Forbidden);
+        (await PostAsync(station, "api/config?check=true", "{\"device\": \"file:'|id2',raw\", " + Modems + "}", "X-Forwarded-For"))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await PostAsync(station, "api/config?check=true", "{\"device\": \"default\", " + Modems + "}", "X-Forwarded-For"))
+            .StatusCode.Should().NotBe(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public void Every_Card_Setup_Offers_Is_A_Plain_Name()
+    {
+        // The discovery fixture's cards, as setup would write them into a document.
+        string machine = new FakeDeviceTree()
+            .Cm108(card: 1, hidraw: 1)
+            .Describe();
+        foreach (string line in machine.Split('\n'))
+        {
+            string[] cells = line.Split('\t');
+            if (cells.Length > 1 && cells[1].Contains("CARD=", StringComparison.Ordinal))
+            {
+                var config = new DaemonConfig { Device = cells[1] };
+                ConfigApi.UnsafeAlsaNames(config).Should().BeEmpty(cells[1]);
+            }
+        }
+
+        ConfigApi.UnsafeAlsaNames(new DaemonConfig { Device = "plughw:CARD=Device,DEV=0" }).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task The_Same_Key_Twice_In_The_Same_Capitals_Is_A_Plain_400()
+    {
+        using var station = new Station(_dir, key: "");
+        const string twice = """{"device": "null", "device": "default", "modems": [{"subChannel": 0, "mode": "afsk1200"}]}""";
+
+        foreach (string url in new[] { "api/config?check=true", "api/config" })
+        {
+            HttpResponseMessage answer = await PostAsync(station, url, twice, null);
+            answer.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            (await answer.Content.ReadAsStringAsync()).Should().Contain("same key twice");
+        }
+    }
+
+    [Fact]
+    public async Task A_Document_Restored_From_History_Cannot_Bring_A_Command_Back_From_Elsewhere()
+    {
+        using var station = new Station(_dir, key: "", configText: WithCommand);
+        (await PostAsync(station, "api/config?persist=true", Plain, null)).StatusCode.Should().Be(HttpStatusCode.OK);
+        string id = JsonNode.Parse(await station.Client.GetStringAsync(station.Url("api/config/history")))!["versions"]![0]!["id"]!.GetValue<string>();
+
+        HttpResponseMessage answer = await PostAsync(station, $"api/config?persist=true&restoreFrom={id}", WithCommand, "X-Forwarded-For");
+
+        answer.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        File.ReadAllText(station.ConfigPath).Should().NotContain("rx_sdr");
     }
 
     // ---------------------------------------------------------------- roll-back and secrets
