@@ -797,6 +797,24 @@ var ConfigModel = (function () {
              local: "http://127.0.0.1:" + port(doc) + "/config" };
   }
 
+  // Whether the document turns a station into a monitor site: it has a monitor section the
+  // loaded one did not. A monitor does not serve this page (the daemon dispatches to the monitor
+  // host before the configuration page is built), so the page would be gone after the restart.
+  function becomesMonitor(loaded, doc) {
+    return !isSet(get(loaded, "monitor")) && isSet(get(doc, "monitor"));
+  }
+
+  // What the secrets that differ in a restored version are called, by their paths. Names only:
+  // the page never holds a secret's value.
+  var SECRET_WORDS = {
+    "api.key": "access key",
+    "publish.token": "monitor token",
+    "ubersdr.password": "UberSDR password"
+  };
+  function secretWords(paths) {
+    return (paths || []).map(function (p) { return SECRET_WORDS[p] || p; });
+  }
+
   function newItem() { return {}; }
 
   var HIDDEN = "(set, not shown)";
@@ -808,7 +826,7 @@ var ConfigModel = (function () {
     parentOf: parentOf, diff: diff, fullDocument: fullDocument, newItem: newItem,
     isSet: isSet, deviceKind: deviceKind, areas: areas, labelOf: labelOf, itemOf: itemOf,
     docPath: docPath, describePath: describePath, problemText: problemText,
-    locateIssue: locateIssue, areaOf: areaOf, pageMove: pageMove, changedLabels: changedLabels, summary: summary,
+    locateIssue: locateIssue, areaOf: areaOf, pageMove: pageMove, becomesMonitor: becomesMonitor, secretWords: secretWords, changedLabels: changedLabels, summary: summary,
     setHidden: function (h) { HIDDEN = h; }
   };
 })();
@@ -843,6 +861,7 @@ var ConfigModel = (function () {
   var moreOpen = {};     // details that were open, by path
   var history = { list: null, stale: true, docs: {} };
   var lastArea = "overview";
+  var restoredSecrets = []; // the secrets (by path) that differ between that version and the running one
   var restoredFrom = null; // the earlier version the document was loaded from, if it was
 
   var $ = function (id) { return document.getElementById(id); };
@@ -896,6 +915,7 @@ var ConfigModel = (function () {
       loaded = answer.running || {};
       doc = clone(loaded);
       restoredFrom = null;
+      restoredSecrets = [];
       errors = {};
       textInvalid = false;
       check = { state: "idle", seq: check.seq + 1, problem: "", path: null };
@@ -1436,7 +1456,9 @@ var ConfigModel = (function () {
     scheduleCheck();
   }
 
-  function changedCount() { return M.diff(loaded, doc).length; }
+  // A secret that differs in a restored version is a change too, though both documents show it
+  // blanked and so the comparison cannot see it.
+  function changedCount() { return M.diff(loaded, doc).length + (restoredFrom ? restoredSecrets.length : 0); }
 
   // Asks the station whether it would start on the document, about 700 ms after the last change.
   function scheduleCheck() {
@@ -1521,6 +1543,9 @@ var ConfigModel = (function () {
     if (!doc || !loaded) return;
     var count = changedCount();
     var labels = M.changedLabels(schema, loaded, doc);
+    if (restoredFrom) {
+      M.secretWords(restoredSecrets).forEach(function (w) { labels.push(w + " (the one this version had)"); });
+    }
     var bad = Object.keys(errors).map(function (p) { return M.describePath(schema, p, [doc]); });
     if (textInvalid) bad.push("the text");
     var res = $("result").textContent;
@@ -1557,10 +1582,39 @@ var ConfigModel = (function () {
     box.textContent = "";
     box.hidden = !notice;
     if (notice) box.appendChild(notice);
+    var extra = count > 0 && bad.length === 0 && !busy ? extraNotices() : [];
+    extra.forEach(function (n) {
+      if (!box.hidden) box.appendChild(document.createElement("br"));
+      box.appendChild(n);
+      box.hidden = false;
+    });
     $("pending").hidden = !(count > 0 || res !== "" || busy);
     $("revert").disabled = busy || count === 0;
     $("try").disabled = !canApply || busy;
     $("save").disabled = !canApply || busy;
+  }
+
+  // Other things to say before applying: a restored version whose secrets differ, and a document
+  // that makes the station a monitor.
+  function extraNotices() {
+    var out = [];
+    if (restoredFrom && restoredSecrets.length > 0) {
+      out.push(document.createTextNode(secretSentence(restoredSecrets)));
+    }
+    if (M.becomesMonitor(loaded, doc)) {
+      out.push(document.createTextNode("This makes the station a monitor site. A monitor does not serve this "
+        + "configuration page, so after the restart it will not answer here; to get it back, remove the "
+        + "\"monitor\" section from the config file on the machine and restart."));
+    }
+    return out;
+  }
+
+  function secretSentence(paths) {
+    var words = M.secretWords(paths);
+    var text = words.length === 1 ? "The " + words[0] + " will change to the one this version had."
+      : "The " + words.join(", ") + " will change to the ones this version had.";
+    if (paths.indexOf("api.key") >= 0) text += " The access key changes too, so this browser will need that version's key afterwards.";
+    return text;
   }
 
   // What applying does to the page the person is looking at, if it is not just a restart: it goes
@@ -1603,6 +1657,7 @@ var ConfigModel = (function () {
   $("revert").addEventListener("click", function () {
     doc = clone(loaded);
     restoredFrom = null;
+    restoredSecrets = [];
     textInvalid = false;
     result("", "");
     drawnShape = shape();
@@ -1760,6 +1815,11 @@ var ConfigModel = (function () {
         getVersion(v.id).then(function (full) {
           look.textContent = "";
           var diffs = M.changedLabels(schema, loaded, full.config);
+          if ((full.secretsChanged || []).length > 0) {
+            var sp = el("p", null, secretSentence(full.secretsChanged));
+            sp.id = "look-secrets-" + v.id;
+            look.appendChild(sp);
+          }
           look.appendChild(el("p", null, diffs.length === 0
             ? "The same as the running configuration."
             : "Differs from the running configuration in " + diffs.length + (diffs.length === 1 ? " setting: " : " settings: ") + diffs.join(", ") + "."));
@@ -1771,6 +1831,7 @@ var ConfigModel = (function () {
         getVersion(v.id).then(function (full) {
           doc = clone(full.config);
           restoredFrom = v.id;
+          restoredSecrets = full.secretsChanged || [];
           textInvalid = false;
           location.hash = "#overview";
           drawnShape = shape();

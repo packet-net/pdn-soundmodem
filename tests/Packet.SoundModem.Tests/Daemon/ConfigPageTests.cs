@@ -1310,6 +1310,93 @@ public partial class ConfigPageTests : IDisposable
     }
 
     [Fact]
+    public async Task A_Version_Whose_Secrets_Differ_From_The_Running_Ones_Says_So_By_Name_And_Is_Not_In_Use()
+    {
+        using var station = new Station(_dir, key: "");
+        const string old = """{"device": "null", "kissPort": 8101, "api": {"key": "old-key"}, "modems": [{"subChannel": 0, "mode": "bpsk300"}]}""";
+        (await station.Client.PostAsync(station.Url("api/config"), new StringContent(old, Encoding.UTF8))).StatusCode.Should().Be(HttpStatusCode.OK);
+        // The same document in every visible way, but the key has been rotated since.
+        File.WriteAllText(station.ConfigPath, old.Replace("old-key", "rotated", StringComparison.Ordinal));
+        station.Client.DefaultRequestHeaders.Add("X-API-Key", "rotated");
+
+        string list = await station.Client.GetStringAsync(station.Url("api/config/history"));
+        JsonNode newest = JsonNode.Parse(list)!["versions"]![0]!;
+        string id = newest["id"]!.GetValue<string>();
+        string one = await station.Client.GetStringAsync(station.Url($"api/config/history/{id}"));
+
+        newest["inUse"]!.GetValue<bool>().Should().BeFalse("its key is not the one running, though the redacted documents match");
+        newest["secretsChanged"]!.AsArray().Select(n => n!.GetValue<string>()).Should().Equal("api.key");
+        JsonNode.Parse(one)!["secretsChanged"]!.AsArray().Select(n => n!.GetValue<string>()).Should().Equal("api.key");
+        (list + one).Should().NotContain("old-key").And.NotContain("rotated", "names only, never values");
+    }
+
+    [Fact]
+    public void Secrets_That_Differ_Are_Named_And_An_Absent_Secret_Equals_An_Empty_One()
+    {
+        ConfigApi.SecretsDiffering("""{"api": {"key": "a"}}""", """{"api": {"key": "a"}}""").Should().BeEmpty();
+        ConfigApi.SecretsDiffering("""{"api": {"key": ""}}""", "{}").Should().BeEmpty();
+        ConfigApi.SecretsDiffering(
+            """{"api": {"key": "a"}, "publish": {"token": "t"}, "ubersdr": {"password": "p"}}""",
+            """{"api": {"key": "b"}, "publish": {"token": "t"}}""")
+            .Should().Equal("api.key", "ubersdr.password");
+    }
+
+    [Fact]
+    public void The_Ubersdr_Password_Is_Sent_To_The_Device_And_The_Monitor_Directory_Alike()
+    {
+        const string running = """{"device": "ubersdr:a.example", "ubersdr": {"password": "pw"}, "monitor": {"directory": "https://d.example/list"}}""";
+        string posted = ConfigApi.Redact(running);
+
+        ConfigApi.RestoreHidden(posted, running, out _).Should().NotBeNull("nothing it is sent to changed");
+
+        string? deviceMoved = ConfigApi.RestoreHidden(
+            posted.Replace("a.example", "evil.example", StringComparison.Ordinal), running, out string why1);
+        deviceMoved.Should().BeNull();
+        why1.Should().Contain("device").And.Contain("ubersdr.password");
+
+        string? directoryMoved = ConfigApi.RestoreHidden(
+            posted.Replace("d.example", "evil.example", StringComparison.Ordinal), running, out string why2);
+        directoryMoved.Should().BeNull("the monitor fetches its receiver list from there and sends each the password");
+        why2.Should().Contain("monitor.directory").And.Contain("ubersdr.password");
+    }
+
+    [Fact]
+    public void A_Document_That_Makes_The_Station_A_Monitor_Is_Told_Apart()
+    {
+        Engine js = Model();
+
+        string answer = js.Evaluate("""
+            (function () {
+              var M = ConfigModel;
+              return JSON.stringify([
+                M.becomesMonitor({ device: "null" }, { device: "null" }),
+                M.becomesMonitor({ device: "null" }, { device: "null", monitor: { publicUrl: "https://m.example" } }),
+                M.becomesMonitor({ monitor: { publicUrl: "a" } }, { monitor: { publicUrl: "b" } }),
+                M.becomesMonitor({ monitor: { publicUrl: "a" } }, { device: "null" })
+              ]);
+            })()
+            """).AsString();
+
+        JsonNode.Parse(answer)!.AsArray().Select(n => n!.GetValue<bool>()).Should().Equal(false, true, false, false);
+    }
+
+    [Fact]
+    public void Files_The_Earlier_Draft_Named_By_Time_Alone_Are_Pruned_On_The_Next_Apply()
+    {
+        string directory = Path.Combine(_dir, "state5", "config-history");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "20261108T101500123Z.json"), "{}");
+        File.WriteAllText(Path.Combine(directory, "notes.json"), "{}");
+        var history = new ConfigHistory(Path.Combine(_dir, "state5", "pending-config.json"), TimeProvider.System);
+
+        history.Record("""{"kissPort": 8101}""", persisted: true, running: "{}");
+
+        File.Exists(Path.Combine(directory, "20261108T101500123Z.json")).Should().BeFalse();
+        File.Exists(Path.Combine(directory, "notes.json")).Should().BeTrue("only the earlier draft's own naming is touched");
+        history.List().Should().HaveCount(2, "the original and the new one");
+    }
+
+    [Fact]
     public async Task A_Restore_From_A_Version_That_Is_Not_There_Is_Refused()
     {
         using var station = new Station(_dir, key: "");

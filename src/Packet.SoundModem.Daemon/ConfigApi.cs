@@ -436,17 +436,46 @@ internal sealed class ConfigApi
     internal static IReadOnlyList<string> SecretPaths => [.. Secrets.Select(s => s.Path)];
 
     /// <summary>
-    /// Each secret, and the setting that says where it is sent. A placeholder keeps a stored
-    /// secret only while that setting is unchanged: otherwise anyone who could post a
+    /// Each secret, and the settings that say where it is sent. A placeholder keeps a stored
+    /// secret only while all of those settings are unchanged: otherwise anyone who could post a
     /// configuration could point <c>publish.url</c> at their own server and be sent the token
-    /// they were never shown.
+    /// they were never shown. The UberSDR password goes to the <c>device</c> and also to each
+    /// receiver the <c>monitor.directory</c> lists.
     /// </summary>
-    private static readonly (string Path, string? SentTo)[] Secrets =
+    private static readonly (string Path, string[] SentTo)[] Secrets =
     [
-        ("api.key", null),
-        ("publish.token", "publish.url"),
-        ("ubersdr.password", "device"),
+        ("api.key", []),
+        ("publish.token", ["publish.url"]),
+        ("ubersdr.password", ["device", "monitor.directory"]),
     ];
+
+    /// <summary>
+    /// The secrets whose values differ between two documents, by path and never by value. An
+    /// absent secret and an empty one are the same here. Used to say what going back to an
+    /// earlier version would change, because the served documents have every secret blanked and
+    /// so cannot show it.
+    /// </summary>
+    internal static IReadOnlyList<string> SecretsDiffering(string a, string b)
+    {
+        JsonNode? left, right;
+        try
+        {
+            left = JsonNode.Parse(a, nodeOptions: null, Jsonc);
+            right = JsonNode.Parse(b, nodeOptions: null, Jsonc);
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+
+        static string? Value(JsonNode? node)
+        {
+            string? text = node?.ToJsonString();
+            return text is null or "\"\"" ? null : text;
+        }
+
+        return [.. Secrets.Select(s => s.Path).Where(path => Value(At(left, path)) != Value(At(right, path)))];
+    }
 
     /// <summary>Whether the key at <paramref name="keyPath"/> is one whose value is never served.</summary>
     internal static bool IsSecret(string keyPath) =>
@@ -587,14 +616,20 @@ internal sealed class ConfigApi
             return null;
         }
 
-        foreach ((string path, string? sentTo) in Secrets)
+        foreach ((string path, string[] sentTo) in Secrets)
         {
-            if (sentTo is not null
-                && restored.Contains(path, StringComparer.OrdinalIgnoreCase)
-                && !JsonNode.DeepEquals(At(root, sentTo), At(stored, sentTo)))
+            if (!restored.Contains(path, StringComparer.OrdinalIgnoreCase))
             {
-                why = $"\"{sentTo}\" has changed, so \"{path}\" cannot be kept as it was: type it in again.";
-                return null;
+                continue;
+            }
+
+            foreach (string setting in sentTo)
+            {
+                if (!JsonNode.DeepEquals(At(root, setting), At(stored, setting)))
+                {
+                    why = $"\"{setting}\" has changed, so \"{path}\" cannot be kept as it was: type it in again.";
+                    return null;
+                }
             }
         }
 
@@ -1001,10 +1036,11 @@ internal sealed class ConfigApi
             var versions = new JsonArray();
             // The newest version that is what the station is running now, if any: the page says
             // "in use now" on it. Compared as the page would see them, redacted.
+            string runningText = _runningJson();
             JsonNode? running = null;
             try
             {
-                running = JsonNode.Parse(Redact(_runningJson()));
+                running = JsonNode.Parse(Redact(runningText));
             }
             catch (JsonException)
             {
@@ -1014,14 +1050,26 @@ internal sealed class ConfigApi
             foreach (ConfigHistory.Version v in _history.List())
             {
                 bool inUse = false;
-                if (!marked && running is not null && _history.Read(v.Id) is { } text)
+                var secretsChanged = new JsonArray();
+                if (_history.Read(v.Id) is { } text)
                 {
-                    try
+                    // A version whose secrets differ is not what is running, though the redacted
+                    // documents look alike.
+                    IReadOnlyList<string> differing = SecretsDiffering(text, runningText);
+                    foreach (string secret in differing)
                     {
-                        inUse = JsonNode.DeepEquals(running, JsonNode.Parse(Redact(text)));
+                        secretsChanged.Add(secret);
                     }
-                    catch (JsonException)
+
+                    if (!marked && running is not null && differing.Count == 0)
                     {
+                        try
+                        {
+                            inUse = JsonNode.DeepEquals(running, JsonNode.Parse(Redact(text)));
+                        }
+                        catch (JsonException)
+                        {
+                        }
                     }
                 }
 
@@ -1032,6 +1080,7 @@ internal sealed class ConfigApi
                     ["time"] = v.Time.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
                     ["kind"] = v.Kind,
                     ["inUse"] = inUse,
+                    ["secretsChanged"] = secretsChanged,
                 });
             }
 
@@ -1053,6 +1102,7 @@ internal sealed class ConfigApi
               "id": {{JsonSerializer.Serialize(version.Id)}},
               "time": {{JsonSerializer.Serialize(version.Time.ToString("O", System.Globalization.CultureInfo.InvariantCulture))}},
               "kind": {{JsonSerializer.Serialize(version.Kind)}},
+              "secretsChanged": {{JsonSerializer.Serialize(SecretsDiffering(document, _runningJson()))}},
               "config": {{Redact(document)}}
             }
             """).ConfigureAwait(false);

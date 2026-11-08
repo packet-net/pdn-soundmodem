@@ -61,6 +61,7 @@ internal sealed partial class ConfigHistory
         lock (_gate)
         {
             MakeDirectory();
+            PruneOldFormat();
             if (running is not null && List().Count == 0)
             {
                 Write("original", running);
@@ -70,6 +71,20 @@ internal sealed partial class ConfigHistory
             foreach (Version old in List().Where(v => v.Kind != "original").Skip(Keep))
             {
                 File.Delete(Path.Combine(_directory, FileName(old) + ".json"));
+            }
+        }
+    }
+
+    /// <summary>Deletes the files an earlier draft wrote, named by the time alone
+    /// (<c>20261108T101500123Z.json</c>): they have no sequence number or kind, so they are never
+    /// listed, and would otherwise sit in the directory for good.</summary>
+    private void PruneOldFormat()
+    {
+        foreach (string file in Directory.EnumerateFiles(_directory, "*.json"))
+        {
+            if (OldIdPattern().IsMatch(Path.GetFileNameWithoutExtension(file)))
+            {
+                File.Delete(file);
             }
         }
     }
@@ -156,6 +171,9 @@ internal sealed partial class ConfigHistory
             return File.Exists(path) ? File.ReadAllText(path) : null;
         }
     }
+
+    [GeneratedRegex(@"^\d{8}T\d{9}Z\z")]
+    private static partial Regex OldIdPattern();
 
     [GeneratedRegex(@"^(\d{6})-(saved|one-run|original)-(\d{8}T\d{9}Z)\z")]
     private static partial Regex IdPattern();
