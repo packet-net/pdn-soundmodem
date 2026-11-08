@@ -439,6 +439,36 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
     }
 
     [Fact(Timeout = 600_000)]
+    public async Task A_Modem_Added_When_The_Plan_Is_Refused_Still_Gets_A_Radio_Frequency()
+    {
+        RequireBrowser();
+        _station = await Station.StartAsync(_scratch.FullName, key: null, modems: """
+            [ { "subChannel": 0, "mode": "bpsk300", "rfFrequency": 7050800 } ],
+              "sideband": "usb"
+            """);
+        IPage page = await OpenConfigAsync();
+        await GoToAsync(page, "modes");
+        await Assertions.Expect(page.Locator("#strip-svg .blk[data-sub='0']")).ToBeVisibleAsync(new() { Timeout = StepMs });
+
+        await page.Locator("#add-f-modems").ClickAsync();
+        await page.Locator("#choice-group-nino").ClickAsync();
+        await page.Locator("#choice-mode-qpsk600").ClickAsync();
+        await Assertions.Expect(page.Locator("#f-modems_1__rfFrequency")).ToBeVisibleAsync(new() { Timeout = StepMs });
+        // Twenty kHz apart: more than one dial can cover.
+        await ReplaceAsync(page, "#f-modems_1__rfFrequency", "7.0708");
+        await Assertions.Expect(page.Locator("#strip.stale")).ToHaveCountAsync(0, new() { Timeout = StepMs });
+
+        await page.Locator("#add-f-modems").ClickAsync();
+        await page.Locator("#choice-group-nino").ClickAsync();
+        await page.Locator("#choice-mode-bpsk1200").ClickAsync();
+
+        ILocator added = page.Locator("#f-modems_2__rfFrequency");
+        await Assertions.Expect(added).ToBeVisibleAsync(new() { Timeout = StepMs });
+        string value = await added.InputValueAsync();
+        value.Should().MatchRegex(@"^\d+\.\d{6}$", "the new modem has a radio frequency like the others");
+    }
+
+    [Fact(Timeout = 600_000)]
     public async Task A_Section_Added_On_The_Page_And_An_Edit_Pasted_As_Text_Are_Both_Saved()
     {
         RequireBrowser();

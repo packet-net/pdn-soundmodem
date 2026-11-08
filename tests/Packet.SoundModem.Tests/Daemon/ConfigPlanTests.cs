@@ -804,21 +804,27 @@ public partial class ConfigPageTests
     }
 
     [Theory]
-    [InlineData("7050800", false)]
-    [InlineData("7.0508", true)]
-    [InlineData("0.05", false)]
-    [InlineData("6001", false)]
-    [InlineData("6000", true)]
-    [InlineData("0.1", true)]
-    public void Mhz_Outside_A_Sensible_Range_Is_Refused_With_A_Plain_Word(string text, bool accepted)
+    [InlineData("7050800", false, "looks like Hz")]
+    [InlineData("3580", false, "looks like kHz")]
+    [InlineData("1800", false, "looks like kHz")]
+    [InlineData("5357", false, "looks like kHz")]
+    [InlineData("30000", false, "looks like kHz")]
+    [InlineData("30001", false, "looks like Hz")]
+    [InlineData("0.05", false, "too low")]
+    [InlineData("1301", false, "looks like kHz")]
+    [InlineData("1300", true, "")]
+    [InlineData("144.8", true, "")]
+    [InlineData("7.0508", true, "")]
+    [InlineData("0.1", true, "")]
+    public void Mhz_Outside_A_Sensible_Range_Is_Refused_With_A_Plain_Word(string text, bool accepted, string said)
     {
         Engine js = Model();
         js.SetValue("text", text);
 
         js.Evaluate("!ConfigModel.mhzFromText(text).error").AsBoolean().Should().Be(accepted);
-        if (!accepted && double.Parse(text, System.Globalization.CultureInfo.InvariantCulture) > 6000)
+        if (!accepted)
         {
-            js.Evaluate("ConfigModel.mhzFromText(text).hint").AsString().Should().Contain("looks like Hz");
+            js.Evaluate("ConfigModel.mhzFromText(text).hint").AsString().Should().Contain(said).And.Contain("MHz");
         }
     }
 
@@ -915,6 +921,44 @@ public partial class ConfigPageTests
         result["all"]!.AsArray().Select(n => n!.GetValue<string>()).Should().Contain("fsk9600");
         result["tuned"]!.AsArray().Select(n => n!.GetValue<string>()).Should().NotContain("fsk9600").And.NotContain("c4fsk9600");
         result["ninoTuned"]!.AsArray().Select(n => n!.GetValue<string>()).Should().NotContain("fsk9600-il2p").And.Contain("bpsk300");
+    }
+
+    [Fact]
+    public void A_Blocks_Limits_Come_From_The_Passband_And_Not_From_Where_The_Blocks_Are()
+    {
+        Engine js = Model();
+        js.SetValue("planJson", DialPlanJson);
+
+        string answer = js.Evaluate("""
+            (function () {
+              var plan = JSON.parse(planJson);
+              var a = ConfigModel.layoutLimits(ConfigModel.stripLayout(plan, {}), 400, 6000);
+              var b = ConfigModel.layoutLimits(ConfigModel.stripLayout(plan, { 0: 7050300, 1: 7052900 }), 400, 6000);
+              var c = ConfigModel.layoutLimits(ConfigModel.stripLayout(plan, { 0: 7051000 }), 400, 6000);
+              return JSON.stringify([a, b, c]);
+            })()
+            """).AsString();
+
+        JsonArray limits = JsonNode.Parse(answer)!.AsArray();
+        limits[0]!.ToJsonString().Should().Be(limits[1]!.ToJsonString(), "a block moved to an end does not move the end");
+        limits[0]!.ToJsonString().Should().Be(limits[2]!.ToJsonString());
+        limits[0]!["min"]!.GetValue<double>().Should().BeLessThan(7050500, "a 400 Hz block may reach the lower edge");
+        limits[0]!["max"]!.GetValue<double>().Should().BeGreaterThan(7052500, "and the upper edge");
+    }
+
+    [Fact]
+    public void A_Plan_The_Station_Refused_Is_Described_In_One_Plain_Sentence()
+    {
+        Engine js = Model();
+
+        string answer = js.Evaluate("""
+            JSON.stringify(ConfigModel.stripCaption({ ok: false, problem: "modems span -8676--8324 Hz", axis: "rf", modems: [] }))
+            """).AsString();
+
+        JsonNode caption = JsonNode.Parse(answer)!;
+        string text = caption["head"]!.GetValue<string>() + ", " + caption["tail"]!.GetValue<string>();
+        text.Should().NotContain("..").And.NotContain(".,").And.NotContain("-8676").And.NotMatchRegex(@"-\d");
+        text.Should().StartWith("The station could not place these modems");
     }
 
     private const string DialPlanJson = """

@@ -865,15 +865,17 @@ var ConfigModel = (function () {
   function mhzText(hz) { return (Math.round(hz) / 1e6).toFixed(6); }
 
   // "7.0508" -> { value: 7050800 }, or { error, hint } for text that is not a frequency in MHz.
-  // Anything outside 0.1 to 6000 MHz is refused: 7050800 typed in Hz would otherwise be taken as
-  // seven million million Hz.
+  // Anything outside 0.1 to 1300 MHz (the top of the 23 cm band) is refused: 3580 typed in kHz, or
+  // 7050800 in Hz, would otherwise be taken as that many MHz.
   function mhzFromText(text) {
     var t = String(text).trim();
     if (!/^\d+(\.\d+)?$/.test(t)) return { error: "a frequency in MHz", hint: "Should be a frequency in MHz, for example 7.0508." };
     var n = Number(t);
-    if (!isFinite(n) || n < 0.1 || n > 6000) {
-      return { error: "a frequency between 0.1 and 6000 MHz",
-               hint: n > 6000 ? "That looks like Hz; type MHz, for example 7.0508." : "That is too low; type MHz, for example 7.0508." };
+    if (!isFinite(n) || n < 0.1 || n > 1300) {
+      var hint = "That is too low; type MHz, for example 7.0508.";
+      if (n > 30000) hint = "That looks like Hz; type MHz, for example 7.0508.";
+      else if (n > 1300) hint = "That looks like kHz; type MHz, for example 3.580.";
+      return { error: "a frequency between 0.1 and 1300 MHz", hint: hint };
     }
     return { value: Math.round(n * 1e6) };
   }
@@ -912,7 +914,15 @@ var ConfigModel = (function () {
       min = Math.max(min, width / 2);
       if (typeof nyquist === "number") max = Math.min(max, nyquist - width / 2);
     }
+    if (min > max) { min = max = (lo + hi) / 2; }
     return { min: min, max: max };
+  }
+
+  // The same, for a strip layout: from its limits, not from where its blocks happen to be.
+  function layoutLimits(layout, width, nyquist) {
+    var lo = typeof layout.limLo === "number" ? layout.limLo : layout.lo;
+    var hi = typeof layout.limHi === "number" ? layout.limHi : layout.hi;
+    return blockLimits(layout.axis, lo, hi, width, nyquist);
   }
 
   // Where a key puts a slider block, or null for a key that is not one of its keys. Arrows move
@@ -1040,6 +1050,17 @@ var ConfigModel = (function () {
     if (dial !== null) take(dial, dial);
     // A channel radio's audio path is not the daemon's to state; show the voice band at least.
     if (!rf && !pass) take(0, 3000);
+    // Where a block may be moved to: the passband and the dial with a margin, or the voice band,
+    // and never from where the blocks are, so a block moved to one end does not move the end.
+    var limLo = null, limHi = null;
+    if (pass) {
+      var margin = Math.max(50, (pass.hi - pass.lo) * 0.05);
+      limLo = pass.lo - margin; limHi = pass.hi + margin;
+      if (dial !== null) { limLo = Math.min(limLo, dial); limHi = Math.max(limHi, dial); }
+    } else if (!rf) {
+      limLo = 0; limHi = typeof plan.nyquistHz === "number" ? Math.min(3000, plan.nyquistHz) : 3000;
+    }
+    if (limLo !== null) take(limLo, limHi);
     if (lo === Infinity) { lo = 0; hi = 3000; }
     var pad = Math.max(50, (hi - lo) * 0.05);
     lo -= pad; hi += pad;
@@ -1050,12 +1071,12 @@ var ConfigModel = (function () {
     for (var t = Math.ceil(lo / step) * step; t <= hi; t += step) {
       ticks.push({ pos: t, label: rf ? (t / 1e6).toFixed(step >= 1000 ? 3 : step >= 100 ? 4 : 5) : String(Math.round(t)) });
     }
-    return { axis: plan.axis, lo: lo, hi: hi, ticks: ticks, passband: pass, dial: dial, blocks: blocks };
+    return { axis: plan.axis, lo: lo, hi: hi, limLo: limLo, limHi: limHi, ticks: ticks, passband: pass, dial: dial, blocks: blocks };
   }
 
   // The line over the strip, in words: what the radio hears, and from what dial.
   function stripCaption(plan) {
-    if (!plan.ok) return { head: "The station could not place these modems.", tail: plan.problem || "" };
+    if (!plan.ok) return { head: "The station could not place these modems on one dial", tail: "so move them closer together or change the dial; the bar at the bottom says what it objected to" };
     var pb = plan.passband;
     if (plan.axis === "rf" && pb && typeof pb.rfLowHz === "number") {
       var kind = plan.radio === "lsb" ? "lower sideband" : "upper sideband";
@@ -1081,7 +1102,7 @@ var ConfigModel = (function () {
     docPath: docPath, describePath: describePath, problemText: problemText,
     locateIssue: locateIssue, areaOf: areaOf, pageMove: pageMove, becomesMonitor: becomesMonitor, secretWords: secretWords, changedLabels: changedLabels, summary: summary,
     mhzText: mhzText, mhzFromText: mhzFromText, snap: snap, toneHz: toneHz, dragTo: dragTo,
-    keyDelta: keyDelta, keyMove: keyMove, dragMoved: dragMoved, blockLimits: blockLimits, nudged: nudged, freeCentre: freeCentre, nextSubChannel: nextSubChannel,
+    keyDelta: keyDelta, keyMove: keyMove, dragMoved: dragMoved, blockLimits: blockLimits, layoutLimits: layoutLimits, nudged: nudged, freeCentre: freeCentre, nextSubChannel: nextSubChannel,
     newModem: newModem, modeInfo: modeInfo, modesOfGroup: modesOfGroup, stripLayout: stripLayout,
     stripCaption: stripCaption, colourOf: colourOf,
     setHidden: function (h) { HIDDEN = h; }
@@ -1848,7 +1869,7 @@ var ConfigModel = (function () {
       g.setAttribute("tabindex", "0");
       g.setAttribute("role", "slider");
       g.setAttribute("aria-orientation", "horizontal");
-      var lim = M.blockLimits(layout.axis, layout.lo, layout.hi, b.width, plan.data ? plan.data.nyquistHz : undefined);
+      var lim = M.layoutLimits(layout, b.width, plan.data ? plan.data.nyquistHz : undefined);
       g.setAttribute("aria-valuemin", String(Math.ceil(lim.min / 100) * 100));
       g.setAttribute("aria-valuemax", String(Math.floor(lim.max / 100) * 100));
       g.setAttribute("aria-valuenow", String(Math.round(b.centre)));
@@ -1921,8 +1942,7 @@ var ConfigModel = (function () {
   }
 
   function limitsOf(b) {
-    var layout = plan.layout;
-    return M.blockLimits(layout.axis, layout.lo, layout.hi, b.width, plan.data ? plan.data.nyquistHz : undefined);
+    return M.layoutLimits(plan.layout, b.width, plan.data ? plan.data.nyquistHz : undefined);
   }
 
   function endDrag(g) {
@@ -2287,10 +2307,18 @@ var ConfigModel = (function () {
           if (pb) {
             var c = M.freeCentre(width, taken, pb.lo, pb.hi, 100);
             place.push({ key: "rfFrequency", value: c === null ? M.snap(pb.lo + width / 2, 100) : c });
-          } else if (layout && layout.blocks.length > 0) {
-            // No passband to place in (the plan could not be built): beside the highest modem.
-            var top = Math.max.apply(null, layout.blocks.map(function (b) { return b.hi; }));
-            place.push({ key: "rfFrequency", value: M.snap(top + width / 2 + 100, 100) });
+          } else {
+            // No plan to place in (it was refused): beside the highest modem the file has, in the
+            // radio frequencies the cards use, so the new one has one like all the others.
+            var top = null;
+            list.forEach(function (m) {
+              var v = M.get(m, "rfFrequency");
+              if (typeof v !== "number") return;
+              var mi = M.modeInfo(schema, M.get(m, "mode"));
+              var edge = v + (mi ? mi.widthHz : 500) / 2;
+              if (top === null || edge > top) top = edge;
+            });
+            if (top !== null) place.push({ key: "rfFrequency", value: M.snap(top + width / 2 + 100, 100) });
           }
         } else {
           var audio = data && data.passband && typeof data.passband.audioLowHz === "number"
