@@ -160,6 +160,8 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
         got.UPdu.ToArray().Should().Equal(message);
         sent.Status.Should().Be(SendStatus.Confirmed);
         bench.Keyups.Should().BeGreaterThan(1, "both stations transmitted through their channels");
+        bench.Sent.Should().BeGreaterThan(1, "every burst that went out is reported for the journal and frame log");
+        bench.Heard.Should().BeGreaterThan(1, "every burst heard is reported too");
     }
 
     // ------------------------------------------------------------------------ helpers
@@ -288,6 +290,8 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
         private readonly StringBuilder _journal = new();
         private Task? _capture;
         private int _keyups;
+        private int _sent;
+        private int _heard;
 
         public Bench()
         {
@@ -317,6 +321,12 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
 
         public int Keyups => Volatile.Read(ref _keyups);
 
+        /// <summary>Bursts the stations reported sent, for the journal and the frame log.</summary>
+        public int Sent => Volatile.Read(ref _sent);
+
+        /// <summary>Bursts the stations reported heard with decoded bytes.</summary>
+        public int Heard => Volatile.Read(ref _heard);
+
         public S5066Station StartNode(int station, string address, string seed)
         {
             // The short CSMA, CAS and DTS values M0LTE.S5066's own audio test uses: a bench, not air.
@@ -331,13 +341,30 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
                 }
                 """;
             var config = new S5066Config { Port = 0, Node = JsonDocument.Parse(node).RootElement.Clone() };
-            return S5066Station.Start(_channels[station], config, IPAddress.Loopback, line =>
+            void Note(string line)
             {
                 lock (_journal)
                 {
                     _journal.AppendLine($"[{station}] {line}");
                 }
-            });
+            }
+
+            return S5066Station.Start(
+                _channels[station], config, IPAddress.Loopback, Note,
+                sent: burst =>
+                {
+                    Interlocked.Increment(ref _sent);
+                    Note($"sent {burst.Waveform} {burst.Bytes.Length} bytes");
+                },
+                heard: burst =>
+                {
+                    if (burst.Bytes.Length > 0)
+                    {
+                        Interlocked.Increment(ref _heard);
+                    }
+
+                    Note($"heard {burst.Waveform} {burst.Bytes.Length} bytes, SNR {burst.SnrDb}, {burst.Ended}");
+                });
         }
 
         /// <summary>Starts the capture clock, once both nodes have their receive taps in.</summary>

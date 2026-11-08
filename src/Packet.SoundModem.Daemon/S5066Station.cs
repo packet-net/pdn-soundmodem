@@ -125,15 +125,22 @@ internal sealed class S5066Station : IAsyncDisposable
     /// <param name="config">The section, as loaded (its node settings already read).</param>
     /// <param name="listen">The <c>"bind"</c> address.</param>
     /// <param name="say">Where one-line journal messages go.</param>
-    internal static S5066Station Start(SoundModemChannel channel, S5066Config config, IPAddress listen, Action<string> say)
+    /// <param name="sent">Told of each burst once its audio has gone to the device, for the
+    /// journal and the frame log. Called on a thread-pool thread.</param>
+    /// <param name="heard">Told of each burst the modem locked to, once it has ended, with the
+    /// blocks it decoded. Called on the receive thread, so it must return promptly.</param>
+    internal static S5066Station Start(
+        SoundModemChannel channel, S5066Config config, IPAddress listen, Action<string> say,
+        Action<Burst>? sent = null, Action<Burst>? heard = null)
     {
         ArgumentNullException.ThrowIfNull(channel);
         ArgumentNullException.ThrowIfNull(config);
         HostConfig node = config.Parsed ?? ReadNode(config.Node);
         void Log(string line) => say($"s5066: {line}");
 
-        var audio = new ChannelAudio(channel, Log);
-        var modem = new BusyInput(new Ms110dHostModem(audio, log: Log), channel);
+        BusyInput? modem = null;
+        var audio = new ChannelAudio(channel, Log, () => modem?.NoteSent());
+        modem = new BusyInput(new Ms110dHostModem(audio, log: Log), channel, sent, heard);
         var host = new NodeHost(node.Node, node.PrngSeed, modem, new NodeHostOptions
         {
             SisEndpoint = new IPEndPoint(listen, config.Port),
@@ -159,6 +166,21 @@ internal sealed class S5066Station : IAsyncDisposable
         _modem.Dispose();
     }
 
+    /// <summary>One 110D burst the node sent or heard: its bytes (D_PDUs, as the core framed them;
+    /// for a heard burst, every decoded block, padding included), waveform and interleaver.</summary>
+    /// <param name="Bytes">The bytes.</param>
+    /// <param name="Wn">The waveform number.</param>
+    /// <param name="Interleaver">The interleaver.</param>
+    /// <param name="SnrDb">The modem's SNR for a heard burst, if it measured one.</param>
+    internal sealed record Burst(byte[] Bytes, int Wn, Interleaver Interleaver, double? SnrDb)
+    {
+        /// <summary>How a heard burst ended; null for one we sent.</summary>
+        public BurstEndReason? Ended { get; init; }
+
+        /// <summary>The waveform as a journal and the frame log show it, e.g. <c>wn6 short</c>.</summary>
+        public string Waveform => $"wn{Wn} {InterleaverNames.ToName(Interleaver).Replace('_', ' ')}";
+    }
+
     /// <summary>
     /// The channel's audio at the modem's 9600 Hz (<see cref="IAudioChannel"/>): received audio from
     /// a channel receive tap, decimated; bursts upsampled and queued on the channel's transmitter.
@@ -174,9 +196,10 @@ internal sealed class S5066Station : IAsyncDisposable
         private readonly int _factor;
         private readonly Decimator _decimator;
         private float[] _decimated = [];
+        private readonly Action _wentOut;
         private Action<ReadOnlyMemory<float>>? _received;
 
-        internal ChannelAudio(SoundModemChannel channel, Action<string> log)
+        internal ChannelAudio(SoundModemChannel channel, Action<string> log, Action wentOut)
         {
             if (channel.SampleRate % IAudioChannel.SampleRate != 0)
             {
@@ -187,6 +210,7 @@ internal sealed class S5066Station : IAsyncDisposable
 
             _channel = channel;
             _log = log;
+            _wentOut = wentOut;
             _factor = channel.SampleRate / IAudioChannel.SampleRate;
             _decimator = new Decimator(channel.SampleRate, _factor);
         }
@@ -226,6 +250,10 @@ internal sealed class S5066Station : IAsyncDisposable
                     if (t.Exception?.GetBaseException() is { } why)
                     {
                         _log($"burst not sent: {why.Message}");
+                    }
+                    else if (!t.IsCanceled)
+                    {
+                        _wentOut();
                     }
 
                     played();
@@ -284,7 +312,10 @@ internal sealed class S5066Station : IAsyncDisposable
 
         private readonly IHostModem _inner;
         private readonly SoundModemChannel _channel;
+        private readonly Action<Burst>? _sent;
+        private readonly Action<Burst>? _heard;
         private readonly TimeProvider _time;
+        private Burst? _sending;
         private readonly object _gate = new();
         private ITimer? _timer;
         private IModemEvents? _events;
@@ -292,10 +323,14 @@ internal sealed class S5066Station : IAsyncDisposable
         private long _unkeyedAt;
         private bool? _reported;
 
-        internal BusyInput(IHostModem inner, SoundModemChannel channel, TimeProvider? time = null)
+        internal BusyInput(
+            IHostModem inner, SoundModemChannel channel, Action<Burst>? sent = null, Action<Burst>? heard = null,
+            TimeProvider? time = null)
         {
             _inner = inner;
             _channel = channel;
+            _sent = sent;
+            _heard = heard;
             _time = time ?? TimeProvider.System;
         }
 
@@ -307,13 +342,28 @@ internal sealed class S5066Station : IAsyncDisposable
         {
             _events = events;
             _channel.TransmittingChanged += OnTransmitting;
-            _inner.Start(events);
+            _inner.Start(_heard is null ? events : new Listening(events, _heard));
             _timer = _time.CreateTimer(_ => Poll(), null, PollInterval, PollInterval);
         }
 
         /// <inheritdoc/>
-        public void Transmit(ReadOnlyMemory<byte> bytes, int wn, Interleaver interleaver, int k, bool eom) =>
+        public void Transmit(ReadOnlyMemory<byte> bytes, int wn, Interleaver interleaver, int k, bool eom)
+        {
             _inner.Transmit(bytes, wn, interleaver, k, eom);
+            if (_sent is not null)
+            {
+                Volatile.Write(ref _sending, new Burst(bytes.ToArray(), wn, interleaver, SnrDb: null));
+            }
+        }
+
+        /// <summary>The burst <see cref="Transmit"/> started has gone to the device.</summary>
+        internal void NoteSent()
+        {
+            if (Interlocked.Exchange(ref _sending, null) is { } burst)
+            {
+                _sent?.Invoke(burst);
+            }
+        }
 
         /// <inheritdoc/>
         public void TerminateReceive() => _inner.TerminateReceive();
@@ -347,6 +397,36 @@ internal sealed class S5066Station : IAsyncDisposable
             }
 
             _events?.ChannelBusy(busy);
+        }
+
+        /// <summary>Passes every event on, and gathers each burst's decoded blocks for
+        /// <see cref="_heard"/>.</summary>
+        private sealed class Listening(IModemEvents inner, Action<Burst> heard) : IModemEvents
+        {
+            private readonly List<byte> _bytes = [];
+
+            public void BurstStarted()
+            {
+                _bytes.Clear();
+                inner.BurstStarted();
+            }
+
+            public void BytesReceived(ReadOnlyMemory<byte> bytes)
+            {
+                _bytes.AddRange(bytes.Span);
+                inner.BytesReceived(bytes);
+            }
+
+            public void BurstEnded(BurstEndReason reason, int wn, Interleaver interleaver, int k, int? snrTenthDb, int blocks)
+            {
+                inner.BurstEnded(reason, wn, interleaver, k, snrTenthDb, blocks);
+                heard(new Burst([.. _bytes], wn, interleaver, snrTenthDb / 10.0) { Ended = reason });
+                _bytes.Clear();
+            }
+
+            public void TransmitDone() => inner.TransmitDone();
+
+            public void ChannelBusy(bool busy) => inner.ChannelBusy(busy);
         }
 
         private void OnTransmitting(bool keyed)

@@ -63,6 +63,11 @@ public class TransmitRecordTests
             "ARDOP: only the virtual TNC knows what the burst was, so the record is written from "
             + "its own FrameTransmitted event (Program.cs, ardopTnc.FrameTransmitted), not here"),
 
+        new("src/Packet.SoundModem.Daemon/S5066Station.cs",
+            "source: this",
+            "the STANAG 5066 node: once the burst has gone to the device, S5066Station's sent callback, "
+            + "which Program.cs turns into a journal line and frameLog.RecordTransmitted with the burst's bytes"),
+
         new("src/Packet.SoundModem.Daemon/IdentTransmission.cs",
             "source: owed",
             "the CW ident: recorded in Program.cs beside owed.NoteIdentified(), with the ident text as the "
