@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pdn-soundmodem configuration - mock-ups</title>
+<style>
+  :root {
+    --bg: #0a0d11;
+    --panel: #11161d;
+    --raised: #161d26;
+    --edge: #1e2632;
+    --ink: #d9e2ea;
+    --muted: #8793a0;
+    --amber: #f5a83c;
+    --trace: #56c8dd;
+    --violet: #b79bff;
+    --good: #7fd18b;
+    --warn: #ffb86b;
+    --bad: #ff9a7a;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
+    --sans: system-ui, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { color-scheme: dark; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); }
+  a { color: var(--amber); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  .mono { font-family: var(--mono); font-size: 13.5px; }
+
+  /* The strip at the very top is not part of the design: it switches between mock-ups. */
+  .mocknav { display: flex; gap: 6px; align-items: center; padding: 8px 14px; background: #2a1d07;
+             border-bottom: 1px solid #4a3410; font-size: 13px; color: #e8c88f; flex-wrap: wrap; }
+  .mocknav button { background: none; border: 1px solid #4a3410; border-radius: 4px; padding: 3px 10px; }
+  .mocknav button[aria-pressed="true"] { background: #4a3410; color: #fff3dc; }
+  .mocknav span { margin-right: 6px; }
+
+  header.top { display: flex; align-items: center; gap: 16px; padding: 10px 18px;
+               background: var(--panel); border-bottom: 1px solid var(--edge); flex-wrap: wrap; }
+  .wordmark { font-family: var(--mono); font-size: 14px; }
+  .wordmark b { color: var(--amber); font-weight: 600; }
+  .wordmark span { color: var(--muted); }
+  .top .station { color: var(--muted); font-size: 13.5px; }
+  .top .right { margin-left: auto; display: flex; gap: 14px; align-items: center; font-size: 13.5px; }
+  .ghost { background: none; border: 1px solid var(--edge); border-radius: 5px; padding: 4px 11px; font-size: 13.5px; }
+  .ghost:hover { border-color: var(--muted); }
+
+  .screen { display: none; }
+  .screen.on { display: block; }
+
+  /* ------------------------------------------------------------ overview */
+  .layout { display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 92px); }
+  nav.areas { border-right: 1px solid var(--edge); padding: 16px 10px; display: flex; flex-direction: column; gap: 2px; }
+  nav.areas a { color: var(--ink); padding: 7px 10px; border-radius: 5px; display: flex; justify-content: space-between; align-items: center; }
+  nav.areas a:hover { background: var(--raised); text-decoration: none; }
+  nav.areas a.on { background: var(--raised); box-shadow: inset 2px 0 0 var(--amber); }
+  nav.areas a small { color: var(--muted); font-size: 12px; }
+  nav.areas .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); display: inline-block; }
+  nav.areas hr { border: 0; border-top: 1px solid var(--edge); margin: 10px 4px; }
+  main { padding: 26px clamp(16px, 4vw, 44px) 120px; max-width: 900px; }
+  h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 4px; }
+  .lede { color: var(--muted); max-width: 62ch; margin-bottom: 26px; }
+
+  .area { border-top: 1px solid var(--edge); padding: 18px 0 20px; display: grid;
+          grid-template-columns: 190px 1fr auto; gap: 6px 22px; align-items: start; }
+  .area h2 { font-size: 16px; font-weight: 600; }
+  .area p { max-width: 58ch; }
+  .area p + p { margin-top: 4px; }
+  .area .sub { color: var(--muted); font-size: 13.5px; }
+  .area .edit { background: none; border: 1px solid var(--edge); border-radius: 5px; padding: 4px 12px; font-size: 13.5px; }
+  .area .edit:hover { border-color: var(--amber); color: var(--amber); }
+  .notice { margin-top: 8px; padding: 8px 11px; border-left: 2px solid var(--warn); background: #1b1610;
+            font-size: 13.5px; max-width: 58ch; }
+  .notice b { color: var(--warn); font-weight: 600; }
+  .ok { color: var(--good); }
+
+  .pending { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--edge);
+             padding: 12px 18px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .pending .what { flex: 1; min-width: 240px; font-size: 14px; }
+  .pending .what small { display: block; color: var(--muted); font-size: 13px; }
+  .btn { border-radius: 5px; padding: 7px 15px; border: 1px solid var(--edge); background: var(--raised); font-size: 14px; }
+  .btn.primary { background: var(--amber); color: #1a1205; border-color: var(--amber); font-weight: 600; }
+  .btn:hover { border-color: var(--muted); }
+
+  /* ------------------------------------------------------------ modes */
+  .strip { background: var(--panel); border: 1px solid var(--edge); border-radius: 6px; padding: 16px 18px 10px; margin-bottom: 24px; }
+  .strip .caption { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 13.5px; color: var(--muted); margin-bottom: 8px; }
+  .strip .caption b { color: var(--ink); font-weight: 600; }
+  .strip svg { width: 100%; height: auto; display: block; }
+  .strip .key { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .strip .key i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+
+  .modem { border: 1px solid var(--edge); border-radius: 6px; margin-bottom: 14px; background: var(--panel); }
+  .modem > .head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--edge); flex-wrap: wrap; }
+  .modem .swatch { width: 12px; height: 12px; border-radius: 3px; }
+  .modem .name { font-weight: 600; }
+  .modem .talks { color: var(--muted); font-size: 13.5px; }
+  .modem .head .spacer { flex: 1; }
+  .modem .body { padding: 14px 16px 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px 22px; }
+  .field label { display: block; font-size: 13.5px; margin-bottom: 4px; }
+  .field .hint { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+  .input { display: flex; align-items: center; background: #0d1117; border: 1px solid var(--edge); border-radius: 5px; }
+  .input input, .input select { flex: 1; min-width: 0; background: none; border: 0; color: var(--ink); padding: 7px 9px; font: inherit; }
+  .input .unit { color: var(--muted); padding: 0 10px; font-size: 13px; }
+  .input.mono input { font-family: var(--mono); font-size: 14px; }
+  .input.warned { border-color: var(--warn); }
+  .field .warntext { color: var(--warn); font-size: 12.5px; margin-top: 4px; }
+  .more { grid-column: 1 / -1; font-size: 13.5px; color: var(--muted); }
+  .more summary { cursor: pointer; }
+  .add { width: 100%; padding: 12px; border: 1px dashed var(--edge); border-radius: 6px; background: none; color: var(--muted); }
+  .add:hover { color: var(--amber); border-color: var(--amber); }
+
+  .picker { grid-column: 1 / -1; }
+  .choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; }
+  .choice { text-align: left; background: #0d1117; border: 1px solid var(--edge); border-radius: 6px; padding: 9px 12px; }
+  .choice:hover { border-color: var(--muted); }
+  .choice[aria-pressed="true"] { border-color: var(--trace); box-shadow: inset 0 0 0 1px var(--trace); }
+  .choice b { display: block; font-weight: 600; font-size: 14px; }
+  .choice span { color: var(--muted); font-size: 12.5px; }
+
+  /* ------------------------------------------------------------ setup */
+  .setup { max-width: 760px; margin: 0 auto; padding: 30px 18px 120px; }
+  .steps { display: flex; gap: 0; margin-bottom: 30px; list-style: none; counter-reset: step; flex-wrap: wrap; }
+  .steps li { flex: 1; min-width: 92px; font-size: 13px; color: var(--muted); padding-top: 9px; border-top: 3px solid var(--edge); margin-right: 4px; }
+  .steps li.done { border-top-color: var(--good); color: var(--ink); }
+  .steps li.now { border-top-color: var(--amber); color: var(--ink); font-weight: 600; }
+  .setup h1 { font-size: 26px; }
+  .found { margin: 22px 0 10px; font-size: 13.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+  .found .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
+  .option { display: grid; grid-template-columns: 22px 1fr; gap: 4px 12px; padding: 14px 16px; border: 1px solid var(--edge);
+            border-radius: 7px; margin-bottom: 9px; background: var(--panel); cursor: pointer; }
+  .option:hover { border-color: var(--muted); }
+  .option.picked { border-color: var(--amber); background: #17130c; }
+  .option input { margin-top: 4px; accent-color: var(--amber); }
+  .option b { font-weight: 600; }
+  .option .detail { grid-column: 2; color: var(--muted); font-size: 13.5px; }
+  .option .detail .mono { color: var(--ink); }
+  .option .extra { grid-column: 2; margin-top: 8px; display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+  .option .extra .field { min-width: 150px; }
+  .tryit { margin-top: 10px; padding: 12px 14px; border: 1px solid var(--edge); border-radius: 6px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+  .tryit .result { color: var(--good); }
+  .stepnav { display: flex; justify-content: space-between; margin-top: 30px; gap: 12px; }
+  .elsewhere { margin-top: 18px; font-size: 13.5px; color: var(--muted); }
+
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.areas { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--edge); padding: 8px; }
+    nav.areas a { white-space: nowrap; }
+    nav.areas hr { display: none; }
+    .area { grid-template-columns: 1fr auto; }
+    .area > div:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+    .area .edit { grid-column: 2; grid-row: 1; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .found .pulse { animation: pulse 2s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity: .35; } }
+  }
+</style>
+</head>
+<body>
+
+<div class="mocknav" role="toolbar" aria-label="Mock-up screens">
+  <span>Mock-up, not working software. Screen:</span>
+  <button aria-pressed="true" data-screen="overview">Overview</button>
+  <button aria-pressed="false" data-screen="modes">Modes and frequencies</button>
+  <button aria-pressed="false" data-screen="setup">First-time setup</button>
+</div>
+
+<!-- ====================================================================== overview -->
+<section class="screen on" id="overview">
+  <header class="top">
+    <div class="wordmark"><b>pdn-soundmodem</b> <span>settings</span></div>
+    <span class="station">GB7XYZ-2, running from /etc/pdn-soundmodem/soundmodem.json</span>
+    <div class="right">
+      <button class="ghost">Edit as text</button>
+      <a href="#">Station page</a>
+    </div>
+  </header>
+  <div class="layout">
+    <nav class="areas" aria-label="Settings areas">
+      <a class="on" href="#">Overview</a>
+      <a href="#">Radio and audio</a>
+      <a href="#">Keying <span class="dot" title="Needs attention"></span></a>
+      <a href="#">Modes and frequencies <small>3</small></a>
+      <a href="#">Connect your software</a>
+      <a href="#">Sharing and logging</a>
+      <hr>
+      <a href="#">Advanced</a>
+      <a href="#">Earlier versions <small>4</small></a>
+      <a href="#">Run setup again</a>
+    </nav>
+    <main>
+      <h1>Your station</h1>
+      <p class="lede">What this station is set up to do, in one place. Each area opens the settings behind it.</p>
+
+      <div class="area">
+        <h2>Radio and audio</h2>
+        <div>
+          <p>A FlexRadio 6500 at <span class="mono">10.45.0.76</span>, slice A, receiving and transmitting through DAX channel 1.</p>
+          <p class="sub">Dial 7.0500 MHz, upper sideband, 2.8 kHz wide.</p>
+        </div>
+        <button class="edit">Change</button>
+      </div>
+
+      <div class="area">
+        <h2>Keying</h2>
+        <div>
+          <p>The radio keys itself; this station asks it to transmit over the network.</p>
+          <p class="sub">Carrier sense listens to the audio.</p>
+          <div class="notice"><b>Worth a look.</b> No callsign ident is set. Stations that transmit unattended usually send one every 10 minutes.</div>
+        </div>
+        <button class="edit">Change</button>
+      </div>
+
+      <div class="area">
+        <h2>Modes and frequencies</h2>
+        <div>
+          <p>Three modems: NinoTNC 300 baud BPSK on 7.0508 MHz, NinoTNC 600 baud QPSK on 7.0516 MHz, and 300 baud HF packet on 7.0525 MHz.</p>
+          <p class="sub">All three fit inside the radio's passband.</p>
+        </div>
+        <button class="edit">Change</button>
+      </div>
+
+      <div class="area">
+        <h2>Connect your software</h2>
+        <div>
+          <p>Node and BBS software connect over KISS to port <span class="mono">8105</span> on every network interface.</p>
+          <p class="sub">LinBPQ is connected now, on sub-channels 0 and 1.</p>
+        </div>
+        <button class="edit">Change</button>
+      </div>
+
+      <div class="area">
+        <h2>Sharing and logging</h2>
+        <div>
+          <p>The station page is at port <span class="mono">8099</span> on your network, and asks for the key before any change.</p>
+          <p class="sub">Heard frames are kept for 30 days. Not sent to a public monitor.</p>
+        </div>
+        <button class="edit">Change</button>
+      </div>
+    </main>
+  </div>
+  <div class="pending" role="region" aria-label="Changes not yet applied">
+    <div class="what">2 changes not applied yet: ident every 10 minutes, KISS port 8105 on this machine only.
+      <small>Applying restarts the station for about 5 seconds. LinBPQ reconnects by itself.</small></div>
+    <button class="btn">Discard</button>
+    <button class="btn">Try until next restart</button>
+    <button class="btn primary">Save and restart</button>
+  </div>
+</section>
+
+<!-- ====================================================================== modes -->
+<section class="screen" id="modes">
+  <header class="top">
+    <div class="wordmark"><b>pdn-soundmodem</b> <span>settings</span></div>
+    <span class="station">GB7XYZ-2</span>
+    <div class="right">
+      <button class="ghost">Edit as text</button>
+      <a href="#">Station page</a>
+    </div>
+  </header>
+  <div class="layout">
+    <nav class="areas" aria-label="Settings areas">
+      <a href="#">Overview</a>
+      <a href="#">Radio and audio</a>
+      <a href="#">Keying</a>
+      <a class="on" href="#">Modes and frequencies <small>3</small></a>
+      <a href="#">Connect your software</a>
+      <a href="#">Sharing and logging</a>
+      <hr>
+      <a href="#">Advanced</a>
+      <a href="#">Earlier versions <small>4</small></a>
+    </nav>
+    <main>
+      <h1>Modes and frequencies</h1>
+      <p class="lede">Each modem listens and transmits on its own frequency inside what the radio can hear. Drag a block on the band, or type the frequency.</p>
+
+      <div class="strip">
+        <div class="caption">
+          <span><b>The radio hears 7.0503 to 7.0528 MHz</b>, upper sideband from a dial of 7.0500 MHz</span>
+          <span>Width shown is each mode's occupied bandwidth</span>
+        </div>
+        <svg viewBox="0 0 800 150" role="img" aria-label="Passband from 7.0503 to 7.0528 MHz with three modems in it; the third crosses the upper edge by 150 Hz">
+          <!-- passband, 7.0503 to 7.0528 MHz on a 7.0500 to 7.0535 axis: 1 kHz = 800/3.5 px -->
+          <rect x="68.6" y="20" width="571.4" height="84" fill="#56c8dd" fill-opacity=".06" stroke="#56c8dd" stroke-opacity=".35"/>
+          <text x="72" y="16" fill="#8793a0" font-size="11" font-family="system-ui">what the radio hears</text>
+          <!-- dial marker -->
+          <line x1="0.5" y1="10" x2="0.5" y2="112" stroke="#f5a83c" stroke-width="1.5"/>
+          <text x="5" y="122" fill="#f5a83c" font-size="11" font-family="system-ui">dial</text>
+          <!-- 1 kHz = 228.57 px from 7.0500 MHz -->
+          <!-- modem 1: 300 BPSK at 7.0508, about 330 Hz -->
+          <rect x="145.2" y="44" width="75.4" height="60" rx="3" fill="#f5a83c" fill-opacity=".85"/>
+          <text x="182.9" y="38" fill="#d9e2ea" font-size="12" text-anchor="middle" font-family="system-ui">300 BPSK</text>
+          <!-- modem 2: 600 QPSK at 7.0516, about 660 Hz -->
+          <rect x="290.3" y="44" width="150.9" height="60" rx="3" fill="#56c8dd" fill-opacity=".8"/>
+          <text x="365.7" y="38" fill="#d9e2ea" font-size="12" text-anchor="middle" font-family="system-ui">600 QPSK</text>
+          <!-- modem 3: 300 baud AFSK at 7.0527, about 500 Hz: its top 150 Hz is past the edge -->
+          <rect x="560" y="44" width="114.3" height="60" rx="3" fill="#b79bff" fill-opacity=".6" stroke="#ffb86b" stroke-width="1.5" stroke-dasharray="4 3"/>
+          <text x="617" y="38" fill="#d9e2ea" font-size="12" text-anchor="middle" font-family="system-ui">300 AFSK</text>
+          <line x1="640" y1="20" x2="640" y2="104" stroke="#ffb86b" stroke-width="1.5"/>
+          <text x="680" y="70" fill="#ffb86b" font-size="11" font-family="system-ui">past the edge</text>
+          <!-- axis -->
+          <line x1="0" y1="112" x2="800" y2="112" stroke="#1e2632"/>
+          <g fill="#8793a0" font-size="11" font-family="ui-monospace, monospace" text-anchor="middle">
+            <text x="114" y="136">7.0505</text><text x="228.6" y="136">7.0510</text><text x="343" y="136">7.0515</text>
+            <text x="457" y="136">7.0520</text><text x="571.4" y="136">7.0525</text><text x="686" y="136">7.0530</text>
+          </g>
+          <g stroke="#2a3441"><line x1="114" y1="112" x2="114" y2="118"/><line x1="228.6" y1="112" x2="228.6" y2="118"/><line x1="343" y1="112" x2="343" y2="118"/><line x1="457" y1="112" x2="457" y2="118"/><line x1="571.4" y1="112" x2="571.4" y2="118"/><line x1="686" y1="112" x2="686" y2="118"/></g>
+        </svg>
+        <div class="key"><span><i style="background:#f5a83c"></i>NinoTNC 300 baud BPSK</span><span><i style="background:#56c8dd"></i>NinoTNC 600 baud QPSK</span><span><i style="background:#b79bff"></i>300 baud HF packet, sticks out past the top edge</span></div>
+      </div>
+
+      <div class="modem">
+        <div class="head">
+          <span class="swatch" style="background:#f5a83c"></span>
+          <span class="name">NinoTNC 300 baud BPSK</span>
+          <span class="talks">Talks to NinoTNC mode 3 and other IL2P+CRC stations</span>
+          <span class="spacer"></span>
+          <button class="ghost">Remove</button>
+        </div>
+        <div class="body">
+          <div class="field">
+            <label for="f1">Frequency</label>
+            <div class="input mono"><input id="f1" value="7.050800"><span class="unit">MHz</span></div>
+            <div class="hint">Audio tone 800 Hz at this dial</div>
+          </div>
+          <div class="field">
+            <label for="s1">KISS sub-channel</label>
+            <div class="input"><select id="s1"><option>0 (chosen for you)</option></select></div>
+            <div class="hint">What your node software calls this port</div>
+          </div>
+          <details class="more"><summary>More for this modem: its own KISS port, ident, transmit level, burst length</summary></details>
+        </div>
+      </div>
+
+      <div class="modem">
+        <div class="head">
+          <span class="swatch" style="background:#56c8dd"></span>
+          <span class="name">NinoTNC 600 baud QPSK</span>
+          <span class="talks">Talks to NinoTNC mode 5</span>
+          <span class="spacer"></span>
+          <button class="ghost">Remove</button>
+        </div>
+        <div class="body">
+          <div class="field">
+            <label for="f2">Frequency</label>
+            <div class="input mono"><input id="f2" value="7.051600"><span class="unit">MHz</span></div>
+            <div class="hint">Audio tone 1600 Hz at this dial</div>
+          </div>
+          <div class="field">
+            <label for="s2">KISS sub-channel</label>
+            <div class="input"><select id="s2"><option>1 (chosen for you)</option></select></div>
+          </div>
+          <details class="more"><summary>More for this modem</summary></details>
+        </div>
+      </div>
+
+      <div class="modem">
+        <div class="head">
+          <span class="swatch" style="background:#b79bff"></span>
+          <span class="name">300 baud HF packet</span>
+          <span class="talks">Talks to classic 300 baud AFSK stations: Dire Wolf, KAM, PK-232</span>
+          <span class="spacer"></span>
+          <button class="ghost">Remove</button>
+        </div>
+        <div class="body">
+          <div class="field">
+            <label for="f3">Frequency</label>
+            <div class="input mono warned"><input id="f3" value="7.052700"><span class="unit">MHz</span></div>
+            <div class="warntext">Its top 150 Hz falls outside what the radio hears. Move it down to 7.0525 MHz, or widen the radio's filter on the Radio and audio page.</div>
+          </div>
+          <div class="field">
+            <label for="w3">KISS sub-channel</label>
+            <div class="input"><select id="w3"><option>2 (chosen for you)</option></select></div>
+          </div>
+          <details class="more"><summary>More for this modem</summary></details>
+        </div>
+      </div>
+
+      <button class="add">Add a modem</button>
+
+      <div class="modem" style="margin-top:14px">
+        <div class="head"><span class="name">Add a modem: what do you want to talk to?</span></div>
+        <div class="body">
+          <div class="picker">
+            <div class="choices">
+              <button class="choice" aria-pressed="true"><b>A NinoTNC</b><span>Pick its mode number next; the modem matches it</span></button>
+              <button class="choice" aria-pressed="false"><b>1200 baud packet</b><span>Most VHF and UHF APRS and packet nodes</span></button>
+              <button class="choice" aria-pressed="false"><b>9600 baud packet</b><span>FM radios with a 9600 data port</span></button>
+              <button class="choice" aria-pressed="false"><b>300 baud HF packet</b><span>Classic AFSK on 30 m</span></button>
+              <button class="choice" aria-pressed="false"><b>Mailcast and HF data</b><span>MIL-STD-188-110D, FreeDV data</span></button>
+              <button class="choice" aria-pressed="false"><b>ARDOP</b><span>For Winlink and other ARDOP software</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <div class="pending" role="region" aria-label="Changes not yet applied">
+    <div class="what">1 problem to fix before applying: the 300 baud HF packet modem sticks out past the passband.
+      <small>The station checks every change as you make it.</small></div>
+    <button class="btn">Discard</button>
+    <button class="btn" disabled>Try until next restart</button>
+    <button class="btn primary" disabled style="opacity:.5">Save and restart</button>
+  </div>
+</section>
+
+<!-- ====================================================================== setup -->
+<section class="screen" id="setup">
+  <header class="top">
+    <div class="wordmark"><b>pdn-soundmodem</b> <span>setup</span></div>
+    <div class="right"><a href="#">Skip setup and edit settings directly</a></div>
+  </header>
+  <div class="setup">
+    <ol class="steps" aria-label="Setup steps">
+      <li class="done">Your radio</li>
+      <li class="done">Sound card</li>
+      <li class="now" aria-current="step">Keying</li>
+      <li>Modes</li>
+      <li>Your software</li>
+      <li>Try it</li>
+    </ol>
+
+    <h1>How does this station key the radio?</h1>
+    <p class="lede">Packet needs the radio to transmit when the modem talks. These are the ways this machine could do that.</p>
+
+    <div class="found"><span class="pulse" aria-hidden="true"></span>Found on this machine just now</div>
+
+    <label class="option picked">
+      <input type="radio" name="ptt" checked>
+      <b>The sound card's own PTT pin</b>
+      <span class="detail">C-Media USB Audio Device, the same card you picked for audio, at <span class="mono">/dev/hidraw0</span>. Most CM108 interfaces key on GPIO 3.</span>
+      <span class="extra">
+        <span class="field"><label for="gpio">GPIO pin</label><span class="input"><select id="gpio"><option>3 (usual)</option><option>1</option><option>2</option><option>4</option></select></span></span>
+      </span>
+    </label>
+
+    <label class="option">
+      <input type="radio" name="ptt">
+      <b>A serial port</b>
+      <span class="detail">FTDI USB serial adapter at <span class="mono">/dev/ttyUSB0</span>, keying on RTS or DTR.</span>
+    </label>
+
+    <label class="option">
+      <input type="radio" name="ptt">
+      <b>Hamlib's rigctld</b>
+      <span class="detail">Nothing is answering on <span class="mono">localhost:4532</span> now. Choose this if you start rigctld yourself.</span>
+    </label>
+
+    <label class="option">
+      <input type="radio" name="ptt">
+      <b>The radio's VOX, or not at all</b>
+      <span class="detail">Nothing is keyed. Fine for receive-only, risky for transmitting: VOX clips the start of every packet.</span>
+    </label>
+
+    <div class="tryit">
+      <button class="btn">Key the radio for 2 seconds</button>
+      <span class="result">Keyed and released. Did the radio's TX light come on?</span>
+    </div>
+
+    <div class="stepnav">
+      <button class="btn">Back to sound card</button>
+      <button class="btn primary">Next: choose modes</button>
+    </div>
+    <p class="elsewhere">Nothing is changed until the last step. You can come back to any step from the settings page later.</p>
+  </div>
+</section>
+
+<script>
+  // Mock-up navigation only.
+  document.querySelectorAll(".mocknav button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll(".mocknav button").forEach(function (o) { o.setAttribute("aria-pressed", o === b ? "true" : "false"); });
+      document.querySelectorAll(".screen").forEach(function (s) { s.classList.toggle("on", s.id === b.dataset.screen); });
+      window.scrollTo(0, 0);
+    });
+  });
+  document.querySelectorAll(".option").forEach(function (o) {
+    o.addEventListener("click", function () {
+      document.querySelectorAll(".option").forEach(function (x) { x.classList.toggle("picked", x === o); });
+    });
+  });
+</script>
+</body>
+</html>
