@@ -890,12 +890,19 @@ var ConfigModel = (function () {
   // 7050800 -> "7.050800": MHz to the Hz, as a frequency is dialled.
   function mhzText(hz) { return (Math.round(hz) / 1e6).toFixed(6); }
 
-  // "7.0508" -> { value: 7050800 }, or { error: "a frequency in MHz" }.
+  // "7.0508" -> { value: 7050800 }, or { error, hint } for text that is not a frequency in MHz.
+  // Anything outside 0.1 to 1300 MHz (the top of the 23 cm band) is refused: 3580 typed in kHz, or
+  // 7050800 in Hz, would otherwise be taken as that many MHz.
   function mhzFromText(text) {
     var t = String(text).trim();
-    if (!/^\d+(\.\d+)?$/.test(t)) return { error: "a frequency in MHz" };
+    if (!/^\d+(\.\d+)?$/.test(t)) return { error: "a frequency in MHz", hint: "Should be a frequency in MHz, for example 7.0508." };
     var n = Number(t);
-    if (!isFinite(n) || n <= 0) return { error: "a frequency in MHz" };
+    if (!isFinite(n) || n < 0.1 || n > 1300) {
+      var hint = "That is too low; type MHz, for example 7.0508.";
+      if (n > 30000) hint = "That looks like Hz; type MHz, for example 7.0508.";
+      else if (n > 1300) hint = "That looks like kHz; type MHz, for example 3.580.";
+      return { error: "a frequency between 0.1 and 1300 MHz", hint: hint };
+    }
     return { value: Math.round(n * 1e6) };
   }
 
@@ -909,13 +916,57 @@ var ConfigModel = (function () {
     return radio === "lsb" ? dialHz - rfHz : rfHz - dialHz;
   }
 
+  // A pointer that has moved less than this has not dragged: a click or a finger's jitter.
+  var DRAG_THRESHOLD_PX = 4;
+  function dragMoved(dxPx) { return Math.abs(dxPx) >= DRAG_THRESHOLD_PX; }
+
   // Where a block lands when the pointer has moved dxPx from where it was picked up, on an axis
-  // where one pixel is hzPerPx. Snapped to step, and kept between min and max when given.
+  // where one pixel is hzPerPx: where it started, moved by the distance snapped to step, so a
+  // frequency off the grid is never changed by anything smaller than a step. Kept between min and
+  // max when given.
   function dragTo(startPos, dxPx, hzPerPx, step, min, max) {
-    var pos = snap(startPos + dxPx * hzPerPx, step);
-    if (typeof min === "number" && pos < min) pos = Math.ceil(min / (step || SNAP_HZ)) * (step || SNAP_HZ);
-    if (typeof max === "number" && pos > max) pos = Math.floor(max / (step || SNAP_HZ)) * (step || SNAP_HZ);
+    step = step || SNAP_HZ;
+    var pos = startPos + snap(dxPx * hzPerPx, step);
+    if (typeof min === "number" && pos < min) pos = Math.ceil(min / step) * step;
+    if (typeof max === "number" && pos > max) pos = Math.floor(max / step) * step;
     return pos;
+  }
+
+  // The range a block's centre may be moved over: the strip's own, and on an audio strip also
+  // above zero (the whole block) and under the channel's Nyquist limit.
+  function blockLimits(axis, lo, hi, width, nyquist) {
+    var min = lo + width / 2, max = hi - width / 2;
+    if (axis !== "rf") {
+      min = Math.max(min, width / 2);
+      if (typeof nyquist === "number") max = Math.min(max, nyquist - width / 2);
+    }
+    if (min > max) { min = max = (lo + hi) / 2; }
+    return { min: min, max: max };
+  }
+
+  // The same, for a strip layout: from its limits, not from where its blocks happen to be.
+  function layoutLimits(layout, width, nyquist) {
+    var lo = typeof layout.limLo === "number" ? layout.limLo : layout.lo;
+    var hi = typeof layout.limHi === "number" ? layout.limHi : layout.hi;
+    return blockLimits(layout.axis, lo, hi, width, nyquist);
+  }
+
+  // Where a key puts a slider block, or null for a key that is not one of its keys. Arrows move
+  // 100 Hz (1 kHz with Shift), Page Up and Down 1 kHz, Home and End go to the ends of its range.
+  function keyMove(keyName, shift, pos, min, max) {
+    var next = null;
+    if (keyName === "Home") next = Math.ceil(min / SNAP_HZ) * SNAP_HZ;
+    else if (keyName === "End") next = Math.floor(max / SNAP_HZ) * SNAP_HZ;
+    else if (keyName === "PageUp") next = nudged(pos, 1000, SNAP_HZ);
+    else if (keyName === "PageDown") next = nudged(pos, -1000, SNAP_HZ);
+    else {
+      var d = keyDelta(keyName, shift);
+      if (d === 0) return null;
+      next = nudged(pos, d, SNAP_HZ);
+    }
+    if (next > max) next = Math.floor(max / SNAP_HZ) * SNAP_HZ;
+    if (next < min) next = Math.ceil(min / SNAP_HZ) * SNAP_HZ;
+    return next;
   }
 
   // What an arrow key moves a block by: 100 Hz, or 1 kHz with Shift; 0 for any other key.
@@ -963,10 +1014,11 @@ var ConfigModel = (function () {
     return null;
   }
 
-  // A modem entry for a mode. place is { key, value } for the frequency it starts on, or null.
+  // A modem entry for a mode. place is { key, value }, or a list of them, for what it starts with, or null.
   function newModem(mode, subChannel, place) {
     var m = { subChannel: subChannel, mode: mode };
-    if (place) m[place.key] = place.value;
+    var places = !place ? [] : Array.isArray(place) ? place : [place];
+    places.forEach(function (p) { m[p.key] = p.value; });
     return m;
   }
 
@@ -979,9 +1031,11 @@ var ConfigModel = (function () {
 
   // The modes of a picker group, in the order the picker lists them. The NinoTNC group is the
   // modes that carry a NinoTNC mode number, lowest first.
-  function modesOfGroup(schema, groupId) {
+  // With tunableOnly, only those that have an audio tone to place (not the baseband modes).
+  function modesOfGroup(schema, groupId, tunableOnly) {
     var list = schema && schema.modes ? schema.modes.list : [];
     var out = list.filter(function (m) {
+      if (tunableOnly && !m.tunable) return false;
       return groupId === "nino" ? typeof m.ninoMode === "number" : m.group === groupId;
     });
     if (groupId === "nino") out.sort(function (a, b) { return a.ninoMode - b.ninoMode; });
@@ -1022,6 +1076,17 @@ var ConfigModel = (function () {
     if (dial !== null) take(dial, dial);
     // A channel radio's audio path is not the daemon's to state; show the voice band at least.
     if (!rf && !pass) take(0, 3000);
+    // Where a block may be moved to: the passband and the dial with a margin, or the voice band,
+    // and never from where the blocks are, so a block moved to one end does not move the end.
+    var limLo = null, limHi = null;
+    if (pass) {
+      var margin = Math.max(50, (pass.hi - pass.lo) * 0.05);
+      limLo = pass.lo - margin; limHi = pass.hi + margin;
+      if (dial !== null) { limLo = Math.min(limLo, dial); limHi = Math.max(limHi, dial); }
+    } else if (!rf) {
+      limLo = 0; limHi = typeof plan.nyquistHz === "number" ? Math.min(3000, plan.nyquistHz) : 3000;
+    }
+    if (limLo !== null) take(limLo, limHi);
     if (lo === Infinity) { lo = 0; hi = 3000; }
     var pad = Math.max(50, (hi - lo) * 0.05);
     lo -= pad; hi += pad;
@@ -1032,12 +1097,12 @@ var ConfigModel = (function () {
     for (var t = Math.ceil(lo / step) * step; t <= hi; t += step) {
       ticks.push({ pos: t, label: rf ? (t / 1e6).toFixed(step >= 1000 ? 3 : step >= 100 ? 4 : 5) : String(Math.round(t)) });
     }
-    return { axis: plan.axis, lo: lo, hi: hi, ticks: ticks, passband: pass, dial: dial, blocks: blocks };
+    return { axis: plan.axis, lo: lo, hi: hi, limLo: limLo, limHi: limHi, ticks: ticks, passband: pass, dial: dial, blocks: blocks };
   }
 
   // The line over the strip, in words: what the radio hears, and from what dial.
   function stripCaption(plan) {
-    if (!plan.ok) return { head: "The station could not place these modems.", tail: plan.problem || "" };
+    if (!plan.ok) return { head: "The station could not place these modems on one dial", tail: "so move them closer together or change the dial; the bar at the bottom says what it objected to" };
     var pb = plan.passband;
     if (plan.axis === "rf" && pb && typeof pb.rfLowHz === "number") {
       var kind = plan.radio === "lsb" ? "lower sideband" : "upper sideband";
@@ -1270,7 +1335,7 @@ var ConfigModel = (function () {
     docPath: docPath, describePath: describePath, problemText: problemText,
     locateIssue: locateIssue, areaOf: areaOf, pageMove: pageMove, becomesMonitor: becomesMonitor, secretWords: secretWords, changedLabels: changedLabels, summary: summary,
     mhzText: mhzText, mhzFromText: mhzFromText, snap: snap, toneHz: toneHz, dragTo: dragTo,
-    keyDelta: keyDelta, nudged: nudged, freeCentre: freeCentre, nextSubChannel: nextSubChannel,
+    keyDelta: keyDelta, keyMove: keyMove, dragMoved: dragMoved, blockLimits: blockLimits, layoutLimits: layoutLimits, nudged: nudged, freeCentre: freeCentre, nextSubChannel: nextSubChannel,
     newModem: newModem, modeInfo: modeInfo, modesOfGroup: modesOfGroup, stripLayout: stripLayout,
     stripCaption: stripCaption, colourOf: colourOf,
     cardOfDevice: cardOfDevice, radioChoices: radioChoices, uberChoices: uberChoices, pickRadio: pickRadio, radioRemovals: radioRemovals, radioNote: radioNote,
@@ -2028,13 +2093,18 @@ var ConfigModel = (function () {
 
   // Everything that shows the plan: the strip, each modem's hint and its warning.
   function paintPlan() {
-    paintStrip();
+    // A block being dragged is never rebuilt under the pointer: the drawing is brought up to date
+    // when it is let go.
+    if (plan.drag) plan.dirty = true; else paintStrip();
     document.querySelectorAll("[data-hint-for]").forEach(function (h) {
       var sub = Number(h.dataset.hintFor);
       var m = planFor(sub);
       var entry = findModem(sub);
       var text = "";
-      if (placedByDial()) {
+      if (m && m.leaseOnly) {
+        text = "Tuned by its lease" + (typeof m.leaseDialHz === "number" && m.audioCentreHz !== null
+          ? ": dial " + M.mhzText(m.leaseDialHz) + " MHz, audio tone " + Math.round(m.audioCentreHz) + " Hz" : "");
+      } else if (placedByDial()) {
         var rf = entry ? M.get(entry, "rfFrequency") : undefined;
         if (typeof rf === "number" && plan.data && typeof plan.data.dialHz === "number") {
           text = "Audio tone " + Math.round(M.toneHz(rf, plan.data.dialHz, plan.data.radio)) + " Hz at this dial";
@@ -2207,8 +2277,9 @@ var ConfigModel = (function () {
       g.setAttribute("tabindex", "0");
       g.setAttribute("role", "slider");
       g.setAttribute("aria-orientation", "horizontal");
-      g.setAttribute("aria-valuemin", String(Math.round(layout.lo)));
-      g.setAttribute("aria-valuemax", String(Math.round(layout.hi)));
+      var lim = M.layoutLimits(layout, b.width, plan.data ? plan.data.nyquistHz : undefined);
+      g.setAttribute("aria-valuemin", String(Math.ceil(lim.min / 100) * 100));
+      g.setAttribute("aria-valuemax", String(Math.floor(lim.max / 100) * 100));
       g.setAttribute("aria-valuenow", String(Math.round(b.centre)));
       g.setAttribute("aria-valuetext", rf ? M.mhzText(b.centre) + " MHz" : Math.round(b.centre) + " Hz");
     }
@@ -2249,7 +2320,8 @@ var ConfigModel = (function () {
   function setPosition(sub, pos) {
     var entry = findModem(sub);
     if (!entry) return;
-    var rf = plan.layout && plan.layout.axis === "rf";
+    // Written where the card writes: by the same rule that decides which field the card shows.
+    var rf = placedByDial();
     var name = rf ? "rfFrequency" : "frequency";
     M.set(entry, name, pos);
     if (rf) M.remove(entry, "frequency");
@@ -2264,22 +2336,50 @@ var ConfigModel = (function () {
       label.classList.toggle("changed", JSON.stringify(M.valueAt(loaded, at)) !== JSON.stringify(pos));
     }
     var hint = document.querySelector('[data-hint-for="' + sub + '"]');
-    if (hint && rf && plan.data && typeof plan.data.dialHz === "number") {
+    var lease = planFor(sub);
+    if (hint && rf && !(lease && lease.leaseOnly) && plan.data && typeof plan.data.dialHz === "number") {
       hint.textContent = "Audio tone " + Math.round(M.toneHz(pos, plan.data.dialHz, plan.data.radio)) + " Hz at this dial";
     }
     edited(false);
   }
 
+  // Whether the strip on screen is drawn in the units the cards write, so a move of a block
+  // means what its field means.
+  function stripAgrees() {
+    return !!plan.layout && (plan.layout.axis === "rf") === placedByDial();
+  }
+
+  function limitsOf(b) {
+    return M.layoutLimits(plan.layout, b.width, plan.data ? plan.data.nyquistHz : undefined);
+  }
+
+  function endDrag(g) {
+    if (!plan.drag) return;
+    plan.drag = null;
+    g.classList.remove("dragging");
+    if (plan.dirty) { plan.dirty = false; paintStrip(); }
+    schedulePlan(true);
+  }
+
   function wireBlock(g, b) {
     var sub = b.subChannel;
+    function move(pos) {
+      var lim = limitsOf(b);
+      pos = Math.max(Math.ceil(lim.min / 100) * 100, Math.min(Math.floor(lim.max / 100) * 100, pos));
+      if (pos === Number(g.dataset.centre)) return;
+      plan.overrides[sub] = pos;
+      placeBlock(g, b, pos);
+      setPosition(sub, pos);
+    }
     g.addEventListener("pointerdown", function (e) {
       if (e.button !== undefined && e.button > 0) return;
+      if (!stripAgrees()) return;
       var s = $("strip-svg");
       var width = s.getBoundingClientRect().width || plan.geom.W;
       // One pixel of the page is the axis span over the usable width of the drawing, in pixels.
       var usable = (plan.geom.W - 2 * plan.geom.pad) * (width / plan.geom.W);
       plan.drag = { sub: sub, pointer: e.pointerId, startX: e.clientX, start: Number(g.dataset.centre),
-                    hzPerPx: (plan.layout.hi - plan.layout.lo) / usable };
+                    hzPerPx: (plan.layout.hi - plan.layout.lo) / usable, moved: false };
       try { g.setPointerCapture(e.pointerId); } catch (err) { /* a synthetic pointer has nothing to capture */ }
       g.classList.add("dragging");
       g.focus();
@@ -2288,30 +2388,24 @@ var ConfigModel = (function () {
     g.addEventListener("pointermove", function (e) {
       var d = plan.drag;
       if (!d || d.pointer !== e.pointerId) return;
-      var pos = M.dragTo(d.start, e.clientX - d.startX, d.hzPerPx, 100,
-                         plan.layout.lo + b.width / 2, plan.layout.hi - b.width / 2);
-      if (pos === Number(g.dataset.centre)) return;
-      plan.overrides[sub] = pos;
-      placeBlock(g, b, pos);
-      setPosition(sub, pos);
+      // A button let go somewhere the block never heard of ends the drag rather than leaving it stuck.
+      if (e.pointerType === "mouse" && e.buttons === 0) { endDrag(g); return; }
+      // A click, or a finger's jitter, is not a drag.
+      if (!d.moved) { if (!M.dragMoved(e.clientX - d.startX)) return; d.moved = true; }
+      var lim = limitsOf(b);
+      move(M.dragTo(d.start, e.clientX - d.startX, d.hzPerPx, 100, lim.min, lim.max));
     });
-    function end(e) {
-      var d = plan.drag;
-      if (!d || d.pointer !== e.pointerId) return;
-      plan.drag = null;
-      g.classList.remove("dragging");
-      schedulePlan(true);
-    }
+    function end(e) { if (plan.drag && plan.drag.pointer === e.pointerId) endDrag(g); }
     g.addEventListener("pointerup", end);
     g.addEventListener("pointercancel", end);
+    g.addEventListener("lostpointercapture", end);
     g.addEventListener("keydown", function (e) {
-      var delta = M.keyDelta(e.key, e.shiftKey);
-      if (delta === 0) return;
+      if (!stripAgrees()) return;
+      var lim = limitsOf(b);
+      var pos = M.keyMove(e.key, e.shiftKey, Number(g.dataset.centre), lim.min, lim.max);
+      if (pos === null) return;
       e.preventDefault();
-      var pos = M.nudged(Number(g.dataset.centre), delta, 100);
-      plan.overrides[sub] = pos;
-      placeBlock(g, b, pos);
-      setPosition(sub, pos);
+      move(pos);
     });
   }
 
@@ -2496,11 +2590,12 @@ var ConfigModel = (function () {
     };
     if (differs()) label.classList.add("changed");
     input.addEventListener("input", function () {
-      var reason = null;
+      var reason = null, message = null;
       if (input.value !== original || errors[path] !== undefined) {
         if (byDial) {
           var parsed = M.mhzFromText(input.value);
-          reason = parsed.error ? parsed.error : M.writeField(doc, path, key, String(parsed.value));
+          if (parsed.error) { reason = parsed.error; message = parsed.hint; }
+          else reason = M.writeField(doc, path, key, String(parsed.value));
         } else {
           reason = M.writeField(doc, path, key, input.value);
         }
@@ -2513,7 +2608,7 @@ var ConfigModel = (function () {
       }
       box.classList.toggle("invalid", !!reason);
       err.hidden = !reason;
-      err.textContent = reason ? "Should be " + reason + "." : "";
+      err.textContent = reason ? (message || "Should be " + reason + ".") : "";
       label.classList.toggle("changed", differs());
       if (!reason) {
         var shown = M.valueAt(doc, path);
@@ -2537,11 +2632,18 @@ var ConfigModel = (function () {
     var body = el("div", "body");
     var choices = el("div", "choices");
     var groups = schema.modes.groups;
+    // Modes with no audio tone (the 9600 baud and OFDM-FM families) cannot be placed at a radio
+    // frequency on a sideband radio, so a station placed that way is not offered them.
+    var tunableOnly = placedByDial();
+    var hidden = false;
+    groups.forEach(function (g) {
+      if (M.modesOfGroup(schema, g.id, tunableOnly).length !== M.modesOfGroup(schema, g.id).length) hidden = true;
+    });
     if (!picker.group) {
       groups.forEach(function (g) {
-        if (M.modesOfGroup(schema, g.id).length === 0) return;
+        if (M.modesOfGroup(schema, g.id, tunableOnly).length === 0) return;
         choices.appendChild(choice("group-" + g.id, g.title, g.blurb, function () {
-          var modes = M.modesOfGroup(schema, g.id);
+          var modes = M.modesOfGroup(schema, g.id, tunableOnly);
           if (modes.length === 1) { addModem(n, modes[0].mode); return; }
           picker.group = g.id;
           render();
@@ -2549,7 +2651,7 @@ var ConfigModel = (function () {
       });
     } else {
       var nino = picker.group === "nino";
-      M.modesOfGroup(schema, picker.group).forEach(function (m) {
+      M.modesOfGroup(schema, picker.group, tunableOnly).forEach(function (m) {
         var title = nino ? "NinoTNC mode " + m.ninoMode : m.name;
         var text = nino ? m.name : "Talks to " + m.talksTo;
         choices.appendChild(choice("mode-" + m.mode, title, text, function () { addModem(n, m.mode); }));
@@ -2557,6 +2659,14 @@ var ConfigModel = (function () {
       choices.appendChild(choice("back", "Back", "Choose something else to talk to", function () { picker.group = null; render(); }));
     }
     body.appendChild(choices);
+    if (hidden) {
+      var why = el("p", "muted", "Modes with no audio tone to place, such as 9600 baud packet and the OFDM modes, are not listed: "
+        + "this station places its modems by radio frequency. Put them on a station that places them by audio frequency or on FM.");
+      why.id = "picker-note";
+      why.style.gridColumn = "1 / -1";
+      why.style.fontSize = "13px";
+      body.appendChild(why);
+    }
     card.appendChild(body);
     return card;
   }
@@ -2585,8 +2695,17 @@ var ConfigModel = (function () {
     var info = M.modeInfo(schema, mode);
     var byDial = placedByDial();
     // The station is asked where things are now, so the free part found is free in its own plan.
+    // On FM the modems share a channel; a file that gives one modem its channel (rfFrequency) must
+    // give every modem one, so a new modem is put on the same channel.
+    var channel = null;
+    if (radioKind() === "fm") {
+      list.forEach(function (m) {
+        var v = M.get(m, "rfFrequency");
+        if (channel === null && typeof v === "number") channel = v;
+      });
+    }
     planNow().then(function (data) {
-      var place = null;
+      var place = [];
       if (list.length > 0 && (!info || info.tunable)) {
         var width = info ? info.widthHz : 500;
         var layout = data && data.ok ? M.stripLayout(data) : null;
@@ -2595,25 +2714,34 @@ var ConfigModel = (function () {
           var pb = layout ? layout.passband : null;
           if (pb) {
             var c = M.freeCentre(width, taken, pb.lo, pb.hi, 100);
-            place = { key: "rfFrequency", value: c === null ? M.snap(pb.lo + width / 2, 100) : c };
-          } else if (layout && layout.blocks.length > 0) {
-            // No passband to place in (the plan could not be built): beside the highest modem.
-            var top = Math.max.apply(null, layout.blocks.map(function (b) { return b.hi; }));
-            place = { key: "rfFrequency", value: M.snap(top + width / 2 + 100, 100) };
+            place.push({ key: "rfFrequency", value: c === null ? M.snap(pb.lo + width / 2, 100) : c });
+          } else {
+            // No plan to place in (it was refused): beside the highest modem the file has, in the
+            // radio frequencies the cards use, so the new one has one like all the others.
+            var top = null;
+            list.forEach(function (m) {
+              var v = M.get(m, "rfFrequency");
+              if (typeof v !== "number") return;
+              var mi = M.modeInfo(schema, M.get(m, "mode"));
+              var edge = v + (mi ? mi.widthHz : 500) / 2;
+              if (top === null || edge > top) top = edge;
+            });
+            if (top !== null) place.push({ key: "rfFrequency", value: M.snap(top + width / 2 + 100, 100) });
           }
         } else {
           var audio = data && data.passband && typeof data.passband.audioLowHz === "number"
             ? { lo: data.passband.audioLowHz, hi: data.passband.audioHighHz } : { lo: 300, hi: 3000 };
           var a = M.freeCentre(width, taken, audio.lo, audio.hi, 100);
-          place = { key: "frequency", value: a === null ? M.snap(audio.lo + width / 2, 100) : a };
+          place.push({ key: "frequency", value: a === null ? M.snap(audio.lo + width / 2, 100) : a });
         }
       }
+      if (channel !== null) place.push({ key: "rfFrequency", value: channel });
       var arr = M.valueAt(doc, n.path);
       if (!Array.isArray(arr)) { var s = atPath(n.path); arr = []; M.set(s.at.obj, s.at.last, arr); }
       arr.push(M.newModem(mode, sub, place));
       picker = { open: false, group: null };
       edited(true);
-      var field = $("f-modems_" + (arr.length - 1) + "__" + (place ? place.key : "subChannel"));
+      var field = $("f-modems_" + (arr.length - 1) + "__" + (place.length > 0 ? place[0].key : "subChannel"));
       if (field) field.focus();
     });
   }

@@ -703,6 +703,264 @@ public partial class ConfigPageTests
         caption["tail"]!.GetValue<string>().Should().Be("upper sideband from a dial of 7.050000 MHz");
     }
 
+    // ---------------------------------------------------------------- review follow-ups
+
+    [Fact]
+    public async Task A_Dial_Left_In_The_File_Beside_Audio_Modems_Does_Not_Make_The_Strip_An_Rf_One()
+    {
+        using var station = new Station(_dir, key: "");
+
+        JsonNode plan = await PlanAsync(station, """
+            {
+              "device": "null", "sideband": "usb", "dialFrequency": 7050000,
+              "modems": [
+                { "subChannel": 0, "mode": "bpsk300", "frequency": 1000 },
+                { "subChannel": 1, "mode": "afsk300", "frequency": 2700 }
+              ]
+            }
+            """);
+
+        plan["axis"]!.GetValue<string>().Should().Be("audio", "the modems are placed in audio terms, as the cards show them");
+        string text = plan["warnings"]!.AsArray().Single()!["text"]!.GetValue<string>();
+        text.Should().Contain(" Hz").And.NotContain("MHz", "the suggestion is in the units the card shows");
+    }
+
+    [Fact]
+    public async Task A_Modem_That_Transmits_Only_Under_A_Lease_Is_Planned_On_Its_Own_Dial()
+    {
+        using var station = new Station(_dir, key: "");
+
+        JsonNode plan = await PlanAsync(station, """
+            {
+              "device": "null", "sideband": "usb", "rig": { "rigctld": "127.0.0.1:4532" },
+              "modems": [
+                { "subChannel": 0, "mode": "bpsk300", "rfFrequency": 7050800 },
+                { "subChannel": 1, "mode": "bpsk300", "rfFrequency": 14100800, "transmitOnlyUnderLease": true }
+              ]
+            }
+            """);
+
+        JsonNode lease = plan["modems"]!.AsArray().Single(m => m!["subChannel"]!.GetValue<int>() == 1)!;
+        lease["leaseOnly"]!.GetValue<bool>().Should().BeTrue();
+        lease["rfHz"]!.GetValue<double>().Should().Be(14100800);
+        double leaseDial = lease["leaseDialHz"]!.GetValue<double>();
+        leaseDial.Should().NotBe(plan["dialHz"]!.GetValue<double>());
+        lease["audioCentreHz"]!.GetValue<double>().Should().BeApproximately(14100800 - leaseDial, 0.01);
+        plan["warnings"]!.AsArray().Should().BeEmpty("a lease-only modem is not judged against the everyday passband");
+    }
+
+    [Theory]
+    [InlineData("flex:192.0.2.1", true)]
+    [InlineData("flex:192.0.2.1:B", true)]
+    [InlineData("flex:192.0.2.1@Station", false)]
+    [InlineData("pipe:/tmp/a,/tmp/b", false)]
+    [InlineData("null", false)]
+    public void The_Wide_Passband_Is_Opened_Only_Where_The_Daemon_Owns_The_Radio(string device, bool wide)
+    {
+        DaemonConfig config = new() { Device = device };
+
+        ConfigApi.CeilingFor(config).Should().Be(wide ? Passband.WideCeilingHz : null);
+    }
+
+    [Fact]
+    public void A_Refusal_Is_Cut_Down_To_The_Problem_As_The_Pages_Check_Does()
+    {
+        string refusal = "configuration error in /tmp/x.json:\n  two modems share \"subChannel\": 1.\n  Renumber one.\n\nTo recover, copy the example over /tmp/x.json.";
+
+        ConfigApi.ProblemOf(refusal).Should().Be("two modems share \"subChannel\": 1. Renumber one.");
+        ConfigApi.ProblemOf("modem 0: unknown mode 'x'.").Should().Be("modem 0: unknown mode 'x'.");
+    }
+
+    [Fact]
+    public async Task The_Same_Document_Asked_Twice_Gets_The_Same_Answer()
+    {
+        using var station = new Station(_dir, key: "");
+
+        JsonNode first = await PlanAsync(station, DialStation);
+        JsonNode second = await PlanAsync(station, DialStation);
+
+        second.ToJsonString().Should().Be(first.ToJsonString());
+    }
+
+    [Fact]
+    public void The_Plan_Says_Where_The_Channel_Ends_So_An_Audio_Strip_Can_Be_Kept_Under_It()
+    {
+        string path = Path.Combine(_dir, "nyquist.json");
+        File.WriteAllText(path, """{ "device": "null", "modems": [ { "subChannel": 0, "mode": "afsk1200" } ] }""");
+
+        ConfigPlan.Describe(DaemonConfig.TryLoad(path, out _, null)!)["nyquistHz"]!.GetValue<double>().Should().Be(6000);
+    }
+
+    [Fact]
+    public void The_Multi_Modes_Are_Said_To_Be_The_Modems_They_Are_Aliases_Of_And_The_Docs_Far_Ends_Are_Named()
+    {
+        ModeLabels.For("bpsk300-multi")!.Name.Should().NotContain("extra decoders");
+        ModeLabels.For("bpsk1200-multi")!.Name.Should().NotContain("extra decoders");
+        ModeLabels.For("bpsk300-multi")!.NinoMode.Should().BeNull("the docs give an alias no number of its own");
+        foreach (string mode in new[] { "bpsk300", "bpsk1200", "qpsk600", "qpsk2400" })
+        {
+            ModeLabels.For(mode)!.TalksTo.Should().Contain("QtSoundModem V26A", $"the docs list QtSM V26A for {mode}");
+        }
+    }
+
+    [Theory]
+    [InlineData("7050800", false, "looks like Hz")]
+    [InlineData("3580", false, "looks like kHz")]
+    [InlineData("1800", false, "looks like kHz")]
+    [InlineData("5357", false, "looks like kHz")]
+    [InlineData("30000", false, "looks like kHz")]
+    [InlineData("30001", false, "looks like Hz")]
+    [InlineData("0.05", false, "too low")]
+    [InlineData("1301", false, "looks like kHz")]
+    [InlineData("1300", true, "")]
+    [InlineData("144.8", true, "")]
+    [InlineData("7.0508", true, "")]
+    [InlineData("0.1", true, "")]
+    public void Mhz_Outside_A_Sensible_Range_Is_Refused_With_A_Plain_Word(string text, bool accepted, string said)
+    {
+        Engine js = Model();
+        js.SetValue("text", text);
+
+        js.Evaluate("!ConfigModel.mhzFromText(text).error").AsBoolean().Should().Be(accepted);
+        if (!accepted)
+        {
+            js.Evaluate("ConfigModel.mhzFromText(text).hint").AsString().Should().Contain(said).And.Contain("MHz");
+        }
+    }
+
+    [Theory]
+    [InlineData(7050830, 10, 7050930)]
+    [InlineData(7050830, 4, 7050830)]
+    [InlineData(7050830, -4, 7050830)]
+    [InlineData(1234, 24, 1434)]
+    public void A_Drag_Moves_By_The_Distance_Snapped_So_A_Frequency_Off_The_Grid_Stays_Off_It(double start, double dxPx, double expected)
+    {
+        Engine js = Model();
+        js.SetValue("start", start);
+        js.SetValue("dx", dxPx);
+
+        js.Evaluate("ConfigModel.dragTo(start, dx, 10, 100)").AsNumber().Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(3, false)]
+    [InlineData(-3.9, false)]
+    [InlineData(4, true)]
+    [InlineData(-12, true)]
+    public void Under_About_Four_Pixels_Is_A_Click_And_Not_A_Drag(double dx, bool dragged)
+    {
+        Engine js = Model();
+        js.SetValue("dx", dx);
+
+        js.Evaluate("ConfigModel.dragMoved(dx)").AsBoolean().Should().Be(dragged);
+    }
+
+    [Fact]
+    public void An_Audio_Strip_Keeps_A_Block_Above_Zero_And_Under_The_Channels_Limit()
+    {
+        Engine js = Model();
+
+        string answer = js.Evaluate("""
+            JSON.stringify([
+              ConfigModel.blockLimits("audio", -150, 3150, 400, 6000),
+              ConfigModel.blockLimits("audio", -150, 9000, 400, 6000),
+              ConfigModel.blockLimits("rf", 7050000, 7053000, 400, 6000)
+            ])
+            """).AsString();
+
+        JsonArray limits = JsonNode.Parse(answer)!.AsArray();
+        limits[0]!["min"]!.GetValue<double>().Should().Be(200);
+        limits[0]!["max"]!.GetValue<double>().Should().Be(2950);
+        limits[1]!["max"]!.GetValue<double>().Should().Be(5800);
+        limits[2]!["min"]!.GetValue<double>().Should().Be(7050200);
+    }
+
+    [Theory]
+    [InlineData("Home", false, 1500, 200)]
+    [InlineData("End", false, 1500, 2900)]
+    [InlineData("PageUp", false, 1500, 2500)]
+    [InlineData("PageDown", false, 1500, 500)]
+    [InlineData("ArrowRight", false, 1500, 1600)]
+    [InlineData("ArrowLeft", true, 1500, 500)]
+    [InlineData("ArrowRight", false, 2900, 2900)]
+    [InlineData("PageDown", false, 600, 200)]
+    public void The_Slider_Keys_Move_A_Block_And_Stop_At_Its_Ends(string key, bool shift, double pos, double expected)
+    {
+        Engine js = Model();
+        js.SetValue("key", key);
+        js.SetValue("shift", shift);
+        js.SetValue("pos", pos);
+
+        js.Evaluate("ConfigModel.keyMove(key, shift, pos, 200, 2950)").AsNumber().Should().Be(expected);
+        js.Evaluate("ConfigModel.keyMove('a', false, 1500, 200, 2950)").IsNull().Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_New_Modem_Can_Start_With_Several_Settings_And_The_Picker_Can_Leave_Out_Modes_With_No_Tone()
+    {
+        Engine js = Model();
+        js.SetValue("schemaJson", ConfigSchema.Json);
+
+        string answer = js.Evaluate("""
+            (function () {
+              var schema = JSON.parse(schemaJson);
+              function names(list) { return list.map(function (m) { return m.mode; }); }
+              return JSON.stringify({
+                modem: ConfigModel.newModem("afsk1200", 1, [{ key: "frequency", value: 1700 }, { key: "rfFrequency", value: 144800000 }]),
+                all: names(ConfigModel.modesOfGroup(schema, "p9600")),
+                tuned: names(ConfigModel.modesOfGroup(schema, "p9600", true)),
+                ninoTuned: names(ConfigModel.modesOfGroup(schema, "nino", true))
+              });
+            })()
+            """).AsString();
+
+        JsonNode result = JsonNode.Parse(answer)!;
+        result["modem"]!["rfFrequency"]!.GetValue<double>().Should().Be(144800000);
+        result["modem"]!["frequency"]!.GetValue<double>().Should().Be(1700);
+        result["all"]!.AsArray().Select(n => n!.GetValue<string>()).Should().Contain("fsk9600");
+        result["tuned"]!.AsArray().Select(n => n!.GetValue<string>()).Should().NotContain("fsk9600").And.NotContain("c4fsk9600");
+        result["ninoTuned"]!.AsArray().Select(n => n!.GetValue<string>()).Should().NotContain("fsk9600-il2p").And.Contain("bpsk300");
+    }
+
+    [Fact]
+    public void A_Blocks_Limits_Come_From_The_Passband_And_Not_From_Where_The_Blocks_Are()
+    {
+        Engine js = Model();
+        js.SetValue("planJson", DialPlanJson);
+
+        string answer = js.Evaluate("""
+            (function () {
+              var plan = JSON.parse(planJson);
+              var a = ConfigModel.layoutLimits(ConfigModel.stripLayout(plan, {}), 400, 6000);
+              var b = ConfigModel.layoutLimits(ConfigModel.stripLayout(plan, { 0: 7050300, 1: 7052900 }), 400, 6000);
+              var c = ConfigModel.layoutLimits(ConfigModel.stripLayout(plan, { 0: 7051000 }), 400, 6000);
+              return JSON.stringify([a, b, c]);
+            })()
+            """).AsString();
+
+        JsonArray limits = JsonNode.Parse(answer)!.AsArray();
+        limits[0]!.ToJsonString().Should().Be(limits[1]!.ToJsonString(), "a block moved to an end does not move the end");
+        limits[0]!.ToJsonString().Should().Be(limits[2]!.ToJsonString());
+        limits[0]!["min"]!.GetValue<double>().Should().BeLessThan(7050500, "a 400 Hz block may reach the lower edge");
+        limits[0]!["max"]!.GetValue<double>().Should().BeGreaterThan(7052500, "and the upper edge");
+    }
+
+    [Fact]
+    public void A_Plan_The_Station_Refused_Is_Described_In_One_Plain_Sentence()
+    {
+        Engine js = Model();
+
+        string answer = js.Evaluate("""
+            JSON.stringify(ConfigModel.stripCaption({ ok: false, problem: "modems span -8676--8324 Hz", axis: "rf", modems: [] }))
+            """).AsString();
+
+        JsonNode caption = JsonNode.Parse(answer)!;
+        string text = caption["head"]!.GetValue<string>() + ", " + caption["tail"]!.GetValue<string>();
+        text.Should().NotContain("..").And.NotContain(".,").And.NotContain("-8676").And.NotMatchRegex(@"-\d");
+        text.Should().StartWith("The station could not place these modems");
+    }
+
     private const string DialPlanJson = """
         { "ok": true, "radio": "usb", "axis": "rf", "dialHz": 7050000, "hasDial": true,
           "passband": { "audioLowHz": 300, "audioHighHz": 2700, "rfLowHz": 7050300, "rfHighHz": 7052700 },

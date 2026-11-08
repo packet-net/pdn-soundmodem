@@ -91,7 +91,8 @@ internal sealed class ConfigApi
         Func<string> runningJson, bool ephemeralInForce, Action requestRestart,
         bool openAudioControls = false, bool openConfiguration = true, TimeProvider? time = null)
     {
-        _history = new ConfigHistory(ephemeralPath, time ?? TimeProvider.System);
+        _time = time ?? TimeProvider.System;
+        _history = new ConfigHistory(ephemeralPath, _time);
         _openAudioControls = openAudioControls;
         _openConfiguration = openConfiguration;
         _key = key;
@@ -846,11 +847,18 @@ internal sealed class ConfigApi
     /// </summary>
     internal static RfPlan.Result? PlanFor(DaemonConfig proposed)
     {
-        bool flex = proposed.Device.StartsWith("flex:", StringComparison.OrdinalIgnoreCase);
         return BandPlanner.Plan(
             proposed.Modems, proposed.Sideband, proposed.DialFrequency, DspRateFor(proposed),
-            flex ? Passband.WideCeilingHz : null);
+            CeilingFor(proposed));
     }
+
+    /// <summary>
+    /// How far up the audio band the radio can be opened: the wide ceiling where the daemon owns
+    /// the radio's filters (a headless Flex, not one in attach mode), else null for the nominal
+    /// SSB window - the same answer start-up works from.
+    /// </summary>
+    internal static double? CeilingFor(DaemonConfig proposed) =>
+        DeviceKinds.Of(proposed.Device).OwnsTheRadio(proposed.Device) ? Passband.WideCeilingHz : null;
 
     /// <summary>The channel rate a proposal runs at: 48 kHz if any mode wants it, as start-up has it.</summary>
     internal static int DspRateFor(DaemonConfig proposed) =>
@@ -1352,6 +1360,16 @@ internal sealed class ConfigApi
     /// <c>POST /api/config/plan</c>: where each modem of a proposed configuration would sit,
     /// worked out by the band planning start-up uses, and nothing applied.
     /// </summary>
+    private readonly TimeProvider _time;
+
+    /// <summary>Recent plan answers by the document they were for: the page asks again after every
+    /// keystroke, and a plan renders a probe frame per mode, which a small machine feels.</summary>
+    private readonly Dictionary<string, (long At, string Json)> _planCache = [];
+
+    private static readonly TimeSpan PlanCacheFor = TimeSpan.FromSeconds(5);
+
+    private const int PlanCacheMax = 16;
+
     private async Task PlanAsync(HttpListenerContext context)
     {
         if (context.Request.HttpMethod != "POST")
@@ -1366,14 +1384,68 @@ internal sealed class ConfigApi
             return;
         }
 
-        if (LoadProposed(body, _configPath, out DaemonConfig? proposed) is string problem)
+        string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body)));
+        long now = _time.GetTimestamp();
+        string? cached = null;
+        lock (_planCache)
         {
-            await RespondAsync(context, 400, problem).ConfigureAwait(false);
+            if (_planCache.TryGetValue(hash, out var hit) && _time.GetElapsedTime(hit.At, now) < PlanCacheFor)
+            {
+                cached = hit.Json;
+            }
+        }
+
+        if (cached is not null)
+        {
+            await RespondJsonAsync(context, 200, cached).ConfigureAwait(false);
             return;
         }
 
-        await RespondJsonAsync(context, 200, ConfigPlan.Describe(proposed!).ToJsonString(Pretty))
-            .ConfigureAwait(false);
+        if (LoadProposed(body, _configPath, out DaemonConfig? proposed) is string problem)
+        {
+            await RespondAsync(context, 400, ProblemOf(problem)).ConfigureAwait(false);
+            return;
+        }
+
+        string json = ConfigPlan.Describe(proposed!).ToJsonString(Pretty);
+        lock (_planCache)
+        {
+            if (_planCache.Count >= PlanCacheMax)
+            {
+                _planCache.Clear();
+            }
+
+            _planCache[hash] = (now, json);
+        }
+
+        await RespondJsonAsync(context, 200, json).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The part of a refusal worth showing: the loader words its refusals for a journal, with a
+    /// first line naming the file and a closing paragraph on recovering a file that will not start.
+    /// </summary>
+    internal static string ProblemOf(string refusal)
+    {
+        string[] lines = refusal.Replace("\r", "").Split('\n');
+        if (!lines[0].StartsWith("configuration error in ", StringComparison.Ordinal))
+        {
+            return refusal;
+        }
+
+        var problem = new List<string>();
+        for (int i = 1; i < lines.Length; i++)
+        {
+            string line = lines[i].Trim();
+            if (line.Length == 0)
+            {
+                break;
+            }
+
+            problem.Add(line);
+        }
+
+        return problem.Count > 0 ? string.Join(' ', problem) : refusal;
     }
 
     /// <summary>
