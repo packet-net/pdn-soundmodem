@@ -60,6 +60,20 @@ internal sealed class ShutdownDeadline : IDisposable
         _limit = limit ?? Limit;
     }
 
+    /// <summary>How long the last unkey before a forced exit may take before the exit goes ahead
+    /// anyway.</summary>
+    internal static readonly TimeSpan LastUnkeyWait = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Releases the station's PTT, called once just before a forced exit. The transmitter unkeys
+    /// itself on the way down; this is for the case where it never got that far. A process that
+    /// ends keyed leaves a CM108 pin or a rigctld transmitting until something opens it again,
+    /// which after <c>systemctl stop</c> is never. Run on a thread of its own and waited for at
+    /// most <see cref="LastUnkeyWait"/>, so an unkey that would block (a radio that is gone)
+    /// costs that second and no more. Null for a station that cannot key.
+    /// </summary>
+    public Action? LastUnkey { get; set; }
+
     /// <summary>Whether stopping has begun. Work that would never be carried out is refused from
     /// then on.</summary>
     public bool IsStopping => _stopping;
@@ -196,7 +210,34 @@ internal sealed class ShutdownDeadline : IDisposable
         _journal(
             $"shutdown: not finished {_limit.TotalSeconds:0} s after it began ({what}); "
             + "exiting with code 1 so the service restarts");
+        TryLastUnkey();
         _exit(1);
+    }
+
+    private void TryLastUnkey()
+    {
+        if (LastUnkey is not { } unkey)
+        {
+            return;
+        }
+
+        var releasing = new Thread(() =>
+        {
+            try
+            {
+                unkey();
+            }
+            catch (Exception)
+            {
+                // Best effort: the exit goes ahead whatever the PTT says.
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "shutdown-unkey",
+        };
+        releasing.Start();
+        releasing.Join(LastUnkeyWait);
     }
 
     private sealed class Part(string name)

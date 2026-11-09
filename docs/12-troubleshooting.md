@@ -233,7 +233,7 @@ One restart is the watch working. A restart loop means the input is silent or ab
 
 A sound card gets the starvation watch only, because a wired input can be silent for real reasons. A FlexRadio and a web receiver get both.
 
-However it starts stopping (a lost radio, a watch, a settings change, `systemctl stop`), the station is gone within 20 s. While it stops it refuses new KISS hosts, transmit leases and test tones. If something will not close in that time, it says what and exits with code 1 so systemd starts it again:
+However it starts stopping (a lost radio, a watch, a settings change, `systemctl stop`), the station is gone within 20 s. A transmission in progress stops within a few seconds and the radio is unkeyed first. While it stops it refuses new KISS hosts, transmit leases and test tones. If something will not close in that time, it says what and exits with code 1 so systemd starts it again:
 
 ```
 shutdown: not finished 20 s after it began (still open, in closing order: Flex radio session, ...); exiting with code 1 so the service restarts

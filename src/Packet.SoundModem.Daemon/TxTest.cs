@@ -305,7 +305,9 @@ internal sealed class TxTestRunner
                 // the sub-channel it named.
                 source: run,
                 withdraw: run.Withdrawal.Token,
-                stopEarly: () => run.Cancelled,
+                // The station stopping ends it too (issue #790): a 30 s test must not hold the
+                // transmitter keyed past the shutdown's deadline.
+                stopEarly: () => run.Cancelled || _options.Stopping?.Invoke() is not null,
                 // What actually reached the device, in case a stop cut the write short - not the
                 // same number as run.Tone.Produced any more, which the render above already set
                 // to the whole burst regardless of how much of it a stop later let through.

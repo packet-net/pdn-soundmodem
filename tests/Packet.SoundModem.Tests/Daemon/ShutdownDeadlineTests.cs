@@ -158,6 +158,42 @@ public class ShutdownDeadlineTests
     }
 
     [Fact]
+    public void A_Forced_Exit_Unkeys_The_Station_First()
+    {
+        // The transmitter unkeys on its way down; a forced exit mid-keyup would otherwise leave a
+        // CM108 or a rigctld transmitting until something opened it again.
+        using var harness = new Harness();
+        var order = new List<string>();
+        var deadline = new ShutdownDeadline(_ => { }, code => order.Add($"exit {code}"), harness.Time)
+        {
+            LastUnkey = () => order.Add("unkey"),
+        };
+        _ = deadline.Track("transmitter", new StubbornWorker());
+
+        deadline.Begin();
+        harness.Time.Advance(ShutdownDeadline.Limit);
+
+        order.Should().Equal(["unkey", "exit 1"]);
+    }
+
+    [Fact]
+    public void An_Unkey_That_Blocks_Does_Not_Stop_The_Exit()
+    {
+        using var harness = new Harness();
+        using var never = new ManualResetEventSlim();
+        var exits = new List<int>();
+        var deadline = new ShutdownDeadline(_ => { }, exits.Add, harness.Time)
+        {
+            LastUnkey = () => never.Wait(),
+        };
+
+        deadline.Begin();
+        harness.Time.Advance(ShutdownDeadline.Limit);
+
+        exits.Should().Equal([1], "the last unkey gets a second, and the exit goes ahead regardless");
+    }
+
+    [Fact]
     public void The_Line_Is_Plain_Ascii()
     {
         using var harness = new Harness();

@@ -1807,6 +1807,7 @@ if (benchTxTest is null
             // and is deliberately not restarted - which is the wrong answer for a change that
             // has already been validated.
             restartRequested = true;
+            shutdown.Begin();
             cancellation.Cancel();
         },
         openAudioControls: openAudioControls,
@@ -1874,9 +1875,13 @@ if (apiEphemeralInForce)
     Console.Error.WriteLine(
         $"api: running a one-run configuration applied over the API; a restart returns to {configPath}");
 }
+// Each door starts the shutdown's clock itself, before cancelling (issue #790): the token's own
+// callbacks start it too, but a callback that blocks must never be able to stop the deadline, so
+// a SIGTERM always ends the process.
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
+    shutdown.Begin();
     cancellation.Cancel();
 };
 
@@ -1889,6 +1894,7 @@ using var sigterm = System.Runtime.InteropServices.PosixSignalRegistration.Creat
     context =>
     {
         context.Cancel = true;
+        shutdown.Begin();
         cancellation.Cancel();
     });
 
@@ -2537,6 +2543,7 @@ DeviceOpening opened = await stationDevice.OpenAsync(new DeviceOpenContext
     RadioLost = () =>
     {
         radioLost = true;
+        shutdown.Begin();
         cancellation.Cancel();
     },
     Cancellation = cancellation.Token,
@@ -2622,7 +2629,6 @@ if (flex is not null)
 // station without one is exactly as it was.
 IPttControl stationPtt = rig is null ? ptt : rig.HoldTransmissions(channel, ptt);
 Task transmitter = channel.RunTransmitterAsync(playback, stationPtt, cancellation.Token);
-shutdown.Watch("transmitter", transmitter);
 
 // A transmitter that dies (the output device failed mid-keyup) must stop the daemon, not
 // leave it running as a healthy-looking receive-only station for the rest of the process's
@@ -2636,6 +2642,7 @@ _ = transmitter.ContinueWith(
             $"transmit: the audio output failed - {t.Exception!.GetBaseException().Message}. "
             + "Stopping so the service restarts.");
         radioLost = true;
+        shutdown.Begin();
         cancellation.Cancel();
     },
     CancellationToken.None,
@@ -3140,8 +3147,15 @@ station.Faulted += fault =>
     }
 
     radioLost = true;
+    shutdown.Begin();
     cancellation.Cancel();
 };
+
+// Registered after everything the shutdown disposes (only the receive loop comes later), so a
+// hung transmitter is named first: it is awaited straight after the receive loop, before
+// anything else is closed. And the last unkey, for a forced exit that comes mid-keyup.
+shutdown.Watch("transmitter", transmitter);
+shutdown.LastUnkey = stationPtt.Unkey;
 
 // --two-tone / --tone: transmit once and go.
 //
