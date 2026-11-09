@@ -116,6 +116,14 @@ public sealed class FlexOscillatorReferenceTests
         mock.Start();
         await using FlexClient client = await FlexClient.ConnectAsync("127.0.0.1", mock.TcpPort, mock.UdpPort);
         var seen = new List<RadioOscillator>();
+        bool SeenAny()
+        {
+            lock (seen)
+            {
+                return seen.Count > 0;
+            }
+        }
+
         client.ReferenceChanged += r =>
         {
             lock (seen)
@@ -125,7 +133,10 @@ public sealed class FlexOscillatorReferenceTests
         };
 
         await mock.InjectStatusAsync("S0|" + status);
-        await Until(() => RadioOscillator.FromFlex(client.Reference).Source is not null, "the radio said which oscillator it is on");
+        // The library sets Reference before it raises ReferenceChanged, so wait for both.
+        await Until(
+            () => RadioOscillator.FromFlex(client.Reference).Source is not null && SeenAny(),
+            "the radio said which oscillator it is on");
 
         RadioOscillator.FromFlex(client.Reference).Should().Be(new RadioOscillator(source, locked));
         lock (seen)
