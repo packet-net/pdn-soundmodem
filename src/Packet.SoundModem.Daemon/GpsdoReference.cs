@@ -25,7 +25,11 @@ internal enum ReferenceState
 /// verdict is unknown (<c>display offline</c>, <c>last report 47 s old</c>).
 /// </param>
 /// <param name="Since">When the verdict last changed, or when watching began.</param>
-internal sealed record ReferenceVerdict(ReferenceState State, string Detail, DateTimeOffset Since)
+/// <param name="Radio">
+/// What a Flex says it is running on, for the chip (<c>Flex on TCXO</c>, <c>Flex ref not
+/// locked</c>), or null for a station that is not a Flex.
+/// </param>
+internal sealed record ReferenceVerdict(ReferenceState State, string Detail, DateTimeOffset Since, string? Radio = null)
 {
     /// <summary>The verdict as <c>/api/txlease</c> spells it: <c>ok</c>, <c>unreliable</c> or <c>unknown</c>.</summary>
     internal string Word => Words(State);
@@ -40,8 +44,69 @@ internal sealed record ReferenceVerdict(ReferenceState State, string Detail, Dat
     /// <summary>The verdict in a sentence's own case, for the journal and the page.</summary>
     internal static string Spoken(ReferenceState state) => state == ReferenceState.Ok ? "OK" : Words(state);
 
-    /// <summary>What the page's top bar shows: <c>10 MHz OK</c>, <c>10 MHz unreliable: GPS LOST</c>, <c>10 MHz unknown</c>.</summary>
-    internal string Chip => State == ReferenceState.Unreliable ? $"10 MHz unreliable: {Detail}" : $"10 MHz {Spoken(State)}";
+    /// <summary>What the page's top bar shows: <c>10 MHz OK</c>, <c>10 MHz unreliable: GPS LOST</c>,
+    /// <c>10 MHz unknown</c>, with a Flex's part after it: <c>10 MHz OK (Flex on TCXO)</c>.</summary>
+    internal string Chip =>
+        (State == ReferenceState.Unreliable ? $"10 MHz unreliable: {Detail}" : $"10 MHz {Spoken(State)}")
+        + (Radio is null ? "" : $" ({Radio})");
+}
+
+/// <summary>
+/// What a Flex says about the oscillator it is running on, from its <c>radio oscillator</c>
+/// status (<c>state=tcxo setting=tcxo locked=1</c>, <c>state=external setting=external locked=1</c>).
+/// </summary>
+/// <remarks>
+/// A 6000-series Flex takes the GPSDO's 10 MHz only when it found it on REF IN at power-up;
+/// otherwise it runs on its own calibrated TCXO, which is fine to transmit on whatever the GPSDO
+/// is doing. So the GPSDO's verdict only counts while the Flex says it is on it.
+/// </remarks>
+/// <param name="Source">
+/// The source in use as <c>/api/txlease</c> spells it: <c>tcxo</c>, <c>ocxo</c>, <c>external</c>,
+/// <c>gpsdo</c>, or null when the radio has not said or said something not recognised.
+/// </param>
+/// <param name="Locked">Whether the radio says its reference is locked.</param>
+internal sealed record RadioOscillator(string? Source, bool Locked)
+{
+    /// <summary>What the radio has said, as M0LTE.Flex read it from its status.</summary>
+    internal static RadioOscillator FromFlex(M0LTE.Flex.FlexReferenceStatus status) => new(
+        status.State switch
+        {
+            M0LTE.Flex.FlexOscillatorSource.Tcxo => "tcxo",
+            M0LTE.Flex.FlexOscillatorSource.Ocxo => "ocxo",
+            M0LTE.Flex.FlexOscillatorSource.External => "external",
+            M0LTE.Flex.FlexOscillatorSource.Gpsdo => "gpsdo",
+            _ => null,
+        },
+        status.Locked);
+
+    /// <summary>On its own internal oscillator and locked: the GPSDO is not in use.</summary>
+    internal bool OnItsOwn => Locked && Source is "tcxo" or "ocxo";
+
+    /// <summary>On the external reference (REF IN, or a built-in GPSDO) and locked: the GPSDO's verdict counts.</summary>
+    internal bool OnTheGpsdo => Locked && Source is "external" or "gpsdo";
+
+    /// <summary>The source in the radio's own case: <c>TCXO</c>, <c>external</c>.</summary>
+    internal string Named => Source switch
+    {
+        "tcxo" => "TCXO",
+        "ocxo" => "OCXO",
+        "gpsdo" => "GPSDO",
+        string other => other,
+        null => "unknown",
+    };
+
+    /// <summary>The Flex's part of the page's chip.</summary>
+    internal string Chip =>
+        OnItsOwn || OnTheGpsdo ? $"Flex on {Named}"
+        : Source is null ? "Flex ref unknown"
+        : "Flex ref not locked";
+
+    /// <summary>The one journal line for the Flex moving to this.</summary>
+    internal string Line =>
+        OnItsOwn ? $"flex: now on its {Named}, the GPSDO is not in use; the reference is judged OK"
+        : OnTheGpsdo ? $"flex: now on its {(Source == "gpsdo" ? "GPSDO" : "external 10 MHz reference")}; the GPSDO's verdict counts"
+        : Source is null ? "flex: its oscillator state is unknown; the reference is judged unknown unless the GPSDO says unreliable"
+        : $"flex: its {Named} reference is not locked; the reference is judged unknown unless the GPSDO says unreliable";
 }
 
 /// <summary>
@@ -63,6 +128,11 @@ internal sealed record ReferenceVerdict(ReferenceState State, string Detail, Dat
 /// <see cref="TimeProvider.GetTimestamp"/>; only <c>since</c> is wall time.</para>
 /// <para><b>Re-evaluated on a clock</b>, not only when a message arrives, because the case that
 /// matters most is the one where no message arrives at all.</para>
+/// <para><b>A Flex has the last word on whether the GPSDO matters.</b> Once a Flex reports its
+/// oscillator (<see cref="FlexOscillator"/>), the verdict follows what it is running on: its own
+/// TCXO, locked, is OK whatever the GPSDO says; the external reference, locked, is the GPSDO's
+/// verdict; not locked or not said is unknown, or unreliable if the GPSDO says so. A station that
+/// is not a Flex never calls it, and its verdict is the GPSDO's alone.</para>
 /// <para>The MQTT side is <see cref="GpsdoFeed"/>; this class has no network, so a test drives it
 /// with topics and payloads and a fake clock.</para>
 /// </remarks>
@@ -101,8 +171,13 @@ internal sealed class GpsdoReference : IDisposable
     private bool _saidUnreadable;
     private bool _saidSubscriberFault;
 
+    /// <summary>What the Flex last said it runs on; null for a station that is not a Flex.</summary>
+    private RadioOscillator? _flex;
+    private bool _saidFlexFault;
+
     private ReferenceState _state = ReferenceState.Unknown;
     private string _detail = "no message yet";
+    private string? _radio;
     private DateTimeOffset _since;
     private long _sinceStamp;
 
@@ -140,21 +215,98 @@ internal sealed class GpsdoReference : IDisposable
             lock (_gate)
             {
                 (ReferenceState state, string detail, _) = Judge();
-                return new ReferenceVerdict(state, detail, _since);
+                return new ReferenceVerdict(state, detail, _since, _flex?.Chip);
             }
         }
     }
 
-    /// <summary>The <c>reference</c> object <c>/api/txlease</c> carries.</summary>
+    /// <summary>The <c>reference</c> object <c>/api/txlease</c> carries, with <c>oscillator</c>
+    /// on a Flex only.</summary>
     internal JsonObject Describe()
     {
-        ReferenceVerdict now = Current;
-        return new JsonObject
+        ReferenceVerdict now;
+        RadioOscillator? flex;
+        lock (_gate)
+        {
+            (ReferenceState state, string detail, _) = Judge();
+            now = new ReferenceVerdict(state, detail, _since);
+            flex = _flex;
+        }
+
+        var described = new JsonObject
         {
             ["state"] = now.Word,
             ["detail"] = now.Detail,
             ["since"] = TxLeaseApi.Utc(now.Since),
         };
+        if (flex is not null)
+        {
+            described["oscillator"] = flex.Source;
+        }
+
+        return described;
+    }
+
+    /// <summary>
+    /// What the Flex says it is running on, from its live status: at bring-up and on every change
+    /// M0LTE.Flex reports. One journal line when it moves (not for the first report, which the
+    /// bring-up's own <c>flex: reference</c> line already gave), then the verdict is worked out
+    /// again. Never throws: it runs on the radio's read loop.
+    /// </summary>
+    internal void FlexOscillator(RadioOscillator oscillator)
+    {
+        ArgumentNullException.ThrowIfNull(oscillator);
+        lock (_publish)
+        {
+            string? line = null;
+            bool problem = false;
+            lock (_gate)
+            {
+                if (oscillator == _flex)
+                {
+                    return;
+                }
+
+                if (_flex is not null)
+                {
+                    line = oscillator.Line;
+                    problem = !oscillator.OnItsOwn && !oscillator.OnTheGpsdo;
+                }
+
+                _flex = oscillator;
+            }
+
+            if (line is not null)
+            {
+                try
+                {
+                    if (problem)
+                    {
+                        _journal.WriteError(line);
+                    }
+                    else
+                    {
+                        _journal.Write(line);
+                    }
+                }
+                catch (Exception fault)
+                {
+                    bool say;
+                    lock (_gate)
+                    {
+                        say = !_saidFlexFault;
+                        _saidFlexFault = true;
+                    }
+
+                    if (say)
+                    {
+                        Console.Error.WriteLine($"gpsdo: journalling the Flex's oscillator failed: {fault.GetBaseException().Message}");
+                    }
+                }
+            }
+
+            PublishGuarded();
+        }
     }
 
     /// <summary>One message from the broker. Topics other than the two are ignored.</summary>
@@ -311,7 +463,8 @@ internal sealed class GpsdoReference : IDisposable
         lock (_gate)
         {
             (ReferenceState state, _, string shown) = Judge();
-            if (state == _state && shown == _detail)
+            string? radio = _flex?.Chip;
+            if (state == _state && shown == _detail && radio == _radio)
             {
                 return;
             }
@@ -327,7 +480,8 @@ internal sealed class GpsdoReference : IDisposable
 
             _state = state;
             _detail = shown;
-            changed = new ReferenceVerdict(state, shown, _since);
+            _radio = radio;
+            changed = new ReferenceVerdict(state, shown, _since, radio);
         }
 
         // Outside _gate (a subscriber may read Current) but inside _publish, so lines and page
@@ -349,9 +503,44 @@ internal sealed class GpsdoReference : IDisposable
 
     /// <summary>
     /// The verdict, with two wordings of its reason: <c>Detail</c> as of now (a stale report's age
-    /// in seconds) and <c>Shown</c>, which only changes when something does.
+    /// in seconds) and <c>Shown</c>, which only changes when something does. The GPSDO's, then
+    /// what a Flex makes of it.
     /// </summary>
-    private (ReferenceState State, string Detail, string Shown) Judge()
+    private (ReferenceState State, string Detail, string Shown) Judge() => Combine(JudgeGpsdo(), _flex);
+
+    /// <summary>
+    /// The GPSDO's verdict as the Flex's oscillator makes it count. No Flex: the GPSDO's alone.
+    /// The Flex on its own TCXO (or OCXO), locked: OK, whatever the GPSDO says. On the external
+    /// reference, locked: the GPSDO's. Not locked, or not said: unknown, unless the GPSDO says
+    /// unreliable, which stands.
+    /// </summary>
+    internal static (ReferenceState State, string Detail, string Shown) Combine(
+        (ReferenceState State, string Detail, string Shown) gpsdo, RadioOscillator? flex)
+    {
+        if (flex is null || flex.OnTheGpsdo)
+        {
+            return gpsdo;
+        }
+
+        if (flex.OnItsOwn)
+        {
+            string own = $"Flex on its own {flex.Named} (GPSDO not in use)";
+            return (ReferenceState.Ok, own, own);
+        }
+
+        if (gpsdo.State == ReferenceState.Unreliable)
+        {
+            return gpsdo;
+        }
+
+        string why = flex.Source is null
+            ? "Flex has not said which oscillator it is on"
+            : $"Flex reports its {flex.Named} reference not locked";
+        return (ReferenceState.Unknown, why, why);
+    }
+
+    /// <summary>The GPSDO display's verdict on its own.</summary>
+    private (ReferenceState State, string Detail, string Shown) JudgeGpsdo()
     {
         if (_status == "offline")
         {

@@ -371,6 +371,7 @@ With a [`gpsdo`](config.md#gpsdo) section, every lease answer (the `GET`, a take
 - `state` is `ok`, `unreliable` or `unknown`.
 - `detail` is the display's state text (`LOCKED`, `GPS LOST`), or why the state is unknown: `no message yet`, `display offline`, `waiting for a fresh report`, `last report 47 s old`, `MQTT broker unreachable`.
 - `since` is when `state` last changed, in UTC.
+- `oscillator`, on a Flex only, is what the radio says it is running on: `tcxo`, `ocxo`, `external`, `gpsdo`, or `null` before it has said. On its own TCXO, locked, `state` is `ok` whatever the GPSDO says, with `detail` "Flex on its own TCXO (GPSDO not in use)"; on `external` or `gpsdo`, locked, it is the GPSDO's verdict; not locked or not said, it is `unknown` (`detail` says why) unless the GPSDO says `unreliable`. See [`gpsdo`](config.md#gpsdo). Other devices leave the key out.
 - Without a `gpsdo` section the key is absent, so a caller can tell "no feed" from "unknown".
 
 ### Keeping receive audio

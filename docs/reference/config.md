@@ -494,9 +494,18 @@ Watches a GPSDO that disciplines the radio's 10 MHz reference, through a display
 | `topicPrefix` | string | `"gpsdo"` | The display's topic prefix: it publishes `<prefix>/status` and `<prefix>/state`. |
 
 - The verdict is **OK** when the display's latest report says `reference_ok` true, **unreliable** when it says false, and **unknown** before any report, while the display is offline, when its last report is more than 30 s old, or when `reference_ok` is missing.
+- On a Flex, the verdict follows the oscillator the radio says it is running on, live from its status. A Flex only uses the 10 MHz on REF IN if it found it there at power-up; otherwise it runs on its own calibrated TCXO, which is fine to transmit on.
+
+  | The Flex says | Verdict |
+  |---|---|
+  | on its own TCXO (or OCXO), locked | **OK**, whatever the GPSDO says: "Flex on its own TCXO (GPSDO not in use)" |
+  | on the external reference or a GPSDO, locked | the GPSDO's verdict, as above |
+  | not locked, or nothing yet | **unknown**, unless the GPSDO says unreliable, which stands |
+
+  Other devices are judged on the GPSDO alone.
 - A retained report (what the broker hands over on connect) counts as fresh while the display's status is `online`, so a restart just before a mailcast slot does not read unknown. A display that dies has its `offline` last will published within about 1.5 keepalives. With no status yet, a retained report waits for one or for a live report. One gap: after a broker restart with persistence, a dead display's retained `online` and last state can read OK for up to 30 s before going stale.
-- The station page shows it beside the radio status: green "10 MHz OK", red "10 MHz unreliable" with the display's state text, grey "10 MHz unknown" (hover for why). Never on a public page.
-- One journal line per change, for example `10 MHz reference unreliable: GPS LOST (was OK for 3h12m)`.
+- The station page shows it beside the radio status: green "10 MHz OK", red "10 MHz unreliable" with the display's state text, grey "10 MHz unknown" (hover for why). On a Flex the radio's part follows in brackets: "10 MHz OK (Flex on TCXO)". Never on a public page.
+- One journal line per change, for example `10 MHz reference unreliable: GPS LOST (was OK for 3h12m)`, and on a Flex one more when the radio changes oscillator, for example `flex: now on its TCXO, the GPSDO is not in use; the reference is judged OK`.
 - [`GET /api/txlease`](ports-and-endpoints.md#the-reference-on-the-lease) carries it as `reference`, for the mailcast head end.
 - It holds nothing back: packet frames and everything else still go out while the reference is unreliable.
 - The broker is reconnected by itself, with one line when it goes (`gpsdo: lost the MQTT broker at ...; reconnecting` or `gpsdo: cannot reach the MQTT broker at ...; retrying quietly`) and one once a connection has lasted a minute (`gpsdo: back on the MQTT broker at ...`). A broker that accepts and drops at once stays quiet and backed off. A broker that refuses the subscription is one line.
