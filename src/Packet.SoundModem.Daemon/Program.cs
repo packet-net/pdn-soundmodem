@@ -2627,7 +2627,9 @@ if (flex is not null)
 // inhibit (composed over whatever is already installed, never instead of it) and the PTT itself
 // refuses a keyup for anything that gets past it. Installed only with a "rig" section, so a
 // station without one is exactly as it was.
-IPttControl stationPtt = rig is null ? ptt : rig.HoldTransmissions(channel, ptt);
+// Behind one lock with the last unkey a forced exit makes (issue #790), so the two never
+// interleave inside the PTT, and nothing keys again once that unkey has been made.
+var stationPtt = new ReleasablePtt(rig is null ? ptt : rig.HoldTransmissions(channel, ptt));
 Task transmitter = channel.RunTransmitterAsync(playback, stationPtt, cancellation.Token);
 
 // A transmitter that dies (the output device failed mid-keyup) must stop the daemon, not
@@ -3155,7 +3157,7 @@ station.Faulted += fault =>
 // hung transmitter is named first: it is awaited straight after the receive loop, before
 // anything else is closed. And the last unkey, for a forced exit that comes mid-keyup.
 shutdown.Watch("transmitter", transmitter);
-shutdown.LastUnkey = stationPtt.Unkey;
+shutdown.LastUnkey = stationPtt.Release;
 
 // --two-tone / --tone: transmit once and go.
 //

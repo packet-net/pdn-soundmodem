@@ -3253,10 +3253,13 @@ public sealed class SoundModemChannel
                             output, samples, item.StopEarly, item.Written,
                             announce: mem => TransmittedAudio?.Invoke(mem), cancellation);
 
-                        if (sentSamples < samples.Length && cancellation.IsCancellationRequested)
+                        if (sentSamples < samples.Length && cancellation.IsCancellationRequested
+                            && item.StopEarly is null)
                         {
-                            // Cut short because the station is stopping (issue #790), not by the
-                            // item's own stop: it never went out whole, so it is not reported sent.
+                            // Cut short because the station is stopping (issue #790): a frame that
+                            // never went out whole is not reported sent. A stoppable item (the
+                            // test tone) is answered as for its own stop, since it is told through
+                            // Written how much of it went out.
                             // The keyup still ends normally below - a clean unkey is worth more
                             // than the rest of a frame, and a process ended mid-keyup leaves a
                             // CM108 or a rigctld transmitting until something opens it again.

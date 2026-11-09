@@ -69,6 +69,50 @@ public sealed class BoundedFlexPttTests
         said.Should().ContainSingle().Which.Should().Be("flex: the radio's session ended during the keyup");
     }
 
+    /// <summary>A PTT whose keyup is slow to answer, and which records what reached the radio.</summary>
+    private sealed class SlowKeyPtt : IPttControl
+    {
+        public ManualResetEventSlim Answer { get; } = new();
+
+        public CountdownEvent Unkeys { get; } = new(2);
+
+        public void Key() => Answer.Wait();
+
+        public void Unkey() => Unkeys.Signal();
+    }
+
+    [Fact]
+    public async Task A_Keyup_Given_Up_With_The_Session_Up_Is_Unkeyed_Now_And_Again_When_It_Finishes()
+    {
+        // The abandoned keyup can still send its xmit 1 after it is given up on; nothing else
+        // would ever unkey it.
+        var inner = new SlowKeyPtt();
+        var ptt = new BoundedFlexPtt(inner, () => true, keyLimit: TimeSpan.FromMilliseconds(300));
+
+        Action key = ptt.Key;
+        key.Should().Throw<TimeoutException>();
+        await Task.Run(() => SpinWait.SpinUntil(() => inner.Unkeys.CurrentCount == 1, TimeSpan.FromSeconds(5)));
+        inner.Unkeys.CurrentCount.Should().Be(1, "one unkey goes at once, for a claim already made");
+
+        inner.Answer.Set();
+        inner.Unkeys.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue(
+            "and one more once the abandoned keyup has finished, for a claim made late");
+    }
+
+    [Fact]
+    public void A_Keyup_Given_Up_Because_The_Session_Ended_Sends_No_Unkey()
+    {
+        var inner = new SlowKeyPtt();
+        var ptt = new BoundedFlexPtt(inner, () => false, keyLimit: TimeSpan.FromMinutes(1));
+
+        Action key = ptt.Key;
+        key.Should().Throw<TimeoutException>();
+        inner.Answer.Set();
+        Thread.Sleep(200);
+
+        inner.Unkeys.CurrentCount.Should().Be(2, "there is no session left to unkey through");
+    }
+
     [Fact]
     public void A_Radio_That_Answers_Is_Keyed_And_Unkeyed_As_Before()
     {

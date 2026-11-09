@@ -53,15 +53,15 @@ internal sealed class BoundedFlexPtt : IPttControl, IDisposable
     internal event Action<string>? RadioUnanswered;
 
     /// <inheritdoc />
-    public void Key() => Bounded(_inner.Key, "keyup", _keyLimit);
+    public void Key() => Bounded(_inner.Key, "keyup", _keyLimit, abandoningKeyup: true);
 
     /// <inheritdoc />
-    public void Unkey() => Bounded(_inner.Unkey, "unkey", _unkeyLimit);
+    public void Unkey() => Bounded(_inner.Unkey, "unkey", _unkeyLimit, abandoningKeyup: false);
 
     /// <inheritdoc />
     public void Dispose() => (_inner as IDisposable)?.Dispose();
 
-    private void Bounded(Action call, string what, TimeSpan limit)
+    private void Bounded(Action call, string what, TimeSpan limit, bool abandoningKeyup)
     {
         Task running = Task.Factory.StartNew(
             call, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
@@ -76,6 +76,19 @@ internal sealed class BoundedFlexPtt : IPttControl, IDisposable
 
             // Read the fault, if it ever comes, so it is never an unobserved task exception.
             _ = running.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
+
+            // A keyup given up on while the session is still up may yet key the radio: the
+            // abandoned call can still send its xmit 1 after this. So unkey now, for a claim it
+            // has already made, and again once it finishes, for one it makes later. Neither waits
+            // for the radio's answer; a session that has ended has nothing to unkey.
+            if (abandoningKeyup && alive)
+            {
+                FireAndForgetUnkey();
+                _ = running.ContinueWith(
+                    _ => FireAndForgetUnkey(), CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            }
+
             string why = alive
                 ? $"flex: the radio did not answer the {what} in {limit.TotalSeconds:0.#} s; treating it as gone"
                 : $"flex: the radio's session ended during the {what}";
@@ -85,5 +98,13 @@ internal sealed class BoundedFlexPtt : IPttControl, IDisposable
 
         // Rethrows the call's own exception, unwrapped, exactly as calling it directly would.
         running.GetAwaiter().GetResult();
+    }
+
+    /// <summary>One unkey on a thread of its own, waited for by nobody.</summary>
+    private void FireAndForgetUnkey()
+    {
+        Task unkey = Task.Factory.StartNew(
+            _inner.Unkey, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        _ = unkey.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
     }
 }

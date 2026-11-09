@@ -261,6 +261,7 @@ internal sealed class TxTestRunner
             int leadSamples = 0;
             int toneSamples = 0;
             int producedSamples = 0;
+            int renderedSamples = 0;
             Task send = _options.Channel.EnqueueTransmit(
                 txDelay =>
                 {
@@ -296,6 +297,7 @@ internal sealed class TxTestRunner
                     var audio = new float[probeAt + (probe?.Audio.Length ?? 0)];
                     burst.CopyTo(audio, leadSamples);
                     probe?.Audio.CopyTo(audio, probeAt);
+                    renderedSamples = audio.Length;
                     return audio;
                 },
                 rejected: refusal => rejection = refusal.Message,
@@ -387,9 +389,15 @@ internal sealed class TxTestRunner
                 return Refuse("stopped before it reached the air, so nothing was transmitted");
             }
 
+            // Cut short by the station stopping rather than by the operator (issue #790): it still
+            // went out, as far as it got, so it is reported and recorded as a transmission.
+            bool stationStopped = !run.Cancelled && producedSamples < renderedSamples
+                && _options.Stopping?.Invoke() is not null;
             string done = run.Cancelled
                 ? $"stopped after {onAir.ToString("0.0", CultureInfo.InvariantCulture)} s"
-                : $"done, {onAir.ToString("0.0", CultureInfo.InvariantCulture)} s on air";
+                : stationStopped
+                    ? $"stopped after {onAir.ToString("0.0", CultureInfo.InvariantCulture)} s, because the station is stopping"
+                    : $"done, {onAir.ToString("0.0", CultureInfo.InvariantCulture)} s on air";
             _options.Journal.Write($"tx test: {done}");
             _options.Report?.Invoke(new TxTestStatus("done", $"{text} - {done}"));
 
