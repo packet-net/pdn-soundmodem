@@ -354,8 +354,10 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      # nuget.org trusted publishing: the job's OIDC token is exchanged for a one-hour API key,
+      # so there is no long-lived NuGet secret to expire (the old one did, after 0.100.0).
+      id-token: write
     env:
-      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -422,8 +424,17 @@ jobs:
             "$GITHUB_REPOSITORY" "$TAG")
           printf '%s' "$payload" | gh api -X POST repos/packet-net/apt/dispatches --input -
 
+      # Asked for just before the pushes: the key it returns lasts an hour. The policy on nuget.org
+      # (owner tomf84) names this repository and release.yml.
+      - name: NuGet login (trusted publishing)
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: tomf84
+
       - name: Push to nuget.org
-        if: env.NUGET_API_KEY != ''
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
           set -euo pipefail
           version="${{ needs.release.outputs.version }}"
@@ -443,10 +454,6 @@ jobs:
                 echo "::warning::${id} snupkg push failed; its nupkg is still uploaded."
             fi
           done
-
-      - name: Warn if NUGET_API_KEY missing
-        if: env.NUGET_API_KEY == ''
-        run: echo "::warning::NUGET_API_KEY is not visible to this repo - NuGet push skipped (the GitHub Release still has the .debs). Grant the org secret access to pdn-soundmodem."
 
   # The npm leg is split out onto a GitHub-hosted runner, which is a DELIBERATE
   # EXCEPTION to the self-hosted-only rule. It was the only one until pages.yml
