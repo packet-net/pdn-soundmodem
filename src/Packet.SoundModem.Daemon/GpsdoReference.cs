@@ -58,7 +58,9 @@ internal sealed record ReferenceVerdict(ReferenceState State, string Detail, Dat
 /// <remarks>
 /// A 6000-series Flex takes the GPSDO's 10 MHz only when it found it on REF IN at power-up;
 /// otherwise it runs on its own calibrated TCXO, which is fine to transmit on whatever the GPSDO
-/// is doing. So the GPSDO's verdict only counts while the Flex says it is on it.
+/// is doing. So the watched GPSDO's verdict only counts while the Flex says it is on its
+/// external reference. <c>state=gpsdo</c> is the radio's own internal GPSDO (the 6600/6700
+/// option), not the one the display watches, so it is judged like the TCXO, on the radio's lock.
 /// </remarks>
 /// <param name="Source">
 /// The source in use as <c>/api/txlease</c> spells it: <c>tcxo</c>, <c>ocxo</c>, <c>external</c>,
@@ -79,21 +81,26 @@ internal sealed record RadioOscillator(string? Source, bool Locked)
         },
         status.Locked);
 
-    /// <summary>On its own internal oscillator and locked: the GPSDO is not in use.</summary>
-    internal bool OnItsOwn => Locked && Source is "tcxo" or "ocxo";
+    /// <summary>On one of its own oscillators (TCXO, OCXO or internal GPSDO) and locked: the
+    /// watched GPSDO is not in use.</summary>
+    internal bool OnItsOwn => Locked && Source is "tcxo" or "ocxo" or "gpsdo";
 
-    /// <summary>On the external reference (REF IN, or a built-in GPSDO) and locked: the GPSDO's verdict counts.</summary>
-    internal bool OnTheGpsdo => Locked && Source is "external" or "gpsdo";
+    /// <summary>On the external reference (REF IN) and locked: the watched GPSDO's verdict counts.</summary>
+    internal bool OnTheGpsdo => Locked && Source is "external";
 
     /// <summary>The source in the radio's own case: <c>TCXO</c>, <c>external</c>.</summary>
     internal string Named => Source switch
     {
         "tcxo" => "TCXO",
         "ocxo" => "OCXO",
-        "gpsdo" => "GPSDO",
+        "gpsdo" => "internal GPSDO",
         string other => other,
         null => "unknown",
     };
+
+    /// <summary>What the watched GPSDO is called beside this source: "external GPSDO" beside the
+    /// radio's own internal one, so the two are not confused.</summary>
+    internal string Watched => Source == "gpsdo" ? "external GPSDO" : "GPSDO";
 
     /// <summary>The Flex's part of the page's chip.</summary>
     internal string Chip =>
@@ -103,8 +110,8 @@ internal sealed record RadioOscillator(string? Source, bool Locked)
 
     /// <summary>The one journal line for the Flex moving to this.</summary>
     internal string Line =>
-        OnItsOwn ? $"flex: now on its {Named}, the GPSDO is not in use; the reference is judged OK"
-        : OnTheGpsdo ? $"flex: now on its {(Source == "gpsdo" ? "GPSDO" : "external 10 MHz reference")}; the GPSDO's verdict counts"
+        OnItsOwn ? $"flex: now on its {Named}, the {Watched} is not in use; the reference is judged OK"
+        : OnTheGpsdo ? "flex: now on its external 10 MHz reference; the GPSDO's verdict counts"
         : Source is null ? "flex: its oscillator state is unknown; the reference is judged unknown unless the GPSDO says unreliable"
         : $"flex: its {Named} reference is not locked; the reference is judged unknown unless the GPSDO says unreliable";
 }
@@ -130,8 +137,8 @@ internal sealed record RadioOscillator(string? Source, bool Locked)
 /// matters most is the one where no message arrives at all.</para>
 /// <para><b>A Flex has the last word on whether the GPSDO matters.</b> Once a Flex reports its
 /// oscillator (<see cref="FlexOscillator"/>), the verdict follows what it is running on: its own
-/// TCXO, locked, is OK whatever the GPSDO says; the external reference, locked, is the GPSDO's
-/// verdict; not locked or not said is unknown, or unreliable if the GPSDO says so. A station that
+/// TCXO (or OCXO, or internal GPSDO), locked, is OK whatever the GPSDO says; the external
+/// reference, locked, is the GPSDO's verdict; not locked or not said is unknown, or unreliable if the GPSDO says so. A station that
 /// is not a Flex never calls it, and its verdict is the GPSDO's alone.</para>
 /// <para>The MQTT side is <see cref="GpsdoFeed"/>; this class has no network, so a test drives it
 /// with topics and payloads and a fake clock.</para>
@@ -173,7 +180,9 @@ internal sealed class GpsdoReference : IDisposable
 
     /// <summary>What the Flex last said it runs on; null for a station that is not a Flex.</summary>
     private RadioOscillator? _flex;
-    private bool _saidFlexFault;
+
+    /// <summary>Lines about the Flex moving, waiting for the next publication, in order.</summary>
+    private readonly List<(string Line, bool Problem)> _flexLines = [];
 
     private ReferenceState _state = ReferenceState.Unknown;
     private string _detail = "no message yet";
@@ -249,64 +258,45 @@ internal sealed class GpsdoReference : IDisposable
 
     /// <summary>
     /// What the Flex says it is running on, from its live status: at bring-up and on every change
-    /// M0LTE.Flex reports. One journal line when it moves (not for the first report, which the
-    /// bring-up's own <c>flex: reference</c> line already gave), then the verdict is worked out
-    /// again. Never throws: it runs on the radio's read loop.
+    /// M0LTE.Flex reports. <paramref name="read"/> is called under the lock, so the last call to
+    /// get in reads the radio's latest state and a stale read cannot overwrite a newer one. One
+    /// journal line when it moves (not for the first report, which the bring-up's own
+    /// <c>flex: reference</c> line already gave).
     /// </summary>
-    internal void FlexOscillator(RadioOscillator oscillator)
+    /// <remarks>
+    /// Runs on the radio's read loop, so it never waits for a publication in progress: it records
+    /// the change and publishes only if nobody else is, and otherwise the next second's
+    /// <see cref="Tick"/> publishes it. Never throws.
+    /// </remarks>
+    /// <returns>True if it published the change itself (or there was none), false if left to the tick.</returns>
+    internal bool FlexOscillator(Func<RadioOscillator> read)
     {
-        ArgumentNullException.ThrowIfNull(oscillator);
-        lock (_publish)
+        ArgumentNullException.ThrowIfNull(read);
+        try
         {
-            string? line = null;
-            bool problem = false;
             lock (_gate)
             {
+                RadioOscillator oscillator = read();
                 if (oscillator == _flex)
                 {
-                    return;
+                    return true;
                 }
 
                 if (_flex is not null)
                 {
-                    line = oscillator.Line;
-                    problem = !oscillator.OnItsOwn && !oscillator.OnTheGpsdo;
+                    _flexLines.Add((oscillator.Line, !oscillator.OnItsOwn && !oscillator.OnTheGpsdo));
                 }
 
                 _flex = oscillator;
             }
-
-            if (line is not null)
-            {
-                try
-                {
-                    if (problem)
-                    {
-                        _journal.WriteError(line);
-                    }
-                    else
-                    {
-                        _journal.Write(line);
-                    }
-                }
-                catch (Exception fault)
-                {
-                    bool say;
-                    lock (_gate)
-                    {
-                        say = !_saidFlexFault;
-                        _saidFlexFault = true;
-                    }
-
-                    if (say)
-                    {
-                        Console.Error.WriteLine($"gpsdo: journalling the Flex's oscillator failed: {fault.GetBaseException().Message}");
-                    }
-                }
-            }
-
-            PublishGuarded();
         }
+        catch (Exception)
+        {
+            // A radio client that throws on a read has nothing to say; the verdict stands.
+            return true;
+        }
+
+        return Tick();
     }
 
     /// <summary>One message from the broker. Topics other than the two are ignored.</summary>
@@ -450,42 +440,52 @@ internal sealed class GpsdoReference : IDisposable
 
             if (say)
             {
-                _journal.WriteError($"gpsdo: showing the reference failed: {fault.GetBaseException().Message}");
+                try
+                {
+                    _journal.WriteError($"gpsdo: showing the reference failed: {fault.GetBaseException().Message}");
+                }
+                catch (Exception)
+                {
+                    // A journal that throws cannot be told so; nothing may escape onto the timer
+                    // or the radio's read loop.
+                }
             }
         }
     }
 
     private void Publish()
     {
-        ReferenceVerdict changed;
+        ReferenceVerdict? changed = null;
         string? line = null;
         bool problem = false;
+        (string Line, bool Problem)[] flexLines;
         lock (_gate)
         {
+            flexLines = [.. _flexLines];
+            _flexLines.Clear();
             (ReferenceState state, _, string shown) = Judge();
             string? radio = _flex?.Chip;
-            if (state == _state && shown == _detail && radio == _radio)
+            if (state != _state || shown != _detail || radio != _radio)
             {
-                return;
+                changed = Moved(state, shown, radio, out line, out problem);
             }
-
-            if (state != _state)
-            {
-                line = $"10 MHz reference {ReferenceVerdict.Spoken(state)}: {shown} "
-                    + $"(was {ReferenceVerdict.Spoken(_state)} for {Span(_time.GetElapsedTime(_sinceStamp))})";
-                problem = state != ReferenceState.Ok;
-                _since = _time.GetUtcNow();
-                _sinceStamp = _time.GetTimestamp();
-            }
-
-            _state = state;
-            _detail = shown;
-            _radio = radio;
-            changed = new ReferenceVerdict(state, shown, _since, radio);
         }
 
         // Outside _gate (a subscriber may read Current) but inside _publish, so lines and page
-        // updates go out in the order the verdicts were reached.
+        // updates go out in the order the verdicts were reached: the Flex's move, then the
+        // verdict it led to.
+        foreach ((string flexLine, bool flexProblem) in flexLines)
+        {
+            if (flexProblem)
+            {
+                _journal.WriteError(flexLine);
+            }
+            else
+            {
+                _journal.Write(flexLine);
+            }
+        }
+
         if (line is not null)
         {
             if (problem)
@@ -498,7 +498,31 @@ internal sealed class GpsdoReference : IDisposable
             }
         }
 
-        Changed?.Invoke(changed);
+        if (changed is not null)
+        {
+            Changed?.Invoke(changed);
+        }
+    }
+
+    /// <summary>Takes a new verdict or shown reason on; caller holds <c>_gate</c>. The journal line
+    /// is for a change of verdict only.</summary>
+    private ReferenceVerdict Moved(ReferenceState state, string shown, string? radio, out string? line, out bool problem)
+    {
+        line = null;
+        problem = false;
+        if (state != _state)
+        {
+            line = $"10 MHz reference {ReferenceVerdict.Spoken(state)}: {shown} "
+                + $"(was {ReferenceVerdict.Spoken(_state)} for {Span(_time.GetElapsedTime(_sinceStamp))})";
+            problem = state != ReferenceState.Ok;
+            _since = _time.GetUtcNow();
+            _sinceStamp = _time.GetTimestamp();
+        }
+
+        _state = state;
+        _detail = shown;
+        _radio = radio;
+        return new ReferenceVerdict(state, shown, _since, radio);
     }
 
     /// <summary>
@@ -510,8 +534,8 @@ internal sealed class GpsdoReference : IDisposable
 
     /// <summary>
     /// The GPSDO's verdict as the Flex's oscillator makes it count. No Flex: the GPSDO's alone.
-    /// The Flex on its own TCXO (or OCXO), locked: OK, whatever the GPSDO says. On the external
-    /// reference, locked: the GPSDO's. Not locked, or not said: unknown, unless the GPSDO says
+    /// The Flex on its own TCXO, OCXO or internal GPSDO, locked: OK, whatever the GPSDO says. On
+    /// the external reference, locked: the GPSDO's. Not locked, or not said: unknown, unless the GPSDO says
     /// unreliable, which stands.
     /// </summary>
     internal static (ReferenceState State, string Detail, string Shown) Combine(
@@ -524,7 +548,7 @@ internal sealed class GpsdoReference : IDisposable
 
         if (flex.OnItsOwn)
         {
-            string own = $"Flex on its own {flex.Named} (GPSDO not in use)";
+            string own = $"Flex on its own {flex.Named} ({flex.Watched} not in use)";
             return (ReferenceState.Ok, own, own);
         }
 

@@ -498,8 +498,8 @@ Watches a GPSDO that disciplines the radio's 10 MHz reference, through a display
 
   | The Flex says | Verdict |
   |---|---|
-  | on its own TCXO (or OCXO), locked | **OK**, whatever the GPSDO says: "Flex on its own TCXO (GPSDO not in use)" |
-  | on the external reference or a GPSDO, locked | the GPSDO's verdict, as above |
+  | on its own TCXO, OCXO or internal GPSDO (the 6600/6700 option), locked | **OK**, whatever the watched GPSDO says: "Flex on its own TCXO (GPSDO not in use)" |
+  | on the external reference (REF IN), locked | the GPSDO's verdict, as above |
   | not locked, or nothing yet | **unknown**, unless the GPSDO says unreliable, which stands |
 
   Other devices are judged on the GPSDO alone.

@@ -23,6 +23,7 @@ public sealed class FlexOscillatorReferenceTests
     private static readonly RadioOscillator GpsdoOption = new("gpsdo", Locked: true);
     private static readonly RadioOscillator ExternalUnlocked = new("external", Locked: false);
     private static readonly RadioOscillator TcxoUnlocked = new("tcxo", Locked: false);
+    private static readonly RadioOscillator GpsdoOptionUnlocked = new("gpsdo", Locked: false);
     private static readonly RadioOscillator NotSaid = new(null, Locked: false);
 
     private readonly FakeTimeProvider _time = new(Noon);
@@ -46,6 +47,7 @@ public sealed class FlexOscillatorReferenceTests
         "gpsdo" => GpsdoOption,
         "external-unlocked" => ExternalUnlocked,
         "tcxo-unlocked" => TcxoUnlocked,
+        "gpsdo-unlocked" => GpsdoOptionUnlocked,
         "not-said" => NotSaid,
         _ => throw new ArgumentException(name),
     };
@@ -70,12 +72,15 @@ public sealed class FlexOscillatorReferenceTests
     [InlineData("tcxo", "ok", "LOCKED", "ok", "Flex on its own TCXO (GPSDO not in use)")]
     [InlineData("tcxo", "unreliable", "GPS LOST", "ok", "Flex on its own TCXO (GPSDO not in use)")]
     [InlineData("tcxo", "unknown", "display offline", "ok", "Flex on its own TCXO (GPSDO not in use)")]
-    // On the external reference (REF IN, or a built-in GPSDO): the GPSDO's verdict.
+    // On the radio's own internal GPSDO (the 6600/6700 option): its own oscillator, judged by its lock.
+    [InlineData("gpsdo", "ok", "LOCKED", "ok", "Flex on its own internal GPSDO (external GPSDO not in use)")]
+    [InlineData("gpsdo", "unreliable", "GPS LOST", "ok", "Flex on its own internal GPSDO (external GPSDO not in use)")]
+    [InlineData("gpsdo-unlocked", "ok", "LOCKED", "unknown", "Flex reports its internal GPSDO reference not locked")]
+    [InlineData("gpsdo-unlocked", "unreliable", "GPS LOST", "unreliable", "GPS LOST")]
+    // On the external reference (REF IN): the GPSDO's verdict.
     [InlineData("external", "ok", "LOCKED", "ok", "LOCKED")]
     [InlineData("external", "unreliable", "GPS LOST", "unreliable", "GPS LOST")]
     [InlineData("external", "unknown", "display offline", "unknown", "display offline")]
-    [InlineData("gpsdo", "ok", "LOCKED", "ok", "LOCKED")]
-    [InlineData("gpsdo", "unreliable", "GPS LOST", "unreliable", "GPS LOST")]
     // Not locked, or not said: unknown, unless the GPSDO says unreliable.
     [InlineData("external-unlocked", "ok", "LOCKED", "unknown", "Flex reports its external reference not locked")]
     [InlineData("external-unlocked", "unreliable", "GPS LOST", "unreliable", "GPS LOST")]
@@ -134,25 +139,31 @@ public sealed class FlexOscillatorReferenceTests
     public void Before_The_Radio_Has_Said_The_Oscillator_Is_Not_Known() =>
         RadioOscillator.FromFlex(FlexReferenceStatus.Unknown).Should().Be(NotSaid);
 
+    [Fact]
+    public void A_Word_The_Library_Does_Not_Recognise_Is_No_Oscillator_At_All() =>
+        RadioOscillator.FromFlex(new FlexReferenceStatus(
+                FlexOscillatorSource.Tcxo, FlexOscillatorSource.Unknown, true, null, "tcxo", "wobbly"))
+            .Should().Be(new RadioOscillator(null, true), "an unrecognised word is null, never a guess");
+
     // ---------------------------------------------------------------- live, with the journal
 
     [Fact]
     public void The_Ninth_Of_November_Reads_Ok_Because_The_Flex_Was_On_Its_Tcxo()
     {
         using GpsdoReference reference = Reference();
-        reference.FlexOscillator(External);
+        reference.FlexOscillator(() => External);
         reference.Receive("gpsdo/status", "online", retained: false);
         reference.Receive("gpsdo/state", State("LOCKED", true), retained: false);
         reference.Current.State.Should().Be(ReferenceState.Ok);
 
         // The GPSDO is unplugged: the Flex falls back to its TCXO and the display goes bad.
-        reference.FlexOscillator(Tcxo);
+        reference.FlexOscillator(() => Tcxo);
         reference.Receive("gpsdo/state", State("NO 10 MHz", false), retained: false);
         for (int i = 0; i < 29 * 6; i++)
         {
             _time.Advance(TimeSpan.FromSeconds(10));
             reference.Receive("gpsdo/state", State("NO 10 MHz", false), retained: false);
-            reference.FlexOscillator(Tcxo);
+            reference.FlexOscillator(() => Tcxo);
         }
 
         ReferenceVerdict now = reference.Current;
@@ -161,7 +172,7 @@ public sealed class FlexOscillatorReferenceTests
         now.Chip.Should().Be("10 MHz OK (Flex on TCXO)");
 
         // Back on the external reference after a power cycle: the GPSDO's verdict counts again.
-        reference.FlexOscillator(External);
+        reference.FlexOscillator(() => External);
         reference.Current.State.Should().Be(ReferenceState.Unreliable);
         reference.Current.Chip.Should().Be("10 MHz unreliable: NO 10 MHz (Flex on external)");
 
@@ -181,12 +192,12 @@ public sealed class FlexOscillatorReferenceTests
         var shown = new List<ReferenceVerdict>();
         reference.Changed += shown.Add;
 
-        reference.FlexOscillator(Tcxo);
-        reference.FlexOscillator(Tcxo);
-        reference.FlexOscillator(TcxoUnlocked);
-        reference.FlexOscillator(TcxoUnlocked);
-        reference.FlexOscillator(NotSaid);
-        reference.FlexOscillator(Tcxo);
+        reference.FlexOscillator(() => Tcxo);
+        reference.FlexOscillator(() => Tcxo);
+        reference.FlexOscillator(() => TcxoUnlocked);
+        reference.FlexOscillator(() => TcxoUnlocked);
+        reference.FlexOscillator(() => NotSaid);
+        reference.FlexOscillator(() => Tcxo);
 
         Journal.Should().Equal(
             "10 MHz reference OK: LOCKED (was unknown for 0s)",
@@ -207,7 +218,7 @@ public sealed class FlexOscillatorReferenceTests
     public void The_First_Report_From_The_Flex_Is_Not_A_Line_Because_Bring_Up_Said_It()
     {
         using GpsdoReference reference = Reference();
-        reference.FlexOscillator(Tcxo);
+        reference.FlexOscillator(() => Tcxo);
 
         Journal.Should().Equal("10 MHz reference OK: Flex on its own TCXO (GPSDO not in use) (was unknown for 0s)");
     }
@@ -233,16 +244,88 @@ public sealed class FlexOscillatorReferenceTests
         reference.Receive("gpsdo/status", "online", retained: false);
         reference.Receive("gpsdo/state", State("GPS LOST", false), retained: false);
         _time.Advance(TimeSpan.FromMinutes(1));
-        reference.FlexOscillator(Tcxo);
+        reference.FlexOscillator(() => Tcxo);
 
         JsonObject answer = TxLeaseApi.Handle(channel, "GET", "", null, reference: reference).Answer;
         answer["reference"]!.ToJsonString().Should().Be(
             """{"state":"ok","detail":"Flex on its own TCXO (GPSDO not in use)","since":"2026-11-09T12:01:00Z","oscillator":"tcxo"}""");
 
         reference.Receive("gpsdo/state", State("GPS LOST", false), retained: false);
-        reference.FlexOscillator(NotSaid);
+        reference.FlexOscillator(() => NotSaid);
         TxLeaseApi.Handle(channel, "GET", "", null, reference: reference).Answer["reference"]!.ToJsonString().Should().Be(
             """{"state":"unreliable","detail":"GPS LOST","since":"2026-11-09T12:01:00Z","oscillator":null}""");
+    }
+
+    // ---------------------------------------------------------------- the radio's read loop
+
+    [Fact]
+    public async Task The_Radio_Read_Loop_Never_Waits_For_A_Publication_And_The_Tick_Publishes_What_It_Left()
+    {
+        using GpsdoReference reference = Reference();
+        reference.Receive("gpsdo/status", "online", retained: false);
+        reference.Receive("gpsdo/state", State("LOCKED", true), retained: false);
+        reference.FlexOscillator(() => External);
+
+        using var inside = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        bool hold = true;
+        reference.Changed += _ =>
+        {
+            if (hold)
+            {
+                inside.Set();
+                release.Wait(TimeSpan.FromSeconds(30));
+            }
+        };
+
+        // A GPSDO report whose page update hangs holds the publication.
+        Task stuck = Task.Run(() => reference.Receive("gpsdo/state", State("GPS LOST", false), retained: false));
+        inside.Wait(TimeSpan.FromSeconds(10)).Should().BeTrue();
+
+        Task<bool> flexCall = Task.Run(() => reference.FlexOscillator(() => Tcxo));
+        (await Task.WhenAny(flexCall, Task.Delay(TimeSpan.FromSeconds(5)))).Should().BeSameAs(flexCall, "the read loop must not block");
+        (await flexCall).Should().BeFalse("it left the publication to the tick");
+        reference.Current.State.Should().Be(ReferenceState.Ok, "the change is taken on at once, published or not");
+
+        hold = false;
+        release.Set();
+        await stuck.WaitAsync(TimeSpan.FromSeconds(10));
+        _journal.Should().NotContain(l => l.StartsWith("flex:", StringComparison.Ordinal), "nothing has published it yet");
+
+        _time.Advance(GpsdoReference.CheckEvery);
+        Journal.Should().Equal(
+            "10 MHz reference OK: LOCKED (was unknown for 0s)",
+            "10 MHz reference unreliable: GPS LOST (was OK for 0s)",
+            "flex: now on its TCXO, the GPSDO is not in use; the reference is judged OK",
+            "10 MHz reference OK: Flex on its own TCXO (GPSDO not in use) (was unreliable for 1s)");
+    }
+
+    [Fact]
+    public void With_Nothing_Publishing_The_Read_Loop_Publishes_The_Change_Itself()
+    {
+        using GpsdoReference reference = Reference();
+        reference.FlexOscillator(() => External).Should().BeTrue();
+        reference.FlexOscillator(() => Tcxo).Should().BeTrue("nobody else was publishing");
+
+        Journal.Should().Equal(
+            "flex: now on its TCXO, the GPSDO is not in use; the reference is judged OK",
+            "10 MHz reference OK: Flex on its own TCXO (GPSDO not in use) (was unknown for 0s)");
+    }
+
+    [Fact]
+    public void A_Journal_That_Throws_Cannot_Escape_Into_The_Radio_Read_Loop()
+    {
+        using var reference = new GpsdoReference(
+            "gpsdo",
+            new StationJournal("", _ => throw new IOException("journal gone"), _ => throw new IOException("journal gone")),
+            _time);
+        reference.FlexOscillator(() => External);
+
+        Action move = () => reference.FlexOscillator(() => TcxoUnlocked);
+        move.Should().NotThrow();
+        Action unreadable = () => reference.FlexOscillator(() => throw new InvalidOperationException("radio gone"));
+        unreadable.Should().NotThrow();
+        reference.Current.State.Should().Be(ReferenceState.Unknown);
     }
 
     private static async Task Until(Func<bool> condition, string because)
