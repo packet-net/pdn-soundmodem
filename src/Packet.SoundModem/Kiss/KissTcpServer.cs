@@ -52,6 +52,9 @@ public sealed class KissTcpServer : IAsyncDisposable
     private readonly CancellationTokenSource _stopping = new();
     private Task? _acceptLoop;
 
+    // Why this server takes no more work, once StopTakingWork has said so; null until then.
+    private volatile string? _refusing;
+
     /// <summary>Creates a server for <paramref name="channel"/> on
     /// <paramref name="port"/> (0 = ephemeral, see <see cref="LocalPort"/>).</summary>
     /// <param name="channel">The modem channel to serve.</param>
@@ -190,6 +193,10 @@ public sealed class KissTcpServer : IAsyncDisposable
             {
                 return; // the listener was stopped under us: shutdown, not a fault
             }
+            catch (SocketException) when (_refusing is not null)
+            {
+                return; // StopTakingWork closed the listener: on purpose, not a fault
+            }
             catch (SocketException e)
             {
                 // One failed accept (a client that reset mid-handshake, the process briefly out
@@ -207,6 +214,13 @@ public sealed class KissTcpServer : IAsyncDisposable
                 }
 
                 continue;
+            }
+
+            if (_refusing is not null)
+            {
+                // Accepted in the instant before the listener closed: no session for it either.
+                client.Dispose();
+                return;
             }
 
             client.NoDelay = true;
@@ -348,6 +362,12 @@ public sealed class KissTcpServer : IAsyncDisposable
                 break;
             case KissCommand.TxTail when frame.Payload.Length >= 1:
                 _channel.Csma.TxTailMilliseconds = frame.Payload[0] * 10;
+                break;
+
+            case KissCommand.SetHardware when frame.Payload.Length >= 1 && _refusing is string refusing:
+                // Settled already: a modem changed now would never send anything in its new mode.
+                HardwareCommand?.Invoke(new KissHardwareEvent(
+                    _polyglot?.DefaultSubChannel ?? TransmitSubChannel(frame.Port, []), refusing, false));
                 break;
 
             case KissCommand.SetHardware when frame.Payload.Length >= 1:
@@ -542,6 +562,30 @@ public sealed class KissTcpServer : IAsyncDisposable
         /// <summary>Why the server dropped this session, when it did (the read loop's
         /// teardown exception would otherwise bury it).</summary>
         public string? Fault { get; set; }
+    }
+
+    /// <summary>
+    /// The station is stopping: take no more work. New connections are refused at the socket (the
+    /// listener closes), and every attached host is let go with <paramref name="reason"/> as its
+    /// disconnect reason, so frames and SETHW that could never reach the air are not accepted.
+    /// Idempotent, cheap and safe from any thread; <see cref="DisposeAsync"/> still does the rest.
+    /// </summary>
+    /// <param name="reason">Why, for the journal's disconnect line and any SETHW refused.</param>
+    public void StopTakingWork(string reason)
+    {
+        ArgumentNullException.ThrowIfNull(reason);
+        if (Interlocked.CompareExchange(ref _refusing, reason, null) is not null)
+        {
+            return;
+        }
+
+        _listener.Stop();
+        foreach (ClientSession session in _clients.Values)
+        {
+            session.Fault ??= reason;
+            session.SendQueue.Writer.TryComplete();
+            session.Client.Dispose();
+        }
     }
 
     /// <inheritdoc />

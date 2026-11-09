@@ -19,8 +19,10 @@ public sealed class FlexArbitrationWiringTests
             "flex:mock", dspRate: 48000, packetBuffer: 3,
             tuning: new FlexTuning(), cancellation: CancellationToken.None);
 
-        runtime.Ptt.Should().BeOfType<FlexPtt>(
+        runtime.Arbitration.Should().BeNull(
             "arbitration is opt-in until the shared-PA hardware probes pass");
+        runtime.Ptt.Should().BeOfType<BoundedFlexPtt>()
+            .Which.Inner.Should().BeOfType<FlexPtt>("each keyup is bounded (issue #790), over the plain PTT");
     }
 
     [Fact]
@@ -41,7 +43,9 @@ public sealed class FlexArbitrationWiringTests
             },
             cancellation: CancellationToken.None);
 
-        runtime.Ptt.Should().BeOfType<FlexArbitratedPtt>();
+        runtime.Arbitration.Should().NotBeNull();
+        runtime.Ptt.Should().BeOfType<BoundedFlexPtt>()
+            .Which.Inner.Should().BeOfType<FlexArbitratedPtt>();
         runtime.Mock!.CommandLog.Should().Contain("client station pdn-soundmodem");
 
         runtime.Ptt.Key();

@@ -159,7 +159,7 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
         // discovering the busy radio inside Key(). Composed over whatever inhibit is already
         // installed (ARDOP's ARQ gate lands earlier), never instead of it. ARDOP's own bursts
         // bypass the inhibit by design and rely on the in-Key wait alone.
-        if (flex.Ptt is M0LTE.Flex.FlexArbitratedPtt arbitratedPtt)
+        if (flex.Arbitration is M0LTE.Flex.FlexArbitratedPtt arbitratedPtt)
         {
             Func<bool>? priorInhibit = channel.TransmitInhibit;
             channel.TransmitInhibit = () =>
@@ -200,6 +200,15 @@ internal sealed class FlexStationDevice(DeviceKind kind, string spec, FlexDevice
         {
             Console.Error.WriteLine(
                 "flex: the radio's session ended; stopping so the service restarts and rediscovers it.");
+            context.RadioLost();
+        };
+
+        // A keyup or an unkey the radio never answered (issue #790): the session may still look
+        // up from here, but a radio that does not answer its PTT is gone for this station's
+        // purposes, and the same restart is what brings it back.
+        flex.RadioUnanswered += why =>
+        {
+            Console.Error.WriteLine($"{why}; stopping so the service restarts and rediscovers it.");
             context.RadioLost();
         };
 

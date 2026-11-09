@@ -2441,7 +2441,8 @@ public sealed class SoundModemChannel
     /// the time this burst has gone out and the channel has been won again, the next one is
     /// normally ready: the transmitter never keys the radio and then waits for audio.</para>
     /// </remarks>
-    private void RunPackedKeyup(object source, PackedAudio burst, IAudioOutput output, IPttControl ptt)
+    private void RunPackedKeyup(
+        object source, PackedAudio burst, IAudioOutput output, IPttControl ptt, CancellationToken stopping)
     {
         List<TxItem> items = [.. burst.Items];
         var heldFor = new TimeSpan[items.Count];
@@ -2510,10 +2511,21 @@ public sealed class SoundModemChannel
                 }
 
                 StartPackedRenders(toStart);
-                WriteStoppably(output, burst.Audio, null, null, announce: mem => TransmittedAudio?.Invoke(mem));
+                int sentSamples = WriteStoppably(
+                    output, burst.Audio, null, null, announce: mem => TransmittedAudio?.Invoke(mem), stopping);
+                bool cutShort = sentSamples < burst.Audio.Length;
                 foreach (TxItem sent in items)
                 {
-                    sent.Done.TrySetResult(true);
+                    if (cutShort)
+                    {
+                        // The station stopped mid-burst (issue #790): the frames never went out
+                        // whole, so they are not reported sent.
+                        Refuse(sent, new OperationCanceledException(stopping));
+                    }
+                    else
+                    {
+                        sent.Done.TrySetResult(true);
+                    }
                 }
 
                 items.Clear();
@@ -3105,7 +3117,7 @@ public sealed class SoundModemChannel
                     // for the channel or rendered refuses it here, unkeyed.
                     if (!RefuseIfLeasedOut(source, packed.Items))
                     {
-                        RunPackedKeyup(source, packed, output, ptt);
+                        RunPackedKeyup(source, packed, output, ptt, cancellation);
                     }
                 }
 
@@ -3179,7 +3191,10 @@ public sealed class SoundModemChannel
                     // measured to be innocent - it scored the same as a full one on every row -
                     // but its premise, that the far end is already locked to this waveform, is
                     // still only true while the modem stays the same.
-                    while (TakeFrom(source) is { } item)
+                    // A station that is stopping takes no further frame into this keyup (issue
+                    // #790): what is still queued stays queued, the keyup ends with its tail and
+                    // the unkey below, and the loop then ends on the cancellation as it always has.
+                    while (!cancellation.IsCancellationRequested && TakeFrom(source) is { } item)
                     {
                         inFlight = item;
                         Finish(item);
@@ -3234,9 +3249,24 @@ public sealed class SoundModemChannel
                         // count) closed for however much of the nominal burst was left unplayed - a
                         // stop 2 s into a 30 s test left 28 s of a tone nobody was sending painted on
                         // the waterfall with nothing behind it.
-                        WriteStoppably(
+                        int sentSamples = WriteStoppably(
                             output, samples, item.StopEarly, item.Written,
-                            announce: mem => TransmittedAudio?.Invoke(mem));
+                            announce: mem => TransmittedAudio?.Invoke(mem), cancellation);
+
+                        if (sentSamples < samples.Length && cancellation.IsCancellationRequested
+                            && item.StopEarly is null)
+                        {
+                            // Cut short because the station is stopping (issue #790): a frame that
+                            // never went out whole is not reported sent. A stoppable item (the
+                            // test tone) is answered as for its own stop, since it is told through
+                            // Written how much of it went out.
+                            // The keyup still ends normally below - a clean unkey is worth more
+                            // than the rest of a frame, and a process ended mid-keyup leaves a
+                            // CM108 or a rigctld transmitting until something opens it again.
+                            Refuse(item, new OperationCanceledException(cancellation));
+                            inFlight = null;
+                            break;
+                        }
 
                         // Not drained here. A drain waits for the card to play everything it
                         // holds, stops the stream and re-arms it, and ALSA pads the last period
@@ -3439,15 +3469,23 @@ public sealed class SoundModemChannel
     private const int StopCheckMilliseconds = 40;
 
     /// <summary>
+    /// The longest an ordinary (not stoppable) item's audio goes to the device in one call. A
+    /// station that is stopping checks between these, so it is roughly how long a stop can take
+    /// to unkey in the middle of a long burst (issue #790).
+    /// </summary>
+    private const int StopLatencySeconds = 5;
+
+    /// <summary>
     /// Writes one item's audio, in blocks it can be asked to stop between rather than as a single
     /// call - for the one transmitter that can change its mind mid-keyup, the operator's test
     /// tone (see <c>TxTestRunner</c> in the daemon, which is not visible from here, hence the
     /// delegates rather than a concrete type).
     /// </summary>
     /// <remarks>
-    /// <para>Every other caller passes <paramref name="stopEarly"/> null and gets exactly the one
-    /// <see cref="IAudioOutput.Write"/> call it always did, announced whole and up front exactly
-    /// as before. A test transmission renders its whole burst up front too - a modem modulates
+    /// <para>Every other caller passes <paramref name="stopEarly"/> null and gets the one
+    /// <see cref="IAudioOutput.Write"/> call it always did for anything up to five seconds long,
+    /// announced whole and up front exactly as before; see the method for longer audio, and for
+    /// <paramref name="stopping"/>, which stops either kind when the station is stopping. A test transmission renders its whole burst up front too - a modem modulates
     /// frames and there is no frame here either - so the only thing this changes for it is how
     /// that already-rendered burst reaches the device: a stop can only take effect between
     /// blocks, which is why the burst is walked in blocks with a check between each rather than
@@ -3469,24 +3507,47 @@ public sealed class SoundModemChannel
     /// stream is never stopped mid-burst; only <see cref="IAudioOutput.Write"/> is called more
     /// than once, which every multi-frame keyup already does today, once per queued frame.</para>
     /// </remarks>
-    private static void WriteStoppably(
+    /// <returns>How many samples went to the device: all of them unless a stop cut it short.</returns>
+    private static int WriteStoppably(
         IAudioOutput output, float[] samples, Func<bool>? stopEarly, Action<int>? written,
-        Action<ReadOnlyMemory<float>> announce)
+        Action<ReadOnlyMemory<float>> announce, CancellationToken stopping)
     {
-        if (stopEarly is null)
-        {
-            announce(samples);
-            output.Write(samples);
-            written?.Invoke(samples.Length);
-            return;
-        }
-
         int block = Math.Max(1, output.SampleRate * StopCheckMilliseconds / 1000);
         int offset = 0;
+        if (stopEarly is null)
+        {
+            // Announced whole and up front as it always was, and written in one call for anything
+            // up to StopLatencySeconds long, so an ordinary frame reaches the device exactly as
+            // before. A longer one (an MS110D burst runs to 31 s) goes in chunks of that length
+            // with the station's token checked between them, so a station that is stopping can
+            // unkey within about that long rather than at the end of the burst (issue #790). Only
+            // a stop leaves the announcement ahead of the air, and then nothing is watching.
+            announce(samples);
+            int chunk = Math.Max(block, output.SampleRate * StopLatencySeconds);
+            while (offset < samples.Length)
+            {
+                if (offset > 0 && stopping.IsCancellationRequested)
+                {
+                    int last = Math.Min(block, samples.Length - offset);
+                    FadeToSilence(samples.AsSpan(offset, last));
+                    output.Write(samples.AsSpan(offset, last));
+                    offset += last;
+                    break;
+                }
+
+                int n = Math.Min(chunk, samples.Length - offset);
+                output.Write(samples.AsSpan(offset, n));
+                offset += n;
+            }
+
+            written?.Invoke(offset);
+            return offset;
+        }
+
         while (offset < samples.Length)
         {
             int n = Math.Min(block, samples.Length - offset);
-            if (stopEarly())
+            if (stopEarly() || stopping.IsCancellationRequested)
             {
                 // Faded rather than cut dead, for the same reason every other edge in this
                 // station's audio is shaped: a hard-keyed edge splatters. This is the last block
@@ -3504,6 +3565,7 @@ public sealed class SoundModemChannel
         }
 
         written?.Invoke(offset);
+        return offset;
     }
 
     /// <summary>Raised-cosine fade from full amplitude at the first sample to silence at the

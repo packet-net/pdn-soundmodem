@@ -34,8 +34,37 @@ public sealed class FlexRuntime : IAsyncDisposable
     /// <summary>The DAX-TX audio sink (at the DSP rate - upsampled internally when needed).</summary>
     public IAudioOutput Output { get; }
 
-    /// <summary>The slice PTT.</summary>
+    /// <summary>The slice PTT, with each keyup and unkey bounded so a radio that stops answering
+    /// cannot hold the transmitter for ever (issue #790).</summary>
     public IPttControl Ptt { get; }
+
+    /// <summary>The arbitrated PTT inside <see cref="Ptt"/>, when keying is arbitrated; null
+    /// otherwise. For asking whether another station is transmitting.</summary>
+    public FlexArbitratedPtt? Arbitration => (Ptt as BoundedFlexPtt)?.Inner as FlexArbitratedPtt ?? Ptt as FlexArbitratedPtt;
+
+    /// <summary>Raised, with a sentence for the journal, when a keyup or an unkey was abandoned
+    /// because the radio did not answer: the radio is as good as gone.</summary>
+    public event Action<string>? RadioUnanswered
+    {
+        add
+        {
+            if (Ptt is BoundedFlexPtt bounded)
+            {
+                bounded.RadioUnanswered += value;
+            }
+        }
+
+        remove
+        {
+            if (Ptt is BoundedFlexPtt bounded)
+            {
+                bounded.RadioUnanswered -= value;
+            }
+        }
+    }
+
+    /// <summary>How long the station's teardown may take before it is abandoned (issue #790).</summary>
+    internal static readonly TimeSpan TeardownLimit = TimeSpan.FromSeconds(5);
 
     /// <summary>Counts the times the DAX transmit audio fell behind the radio's sample clock
     /// (issue #748). It sits inside <see cref="Output"/>, at the DAX rate.</summary>
@@ -52,10 +81,46 @@ public sealed class FlexRuntime : IAsyncDisposable
         (Output as IDisposable)?.Dispose();
         // The arbitrated PTT holds a status-stream subscription; the plain one holds nothing.
         (Ptt as IDisposable)?.Dispose();
-        await Station.DisposeAsync().ConfigureAwait(false);
+
+        // Issue #790: a session the radio has already ended must be dropped BEFORE the station is
+        // disposed. The station's teardown sends its best-effort `slice remove` and waits for the
+        // reply with no timeout, and a FlexClient whose read loop has ended fails only the
+        // commands pending at that moment - one sent afterwards goes into the half-closed socket
+        // and its reply never comes, so the teardown waited for ever. That is what held GB7RDG
+        // off the air after the Flex dropped its clients. Disposed first, the client refuses the
+        // write at once and the station's teardown carries on. The slice is not removed, and a
+        // FLEX-6500 may keep a headless client's slice after the client has gone (see the
+        // teardown's own notes in M0LTE.Flex): a radio that is still up then holds it until it
+        // restarts, which is the best that can be done with no session to remove it through.
+        if (!Station.Client.IsConnected)
+        {
+            await Station.Client.DisposeAsync().ConfigureAwait(false);
+        }
+
+        await DisposeStationBoundedAsync(Station).ConfigureAwait(false);
         if (Mock is not null)
         {
             await Mock.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Disposes the station, giving up after <see cref="TeardownLimit"/>: a radio that vanished
+    /// without closing the session (a power cut) leaves the client connected as far as it knows,
+    /// and the `slice remove` the teardown sends would then wait for a reply for ever. Given up
+    /// on, the client is disposed so nothing more is sent, and the teardown is left behind.
+    /// </summary>
+    internal static async Task DisposeStationBoundedAsync(FlexStation station)
+    {
+        Task teardown = station.DisposeAsync().AsTask();
+        try
+        {
+            await teardown.WaitAsync(TeardownLimit).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            _ = teardown.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
+            await station.Client.DisposeAsync().ConfigureAwait(false);
         }
     }
 }
@@ -293,7 +358,7 @@ public static class FlexDevice
         // SmartSDR owns the transmitter there - so its warning stays null and this never fires.)
         if (station.TransmitSourceWarning is string transmitWarning)
         {
-            await station.DisposeAsync().ConfigureAwait(false); // disposes the shared client too
+            await FlexRuntime.DisposeStationBoundedAsync(station).ConfigureAwait(false); // disposes the shared client too
             if (mock is not null)
             {
                 await mock.DisposeAsync().ConfigureAwait(false);
@@ -318,12 +383,22 @@ public static class FlexDevice
         // Arbitrated keying carries the plan's transmit-filter high cut so every keyup
         // re-asserts it while the radio is quiet - the global, persistent filter is the
         // setting two stations otherwise overwrite under each other.
+        // Each keyup and unkey is bounded (issue #790): M0LTE.Flex waits for the radio's answer
+        // with no timeout, and an answer that never comes would hold the transmitter loop, and
+        // with it the station's shutdown, for ever. An arbitrated keyup may legitimately wait for
+        // another station to clear first, so its bound covers that wait and then some.
+        FlexPttArbitrationOptions arbitration = (tuning.ArbitrationTimings ?? new FlexPttArbitrationOptions()) with
+        {
+            TransmitFilterHighHz = tuning.TransmitFilterHighHz,
+        };
         IPttControl ptt = tuning.Arbitration
-            ? station.CreateArbitratedPtt((tuning.ArbitrationTimings ?? new FlexPttArbitrationOptions()) with
-            {
-                TransmitFilterHighHz = tuning.TransmitFilterHighHz,
-            })
-            : station.CreatePtt();
+            ? new BoundedFlexPtt(
+                station.CreateArbitratedPtt(arbitration),
+                () => station.Client.IsConnected,
+                keyLimit: arbitration.QuietWaitTimeout
+                    + (arbitration.ConfirmTimeout + arbitration.RetryBackoff) * arbitration.KeyAttempts
+                    + BoundedFlexPtt.UnkeyLimit)
+            : new BoundedFlexPtt(station.CreatePtt(), () => station.Client.IsConnected, BoundedFlexPtt.UnkeyLimit);
 
         return new FlexRuntime(mock, station, input, output, ptt, transmitStalls, flexOutput.TransmitLead);
     }

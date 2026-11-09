@@ -208,6 +208,57 @@ public class TxLeaseTests
     }
 
     [Fact]
+    public async Task A_Take_Is_Refused_While_The_Station_Is_Stopping_But_A_Release_Still_Works()
+    {
+        // Issue #790: GB7RDG granted pdn-mailcast's 12:00 lease while it was stuck stopping, and
+        // the slot went nowhere. A take is refused with the reason; giving one back is not work.
+        const string key = "test-key-not-a-secret";
+        (SoundModemChannel channel, _) = Station();
+        string? stopping = null;
+        var api = new ConfigApi(
+            key, "/nonexistent/soundmodem.json", "/nonexistent/pending.json",
+            runningJson: () => "{}", ephemeralInForce: false, requestRestart: () => { })
+        {
+            Stopping = () => stopping,
+        };
+        api.ServeTxLease(channel, cannot: null);
+
+        int port = FreePorts.Next();
+        using var listener = new HttpListener();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        Task serving = Task.Run(async () =>
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                HttpListenerContext context = await listener.GetContextAsync();
+                await api.HandleAsync(context, context.Request.Url!.AbsolutePath);
+            }
+        });
+
+        var url = new Uri($"http://127.0.0.1:{port}/api/txlease", UriKind.Absolute);
+        using var keyed = new HttpClient();
+        keyed.DefaultRequestHeaders.Add("X-API-Key", key);
+        HttpResponseMessage granted = await keyed.PostAsync(
+            url, new StringContent("""{"subChannel": 3, "seconds": 60}""", Encoding.UTF8, "application/json"));
+
+        stopping = ShutdownDeadline.Refusal;
+        HttpResponseMessage refused = await keyed.PostAsync(
+            url, new StringContent("""{"subChannel": 3, "seconds": 60}""", Encoding.UTF8, "application/json"));
+        HttpResponseMessage released = await keyed.PostAsync(
+            url, new StringContent("""{"subChannel": 3, "release": true}""", Encoding.UTF8, "application/json"));
+
+        await serving.WaitAsync(TimeSpan.FromSeconds(30));
+        listener.Close();
+
+        granted.StatusCode.Should().Be(HttpStatusCode.OK);
+        refused.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await refused.Content.ReadAsStringAsync()).Should().Contain("this station is stopping");
+        released.StatusCode.Should().Be(HttpStatusCode.OK);
+        channel.TransmitLease.Holder.Should().BeNull();
+    }
+
+    [Fact]
     public void Something_Held_Back_By_A_Lease_Is_Said_Once_Then_Counted_Each_Minute()
     {
         var time = new FakeTimeProvider(Noon);

@@ -198,6 +198,13 @@ internal sealed class TxTestRunner
             return Refuse(cannot);
         }
 
+        // A station on its way down would queue the test behind a transmitter that has already
+        // stopped, and the caller would wait out the channel bound for nothing (issue #790).
+        if (_options.Stopping?.Invoke() is string stopping)
+        {
+            return Refuse(stopping);
+        }
+
         // A transmit lease gives the transmitter to one sub-channel, and a test tone from anybody
         // else is exactly what it exists to keep off the air. The holder's own tone (the mailcast
         // head end's calibration tone) is the one exception, and it says it is the holder's by
@@ -254,6 +261,7 @@ internal sealed class TxTestRunner
             int leadSamples = 0;
             int toneSamples = 0;
             int producedSamples = 0;
+            int renderedSamples = 0;
             Task send = _options.Channel.EnqueueTransmit(
                 txDelay =>
                 {
@@ -289,6 +297,7 @@ internal sealed class TxTestRunner
                     var audio = new float[probeAt + (probe?.Audio.Length ?? 0)];
                     burst.CopyTo(audio, leadSamples);
                     probe?.Audio.CopyTo(audio, probeAt);
+                    renderedSamples = audio.Length;
                     return audio;
                 },
                 rejected: refusal => rejection = refusal.Message,
@@ -298,7 +307,9 @@ internal sealed class TxTestRunner
                 // the sub-channel it named.
                 source: run,
                 withdraw: run.Withdrawal.Token,
-                stopEarly: () => run.Cancelled,
+                // The station stopping ends it too (issue #790): a 30 s test must not hold the
+                // transmitter keyed past the shutdown's deadline.
+                stopEarly: () => run.Cancelled || _options.Stopping?.Invoke() is not null,
                 // What actually reached the device, in case a stop cut the write short - not the
                 // same number as run.Tone.Produced any more, which the render above already set
                 // to the whole burst regardless of how much of it a stop later let through.
@@ -378,9 +389,15 @@ internal sealed class TxTestRunner
                 return Refuse("stopped before it reached the air, so nothing was transmitted");
             }
 
+            // Cut short by the station stopping rather than by the operator (issue #790): it still
+            // went out, as far as it got, so it is reported and recorded as a transmission.
+            bool stationStopped = !run.Cancelled && producedSamples < renderedSamples
+                && _options.Stopping?.Invoke() is not null;
             string done = run.Cancelled
                 ? $"stopped after {onAir.ToString("0.0", CultureInfo.InvariantCulture)} s"
-                : $"done, {onAir.ToString("0.0", CultureInfo.InvariantCulture)} s on air";
+                : stationStopped
+                    ? $"stopped after {onAir.ToString("0.0", CultureInfo.InvariantCulture)} s, because the station is stopping"
+                    : $"done, {onAir.ToString("0.0", CultureInfo.InvariantCulture)} s on air";
             _options.Journal.Write($"tx test: {done}");
             _options.Report?.Invoke(new TxTestStatus("done", $"{text} - {done}"));
 
@@ -733,6 +750,12 @@ internal sealed record TxTestOptions
     /// no transmitter at all), because those are not conditions that come and go.
     /// </summary>
     public string? Refusal { get; init; }
+
+    /// <summary>
+    /// Why no test can run right now because the station is stopping, or null while it is not.
+    /// Asked on every request, unlike <see cref="Refusal"/>, because stopping comes later.
+    /// </summary>
+    public Func<string?>? Stopping { get; init; }
 
     /// <summary>The sub-channel a test is filed under in the frame log and the frames panel.</summary>
     public int SubChannel { get; init; }

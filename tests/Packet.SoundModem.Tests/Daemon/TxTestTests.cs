@@ -411,6 +411,46 @@ public class TxTestTests
     }
 
     [Fact]
+    public async Task A_Test_Cut_Short_By_The_Station_Stopping_Is_Reported_And_Recorded_As_Transmitted()
+    {
+        // Issue #790: the station starting to stop ends a running test early, but what went out
+        // went out, so it is written down like any other transmission rather than reported as
+        // never having reached the air. The stop is polled once per 40 ms block of the burst:
+        // asked once before the run, then the first 25 blocks (1 s) find the station running.
+        int asked = 0;
+        await using var rig = new Rig(o => o with
+        {
+            Stopping = () => Interlocked.Increment(ref asked) > 26 ? ShutdownDeadline.Refusal : null,
+        });
+
+        TxTestOutcome outcome = await rig.Runner.RunAsync(new TxTestRequest(false, 1800, 5));
+        await rig.SettledAsync();
+
+        outcome.Ran.Should().BeTrue(outcome.Refusal);
+        rig.Records.Should().ContainSingle().Which.Text.Should().Contain("because the station is stopping");
+        rig.Reports[^1].State.Should().Be("done");
+        rig.Output.Snapshot().Length.Should().BeLessThan(Rate * 3, "the rest of the 5 s tone did not go out");
+        rig.Keying.Should().Equal(["key", "unkey"]);
+    }
+
+    [Fact]
+    public async Task A_Station_That_Is_Stopping_Refuses_And_Never_Keys()
+    {
+        // Issue #790: a test asked for while the station is on its way down would queue behind a
+        // transmitter that has already stopped. Refused with the reason instead.
+        string? stopping = null;
+        await using var rig = new Rig(o => o with { Stopping = () => stopping });
+
+        stopping = ShutdownDeadline.Refusal;
+        TxTestOutcome outcome = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
+
+        outcome.Ran.Should().BeFalse();
+        outcome.Refusal.Should().Be(ShutdownDeadline.Refusal);
+        rig.Keying.Should().BeEmpty("a refused test never touches the radio");
+        rig.Output.Snapshot().Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task A_Receive_Only_Station_Is_Refused_By_The_Channel_Itself()
     {
         // Not through the start-up refusal above but through the channel's own gate, so the

@@ -108,6 +108,41 @@ public class KissClientEventTests
             + "clean shutdown teaches operators to ignore them");
     }
 
+    [Fact]
+    public async Task A_Stopping_Station_Refuses_New_Hosts_And_Lets_Attached_Ones_Go_With_The_Reason()
+    {
+        // Issue #790: a station stuck on its way down kept taking KISS hosts and SETHW for 21
+        // minutes and sent nothing. Stopping, the port takes no more work: a host already attached
+        // sees its session end (so it can send no frame and no SETHW), with the reason in the
+        // journal's disconnect line, and a new one is refused at the socket.
+        await using var server = new KissTcpServer(Channel(), 0, IPAddress.Loopback);
+        var goodbyes = new List<KissClientEvent>();
+        var acceptFailures = new List<string>();
+        server.ClientDisconnected += goodbyes.Add;
+        server.AcceptFailed += acceptFailures.Add;
+        server.Start();
+        int port = server.LocalPort;
+
+        using var attached = new TcpClient();
+        await attached.ConnectAsync(IPAddress.Loopback, port);
+        await WaitFor(() => server.ClientCount == 1);
+
+        server.StopTakingWork("this station is stopping");
+
+        await WaitFor(() => goodbyes.Count == 1);
+        goodbyes[0].Reason.Should().Be("this station is stopping");
+        int read = await attached.GetStream().ReadAsync(new byte[16]).AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(10))
+            .ContinueWith(t => t.IsCompletedSuccessfully ? t.Result : 0);
+        read.Should().Be(0, "the host's session is over");
+
+        using var late = new TcpClient();
+        Func<Task> connecting = () => late.ConnectAsync(IPAddress.Loopback, port);
+        await connecting.Should().ThrowAsync<SocketException>("nothing listens on a port that is stopping");
+        server.ClientCount.Should().Be(0);
+        acceptFailures.Should().BeEmpty("closing the listener on purpose is not an accept failure");
+    }
+
     private static async Task WaitFor(Func<bool> condition)
     {
         for (int i = 0; i < 200 && !condition(); i++)

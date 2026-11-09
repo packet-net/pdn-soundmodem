@@ -551,6 +551,13 @@ if (mailcastSectionLeft)
     stationJournal.WriteError(MailcastRetired.Line);
 }
 
+// Issue #790: once stopping begins, for whatever reason, the process ends within 20 s. The orderly
+// shutdown closes things one after another and any of them can wait for ever on something outside
+// this process (the teardown of a Flex session that had already ended did), leaving a station off
+// the air but still taking KISS hosts and transmit leases. Declared first among what the shutdown
+// closes, so it is disposed - the clock stopped - only once everything else has been.
+using var shutdown = new ShutdownDeadline(Console.Error.WriteLine, Environment.Exit);
+
 // Looks in packet-net's apt repository for a newer pdn-soundmodem (issue #583): once soon after
 // start-up, then once a day. Always on, with no setting to turn it off (Tom's decision on the
 // issue) - it never installs anything, and a station that cannot reach the repository (most
@@ -788,7 +795,7 @@ if (frameLogConfig is not null
     return 2;
 }
 
-await using var frameLogLifetime = frameLog;
+await using var frameLogLifetime = shutdown.Track("frame log", frameLog);
 
 // The PSK detector, for the informational print below: --psk-detector overrides it; unset,
 // the catalogue default applies, which is differential for every PSK family (see
@@ -1365,7 +1372,7 @@ if (benchTxTest is null && waterfallConfig is not null)
     }
 }
 
-await using var waterfallLifetime = waterfallServer;
+await using var waterfallLifetime = shutdown.Track("web server", waterfallServer);
 
 // The signal survey: watch the whole passband for transmissions this station cannot read, and
 // keep the ones worth looking at later (issue #206). Off unless configured - it writes audio to
@@ -1648,8 +1655,10 @@ if (metricsConfig is { Enabled: true })
     }
 }
 
-using var surveyLifetime = new Disposer(() => survey?.Dispose());
-using var prospectorDisposer = new Disposer(() => prospectorLifetime?.Dispose());
+using var surveyLifetime = shutdown.Track(
+    survey is null ? null : "survey", new Disposer(() => survey?.Dispose()));
+using var prospectorDisposer = shutdown.Track(
+    prospectorLifetime is null ? null : "survey prospector", new Disposer(() => prospectorLifetime?.Dispose()));
 
 // Continuous raw capture: everything the channel hears, chunked to disk, so the run can be
 // re-scored offline against a later receiver. Curated bursts are the survey's job; this is
@@ -1680,7 +1689,8 @@ if (rawCaptureConfig is not null)
         + "(oldest pruned)");
 }
 
-using var rawCaptureLifetime = new Disposer(() => rawCapture?.Dispose());
+using var rawCaptureLifetime = shutdown.Track(
+    rawCapture is null ? null : "raw capture", new Disposer(() => rawCapture?.Dispose()));
 
 // Ghost demodulators for the station identifications a NinoTNC sends alongside its PSK SSB data
 // modes rather than within them. Wired here rather than earlier because a ghost reports to the
@@ -1742,6 +1752,12 @@ bool restartRequested = false;
 
 using var cancellation = new CancellationTokenSource();
 
+// Every door out of the process comes through this token - a lost radio, a station fault, an
+// applied configuration change, Ctrl-C, SIGTERM - so this is where the shutdown's clock starts.
+// Not the signal handlers alone: a SIGTERM after the shutdown has begun only cancels a token that
+// is already cancelled, which is why `systemctl restart` could not end the hung process either.
+cancellation.Token.Register(shutdown.Begin);
+
 // Issue #583: started here, now that there is a token for it to run on. Independent of whether
 // a waterfall page exists at all - its journal line is worth having on a headless station too.
 updateCheck.Start(cancellation.Token);
@@ -1791,6 +1807,7 @@ if (benchTxTest is null
             // and is deliberately not restarted - which is the wrong answer for a change that
             // has already been validated.
             restartRequested = true;
+            shutdown.Begin();
             cancellation.Cancel();
         },
         openAudioControls: openAudioControls,
@@ -1800,6 +1817,7 @@ if (benchTxTest is null
     configApi.ServeReport(recentOutput);
     waterfallServer.ApiHandler = configApi.HandleAsync;
     configApi.HostPorts = () => waterfallServer?.HostPortsMessage;
+    configApi.Stopping = () => shutdown.RefusalReason;
     waterfallServer.ServesConfigPage = apiKey.Length > 0 || waterfallConfig?.Public != true;
 
     if (HardwareFixture.StartUpNotice() is { } fixtureNotice)
@@ -1857,9 +1875,13 @@ if (apiEphemeralInForce)
     Console.Error.WriteLine(
         $"api: running a one-run configuration applied over the API; a restart returns to {configPath}");
 }
+// Each door starts the shutdown's clock itself, before cancelling (issue #790): the token's own
+// callbacks start it too, but a callback that blocks must never be able to stop the deadline, so
+// a SIGTERM always ends the process.
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
+    shutdown.Begin();
     cancellation.Cancel();
 };
 
@@ -1872,6 +1894,7 @@ using var sigterm = System.Runtime.InteropServices.PosixSignalRegistration.Creat
     context =>
     {
         context.Cancel = true;
+        shutdown.Begin();
         cancellation.Cancel();
     });
 
@@ -2036,7 +2059,19 @@ if (benchTxTest is null && modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
     }
 }
 
-await using var kissLifetime = new KissServerSet(kissServers);
+await using var kissLifetime = shutdown.Track("KISS servers", new KissServerSet(kissServers));
+
+// Stopping, the KISS ports take no new work: new hosts are refused at the socket and attached ones
+// are let go with the reason in the journal, rather than having frames and SETHW accepted that
+// would never reach the air (issue #790). Registered here, once the servers exist; a token that is
+// already cancelled runs it at once.
+cancellation.Token.Register(() =>
+{
+    foreach (KissTcpServer server in kissServers)
+    {
+        server.StopTakingWork(ShutdownDeadline.Refusal);
+    }
+});
 
 M0LTE.Ardop.Host.ArdopHostServer? ardopServer = null;
 if (benchTxTest is null && ardopModem is not null)
@@ -2325,7 +2360,7 @@ if (benchTxTest is null && ardopModem is not null)
         + (ardopBusy is null ? "" : $", busy watch {ardopBusy.LowHz:F0}-{ardopBusy.HighHz:F0} Hz")
         + ")");
 }
-await using var ardopLifetime = ardopServer;
+await using var ardopLifetime = shutdown.Track("ARDOP host", ardopServer);
 
 // Which sub-channel this station's own service transmissions are filed under in the frame log and
 // the frames panel: the operator's test tone and a POCSAG page, neither of which is a modem's
@@ -2387,7 +2422,7 @@ if (benchTxTest is null && s5066Config is not null)
         $"s5066 sis tcp: {s5066Shown}:{s5066Station.SisEndpoint.Port} (node {s5066Station.Address}, "
         + $"MIL-STD-188-110D on the {DspRate} Hz channel, busy input from the channel's carrier sense)");
 }
-await using var s5066Lifetime = s5066Station;
+await using var s5066Lifetime = shutdown.Track("STANAG 5066 node", s5066Station);
 
 Packet.SoundModem.Pocsag.PagingTcpServer? pagingServer = null;
 if (benchTxTest is null && paging is not null)
@@ -2426,7 +2461,7 @@ if (benchTxTest is null && paging is not null)
     pagingServer.Start();
     Console.WriteLine($"paging tcp: {(Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString())}:{pagingServer.LocalPort} ({pagingServer.Mode}, DAPNET/POCSAG-compatible)");
 }
-await using var pagingLifetime = pagingServer;
+await using var pagingLifetime = shutdown.Track("paging server", pagingServer);
 
 // Rig control through Hamlib's rigctld (the "rig" section): the band plan's dial, a rigctld PTT
 // and the tuning windows /api/rig/tune opens. Started before the audio and the PTT, because a
@@ -2475,7 +2510,7 @@ if (rigConfig is not null)
 }
 
 leaseRig = rig;
-await using var rigLifetime = rig;
+await using var rigLifetime = shutdown.Track("rig", rig);
 
 // The receive window (GET/POST /rig-window, issue #585): a program on the same machine retunes
 // this rig and holds all transmitting for a while, then gets it back. Keyless and loopback-only
@@ -2508,6 +2543,7 @@ DeviceOpening opened = await stationDevice.OpenAsync(new DeviceOpenContext
     RadioLost = () =>
     {
         radioLost = true;
+        shutdown.Begin();
         cancellation.Cancel();
     },
     Cancellation = cancellation.Token,
@@ -2568,7 +2604,7 @@ else
     runtimeApi?.NoMixer(mixerWhyNot);
 }
 
-await using var flexLifetime = flex;
+await using var flexLifetime = shutdown.Track("Flex radio session", flex);
 
 // A keyup that fails must say so: the loop survives it (faulting the queued frames), and
 // this line is the only place the operator learns why nothing went out - "another station
@@ -2591,7 +2627,9 @@ if (flex is not null)
 // inhibit (composed over whatever is already installed, never instead of it) and the PTT itself
 // refuses a keyup for anything that gets past it. Installed only with a "rig" section, so a
 // station without one is exactly as it was.
-IPttControl stationPtt = rig is null ? ptt : rig.HoldTransmissions(channel, ptt);
+// Behind one lock with the last unkey a forced exit makes (issue #790), so the two never
+// interleave inside the PTT, and nothing keys again once that unkey has been made.
+var stationPtt = new ReleasablePtt(rig is null ? ptt : rig.HoldTransmissions(channel, ptt));
 Task transmitter = channel.RunTransmitterAsync(playback, stationPtt, cancellation.Token);
 
 // A transmitter that dies (the output device failed mid-keyup) must stop the daemon, not
@@ -2606,6 +2644,7 @@ _ = transmitter.ContinueWith(
             $"transmit: the audio output failed - {t.Exception!.GetBaseException().Message}. "
             + "Stopping so the service restarts.");
         radioLost = true;
+        shutdown.Begin();
         cancellation.Cancel();
     },
     CancellationToken.None,
@@ -2633,6 +2672,7 @@ var txTestRunner = new TxTestRunner(new TxTestOptions
     MaxSeconds = txTestConfig.MaxSeconds,
     Amplitude = txTestConfig.Amplitude,
     Refusal = txTestRefusal,
+    Stopping = () => shutdown.RefusalReason,
     SubChannel = serviceTxSubChannel,
     Report = status => waterfallServer?.ReportTxTest(status),
     Recorded = record =>
@@ -2944,7 +2984,7 @@ if (benchTxTest is null && publishConfig is not null)
 
 // Disposal runs in reverse declaration order, so this stops after the station has stopped feeding
 // it and before the waterfall server it publishes from goes, which is the order a goodbye needs.
-await using var uplinkLifetime = uplink;
+await using var uplinkLifetime = shutdown.Track("monitor uplink", uplink);
 
 long frameLogDropsSeen = 0;
 long captureDropsSeen = 0;
@@ -3109,8 +3149,15 @@ station.Faulted += fault =>
     }
 
     radioLost = true;
+    shutdown.Begin();
     cancellation.Cancel();
 };
+
+// Registered after everything the shutdown disposes (only the receive loop comes later), so a
+// hung transmitter is named first: it is awaited straight after the receive loop, before
+// anything else is closed. And the last unkey, for a forced exit that comes mid-keyup.
+shutdown.Watch("transmitter", transmitter);
+shutdown.LastUnkey = stationPtt.Release;
 
 // --two-tone / --tone: transmit once and go.
 //
@@ -3160,7 +3207,10 @@ if (benchTxTest is not null)
     return benchOutcome.Ran ? 0 : 1;
 }
 
-station.Run();
+using (shutdown.Running("receive loop"))
+{
+    station.Run();
+}
 
 try
 {
