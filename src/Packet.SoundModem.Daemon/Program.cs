@@ -2700,13 +2700,30 @@ GpsdoReference? gpsdoReference = null;
 if (benchTxTest is null && gpsdoConfig is not null)
 {
     gpsdoReference = new GpsdoReference(gpsdoConfig.TopicPrefix, stationJournal, TimeProvider.System);
+
+    // A Flex only uses the GPSDO when it found it on REF IN at power-up; on its own TCXO the
+    // GPSDO's state is beside the point. Followed live from the radio's status (the session the
+    // daemon holds subscribes to it), before the page and the API see the first verdict. Every
+    // call reads the radio's state afresh under the reference's lock, so the first read cannot
+    // overwrite a change that raced it. A lost session stops the daemon, so there is no reconnect
+    // to follow here.
+    if (flex is not null)
+    {
+        GpsdoReference followed = gpsdoReference;
+        M0LTE.Flex.FlexClient flexClient = flex.Station.Client;
+        RadioOscillator ReadFlex() => RadioOscillator.FromFlex(flexClient.Reference);
+        flexClient.ReferenceChanged += _ => followed.FlexOscillator(ReadFlex);
+        followed.FlexOscillator(ReadFlex);
+    }
     if (waterfallServer is not null && waterfallConfig?.Public != true)
     {
         void ShowReference(ReferenceVerdict verdict) =>
             waterfallServer.SetReferenceStatus(verdict.Word, verdict.Chip, verdict.Detail);
 
-        ShowReference(gpsdoReference.Current);
+        // Subscribed first, so a change between the two cannot be missed; at worst the page is
+        // told the same verdict twice, which it ignores.
         gpsdoReference.Changed += ShowReference;
+        ShowReference(gpsdoReference.Current);
     }
 
     runtimeApi?.ServeReference(gpsdoReference);
