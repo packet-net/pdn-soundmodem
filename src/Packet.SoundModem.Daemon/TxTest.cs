@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
+using Packet.SoundModem.Ident;
 using Packet.SoundModem.Waterfall;
 
 namespace Packet.SoundModem.Daemon;
@@ -63,6 +64,12 @@ internal sealed class TxTestRunner
     internal const double MinToneHz = 50;
 
     /// <summary>
+    /// The sending speed of the <c>cw-e</c> marker: 20 wpm, the station ident's own default, so a
+    /// dit is 60 ms and one comes every 240 ms (a dit and the 3-unit gap between letters).
+    /// </summary>
+    internal const double MarkerWpm = 20;
+
+    /// <summary>
     /// How often the same refusal reaches the journal. A caller that cannot transmit at all - a
     /// station with <c>"enabled": false</c>, or with no PTT - can be asked over and over from a
     /// page or a script, and one line each would bury everything else the station has to say.
@@ -92,9 +99,16 @@ internal sealed class TxTestRunner
     /// it. The callback that renders the burst holds this object, so what it asks is "was THIS
     /// test cancelled", which stays true for ever.
     /// </remarks>
-    private sealed class Run(TestTone tone, double burstSeconds, ProbeBurst? probe)
+    private sealed class Run(TestTone? tone, float[]? keyed, double burstSeconds, ProbeBurst? probe)
     {
-        internal TestTone Tone { get; } = tone;
+        /// <summary>The steady tone, or null when a marker is sent instead.</summary>
+        internal TestTone? Tone { get; } = tone;
+
+        /// <summary>The marker's audio, rendered when the run was prepared, or null for a tone.</summary>
+        internal float[]? Keyed { get; } = keyed;
+
+        /// <summary>The tone or the marker, whichever this run sends, without the probe.</summary>
+        internal float[] Render() => Keyed ?? Tone!.Render();
 
         /// <summary>The whole keyup's audio, in seconds, TXDELAY aside: the tone, and the gap and
         /// probe after it when there is one. Fixed when the run is prepared, so the channel wait
@@ -115,7 +129,7 @@ internal sealed class TxTestRunner
             // SoundModemChannel.WriteStoppably), but it shortens what gets rendered at all in the
             // rare case where this lands before the render has happened yet. The withdrawal then
             // takes the item off the queue if the transmitter has not reached it yet either.
-            Tone.Stop();
+            Tone?.Stop();
             try
             {
                 Withdrawal.Cancel();
@@ -262,7 +276,7 @@ internal sealed class TxTestRunner
                     // nothing can interrupt, which is what let a 5, 15 or 60 second test outlive
                     // Stop entirely - the whole burst was already on its way to the sound card
                     // before the button could do anything about it.
-                    float[] burst = run.Tone.Render();
+                    float[] burst = run.Render();
                     leadSamples = (int)Math.Round(txDelay / 1000.0 * _options.Channel.SampleRate);
                     toneSamples = burst.Length;
 
@@ -385,6 +399,7 @@ internal sealed class TxTestRunner
             {
                 Probe = probeComplete == true ? run.Probe!.Descriptor.Id : null,
                 ProbeComplete = probeComplete,
+                Marker = request.Marker,
             };
         }
         catch (Exception unexpected)
@@ -440,6 +455,14 @@ internal sealed class TxTestRunner
         double[] tones;
         double audioHz;
         string what;
+        if (request.Marker is { } marker && (MarkerProblem(marker) ?? (request.TwoTone ? MarkerTwoTone : null)) is string badMarker)
+        {
+            // The API answers these 400 before it gets here; this is the one set of rules for
+            // anything else that might ask.
+            refusal = badMarker;
+            return null;
+        }
+
         if (request.TwoTone)
         {
             tones = [TestTone.TwoToneLowHz, TestTone.TwoToneHighHz];
@@ -462,8 +485,10 @@ internal sealed class TxTestRunner
 
             tones = [hz];
             audioHz = hz;
-            what = $"single tone {hz:F0} Hz (FM Bessel null at "
-                + $"{TestTone.BesselNullDeviationHz(hz) / 1000:F1} kHz deviation)";
+            what = request.Marker is null
+                ? $"single tone {hz:F0} Hz (FM Bessel null at "
+                    + $"{TestTone.BesselNullDeviationHz(hz) / 1000:F1} kHz deviation)"
+                : $"Morse E marker at {hz:F0} Hz, {MarkerWpm:0} wpm";
         }
 
         ProbeBurst? probe = null;
@@ -483,11 +508,18 @@ internal sealed class TxTestRunner
                 + $"{Seconds(ready.Descriptor.DurationSeconds)} s";
         }
 
-        double burstSeconds = seconds + (probe is { } extra
-            ? (extra.GapSamples + extra.Audio.Length) / (double)_options.Channel.SampleRate
-            : 0);
+        // A marker is rendered here, before anything is queued, as the probe is: it is short work,
+        // and done now it never holds up a keyup the channel has already granted.
+        float[]? keyed = request.Marker is null
+            ? null
+            : RenderCwE(audioHz, _options.Amplitude, _options.Channel.SampleRate, seconds);
+        double burstSeconds = (keyed is null ? seconds : keyed.Length / (double)_options.Channel.SampleRate)
+            + (probe is { } extra
+                ? (extra.GapSamples + extra.Audio.Length) / (double)_options.Channel.SampleRate
+                : 0);
         var run = new Run(
-            new TestTone(tones, _options.Amplitude, _options.Channel.SampleRate, seconds),
+            keyed is null ? new TestTone(tones, _options.Amplitude, _options.Channel.SampleRate, seconds) : null,
+            keyed,
             burstSeconds,
             probe);
         string text =
@@ -569,6 +601,41 @@ internal sealed class TxTestRunner
         }
 
         return ProbeSignal.BandProblem(descriptor, asked.AudioHz, _options.Channel.SampleRate);
+    }
+
+    /// <summary>
+    /// What is wrong with a marker name, or null when this station sends it. A newer head end
+    /// asking for a marker this station does not know must hear "no", never get the plain tone.
+    /// </summary>
+    internal static string? MarkerProblem(string marker) =>
+        marker == TxTestRequest.CwEMarker
+            ? null
+            : $"unknown marker \"{Printable(marker)}\"; this station sends \"{TxTestRequest.CwEMarker}\" "
+              + "(Morse E at the tone frequency) or the steady tone when \"marker\" is left out";
+
+    /// <summary>Why a marker cannot go with the two-tone test.</summary>
+    internal const string MarkerTwoTone =
+        "a marker is sent at one frequency, \"toneHz\": leave \"twoTone\" out or false";
+
+    /// <summary>
+    /// The <c>cw-e</c> marker: Morse E (dits) at <paramref name="hz"/>, <see cref="MarkerWpm"/>,
+    /// as many as fit in <paramref name="seconds"/>, then silence to the full length, so a probe
+    /// after it starts exactly where it would after a tone of the same length.
+    /// </summary>
+    /// <remarks>
+    /// Keyed by <see cref="MorseGenerator.Real"/>, the same renderer and the same 5 ms raised-cosine
+    /// edges as the station's CW ident, so the marker is as click-free as the ident is.
+    /// </remarks>
+    internal static float[] RenderCwE(double hz, double amplitude, int sampleRate, double seconds)
+    {
+        double dot = MorseGenerator.DotSeconds(MarkerWpm);
+
+        // Each E is a dit and, between letters, a 3-unit gap: n letters take 4n - 3 units.
+        int letters = Math.Max(1, (int)Math.Floor((seconds + (3 * dot)) / (4 * dot)));
+        float[] dits = MorseGenerator.Real(new string('E', letters), hz, amplitude, MarkerWpm, sampleRate);
+        var audio = new float[Math.Max(dits.Length, (int)Math.Round(seconds * sampleRate))];
+        dits.CopyTo(audio, 0);
+        return audio;
     }
 
     private static string Seconds(double seconds) => seconds.ToString("0.0", CultureInfo.InvariantCulture);
@@ -729,6 +796,9 @@ internal sealed record TxTestOutcome(bool Ran, string Text, string? Refusal, boo
     /// <summary>Whether all of the probe asked for went out: true when it did, false when a stop
     /// cut it short or kept it off the air, null when no probe was asked for.</summary>
     public bool? ProbeComplete { get; init; }
+
+    /// <summary>The marker that went out in place of the tone, or null when the tone did.</summary>
+    public string? Marker { get; init; }
 }
 
 /// <summary>A probe ready to follow the tone: which one, the silence before it, and its audio.</summary>

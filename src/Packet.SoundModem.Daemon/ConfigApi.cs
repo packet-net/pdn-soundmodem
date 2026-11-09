@@ -50,6 +50,7 @@ internal sealed class ConfigApi
     private Func<int, bool>? _hasModem;
     private string? _txLeaseCannot;
     private TxLeaseTuning? _txLeaseTuning;
+    private GpsdoReference? _reference;
     private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
     private MixerRuntime? _mixer;
     private RigControl? _rig;
@@ -170,6 +171,12 @@ internal sealed class ConfigApi
         _txLeaseCannot = cannot;
     }
 
+    /// <summary>
+    /// Adds the GPSDO's 10 MHz reference to what <c>/api/txlease</c> answers (issue #789). Only a
+    /// station with a <c>gpsdo</c> section installs it; without it the field is absent.
+    /// </summary>
+    internal void ServeReference(GpsdoReference reference) => _reference = reference;
+
     // ---------------------------------------------------------------- rig
     /// <summary>
     /// Serves the station's rig at <c>/api/rig</c> and <c>/api/rig/tune</c>. See <see cref="RigApi"/>.
@@ -236,7 +243,7 @@ internal sealed class ConfigApi
         }
 
         (int status, JsonObject answer) = TxLeaseApi.Handle(
-            _txLease, context.Request.HttpMethod, body, _txLeaseCannot, _rig, _txLeaseTuning);
+            _txLease, context.Request.HttpMethod, body, _txLeaseCannot, _rig, _txLeaseTuning, _reference);
         await RespondJsonAsync(context, status, answer.ToJsonString(Pretty)).ConfigureAwait(false);
     }
 
@@ -265,7 +272,8 @@ internal sealed class ConfigApi
                 "POST to transmit: {\"twoTone\": true, \"seconds\": 5} for the two-tone test, "
                 + "{\"twoTone\": false, \"toneHz\": 999, \"seconds\": 5} for a single tone, either "
                 + "optionally with \"probe\": {\"kind\": \"zc255\", \"gapSeconds\": 1.5, \"audioHz\": 1800} "
-                + "to follow it with a channel-sounding probe, {\"stop\": true} to end one early")
+                + "to follow it with a channel-sounding probe, \"marker\": \"cw-e\" with a single tone to send "
+                + "Morse E at toneHz instead of the steady tone, {\"stop\": true} to end one early")
                 .ConfigureAwait(false);
             return;
         }
@@ -314,9 +322,14 @@ internal sealed class ConfigApi
         double seconds;
         int? subChannel;
         Waterfall.TxTestProbe? probe;
+        string? marker;
         try
         {
-            twoTone = asked?["twoTone"]?.GetValue<bool>() ?? true;
+            marker = asked?["marker"]?.GetValue<string>();
+
+            // A marker is one frequency, so with a marker an absent "twoTone" means the single
+            // tone it is keyed at, not the two-tone default.
+            twoTone = asked?["twoTone"]?.GetValue<bool>() ?? marker is null;
             toneHz = asked?["toneHz"]?.GetValue<double>() ?? Audio.TestTone.TwoToneLowHz;
             seconds = asked?["seconds"]?.GetValue<double>() ?? 0;
             subChannel = asked?["subChannel"]?.GetValue<int>();
@@ -328,7 +341,7 @@ internal sealed class ConfigApi
             // reason to drop the connection with no explanation.
             await RespondAsync(context, 400,
                 "\"twoTone\" is true or false, \"toneHz\" and \"seconds\" are "
-                + "numbers, \"subChannel\" a whole number, \"probe\" an object with a \"kind\" "
+                + "numbers, \"subChannel\" a whole number, \"marker\" a string, \"probe\" an object with a \"kind\" "
                 + $"string and \"gapSeconds\" and \"audioHz\" numbers: {wrongType.Message}").ConfigureAwait(false);
             return;
         }
@@ -343,6 +356,15 @@ internal sealed class ConfigApi
             return;
         }
 
+        // A marker this station does not send is the caller's mistake too: a newer head end must
+        // hear "no", never get the plain tone with its marker silently left off.
+        if (marker is not null
+            && (TxTestRunner.MarkerProblem(marker) ?? (twoTone ? TxTestRunner.MarkerTwoTone : null)) is string badMarker)
+        {
+            await RespondAsync(context, 400, badMarker).ConfigureAwait(false);
+            return;
+        }
+
         // Checked as /api/txlease checks it: a sub-channel that carries no modem is a caller's
         // mistake, and a 400 says so before anything is prepared.
         if (subChannel is int sub && _hasModem is { } hasModem && !hasModem(sub))
@@ -352,7 +374,7 @@ internal sealed class ConfigApi
         }
 
         TxTestOutcome outcome = await _txTest
-            .RunAsync(new Waterfall.TxTestRequest(twoTone, toneHz, seconds) { SubChannel = subChannel, Probe = probe })
+            .RunAsync(new Waterfall.TxTestRequest(twoTone, toneHz, seconds) { SubChannel = subChannel, Probe = probe, Marker = marker })
             .ConfigureAwait(false);
 
         // Three answers, because a script should be able to tell them apart without reading the
@@ -361,7 +383,7 @@ internal sealed class ConfigApi
         // test already running. 500: something threw - a PTT that failed, a device that died -
         // which is a fault rather than an answer, and is worth a retry where a 409 is not.
         int status = outcome.Ran ? 200 : outcome.Failed ? 500 : 409;
-        await RespondJsonAsync(context, status, new JsonObject
+        var reply = new JsonObject
         {
             ["transmitted"] = outcome.Ran,
             ["sent"] = outcome.Ran ? outcome.Text : null,
@@ -374,7 +396,18 @@ internal sealed class ConfigApi
             // the probe" from "sent both".
             ["probe"] = outcome.Probe,
             ["probeComplete"] = outcome.ProbeComplete,
-        }.ToJsonString(new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+        };
+
+        // Only on a reply that sent the marker. A station older than the marker ignores the field
+        // and sends the plain tone, and says nothing about it; so the key's presence is how a head
+        // end knows the marker was honoured, and a plain tone's reply never carries it.
+        if (outcome.Ran && outcome.Marker is { } sentMarker)
+        {
+            reply["marker"] = sentMarker;
+        }
+
+        await RespondJsonAsync(context, status, reply.ToJsonString(new JsonSerializerOptions { WriteIndented = true }))
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -476,6 +509,7 @@ internal sealed class ConfigApi
         ("api.key", []),
         ("publish.token", ["publish.url"]),
         ("ubersdr.password", ["device", "monitor.directory"]),
+        ("gpsdo.password", ["gpsdo.host", "gpsdo.port", "gpsdo.username"]),
     ];
 
     /// <summary>
