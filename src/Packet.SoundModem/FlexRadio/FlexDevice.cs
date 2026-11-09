@@ -52,6 +52,20 @@ public sealed class FlexRuntime : IAsyncDisposable
         (Output as IDisposable)?.Dispose();
         // The arbitrated PTT holds a status-stream subscription; the plain one holds nothing.
         (Ptt as IDisposable)?.Dispose();
+
+        // Issue #790: a session the radio has already ended must be dropped BEFORE the station is
+        // disposed. The station's teardown sends its best-effort `slice remove` and waits for the
+        // reply with no timeout, and a FlexClient whose read loop has ended fails only the
+        // commands pending at that moment - one sent afterwards goes into the half-closed socket
+        // and its reply never comes, so the teardown waited for ever. That is what held GB7RDG
+        // off the air after the Flex dropped its clients. Disposed first, the client refuses the
+        // write at once and the station's teardown carries on. (Nothing is lost: there is no
+        // session left to remove the slice through.)
+        if (!Station.Client.IsConnected)
+        {
+            await Station.Client.DisposeAsync().ConfigureAwait(false);
+        }
+
         await Station.DisposeAsync().ConfigureAwait(false);
         if (Mock is not null)
         {

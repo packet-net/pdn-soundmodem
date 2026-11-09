@@ -411,6 +411,23 @@ public class TxTestTests
     }
 
     [Fact]
+    public async Task A_Station_That_Is_Stopping_Refuses_And_Never_Keys()
+    {
+        // Issue #790: a test asked for while the station is on its way down would queue behind a
+        // transmitter that has already stopped. Refused with the reason instead.
+        string? stopping = null;
+        await using var rig = new Rig(o => o with { Stopping = () => stopping });
+
+        stopping = ShutdownDeadline.Refusal;
+        TxTestOutcome outcome = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
+
+        outcome.Ran.Should().BeFalse();
+        outcome.Refusal.Should().Be(ShutdownDeadline.Refusal);
+        rig.Keying.Should().BeEmpty("a refused test never touches the radio");
+        rig.Output.Snapshot().Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task A_Receive_Only_Station_Is_Refused_By_The_Channel_Itself()
     {
         // Not through the start-up refusal above but through the channel's own gate, so the

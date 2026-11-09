@@ -156,6 +156,12 @@ internal sealed class ConfigApi
     /// </summary>
     public void ServeTxTest(TxTestRunner runner) => _txTest = runner;
 
+    /// <summary>
+    /// Why the station takes no new transmit work right now because it is stopping, or null while
+    /// it is not; a take of the transmit lease is refused with it (issue #790).
+    /// </summary>
+    public Func<string?>? Stopping { get; set; }
+
     // ---------------------------------------------------------------- TX lease
     /// <summary>
     /// Serves the channel's transmit lease at <c>/api/txlease</c>. See <see cref="TxLeaseApi"/>.
@@ -242,8 +248,12 @@ internal sealed class ConfigApi
             body = await reader.ReadToEndAsync().ConfigureAwait(false);
         }
 
+        // A station on its way down refuses a take as firmly as one that cannot transmit at all: a
+        // lease granted now would be a slot that never goes out (issue #790). A release still
+        // works, since the refusal is checked after it.
         (int status, JsonObject answer) = TxLeaseApi.Handle(
-            _txLease, context.Request.HttpMethod, body, _txLeaseCannot, _rig, _txLeaseTuning, _reference);
+            _txLease, context.Request.HttpMethod, body, Stopping?.Invoke() ?? _txLeaseCannot, _rig,
+            _txLeaseTuning, _reference);
         await RespondJsonAsync(context, status, answer.ToJsonString(Pretty)).ConfigureAwait(false);
     }
 

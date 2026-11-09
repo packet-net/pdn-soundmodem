@@ -198,6 +198,13 @@ internal sealed class TxTestRunner
             return Refuse(cannot);
         }
 
+        // A station on its way down would queue the test behind a transmitter that has already
+        // stopped, and the caller would wait out the channel bound for nothing (issue #790).
+        if (_options.Stopping?.Invoke() is string stopping)
+        {
+            return Refuse(stopping);
+        }
+
         // A transmit lease gives the transmitter to one sub-channel, and a test tone from anybody
         // else is exactly what it exists to keep off the air. The holder's own tone (the mailcast
         // head end's calibration tone) is the one exception, and it says it is the holder's by
@@ -733,6 +740,12 @@ internal sealed record TxTestOptions
     /// no transmitter at all), because those are not conditions that come and go.
     /// </summary>
     public string? Refusal { get; init; }
+
+    /// <summary>
+    /// Why no test can run right now because the station is stopping, or null while it is not.
+    /// Asked on every request, unlike <see cref="Refusal"/>, because stopping comes later.
+    /// </summary>
+    public Func<string?>? Stopping { get; init; }
 
     /// <summary>The sub-channel a test is filed under in the frame log and the frames panel.</summary>
     public int SubChannel { get; init; }
