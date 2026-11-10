@@ -79,6 +79,36 @@ public sealed class TxLeaseTuneTests : IAsyncDisposable
         TxLeaseApi.Handle(channel, "POST", body, null, rig, tuning);
 
     [Fact]
+    public void The_Audio_Centre_Every_Lease_Reports_Is_Where_The_Planner_Put_Each_Modem()
+    {
+        List<ModemConfig> modems = Modems();
+        RfPlan.Result plan = Plan(modems);
+        Dictionary<int, RfPlan.Result> alone = BandPlanner.PlanLeaseOnly(modems, "usb", 12000);
+
+        TxLeaseApi.AudioCentreOf(modems, 0).Should().Be(plan.Modems.Single(p => p.Slot.SubChannel == 0).AudioCentreHz);
+        TxLeaseApi.AudioCentreOf(modems, 3).Should().Be(alone[3].Modems.Single().AudioCentreHz);
+        TxLeaseApi.AudioCentreOf(modems, 7).Should().BeNull();
+        TxLeaseApi.AudioCentreOf([new() { SubChannel = 1, Mode = "afsk1200" }], 1)
+            .Should().Be(ModemCatalog.DefaultCentreFrequencyFor("afsk1200"));
+        TxLeaseApi.AudioCentreOf([new() { SubChannel = 1, Mode = "ardop" }], 1)
+            .Should().Be(ArdopChannelBridge.NativeCentreHz);
+    }
+
+    [Fact]
+    public async Task A_Tuned_Lease_Keeps_Its_Own_Audio_Centre_Beside_The_Every_Lease_One()
+    {
+        (SoundModemChannel channel, RigControl rig, TxLeaseTuning tuning, List<ModemConfig> modems, _) = await Station();
+        double audio = modems.Single(m => m.SubChannel == 3).Frequency!.Value;
+
+        JsonObject answer = TxLeaseApi.Handle(
+            channel, "POST", """{"subChannel": 3, "seconds": 60, "tune": true}""", null, rig, tuning,
+            audioCentreOf: _ => 999).Answer;
+
+        answer["tuned"]!.GetValue<bool>().Should().BeTrue();
+        answer["audioCentreHz"]!.GetValue<double>().Should().BeApproximately(audio, 0.1);
+    }
+
+    [Fact]
     public async Task A_Take_That_Asks_Tunes_The_Rig_For_The_Holders_Modem_And_Release_Puts_It_Back()
     {
         (SoundModemChannel channel, RigControl rig, TxLeaseTuning tuning, List<ModemConfig> modems, _) = await Station();

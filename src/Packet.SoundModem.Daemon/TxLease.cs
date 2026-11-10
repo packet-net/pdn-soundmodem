@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Packet.SoundModem.Channel;
+using Packet.SoundModem.Modems;
 using Packet.SoundModem.Rig;
 
 namespace Packet.SoundModem.Daemon;
@@ -77,6 +78,18 @@ internal static class TxLeaseApi
 
         return (status, answer);
     }
+
+    /// <summary>
+    /// Where a sub-channel's modem sits in the audio, as it is built: the centre the band plan wrote
+    /// back (a lease-only modem's own, planned alone), else its mode's own centre (ARDOP's native
+    /// one). Null with no such modem, or for a baseband mode, which has no centre.
+    /// </summary>
+    internal static double? AudioCentreOf(IReadOnlyList<ModemConfig> modems, int subChannel) =>
+        modems.FirstOrDefault(m => m.SubChannel == subChannel) is { } modem
+            ? modem.Frequency ?? (DaemonConfig.IsArdop(modem.Mode)
+                ? ArdopChannelBridge.NativeCentreHz
+                : ModemCatalog.DefaultCentreFrequencyFor(modem.Mode))
+            : null;
 
     private static (int Status, JsonObject Answer) Answer(
         SoundModemChannel channel, string method, string body, string? cannot, RigControl? rig,
