@@ -50,6 +50,7 @@ internal sealed class ConfigApi
     private Func<int, bool>? _hasModem;
     private string? _txLeaseCannot;
     private TxLeaseTuning? _txLeaseTuning;
+    private Func<int, double?>? _txLeaseAudioCentre;
     private GpsdoReference? _reference;
     private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
     private MixerRuntime? _mixer;
@@ -169,9 +170,14 @@ internal sealed class ConfigApi
     /// <param name="channel">The station's channel, whose lease it is.</param>
     /// <param name="cannot">Why this station cannot transmit at all, or null.</param>
     /// <param name="tuning">Tunes the rig for a take that asks for it, or null without a rig.</param>
-    public void ServeTxLease(Channel.SoundModemChannel channel, string? cannot, TxLeaseTuning? tuning = null)
+    /// <param name="audioCentreOf">Where a sub-channel's modem sits in the audio, for the answers'
+    /// <c>audioCentreHz</c>; null leaves it to a tuned lease.</param>
+    public void ServeTxLease(
+        Channel.SoundModemChannel channel, string? cannot, TxLeaseTuning? tuning = null,
+        Func<int, double?>? audioCentreOf = null)
     {
         _txLeaseTuning = tuning;
+        _txLeaseAudioCentre = audioCentreOf;
         _txLease = channel;
         _hasModem = channel.Modems.ContainsKey;
         _txLeaseCannot = cannot;
@@ -253,7 +259,7 @@ internal sealed class ConfigApi
         // works, since the refusal is checked after it.
         (int status, JsonObject answer) = TxLeaseApi.Handle(
             _txLease, context.Request.HttpMethod, body, Stopping?.Invoke() ?? _txLeaseCannot, _rig,
-            _txLeaseTuning, _reference);
+            _txLeaseTuning, _reference, _txLeaseAudioCentre);
         await RespondJsonAsync(context, status, answer.ToJsonString(Pretty)).ConfigureAwait(false);
     }
 

@@ -2730,7 +2730,13 @@ TxLeaseTuning? txLeaseTuning = rig is null
             sub, modems, bandPlan, leaseOnlyPlans,
             bandPlan is null ? 0 : stationDevice.RigDialOffsetHz(bandPlan.Sideband),
             rigConfig?.Mode));
-runtimeApi?.ServeTxLease(channel, channel.ReceiveOnlyReason, txLeaseTuning);
+// Every lease answer says where the holder's modem sits in the audio, tuned or not, so a head end
+// puts its calibration tone with its data: the centre the band plan gave it, or its mode's own.
+runtimeApi?.ServeTxLease(
+    channel, channel.ReceiveOnlyReason, txLeaseTuning,
+    sub => modems.FirstOrDefault(m => m.SubChannel == sub) is { } leased
+        ? leased.Frequency ?? ModemCatalog.DefaultCentreFrequencyFor(leased.Mode)
+        : null);
 
 // The GPSDO's 10 MHz reference (issue #789), from the display that watches it, over MQTT: a chip
 // in the operator page's top bar, one journal line per change of verdict, and a "reference"
