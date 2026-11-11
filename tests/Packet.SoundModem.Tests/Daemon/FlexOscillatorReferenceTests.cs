@@ -245,6 +245,29 @@ public sealed class FlexOscillatorReferenceTests
         reference.Describe().ContainsKey("oscillator").Should().BeFalse("only a Flex reports one");
     }
 
+    [Fact]
+    public void A_Held_Gps_Spell_On_The_External_Reference_Is_Ok_And_The_Tcxo_Is_Ok_After_It_Trips()
+    {
+        using GpsdoReference reference = Reference();
+        reference.FlexOscillator(() => External);
+        reference.Receive("gpsdo/status", "online", retained: false);
+        reference.Receive("gpsdo/state", "{\"state\":\"LOCKED\",\"reference_ok\":true,\"locked\":true}", retained: false);
+
+        const string lost = "{\"state\":\"GPS LOST\",\"reference_ok\":false,\"locked\":true,\"alarms\":[\"gps_no_fix\",\"reference_suspect\"]}";
+        reference.Receive("gpsdo/state", lost, retained: false);
+        _time.Advance(TimeSpan.FromSeconds(10));
+        reference.Current.State.Should().Be(ReferenceState.Ok);
+        reference.Current.Chip.Should().Be("10 MHz OK, holding (Flex on external)");
+
+        _time.Advance(TimeSpan.FromSeconds(50));
+        reference.Receive("gpsdo/state", lost, retained: false);
+        reference.Current.Chip.Should().Be("10 MHz unreliable: GPS LOST for over 60 s (Flex on external)");
+
+        reference.FlexOscillator(() => Tcxo);
+        reference.Current.State.Should().Be(ReferenceState.Ok, "on its own TCXO the GPSDO does not count, held or not");
+        reference.Current.Chip.Should().Be("10 MHz OK (Flex on TCXO)");
+    }
+
     // ---------------------------------------------------------------- the lease
 
     [Fact]
