@@ -147,14 +147,19 @@ internal sealed record RadioOscillator(string? Source, bool Locked)
 /// <para><b>Short GPS spells are held.</b> The display says <c>reference_ok</c> false the moment the
 /// GPS fix or its PPS goes (<c>GPS LOST</c>, <c>NO PPS</c>), but the GPSDO's OCXO coasts fine over
 /// seconds, and on GB7RDG such spells of 0 to 20 s come dozens of times a day with the GPSDO
-/// locked throughout. So while the GPSDO itself still says <c>locked</c>, a spell stays OK
+/// locked throughout. So a spell whose every report blames the GPS side only (<see
+/// cref="GpsSide"/> alarms, or <c>no_pps</c>) with the GPSDO still <c>locked</c>, stays OK
 /// ("GPS LOST for 12 s, GPSDO still locked, holding") until it has lasted <see cref="Grace"/>,
 /// checked by the same 1 s clock as staleness. A spell is continuous: it ends only when
-/// <c>reference_ok</c> is true again, and the next one starts its own count. <c>locked</c> false
-/// (<c>UNLOCKED</c>, <c>HOLD</c>, <c>WARM UP</c>, <c>NO DATA</c>), or absent, is unreliable at
-/// once, and stays so for the rest of the spell. One exception: during <c>NO PPS</c> the display
-/// sends <c>locked</c> false after 3 s only because the GPSDO prints no report line without a PPS,
-/// so a spell with the <c>no_pps</c> alarm is held like <c>GPS LOST</c>.</para>
+/// <c>reference_ok</c> is true again, and the next one starts its own count. Unreliable at once,
+/// and for the rest of the spell: <c>locked</c> false (<c>UNLOCKED</c>, <c>HOLD</c>, <c>WARM
+/// UP</c>, <c>NO DATA</c>) or absent; any other alarm (<c>no_10mhz</c>, <c>gpsdo_silent</c>,
+/// <c>dac_near_limit</c>, one not known here) or none at all; and a spell not seen to start, that
+/// is, one whose first report was retained or did not follow a fresh <c>reference_ok</c> true
+/// (a restart mid-spell cannot know how long the GPS has been gone). During <c>NO PPS</c> the
+/// display sends <c>locked</c> false after 3 s only because the GPSDO prints no report line
+/// without a PPS, so <c>locked</c> false with <c>no_pps</c> is held too, but only in a spell
+/// seen to start from a good report, which a cold or unlocked GPSDO never gives.</para>
 /// <para>The MQTT side is <see cref="GpsdoFeed"/>; this class has no network, so a test drives it
 /// with topics and payloads and a fake clock.</para>
 /// </remarks>
@@ -169,7 +174,14 @@ internal sealed class GpsdoReference : IDisposable
     internal static readonly TimeSpan Grace = TimeSpan.FromSeconds(60);
 
     /// <summary>How a held spell's reason ends, so the page's chip can say it is holding.</summary>
-    internal const string Holding = ", GPSDO still locked, holding";
+    internal const string Holding = ", holding";
+
+    /// <summary>The display's alarms (gpsdo-cyd <c>state_json.cpp</c>) that blame the GPS, not the
+    /// GPSDO: a spell with only these (and <c>no_pps</c>) may be held.</summary>
+    internal static readonly IReadOnlySet<string> GpsSide = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "gps_silent", "gps_no_fix", "gps_few_sats", "reference_suspect", "gps_spoofing", "gps_signal_loss",
+    };
 
     /// <summary>How often staleness and held spells are checked between messages.</summary>
     internal static readonly TimeSpan CheckEvery = TimeSpan.FromSeconds(1);
@@ -196,9 +208,13 @@ internal sealed class GpsdoReference : IDisposable
     /// null while there is none.</summary>
     private long? _spellStart;
 
-    /// <summary>The current spell has had a report that is unreliable at once (the GPSDO not
-    /// locked), so it is not held again until it ends.</summary>
+    /// <summary>The current spell has had a report that is unreliable at once, or was not seen to
+    /// start, so it is not held again until it ends.</summary>
     private bool _spellTripped;
+
+    /// <summary>The spell's latest report has the <c>no_pps</c> alarm, for its wording.</summary>
+    private bool _spellNoPps;
+
     /// <summary>When the last report that counts arrived, on the monotonic clock.</summary>
     private long? _reportedAt;
 
@@ -357,7 +373,7 @@ internal sealed class GpsdoReference : IDisposable
         }
         else if (topic == _stateTopic)
         {
-            if (!TryRead(payload, out string? text, out bool? referenceOk, out bool? locked, out bool noPps))
+            if (!TryRead(payload, out string? text, out bool? referenceOk, out bool? locked, out IReadOnlyList<string> alarms))
             {
                 bool say;
                 lock (_gate)
@@ -382,15 +398,27 @@ internal sealed class GpsdoReference : IDisposable
                 _saidUnreadable = false;
                 _stateHeard = true;
                 _stateText = text;
+                bool lastWasGood = _referenceOk == true && _reportedAt is long last
+                    && _time.GetElapsedTime(last) <= StaleAfter;
                 _referenceOk = referenceOk;
                 long now = _time.GetTimestamp();
                 if (referenceOk == false)
                 {
-                    _spellStart ??= now;
-                    if (!Holds(locked, noPps))
+                    if (_spellStart is null)
+                    {
+                        // A spell is held only if it was seen to start: live, straight after a
+                        // fresh good report. A retained one, or the first after a restart or a
+                        // gap, may have been going for hours.
+                        _spellStart = now;
+                        _spellTripped = retained || !lastWasGood;
+                    }
+
+                    if (!Holds(locked, alarms))
                     {
                         _spellTripped = true;
                     }
+
+                    _spellNoPps = alarms.Contains("no_pps");
                 }
                 else if (referenceOk == true)
                 {
@@ -641,7 +669,9 @@ internal sealed class GpsdoReference : IDisposable
             if (lasted < Grace)
             {
                 string seconds = Math.Floor(lasted.TotalSeconds).ToString("0", CultureInfo.InvariantCulture);
-                return (ReferenceState.Ok, $"{text} for {seconds} s{Holding}", $"{text}{Holding}");
+                // During NO PPS the display cannot say the GPSDO is still locked, so this does not.
+                string still = _spellNoPps ? "" : ", GPSDO still locked";
+                return (ReferenceState.Ok, $"{text} for {seconds} s{still}{Holding}", $"{text}{still}{Holding}");
             }
 
             string over = $"{text} for over {Grace.TotalSeconds:0} s";
@@ -659,23 +689,33 @@ internal sealed class GpsdoReference : IDisposable
     }
 
     /// <summary>
-    /// Whether a report of <c>reference_ok</c> false may be held for <see cref="Grace"/>: only while
-    /// the GPSDO says it is locked, or during <c>NO PPS</c>, when the display's <c>locked</c> goes
-    /// false after 3 s only because the GPSDO prints no report line without a PPS.
+    /// Whether a report of <c>reference_ok</c> false may be held for <see cref="Grace"/>: its alarms
+    /// blame the GPS side and nothing else (<see cref="GpsSide"/>, <c>no_pps</c>, and
+    /// <c>unlocked</c>, which the display adds to every <c>no_pps</c>), and the GPSDO says it is
+    /// locked, or it is <c>NO PPS</c>, when the display's <c>locked</c> goes false after 3 s only
+    /// because the GPSDO prints no report line without a PPS. Whether the spell was seen to start
+    /// is the caller's.
     /// </summary>
-    internal static bool Holds(bool? locked, bool noPps) => locked == true || (locked == false && noPps);
+    internal static bool Holds(bool? locked, IReadOnlyList<string> alarms)
+    {
+        bool noPps = alarms.Contains("no_pps");
+        bool gpsCause = noPps || alarms.Any(GpsSide.Contains);
+        bool nothingElse = alarms.All(a => GpsSide.Contains(a) || a == "no_pps" || (a == "unlocked" && noPps));
+        return gpsCause && nothingElse && (locked == true || (locked == false && noPps));
+    }
 
     /// <summary>
     /// Reads a state payload's fields of interest. False for anything that is not a JSON object. A
     /// field that is absent, or not of its type, is null: absent means unknown. <paramref
-    /// name="noPps"/> is whether <c>alarms</c> holds <c>no_pps</c>.
+    /// name="alarms"/> is the <c>alarms</c> array's strings, empty when there is none.
     /// </summary>
-    internal static bool TryRead(string payload, out string? stateText, out bool? referenceOk, out bool? locked, out bool noPps)
+    internal static bool TryRead(
+        string payload, out string? stateText, out bool? referenceOk, out bool? locked, out IReadOnlyList<string> alarms)
     {
         stateText = null;
         referenceOk = null;
         locked = null;
-        noPps = false;
+        alarms = [];
         try
         {
             using JsonDocument document = JsonDocument.Parse(payload);
@@ -702,15 +742,16 @@ internal sealed class GpsdoReference : IDisposable
                 locked = lockedElement.GetBoolean();
             }
 
-            if (document.RootElement.TryGetProperty("alarms", out JsonElement alarms) && alarms.ValueKind == JsonValueKind.Array)
+            if (document.RootElement.TryGetProperty("alarms", out JsonElement array) && array.ValueKind == JsonValueKind.Array)
             {
-                foreach (JsonElement alarm in alarms.EnumerateArray())
+                var named = new List<string>();
+                foreach (JsonElement alarm in array.EnumerateArray())
                 {
-                    if (alarm.ValueKind == JsonValueKind.String && alarm.GetString() == "no_pps")
-                    {
-                        noPps = true;
-                    }
+                    // Anything that is not a string is an alarm not known here, so not holdable.
+                    named.Add(alarm.ValueKind == JsonValueKind.String ? alarm.GetString() ?? "" : "?");
                 }
+
+                alarms = named;
             }
 
             return true;

@@ -527,7 +527,7 @@ public sealed class GpsdoReferenceTests : IDisposable
         reference.Receive("gpsdo/state", Live("NO PPS", false, false, "no_pps", "unlocked"), retained: false);
 
         reference.Current.State.Should().Be(ReferenceState.Ok);
-        reference.Current.Detail.Should().Be("NO PPS for 4 s, GPSDO still locked, holding");
+        reference.Current.Detail.Should().Be("NO PPS for 4 s, holding");
 
         Reporting(reference, Live("NO PPS", false, false, "no_pps", "unlocked"), 56);
         reference.Current.State.Should().Be(ReferenceState.Unreliable);
@@ -539,12 +539,12 @@ public sealed class GpsdoReferenceTests : IDisposable
     {
         using GpsdoReference reference = Watching();
 
-        reference.Receive("gpsdo/state", Live("GPS LOST", false, true), retained: false);
-        Reporting(reference, Live("GPS LOST", false, true), 30);
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: false);
+        Reporting(reference, Live("GPS LOST", false, true, "reference_suspect"), 30);
         reference.Receive("gpsdo/state", Live("NO PPS", false, true, "no_pps"), retained: false);
         Reporting(reference, Live("NO PPS", false, true, "no_pps"), 29);
         reference.Current.State.Should().Be(ReferenceState.Ok);
-        reference.Current.Detail.Should().Be("NO PPS for 59 s, GPSDO still locked, holding");
+        reference.Current.Detail.Should().Be("NO PPS for 59 s, holding");
 
         _time.Advance(TimeSpan.FromSeconds(1));
         reference.Current.State.Should().Be(ReferenceState.Unreliable, "one spell of 60 s, whatever it was called");
@@ -555,12 +555,12 @@ public sealed class GpsdoReferenceTests : IDisposable
     {
         using GpsdoReference reference = Watching();
 
-        reference.Receive("gpsdo/state", Live("GPS LOST", false, true), retained: false);
-        Reporting(reference, Live("GPS LOST", false, true), 50);
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: false);
+        Reporting(reference, Live("GPS LOST", false, true, "reference_suspect"), 50);
         reference.Receive("gpsdo/state", Live("LOCKED", true, true), retained: false);
         _time.Advance(TimeSpan.FromSeconds(1));
-        reference.Receive("gpsdo/state", Live("GPS LOST", false, true), retained: false);
-        Reporting(reference, Live("GPS LOST", false, true), 50);
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: false);
+        Reporting(reference, Live("GPS LOST", false, true, "reference_suspect"), 50);
 
         reference.Current.State.Should().Be(ReferenceState.Ok);
         reference.Current.Detail.Should().Be("GPS LOST for 50 s, GPSDO still locked, holding");
@@ -574,13 +574,13 @@ public sealed class GpsdoReferenceTests : IDisposable
 
         reference.Receive("gpsdo/state", Live("UNLOCKED", false, false, "unlocked"), retained: false);
         _time.Advance(TimeSpan.FromSeconds(10));
-        reference.Receive("gpsdo/state", Live("GPS LOST", false, true), retained: false);
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: false);
 
         reference.Current.State.Should().Be(ReferenceState.Unreliable);
         reference.Current.Detail.Should().Be("GPS LOST");
 
         reference.Receive("gpsdo/state", Live("LOCKED", true, true), retained: false);
-        reference.Receive("gpsdo/state", Live("GPS LOST", false, true), retained: false);
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: false);
         reference.Current.State.Should().Be(ReferenceState.Ok, "a new spell, with the GPSDO locked");
     }
 
@@ -589,18 +589,158 @@ public sealed class GpsdoReferenceTests : IDisposable
     {
         using GpsdoReference reference = Watching();
 
-        reference.Receive("gpsdo/state", Live("GPS LOST", false, true), retained: false);
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: false);
         _time.Advance(TimeSpan.FromSeconds(31));
         reference.Current.State.Should().Be(ReferenceState.Unknown);
         reference.Current.Detail.Should().Be("last report 31 s old");
 
-        reference.Receive("gpsdo/state", Live("GPS LOST", false, true), retained: false);
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: false);
         reference.Current.State.Should().Be(ReferenceState.Ok, "31 s into the spell");
         _time.Advance(TimeSpan.FromSeconds(29));
         reference.Current.State.Should().Be(ReferenceState.Unreliable, "the spell did not end while nobody was reporting");
 
         reference.Receive("gpsdo/status", "offline", retained: false);
         reference.Current.Detail.Should().Be("display offline");
+    }
+
+    [Theory]
+    // The 10 MHz itself missing is the GPSDO's fault, not the GPS's, whatever "locked" says.
+    [InlineData("NO 10 MHz", "no_10mhz")]
+    [InlineData("GPS LOST", "reference_suspect,no_10mhz")]
+    [InlineData("GPS LOST", "reference_suspect,dac_near_limit")]
+    [InlineData("GPS LOST", "reference_suspect,something_new")]
+    // No alarm at all: nothing says the GPS is to blame.
+    [InlineData("GPS LOST", "")]
+    public void A_Spell_With_Any_Cause_But_The_Gps_Is_Unreliable_At_Once(string state, string alarms)
+    {
+        using GpsdoReference reference = Watching();
+
+        reference.Receive(
+            "gpsdo/state", Live(state, false, true, alarms.Split(',', StringSplitOptions.RemoveEmptyEntries)), retained: false);
+
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+        reference.Current.Detail.Should().Be(state);
+    }
+
+    [Theory]
+    [InlineData("gps_silent")]
+    [InlineData("gps_no_fix")]
+    [InlineData("gps_few_sats")]
+    [InlineData("gps_spoofing")]
+    [InlineData("gps_signal_loss")]
+    [InlineData("reference_suspect")]
+    public void Each_Gps_Side_Alarm_Is_Held(string alarm)
+    {
+        using GpsdoReference reference = Watching();
+
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, alarm, "reference_suspect"), retained: false);
+
+        reference.Current.State.Should().Be(ReferenceState.Ok);
+    }
+
+    [Fact]
+    public void A_No_10_Mhz_Report_Inside_A_Held_Spell_Ends_The_Hold()
+    {
+        using GpsdoReference reference = Watching();
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: false);
+        Reporting(reference, Live("GPS LOST", false, true, "reference_suspect"), 10);
+
+        reference.Receive("gpsdo/state", Live("NO 10 MHz", false, true, "no_10mhz"), retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Unreliable, "the same spell, so not held again");
+    }
+
+    [Fact]
+    public void No_Pps_From_A_Gpsdo_Never_Seen_Ok_Is_Unreliable_At_Once()
+    {
+        // The display just booted, or a cold GPSDO after a power cut: NO PPS with "locked" false
+        // and no good report before it.
+        using GpsdoReference reference = Reference();
+        reference.Receive("gpsdo/status", "online", retained: false);
+
+        reference.Receive("gpsdo/state", Live("NO PPS", false, false, "no_pps", "unlocked"), retained: false);
+
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+    }
+
+    [Theory]
+    [InlineData("UNLOCKED")]
+    [InlineData("HOLD")]
+    [InlineData("WARM UP")]
+    public void No_Pps_After_The_Gpsdo_Said_It_Was_Not_Locked_Is_Not_Held(string state)
+    {
+        using GpsdoReference reference = Watching();
+        reference.Receive("gpsdo/state", Live(state, false, false, "unlocked"), retained: false);
+
+        reference.Receive("gpsdo/state", Live("NO PPS", false, false, "no_pps", "unlocked"), retained: false);
+
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+    }
+
+    [Fact]
+    public void No_Pps_After_A_Gap_In_Reports_Is_Not_Held()
+    {
+        // The last good report is too old to vouch that the spell has only just begun.
+        using GpsdoReference reference = Watching();
+        _time.Advance(TimeSpan.FromSeconds(40));
+
+        reference.Receive("gpsdo/state", Live("NO PPS", false, false, "no_pps", "unlocked"), retained: false);
+
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+    }
+
+    [Fact]
+    public void The_Gpsdo_Going_Silent_With_No_Pps_Lingering_Is_Unreliable_At_Once()
+    {
+        using GpsdoReference reference = Watching();
+        reference.Receive("gpsdo/state", Live("NO PPS", false, true, "no_pps", "unlocked"), retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Ok);
+
+        _time.Advance(TimeSpan.FromSeconds(4));
+        reference.Receive("gpsdo/state", Live("NO DATA", false, false, "gpsdo_silent", "no_pps", "unlocked"), retained: false);
+
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+        reference.Current.Detail.Should().Be("NO DATA");
+    }
+
+    [Fact]
+    public void A_Spell_First_Seen_In_A_Retained_Report_Is_Not_Held()
+    {
+        // A restart mid-spell: the broker's retained report cannot say how long the GPS has been gone.
+        using GpsdoReference reference = Reference();
+        reference.Receive("gpsdo/status", "online", retained: true);
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: true);
+
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Unreliable, "still the spell it joined part way");
+
+        reference.Receive("gpsdo/state", Live("LOCKED", true, true), retained: false);
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Ok, "a spell seen to start is held");
+    }
+
+    [Fact]
+    public void A_Spell_First_Seen_Live_With_No_Report_Before_It_Is_Not_Held()
+    {
+        using GpsdoReference reference = Reference();
+        reference.Receive("gpsdo/status", "online", retained: false);
+
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: false);
+
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+    }
+
+    [Fact]
+    public void A_Retained_Bad_Report_After_A_Reconnect_Is_Not_Held()
+    {
+        using GpsdoReference reference = Watching();
+
+        reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: true);
+
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
     }
 
     // ---------------------------------------------------------------- the feed

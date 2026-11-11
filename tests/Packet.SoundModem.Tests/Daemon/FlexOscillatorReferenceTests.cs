@@ -253,7 +253,7 @@ public sealed class FlexOscillatorReferenceTests
         reference.Receive("gpsdo/status", "online", retained: false);
         reference.Receive("gpsdo/state", "{\"state\":\"LOCKED\",\"reference_ok\":true,\"locked\":true}", retained: false);
 
-        const string lost = "{\"state\":\"GPS LOST\",\"reference_ok\":false,\"locked\":true}";
+        const string lost = "{\"state\":\"GPS LOST\",\"reference_ok\":false,\"locked\":true,\"alarms\":[\"gps_no_fix\",\"reference_suspect\"]}";
         reference.Receive("gpsdo/state", lost, retained: false);
         _time.Advance(TimeSpan.FromSeconds(10));
         reference.Current.State.Should().Be(ReferenceState.Ok);
