@@ -45,9 +45,12 @@ internal sealed record ReferenceVerdict(ReferenceState State, string Detail, Dat
     internal static string Spoken(ReferenceState state) => state == ReferenceState.Ok ? "OK" : Words(state);
 
     /// <summary>What the page's top bar shows: <c>10 MHz OK</c>, <c>10 MHz unreliable: GPS LOST</c>,
-    /// <c>10 MHz unknown</c>, with a Flex's part after it: <c>10 MHz OK (Flex on TCXO)</c>.</summary>
+    /// <c>10 MHz unknown</c>, <c>10 MHz OK, holding</c> during a short GPS spell, with a Flex's part
+    /// after it: <c>10 MHz OK (Flex on TCXO)</c>.</summary>
     internal string Chip =>
-        (State == ReferenceState.Unreliable ? $"10 MHz unreliable: {Detail}" : $"10 MHz {Spoken(State)}")
+        (State == ReferenceState.Unreliable ? $"10 MHz unreliable: {Detail}"
+            : State == ReferenceState.Ok && Detail.EndsWith(GpsdoReference.Holding, StringComparison.Ordinal) ? "10 MHz OK, holding"
+            : $"10 MHz {Spoken(State)}")
         + (Radio is null ? "" : $" ({Radio})");
 }
 
@@ -125,7 +128,8 @@ internal sealed record RadioOscillator(string? Source, bool Locked)
 /// <para><b>Unknown is not good.</b> The verdict is unknown until there is something to go on,
 /// while the display is offline, and once its last report is more than <see cref="StaleAfter"/>
 /// old. Otherwise it is the display's own <c>reference_ok</c>, which is the one field the spec says
-/// to act on; an absent one is unknown, never false. The state text is shown, not parsed.</para>
+/// to act on, with short spells held (below); an absent one is unknown, never false. The state text
+/// is shown, not parsed.</para>
 /// <para><b>A retained state counts only beside an online status.</b> The broker hands a new
 /// subscriber the last state the display published, however long ago. While the retained status
 /// is <c>online</c> that state is taken as fresh at receipt (a display that dies has its last will,
@@ -140,6 +144,17 @@ internal sealed record RadioOscillator(string? Source, bool Locked)
 /// TCXO (or OCXO, or internal GPSDO), locked, is OK whatever the GPSDO says; the external
 /// reference, locked, is the GPSDO's verdict; not locked or not said is unknown, or unreliable if the GPSDO says so. A station that
 /// is not a Flex never calls it, and its verdict is the GPSDO's alone.</para>
+/// <para><b>Short GPS spells are held.</b> The display says <c>reference_ok</c> false the moment the
+/// GPS fix or its PPS goes (<c>GPS LOST</c>, <c>NO PPS</c>), but the GPSDO's OCXO coasts fine over
+/// seconds, and on GB7RDG such spells of 0 to 20 s come dozens of times a day with the GPSDO
+/// locked throughout. So while the GPSDO itself still says <c>locked</c>, a spell stays OK
+/// ("GPS LOST for 12 s, GPSDO still locked, holding") until it has lasted <see cref="Grace"/>,
+/// checked by the same 1 s clock as staleness. A spell is continuous: it ends only when
+/// <c>reference_ok</c> is true again, and the next one starts its own count. <c>locked</c> false
+/// (<c>UNLOCKED</c>, <c>HOLD</c>, <c>WARM UP</c>, <c>NO DATA</c>), or absent, is unreliable at
+/// once, and stays so for the rest of the spell. One exception: during <c>NO PPS</c> the display
+/// sends <c>locked</c> false after 3 s only because the GPSDO prints no report line without a PPS,
+/// so a spell with the <c>no_pps</c> alarm is held like <c>GPS LOST</c>.</para>
 /// <para>The MQTT side is <see cref="GpsdoFeed"/>; this class has no network, so a test drives it
 /// with topics and payloads and a fake clock.</para>
 /// </remarks>
@@ -149,7 +164,14 @@ internal sealed class GpsdoReference : IDisposable
     /// republishes every 10 s, so this is three missed reports.</summary>
     internal static readonly TimeSpan StaleAfter = TimeSpan.FromSeconds(30);
 
-    /// <summary>How often staleness is checked between messages.</summary>
+    /// <summary>How long a spell of <c>reference_ok</c> false is held as OK while the GPSDO still
+    /// says it is locked. Fixed, not a setting.</summary>
+    internal static readonly TimeSpan Grace = TimeSpan.FromSeconds(60);
+
+    /// <summary>How a held spell's reason ends, so the page's chip can say it is holding.</summary>
+    internal const string Holding = ", GPSDO still locked, holding";
+
+    /// <summary>How often staleness and held spells are checked between messages.</summary>
     internal static readonly TimeSpan CheckEvery = TimeSpan.FromSeconds(1);
 
     private readonly string _statusTopic;
@@ -169,6 +191,14 @@ internal sealed class GpsdoReference : IDisposable
     private bool _stateHeard;
     private string? _stateText;
     private bool? _referenceOk;
+
+    /// <summary>When the current spell of <c>reference_ok</c> false began, on the monotonic clock;
+    /// null while there is none.</summary>
+    private long? _spellStart;
+
+    /// <summary>The current spell has had a report that is unreliable at once (the GPSDO not
+    /// locked), so it is not held again until it ends.</summary>
+    private bool _spellTripped;
     /// <summary>When the last report that counts arrived, on the monotonic clock.</summary>
     private long? _reportedAt;
 
@@ -327,7 +357,7 @@ internal sealed class GpsdoReference : IDisposable
         }
         else if (topic == _stateTopic)
         {
-            if (!TryRead(payload, out string? text, out bool? referenceOk))
+            if (!TryRead(payload, out string? text, out bool? referenceOk, out bool? locked, out bool noPps))
             {
                 bool say;
                 lock (_gate)
@@ -353,11 +383,25 @@ internal sealed class GpsdoReference : IDisposable
                 _stateHeard = true;
                 _stateText = text;
                 _referenceOk = referenceOk;
+                long now = _time.GetTimestamp();
+                if (referenceOk == false)
+                {
+                    _spellStart ??= now;
+                    if (!Holds(locked, noPps))
+                    {
+                        _spellTripped = true;
+                    }
+                }
+                else if (referenceOk == true)
+                {
+                    _spellStart = null;
+                    _spellTripped = false;
+                }
                 // A retained state is fresh at receipt only while the display's status is online:
                 // a display that dies has its last will published as "offline" within about 1.5
                 // keepalives, so an "online" status vouches for the state beside it. Without one
                 // it waits (for the status, or for a live report).
-                long arrived = _time.GetTimestamp();
+                long arrived = now;
                 if (!retained || _status == "online")
                 {
                     _reportedAt = arrived;
@@ -591,6 +635,19 @@ internal sealed class GpsdoReference : IDisposable
         }
 
         string text = _stateText ?? "no state text";
+        if (_referenceOk == false && _spellStart is long start && !_spellTripped)
+        {
+            TimeSpan lasted = _time.GetElapsedTime(start);
+            if (lasted < Grace)
+            {
+                string seconds = Math.Floor(lasted.TotalSeconds).ToString("0", CultureInfo.InvariantCulture);
+                return (ReferenceState.Ok, $"{text} for {seconds} s{Holding}", $"{text}{Holding}");
+            }
+
+            string over = $"{text} for over {Grace.TotalSeconds:0} s";
+            return (ReferenceState.Unreliable, over, over);
+        }
+
         return _referenceOk switch
         {
             true => (ReferenceState.Ok, text, text),
@@ -602,13 +659,23 @@ internal sealed class GpsdoReference : IDisposable
     }
 
     /// <summary>
-    /// Reads a state payload's two fields of interest. False for anything that is not a JSON
-    /// object. A field that is absent, or not of its type, is null: absent means unknown.
+    /// Whether a report of <c>reference_ok</c> false may be held for <see cref="Grace"/>: only while
+    /// the GPSDO says it is locked, or during <c>NO PPS</c>, when the display's <c>locked</c> goes
+    /// false after 3 s only because the GPSDO prints no report line without a PPS.
     /// </summary>
-    internal static bool TryRead(string payload, out string? stateText, out bool? referenceOk)
+    internal static bool Holds(bool? locked, bool noPps) => locked == true || (locked == false && noPps);
+
+    /// <summary>
+    /// Reads a state payload's fields of interest. False for anything that is not a JSON object. A
+    /// field that is absent, or not of its type, is null: absent means unknown. <paramref
+    /// name="noPps"/> is whether <c>alarms</c> holds <c>no_pps</c>.
+    /// </summary>
+    internal static bool TryRead(string payload, out string? stateText, out bool? referenceOk, out bool? locked, out bool noPps)
     {
         stateText = null;
         referenceOk = null;
+        locked = null;
+        noPps = false;
         try
         {
             using JsonDocument document = JsonDocument.Parse(payload);
@@ -627,6 +694,23 @@ internal sealed class GpsdoReference : IDisposable
                 && ok.ValueKind is JsonValueKind.True or JsonValueKind.False)
             {
                 referenceOk = ok.GetBoolean();
+            }
+
+            if (document.RootElement.TryGetProperty("locked", out JsonElement lockedElement)
+                && lockedElement.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                locked = lockedElement.GetBoolean();
+            }
+
+            if (document.RootElement.TryGetProperty("alarms", out JsonElement alarms) && alarms.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement alarm in alarms.EnumerateArray())
+                {
+                    if (alarm.ValueKind == JsonValueKind.String && alarm.GetString() == "no_pps")
+                    {
+                        noPps = true;
+                    }
+                }
             }
 
             return true;
