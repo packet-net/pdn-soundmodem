@@ -48,6 +48,39 @@ public class TxLeaseTests
     }
 
     [Fact]
+    public void Every_Answer_Naming_A_Holder_Says_Where_Its_Modem_Sits_In_The_Audio_Tuned_Or_Not()
+    {
+        // A head end puts its calibration tone at the holder's audio centre, so a station without a
+        // tuned lease (a Flex, a rig whose everyday dial already suits) has to say it too.
+        (SoundModemChannel channel, _) = Station();
+        Func<int, double?> centres = sub => sub == 3 ? 4049.96 : null;
+
+        JsonObject idle = TxLeaseApi.Handle(channel, "GET", "", null, audioCentreOf: centres).Answer;
+        idle.ContainsKey("audioCentreHz").Should().BeFalse();
+
+        (int status, JsonObject taken) = TxLeaseApi.Handle(
+            channel, "POST", """{"subChannel": 3, "seconds": 60, "tune": true}""", null, audioCentreOf: centres);
+        status.Should().Be(200);
+        taken["tuned"]!.GetValue<bool>().Should().BeFalse();
+        taken["audioCentreHz"]!.GetValue<double>().Should().Be(4050.0);
+
+        JsonObject read = TxLeaseApi.Handle(channel, "GET", "", null, audioCentreOf: centres).Answer;
+        read["audioCentreHz"]!.GetValue<double>().Should().Be(4050.0);
+
+        (_, JsonObject without) = Post(channel, """{"subChannel": 3, "seconds": 60}""");
+        without.ContainsKey("audioCentreHz").Should().BeFalse();
+    }
+
+    [Fact]
+    public void A_Holder_Whose_Modem_Has_No_Audio_Centre_Gets_No_Field()
+    {
+        (SoundModemChannel channel, _) = Station();
+        (_, JsonObject taken) = TxLeaseApi.Handle(
+            channel, "POST", """{"subChannel": 0, "seconds": 60}""", null, audioCentreOf: _ => null);
+        taken.ContainsKey("audioCentreHz").Should().BeFalse();
+    }
+
+    [Fact]
     public void Another_Sub_Channel_Is_Refused_With_A_409_Naming_The_Holder()
     {
         (SoundModemChannel channel, _) = Station();

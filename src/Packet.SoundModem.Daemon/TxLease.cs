@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Packet.SoundModem.Channel;
+using Packet.SoundModem.Modems;
 using Packet.SoundModem.Rig;
 
 namespace Packet.SoundModem.Daemon;
@@ -49,11 +50,23 @@ internal static class TxLeaseApi
     /// without a rig; then <c>"tune": true</c> is accepted and ignored.</param>
     /// <param name="reference">The GPSDO's 10 MHz reference (issue #789), or null for a station
     /// with no <c>gpsdo</c> section; every answer that describes the lease then carries it.</param>
+    /// <param name="audioCentreOf">Where a sub-channel's modem sits in the audio, in Hz, or null
+    /// when it has no centre (a baseband mode); every answer that names a holder then carries the
+    /// holder's as <c>audioCentreHz</c>, tuned or not, so a head end can put its calibration tone
+    /// with its data.</param>
     internal static (int Status, JsonObject Answer) Handle(
         SoundModemChannel channel, string method, string body, string? cannot, RigControl? rig = null,
-        TxLeaseTuning? tuning = null, GpsdoReference? reference = null)
+        TxLeaseTuning? tuning = null, GpsdoReference? reference = null, Func<int, double?>? audioCentreOf = null)
     {
         (int status, JsonObject answer) = Answer(channel, method, body, cannot, rig, tuning);
+
+        // A tuned lease has already said where its modem sits in the audio on the tuned dial.
+        if (audioCentreOf is not null && !answer.ContainsKey("audioCentreHz")
+            && answer["subChannel"] is JsonValue named && named.TryGetValue(out int holder)
+            && audioCentreOf(holder) is double centre)
+        {
+            answer["audioCentreHz"] = Math.Round(centre, 1);
+        }
 
         // On every answer that describes the lease, and on nothing else: a head end reads it
         // before each slot from the GET, and the take that follows reads the same. Left out
@@ -65,6 +78,18 @@ internal static class TxLeaseApi
 
         return (status, answer);
     }
+
+    /// <summary>
+    /// Where a sub-channel's modem sits in the audio, as it is built: the centre the band plan wrote
+    /// back (a lease-only modem's own, planned alone), else its mode's own centre (ARDOP's native
+    /// one). Null with no such modem, or for a baseband mode, which has no centre.
+    /// </summary>
+    internal static double? AudioCentreOf(IReadOnlyList<ModemConfig> modems, int subChannel) =>
+        modems.FirstOrDefault(m => m.SubChannel == subChannel) is { } modem
+            ? modem.Frequency ?? (DaemonConfig.IsArdop(modem.Mode)
+                ? ArdopChannelBridge.NativeCentreHz
+                : ModemCatalog.DefaultCentreFrequencyFor(modem.Mode))
+            : null;
 
     private static (int Status, JsonObject Answer) Answer(
         SoundModemChannel channel, string method, string body, string? cannot, RigControl? rig,
