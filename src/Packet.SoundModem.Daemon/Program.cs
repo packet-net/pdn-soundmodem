@@ -976,10 +976,10 @@ foreach (ModemConfig modemConfig in modems)
 
     if (IdentCentreCheck.Warning(
             subChannel, tone, modemConfig.Frequency ?? plannedCentreHz,
-            identPlan?.IsFm ?? false,
+            identPlan?.IsFm ?? RfPlan.IsFmRadio(sideband),
             identPlan is not null && !identPlan.IsFm ? identPlan.DialHz : null,
             identPlan?.IsUpperSideband ?? true,
-            id.ToneHz is not null || id.RfFrequency is not null) is string offCentre)
+            id.ToneHz is not null ? "toneHz" : id.RfFrequency is not null ? "rfFrequency" : null) is string offCentre)
     {
         Console.Error.WriteLine(offCentre);
     }

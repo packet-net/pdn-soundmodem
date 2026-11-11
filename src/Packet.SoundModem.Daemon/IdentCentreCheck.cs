@@ -19,13 +19,13 @@ internal static class IdentCentreCheck
     /// <param name="isFm">True on FM, where the ident is a bare audio tone with no RF meaning.</param>
     /// <param name="dialHz">The dial, or null when there is no band plan.</param>
     /// <param name="upperSideband">True when audio Hz are added to the dial.</param>
-    /// <param name="fromToneHz">True when the ident's place came from <c>toneHz</c> or
-    /// <c>rfFrequency</c> rather than defaulting to the centre.</param>
+    /// <param name="placedBy">The <c>identify</c> key that placed the ident (<c>toneHz</c> or
+    /// <c>rfFrequency</c>), or null when it defaults to the centre.</param>
     internal static string? Warning(
         int subChannel, double identToneHz, double? centreHz, bool isFm,
-        double? dialHz, bool upperSideband, bool fromToneHz)
+        double? dialHz, bool upperSideband, string? placedBy)
     {
-        if (isFm || !fromToneHz || centreHz is not double centre
+        if (isFm || placedBy is null || centreHz is not double centre
             || Math.Abs(identToneHz - centre) <= ToleranceHz)
         {
             return null;
@@ -37,6 +37,6 @@ internal static class IdentCentreCheck
 
         return $"modem {subChannel}: WARNING - the CW ident is at {identToneHz:F0} Hz audio{Rf(identToneHz)} "
             + $"but the modem's signal is centred at {centre:F0} Hz{Rf(centre)}. "
-            + "Remove \"toneHz\" from \"identify\" to send it on the signal's centre.";
+            + $"Remove \"{placedBy}\" from \"identify\" to send it on the signal's centre.";
     }
 }
