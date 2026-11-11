@@ -973,6 +973,16 @@ foreach (ModemConfig modemConfig in modems)
             + $"{identPlan.Window.LowHz:F0}-{identPlan.Window.HighHz:F0} Hz passband and may be filtered; "
             + "unset \"toneHz\" to use the modem's centre");
     }
+
+    if (IdentCentreCheck.Warning(
+            subChannel, tone, modemConfig.Frequency ?? plannedCentreHz,
+            identPlan?.IsFm ?? false,
+            identPlan is not null && !identPlan.IsFm ? identPlan.DialHz : null,
+            identPlan?.IsUpperSideband ?? true,
+            id.ToneHz is not null || id.RfFrequency is not null) is string offCentre)
+    {
+        Console.Error.WriteLine(offCentre);
+    }
 }
 
 // Where each modem sits in the audio band, for the radio's transmit filter: from the plan when
