@@ -19,6 +19,9 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Always the default branch: a manual run from a feature branch must not push it to main.
+          ref: main
       - name: Choose where setup-dotnet installs
         if: runner.environment == 'self-hosted'
         run: echo "DOTNET_INSTALL_DIR=$HOME/.dotnet" >> "$GITHUB_ENV"
@@ -45,6 +48,15 @@ jobs:
           mkdir -p "$RUNNER_TEMP/browser-libs/root"
           while IFS= read -r line; do export "$line"; done < <(scripts/browser-libs.sh "$RUNNER_TEMP/browser-libs")
           dotnet test --configuration Release --no-build -- --filter-not-trait "Category=Aspiration" --filter-not-trait "Category=Quarantine"
+          # Package smoke build: a dependency bump that breaks the .deb fails this attempt.
+          packaging/build-deb.sh 0.0.0-ci amd64 "$RUNNER_TEMP/artifacts"
+          listing="$(dpkg-deb --contents "$RUNNER_TEMP/artifacts/pdn-soundmodem_0.0.0-ci_amd64.deb")"
+          grep -q 'usr/lib/systemd/system/pdn-soundmodem\.service$' <<<"$listing"
+          grep -q 'usr/lib/pdn-soundmodem/pdn-soundmodem$' <<<"$listing"
+          grep -q 'usr/bin/pdn-soundmodem ->' <<<"$listing"
+          grep -q 'usr/share/pdn-soundmodem/soundmodem\.example\.json$' <<<"$listing"
+          grep -q 'usr/lib/pdn-soundmodem/libSystem\.IO\.Ports\.Native\.so$' <<<"$listing"
+          grep -q 'usr/lib/pdn-soundmodem/libe_sqlite3\.so -> \.\./x86_64-linux-gnu/libsqlite3\.so\.0$' <<<"$listing"
       - name: Security pass (only when the full upgrade failed)
         id: security
         if: steps.full.outcome == 'failure'
@@ -62,6 +74,16 @@ jobs:
           mkdir -p "$RUNNER_TEMP/browser-libs/root"
           while IFS= read -r line; do export "$line"; done < <(scripts/browser-libs.sh "$RUNNER_TEMP/browser-libs")
           dotnet test --configuration Release --no-build -- --filter-not-trait "Category=Aspiration" --filter-not-trait "Category=Quarantine"
+
+          # Package smoke build: a dependency bump that breaks the .deb fails this attempt.
+          packaging/build-deb.sh 0.0.0-ci amd64 "$RUNNER_TEMP/artifacts"
+          listing="$(dpkg-deb --contents "$RUNNER_TEMP/artifacts/pdn-soundmodem_0.0.0-ci_amd64.deb")"
+          grep -q 'usr/lib/systemd/system/pdn-soundmodem\.service$' <<<"$listing"
+          grep -q 'usr/lib/pdn-soundmodem/pdn-soundmodem$' <<<"$listing"
+          grep -q 'usr/bin/pdn-soundmodem ->' <<<"$listing"
+          grep -q 'usr/share/pdn-soundmodem/soundmodem\.example\.json$' <<<"$listing"
+          grep -q 'usr/lib/pdn-soundmodem/libSystem\.IO\.Ports\.Native\.so$' <<<"$listing"
+          grep -q 'usr/lib/pdn-soundmodem/libe_sqlite3\.so -> \.\./x86_64-linux-gnu/libsqlite3\.so\.0$' <<<"$listing"
 
       - name: Commit and push on a green build
         if: success()
