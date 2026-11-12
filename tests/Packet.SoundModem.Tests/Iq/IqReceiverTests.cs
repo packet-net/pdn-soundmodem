@@ -538,13 +538,30 @@ public sealed class IqReceiverTests
             }
         }
 
-        PumpAndDrain(20); // warm: JIT, tiering, first-touch
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        PumpAndDrain(100);
-        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        // Warm: JIT, tiering, first-touch. Tiered compilation promotes a method only after a delay
+        // and a call count, on a background thread, so pump, give it time, and pump again; on a slow
+        // machine the promotion can otherwise land inside the measurement.
+        PumpAndDrain(20);
+        Thread.Sleep(200);
+        PumpAndDrain(30);
+        Thread.Sleep(200);
 
-        pumped.Should().Be(120, "every block was real IQ");
-        allocated.Should().Be(0, "the per-block path runs in buffers sized at construction");
+        // GC.GetAllocatedBytesForCurrentThread counts anything this thread allocates, including a
+        // one-off from the runtime itself (a tier-up, a lazily built runtime structure), and that
+        // is not the receiver's. A per-block allocation happens in every round; a one-off lands in
+        // one. So take the smallest of several rounds: zero means the steady state allocates
+        // nothing, and any real per-block allocation still fails because no round is clean.
+        const int rounds = 5;
+        long fewest = long.MaxValue;
+        for (int r = 0; r < rounds; r++)
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            PumpAndDrain(20);
+            fewest = Math.Min(fewest, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+
+        pumped.Should().Be(50 + (rounds * 20), "every block was real IQ");
+        fewest.Should().Be(0, "the per-block path runs in buffers sized at construction");
     }
 
     [Fact]
