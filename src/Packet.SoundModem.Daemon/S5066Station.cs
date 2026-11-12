@@ -325,7 +325,7 @@ internal sealed class S5066Station : IAsyncDisposable
     /// the receivers settle.</para>
     /// <para>Polled every <see cref="PollInterval"/> and raised only on a change.</para>
     /// </remarks>
-    internal sealed class BusyInput : IHostModem, IDisposable
+    internal sealed class BusyInput : IHostModem, IHostModemWrapper, IDisposable
     {
         internal static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(50);
 
@@ -356,6 +356,10 @@ internal sealed class S5066Station : IAsyncDisposable
             _heard = heard;
             _time = time ?? TimeProvider.System;
         }
+
+        /// <summary>The modem inside, which the host looks through to, for the calibrated rate table
+        /// and the modem's trace sink.</summary>
+        public IHostModem Inner => _inner;
 
         /// <inheritdoc/>
         public BurstPlan PlanBurst(int wn, Interleaver interleaver, int byteCount) => _inner.PlanBurst(wn, interleaver, byteCount);
@@ -428,10 +432,10 @@ internal sealed class S5066Station : IAsyncDisposable
         {
             private readonly List<byte> _bytes = [];
 
-            public void BurstStarted()
+            public void BurstStarted(int? blockMs)
             {
                 _bytes.Clear();
-                inner.BurstStarted();
+                inner.BurstStarted(blockMs);
             }
 
             public void BytesReceived(ReadOnlyMemory<byte> bytes)

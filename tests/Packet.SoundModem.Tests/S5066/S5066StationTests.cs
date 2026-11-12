@@ -5,7 +5,9 @@ using System.Text.Json;
 using AwesomeAssertions;
 using M0LTE.Radio.Audio;
 using M0LTE.S5066.Client;
+using M0LTE.S5066.Core.Runtime;
 using M0LTE.S5066.Core.Sis;
+using M0LTE.S5066.Host.Modem;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
 using Packet.SoundModem.Modems;
@@ -217,6 +219,21 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
         heard.Length.Should().BeGreaterThanOrEqualTo(lead + (tone.Length * 5), "TXDELAY, then the burst at 48 kHz");
         heard.Take(lead).Max(MathF.Abs).Should().Be(0, "the first TXDELAY is silence, while the radio switches");
         heard.Skip(lead).Max(MathF.Abs).Should().BeGreaterThan(0.3f, "the burst follows it");
+    }
+
+    [Fact]
+    public void The_Busy_Input_Is_A_Wrapper_And_Passes_The_Block_Duration_On()
+    {
+        var inner = new FakeModem();
+        using var busy = new S5066Station.BusyInput(inner, new SoundModemChannel(ChannelRate, randomSeed: 5), heard: _ => { });
+        ((IHostModemWrapper)busy).Inner.Should().BeSameAs(inner, "the host looks through it to the Ms110d modem for its calibration and trace sink");
+
+        var seen = new List<int?>();
+        busy.Start(new RecordingEvents(seen));
+        inner.Events!.BurstStarted(1234);
+        inner.Events.BurstStarted(null);
+
+        seen.Should().Equal(1234, null);
     }
 
     // ------------------------------------------------------------------------ helpers
@@ -493,6 +510,52 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
     }
 
     /// <summary>The playback device: hands each 20 ms block to the air as it plays, in real time.</summary>
+    private sealed class FakeModem : IHostModem
+    {
+        public IModemEvents? Events { get; private set; }
+
+        public BurstPlan PlanBurst(int wn, Interleaver interleaver, int byteCount) => throw new NotSupportedException();
+
+        public void Start(IModemEvents events) => Events = events;
+
+        public void Transmit(ReadOnlyMemory<byte> bytes, int wn, Interleaver interleaver, int k, bool eom)
+        {
+        }
+
+        public void TerminateReceive()
+        {
+        }
+
+        public void SetMaxInputBlocks(int n)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class RecordingEvents(List<int?> blockMs) : IModemEvents
+    {
+        public void BurstStarted(int? blockMs1) => blockMs.Add(blockMs1);
+
+        public void BytesReceived(ReadOnlyMemory<byte> bytes)
+        {
+        }
+
+        public void BurstEnded(BurstEndReason reason, int wn, Interleaver interleaver, int k, int? snrTenthDb, int blocks)
+        {
+        }
+
+        public void TransmitDone()
+        {
+        }
+
+        public void ChannelBusy(bool busy)
+        {
+        }
+    }
+
     private sealed class PacedSink(Action<float[]> onBlock) : IAudioOutput, IPttControl
     {
         private readonly int _blockSamples = ChannelRate * BlockMs / 1000;
