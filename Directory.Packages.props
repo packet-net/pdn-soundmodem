@@ -31,8 +31,8 @@
     <!-- A STANAG 5066 node (the engine, its SIS server and an MS110D modem port), started only
          by an "s5066" section; the daemon references it, the library package does not.
          AGPL-3.0-or-later. The client is tests only. -->
-    <PackageVersion Include="M0LTE.S5066.Host" Version="0.1.2" />
-    <PackageVersion Include="M0LTE.S5066.Client" Version="0.1.2" />
+    <PackageVersion Include="M0LTE.S5066.Host" Version="0.2.1" />
+    <PackageVersion Include="M0LTE.S5066.Client" Version="0.2.1" />
     <!-- The Tait CCDI driver, for OFDM-FM carrier sense taken from the radio's own squelch and
          signal-strength meter rather than inferred from the audio a receiver produces. AGPL-3.0,
          the same licence as this repo; see CLAUDE.md, Licence rules.
