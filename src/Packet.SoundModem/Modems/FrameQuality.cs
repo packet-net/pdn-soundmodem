@@ -30,7 +30,11 @@ namespace Packet.SoundModem.Modems;
 /// listener (issue #343). What a bank legitimately knows per frame - the winning branch - is
 /// already carried structured, in <see cref="FrequencyOffsetHz"/> and <see cref="EmphasisDb"/>;
 /// the receiver's own construction stays on <see cref="IModem.Mode"/>, where the daemon's logs
-/// and waterfall read it.</param>
+/// and waterfall read it. An autobaud receiver names what the transmission announced, not what
+/// it would itself send: <see cref="Ms110dModem"/> gives the waveform read from the burst's
+/// preamble, <c>"ms110d-wn4"</c>, with <c>-long</c> (or another interleaver's name) after it when
+/// the burst was not on the short interleaver, so it can differ from that modem's own
+/// <see cref="IModem.Mode"/>, which is its transmit waveform.</param>
 /// <param name="FrameBytes">Decoded AX.25 frame length in bytes.</param>
 /// <param name="CorrectedBytes">Bytes repaired by forward error correction (Reed-Solomon,
 /// IL2P and FX.25 framings). <c>null</c> for unprotected framings (classic HDLC), where no
