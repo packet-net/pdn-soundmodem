@@ -22,8 +22,10 @@ public sealed class GpsdoReferenceTests : IDisposable
     private static readonly DateTimeOffset Noon = new(2026, 11, 8, 12, 0, 0, TimeSpan.Zero);
 
     /// <summary>A real <c>gpsdo/state</c> from the display on the LAN, 2026-11-08, verbatim but for
-    /// the three fields each test sets.</summary>
-    private static string State(string state, bool? referenceOk) =>
+    /// the fields each test sets. Its alarms are <c>unlocked</c> alone and its time-interval error
+    /// 35 ns, so after a good report it is holdover (issue #807); <see cref="Faulty"/> is the same
+    /// report with the 10 MHz gone, which is unreliable whatever came before.</summary>
+    private static string State(string state, bool? referenceOk, string alarms = "\"unlocked\"") =>
         "{\"state\":\"" + state + "\""
         + (referenceOk is bool ok ? ",\"reference_ok\":" + (ok ? "true" : "false") : "")
         + ",\"locked\":false,\"locked_s\":0,\"lock_losses\":0,\"gpsdo_restarts\":0,\"gps_restarts\":0,"
@@ -32,7 +34,10 @@ public sealed class GpsdoReferenceTests : IDisposable
         + "\"firmware\":\"Rev. 3.4 paulv mods  ID:0\",\"lock_counter\":1319,\"lock_target\":1500,"
         + "\"lock_test_tic_ns\":35,\"lock_test_freq_ns\":0,\"missed_pps_total\":1,\"since_missed_pps_s\":2106,"
         + "\"gps_seen\":true,\"fix\":\"3D\",\"sats_used\":12,\"sats_in_view\":22,\"hdop\":0.75,\"gps_age_s\":0,"
-        + "\"alarms\":[\"unlocked\"]}";
+        + "\"alarms\":[" + alarms + "]}";
+
+    /// <summary><see cref="State"/> with the <c>no_10mhz</c> alarm: a real fault, never holdover.</summary>
+    private static string Faulty(string state) => State(state, false, "\"unlocked\",\"no_10mhz\"");
 
     private readonly string _dir = Directory.CreateTempSubdirectory("pdnsm-gpsdo").FullName;
     private readonly FakeTimeProvider _time = new(Noon);
@@ -147,7 +152,7 @@ public sealed class GpsdoReferenceTests : IDisposable
         reference.Current.Detail.Should().Be("LOCKED");
         reference.Current.Chip.Should().Be("10 MHz OK");
 
-        reference.Receive("gpsdo/state", State("GPS LOST", false), retained: false);
+        reference.Receive("gpsdo/state", Faulty("GPS LOST"), retained: false);
         reference.Current.State.Should().Be(ReferenceState.Unreliable);
         reference.Current.Chip.Should().Be("10 MHz unreliable: GPS LOST");
     }
@@ -233,7 +238,7 @@ public sealed class GpsdoReferenceTests : IDisposable
 
         Parallel.For(0, 2000, new ParallelOptions { MaxDegreeOfParallelism = 8 }, i =>
         {
-            reference.Receive("gpsdo/state", i % 2 == 0 ? State("LOCKED", true) : State("GPS LOST", false), retained: false);
+            reference.Receive("gpsdo/state", i % 2 == 0 ? State("LOCKED", true) : Faulty("GPS LOST"), retained: false);
             if (i % 7 == 0)
             {
                 reference.Evaluate();
@@ -382,8 +387,8 @@ public sealed class GpsdoReferenceTests : IDisposable
             reference.Receive("gpsdo/state", State("LOCKED", true), retained: false);
         }
 
-        reference.Receive("gpsdo/state", State("GPS LOST", false), retained: false);
-        reference.Receive("gpsdo/state", State("GPS LOST", false), retained: false);
+        reference.Receive("gpsdo/state", Faulty("GPS LOST"), retained: false);
+        reference.Receive("gpsdo/state", Faulty("GPS LOST"), retained: false);
         _time.Advance(TimeSpan.FromSeconds(5));
         reference.Receive("gpsdo/status", "offline", retained: false);
 
@@ -494,7 +499,7 @@ public sealed class GpsdoReferenceTests : IDisposable
     [InlineData("HOLD")]
     [InlineData("WARM UP")]
     [InlineData("NO DATA")]
-    public void The_Gpsdo_Saying_It_Is_Not_Locked_Is_Unreliable_At_Once(string state)
+    public void The_Gpsdo_Saying_It_Is_Not_Locked_With_No_Time_Interval_Error_To_Vouch_For_It_Is_Unreliable_At_Once(string state)
     {
         using GpsdoReference reference = Watching();
 
@@ -741,6 +746,264 @@ public sealed class GpsdoReferenceTests : IDisposable
         reference.Receive("gpsdo/state", Live("GPS LOST", false, true, "reference_suspect"), retained: true);
 
         reference.Current.State.Should().Be(ReferenceState.Unreliable);
+    }
+
+    // ---------------------------------------------------------------- holdover (issue #807)
+
+    /// <summary>The display's <c>gpsdo/state</c> at M0LTE's station on 2026-11-14 while the
+    /// reference was called unreliable and the 14:00 mailcast slot was aborted, verbatim from the
+    /// issue: one missed PPS, and the firmware's 25 minutes back to <c>LOCKED</c>.</summary>
+    private const string Relocking =
+        """{"state":"UNLOCKED","reference_ok":false,"locked":false,"locked_s":0,"lock_losses":"""
+        + """7,"tic_ns":-27,"tic_error_ns":-33.0,"dac":30140,"dac_near_limit":false,"ocxo_c":"""
+        + """44.2,"tc_s":300,"lock_counter":1124,"lock_target":1500,"missed_pps_total":844,"since_missed_pps_s":"""
+        + """69,"damaged_lines":242,"fix":"3D","sats_used":11,"hdop":0.86,"alarms":["unlocked"]}""";
+
+    /// <summary>The same station's display during <c>NO PPS</c>, 2026-11-14, verbatim: the GPS
+    /// has gone too, but the OCXO is 3 ns off.</summary>
+    private const string NoPps =
+        """{"state":"NO PPS","reference_ok":false,"locked":false,"locked_s":0,"lock_losses":"""
+        + """7,"gpsdo_restarts":0,"gps_restarts":0,"tic_ns":-3,"dac":30186,"dac_near_limit":false,"ocxo_c":"""
+        + """44.2,"diff_ns":5,"tic_error_ns":-3.0,"tc_s":300,"ambient_c":34.1,"gpsdo_age_s":1,"firmware":"Rev. 3.4 paulv mods  ID:"""
+        + """0","missed_pps_since_display":478,"damaged_lines":243,"gps_position_learned":true,"gps_seen":true,"antenna":"DONTKNOW","antenna_text":"not checked","fix":"none","sats_used":"""
+        + """0,"sats_in_view":22,"hdop":99.99,"gps_age_s":0,"alarms":["no_pps","unlocked","gps_no_fix","gps_few_sats","gps_signal_loss"]}""";
+
+    /// <summary><see cref="Relocking"/> with one field's value replaced.</summary>
+    private static string RelockingWith(string field, string value)
+    {
+        JsonObject report = JsonNode.Parse(Relocking)!.AsObject();
+        report[field] = JsonNode.Parse(value);
+        return report.ToJsonString();
+    }
+
+    /// <summary><see cref="Relocking"/> with one more field.</summary>
+    private static string RelockingAnd(string field, string value) => RelockingWith(field, value);
+
+    [Fact]
+    public void The_Report_That_Cost_The_1400_Slot_Is_Holdover_And_Fine_To_Transmit_On()
+    {
+        using GpsdoReference reference = Watching();
+        Reporting(reference, Live("LOCKED", true, true), 110 * 60);
+
+        reference.Receive("gpsdo/state", Relocking, retained: false);
+
+        reference.Current.State.Should().Be(ReferenceState.Holdover);
+        reference.Current.Detail.Should().Be("UNLOCKED, relocking 1124/1500 s, TIE -33 ns");
+        reference.Current.Chip.Should().Be("10 MHz OK, holdover: UNLOCKED, relocking 1124/1500 s, TIE -33 ns");
+        JsonNode lease = TxLeaseApi.Handle(Channel(), "GET", "", null, reference: reference).Answer["reference"]!;
+        lease["state"]!.GetValue<string>().Should().Be("holdover");
+        lease["detail"]!.GetValue<string>().Should().Be("UNLOCKED, relocking 1124/1500 s, TIE -33 ns");
+        Journal.Last().Should().Be("10 MHz reference in holdover: UNLOCKED, relocking 1124/1500 s, TIE -33 ns (was OK for 1h50m)");
+
+        // The firmware's 25 minutes back to LOCKED, a report every 10 s: still holdover, and not
+        // a line or a page update for the counter or the TIE moving.
+        var seen = new List<ReferenceVerdict>();
+        reference.Changed += seen.Add;
+        for (int counter = 1134; counter < 1500; counter += 10)
+        {
+            _time.Advance(TimeSpan.FromSeconds(10));
+            string report = RelockingWith("lock_counter", counter.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                .Replace("-33", counter % 20 == 0 ? "-31" : "-35", StringComparison.Ordinal);
+            reference.Receive("gpsdo/state", report, retained: false);
+            reference.Current.State.Should().Be(ReferenceState.Holdover);
+        }
+
+        seen.Should().BeEmpty();
+        _time.Advance(TimeSpan.FromSeconds(4));
+        reference.Receive("gpsdo/state", Live("LOCKED", true, true), retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Ok);
+        _lines.Last().Should().Be("10 MHz reference OK: LOCKED (was in holdover for 6m14s)");
+    }
+
+    [Fact]
+    public void No_Pps_Past_60_Seconds_Is_Holdover_Not_Unreliable()
+    {
+        var seen = new List<ReferenceVerdict>();
+        using GpsdoReference reference = Watching(seen);
+
+        reference.Receive("gpsdo/state", NoPps, retained: false);
+        Reporting(reference, NoPps, 50);
+        reference.Current.Detail.Should().Be("NO PPS for 50 s, holding", "the first 60 s are held as before");
+
+        _time.Advance(TimeSpan.FromSeconds(10));
+        reference.Current.State.Should().Be(ReferenceState.Holdover, "the 1 s clock alone moves it on");
+        reference.Current.Detail.Should().Be("NO PPS, TIE -3 ns");
+        seen[^1].Chip.Should().Be("10 MHz OK, holdover: NO PPS");
+        Journal.Last().Should().Be("10 MHz reference in holdover: NO PPS, TIE -3 ns (was OK for 1m00s)");
+    }
+
+    [Fact]
+    public void A_Spell_From_No_Pps_Into_Unlocked_Is_One_Holdover()
+    {
+        using GpsdoReference reference = Watching();
+        reference.Receive("gpsdo/state", NoPps, retained: false);
+        Reporting(reference, NoPps, 70);
+        reference.Receive("gpsdo/state", Relocking, retained: false);
+
+        reference.Current.State.Should().Be(ReferenceState.Holdover);
+        Journal.Where(l => l.Contains("holdover", StringComparison.Ordinal)).Should().ContainSingle();
+    }
+
+    [Fact]
+    public void Holdover_Lasts_Up_To_Its_Limit_From_The_Last_Good_Report_Then_Is_Unreliable()
+    {
+        using var reference = new GpsdoReference(
+            "gpsdo", new StationJournal("", _lines.Add, _errors.Add), _time, holdover: TimeSpan.FromMinutes(30));
+        reference.Receive("gpsdo/status", "online", retained: true);
+        reference.Receive("gpsdo/state", Live("LOCKED", true, true), retained: false);
+        reference.Receive("gpsdo/state", Relocking, retained: false);
+
+        Reporting(reference, Relocking, (29 * 60) + 59);
+        reference.Current.State.Should().Be(ReferenceState.Holdover);
+        _time.Advance(TimeSpan.FromSeconds(1));
+
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+        reference.Current.Detail.Should().Be("UNLOCKED, in holdover for over 30m00s");
+        _errors.Last().Should().Be(
+            "10 MHz reference unreliable: UNLOCKED, in holdover for over 30m00s (was in holdover for 30m00s)");
+    }
+
+    [Fact]
+    public void The_Default_Holdover_Limit_Is_Six_Hours()
+    {
+        GpsdoReference.DefaultHoldover.Should().Be(TimeSpan.FromHours(6));
+        using GpsdoReference reference = Watching();
+        reference.Receive("gpsdo/state", Relocking, retained: false);
+
+        Reporting(reference, Relocking, (6 * 3600) - 10);
+        reference.Current.State.Should().Be(ReferenceState.Holdover);
+        Reporting(reference, Relocking, 10);
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+    }
+
+    [Fact]
+    public void A_Holdover_Limit_Of_Zero_Is_The_Old_Behaviour()
+    {
+        using var reference = new GpsdoReference(
+            "gpsdo", new StationJournal("", _lines.Add, _errors.Add), _time, holdover: TimeSpan.Zero);
+        reference.Receive("gpsdo/status", "online", retained: true);
+        reference.Receive("gpsdo/state", Live("LOCKED", true, true), retained: false);
+
+        reference.Receive("gpsdo/state", Relocking, retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+        reference.Current.Detail.Should().Be("UNLOCKED");
+    }
+
+    [Theory]
+    [InlineData("alarms", """["unlocked","no_10mhz"]""")]
+    [InlineData("alarms", """["unlocked","gpsdo_silent"]""")]
+    [InlineData("alarms", """["unlocked","dac_near_limit"]""")]
+    [InlineData("alarms", """["unlocked","something_new"]""")]
+    [InlineData("alarms", """["unlocked",7]""")]
+    [InlineData("dac_near_limit", "true")]
+    [InlineData("tic_error_ns", "1000.5")]
+    [InlineData("tic_error_ns", "-4200.0")]
+    [InlineData("tic_error_ns", "null")]
+    [InlineData("warmup_remaining_s", "540")]
+    public void A_Report_That_Does_Not_Show_A_Good_10_Mhz_Is_Unreliable_For_The_Rest_Of_The_Spell(string field, string value)
+    {
+        using GpsdoReference reference = Watching();
+        string faulty = RelockingAnd(field, value);
+
+        reference.Receive("gpsdo/state", Relocking, retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Holdover);
+        reference.Receive("gpsdo/state", faulty, retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+        reference.Current.Detail.Should().Be("UNLOCKED");
+
+        reference.Receive("gpsdo/state", Relocking, retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Unreliable, "the same spell, so not holdover again");
+
+        reference.Receive("gpsdo/state", Live("LOCKED", true, true), retained: false);
+        reference.Receive("gpsdo/state", Relocking, retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Holdover, "a new spell, seen to start from a good report");
+    }
+
+    [Fact]
+    public void A_Time_Interval_Error_Of_Exactly_1_Microsecond_Is_Still_Holdover()
+    {
+        using GpsdoReference reference = Watching();
+
+        reference.Receive("gpsdo/state", RelockingWith("tic_error_ns", "-1000.0"), retained: false);
+
+        reference.Current.State.Should().Be(ReferenceState.Holdover);
+        reference.Current.Detail.Should().Be("UNLOCKED, relocking 1124/1500 s, TIE -1000 ns");
+    }
+
+    [Fact]
+    public void A_Gpsdo_Restart_Since_The_Last_Good_Report_Is_Not_Holdover()
+    {
+        // The OCXO may have gone cold, whatever its first lines say.
+        using GpsdoReference reference = Reference();
+        reference.Receive("gpsdo/status", "online", retained: true);
+        reference.Receive("gpsdo/state", """{"state":"LOCKED","reference_ok":true,"locked":true,"gpsdo_restarts":2,"alarms":[]}""", retained: false);
+
+        reference.Receive("gpsdo/state", RelockingAnd("gpsdo_restarts", "2"), retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Holdover, "no restart since the good report");
+        reference.Receive("gpsdo/state", RelockingAnd("gpsdo_restarts", "3"), retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+    }
+
+    [Fact]
+    public void A_Cold_Or_Warming_Gpsdo_Is_Never_Holdover()
+    {
+        // No good report before it: a GPSDO just powered up says UNLOCKED with a small TIE too.
+        using GpsdoReference reference = Reference();
+        reference.Receive("gpsdo/status", "online", retained: false);
+        reference.Receive("gpsdo/state", Relocking, retained: false);
+        Reporting(reference, Relocking, 600);
+
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+    }
+
+    [Fact]
+    public void A_Holdover_First_Seen_Retained_Or_After_A_Gap_Is_Not_Holdover()
+    {
+        using (GpsdoReference retained = Watching())
+        {
+            retained.Receive("gpsdo/state", Relocking, retained: true);
+            retained.Current.State.Should().Be(ReferenceState.Unreliable);
+        }
+
+        using GpsdoReference gap = Watching();
+        _time.Advance(TimeSpan.FromSeconds(40));
+        gap.Receive("gpsdo/state", Relocking, retained: false);
+        gap.Current.State.Should().Be(ReferenceState.Unreliable);
+    }
+
+    [Fact]
+    public void A_Holdover_Whose_Reports_Stop_Is_Unknown_And_Offline_Is_Unknown()
+    {
+        using GpsdoReference reference = Watching();
+        reference.Receive("gpsdo/state", Relocking, retained: false);
+
+        _time.Advance(TimeSpan.FromSeconds(31));
+        reference.Current.State.Should().Be(ReferenceState.Unknown);
+        reference.Receive("gpsdo/state", Relocking, retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Holdover, "the spell went on while nobody reported");
+        reference.Receive("gpsdo/status", "offline", retained: false);
+        reference.Current.Detail.Should().Be("display offline");
+    }
+
+    [Fact]
+    public void Holdover_Wording_Leaves_Out_A_Lock_Counter_That_Is_Not_Counting()
+    {
+        GpsdoReference.TryRead(NoPps, out GpsdoReport noPps).Should().BeTrue();
+        GpsdoReference.HoldoverDetail("NO PPS", noPps).Should().Be("NO PPS, TIE -3 ns");
+        GpsdoReference.TryRead(RelockingWith("lock_counter", "1500"), out GpsdoReport done).Should().BeTrue();
+        GpsdoReference.HoldoverDetail("HOLD", done).Should().Be("HOLD, TIE -33 ns");
+    }
+
+    [Fact]
+    public void The_Holdover_Limit_Loads_Defaults_And_Is_Checked()
+    {
+        Load("""{"device": "null", "gpsdo": {"host": "b"}}""").Config!.Gpsdo!.HoldoverHours.Should().Be(6);
+        Load("""{"device": "null", "gpsdo": {"host": "b", "holdoverHours": 24}}""").Config!.Gpsdo!.HoldoverHours.Should().Be(24);
+        Load("""{"device": "null", "gpsdo": {"host": "b", "holdoverHours": 0}}""").Config!.Gpsdo!.HoldoverHours.Should().Be(0);
+
+        (DaemonConfig? config, string error) = Load("""{"device": "null", "gpsdo": {"host": "b", "holdoverHours": -1}}""");
+        config.Should().BeNull();
+        error.Should().Contain("\"gpsdo\".\"holdoverHours\" is -1");
     }
 
     // ---------------------------------------------------------------- the feed

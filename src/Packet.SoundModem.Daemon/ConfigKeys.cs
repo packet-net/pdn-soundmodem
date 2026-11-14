@@ -301,6 +301,7 @@ internal static class ConfigKeys
         K("username", "MQTT username", advanced: true);
         K("password", "MQTT password", advanced: true);
         K("topicPrefix", "Topic prefix", advanced: true);
+        K("holdoverHours", "Transmit on a GPSDO in holdover for up to", "hours", advanced: true);
 
         T("CarrierSenseConfig");
         K("radio", "Radio driver");

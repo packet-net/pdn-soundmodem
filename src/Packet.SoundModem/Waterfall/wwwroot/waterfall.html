@@ -47,6 +47,7 @@
   .radio-status.bad { background: rgba(255,120,90,.16); color: #ff9a7a; }
   .radio-status.quiet { color: var(--muted); }
   .radio-status.good { background: rgba(90,200,120,.16); color: #7ddc98; }
+  .radio-status.warn { background: rgba(240,180,90,.16); color: #f0b45a; }
   .radio-status a { color: var(--amber); text-decoration: none; }
   .radio-status a:hover { text-decoration: underline; }
   /* Public deployment: a paragraph for a visitor who has never seen a packet waterfall, and
@@ -813,8 +814,9 @@ function setRadioStatus(status) {
   el.classList.toggle("quiet", /^(idle|no viewers|connecting)\b/i.test(status));
 }
 
-// The 10 MHz reference chip: {state: "ok"|"unreliable"|"unknown", text, detail}, or null for a
-// station with no GPSDO feed, which shows nothing.
+// The 10 MHz reference chip: {state: "ok"|"holdover"|"unreliable"|"unknown", text, detail}, or
+// null for a station with no GPSDO feed, which shows nothing. Holdover is fine to transmit on, but
+// amber, so the operator sees the GPSDO has lost its PPS or lock.
 function setReferenceStatus(ref) {
   const el = document.getElementById("refStatus");
   if (!el) return;
@@ -823,8 +825,9 @@ function setReferenceStatus(ref) {
   el.textContent = ref.text || ("10 MHz " + ref.state);
   el.title = ref.detail ? "GPSDO: " + ref.detail : "";
   el.classList.toggle("good", ref.state === "ok");
+  el.classList.toggle("warn", ref.state === "holdover");
   el.classList.toggle("bad", ref.state === "unreliable");
-  el.classList.toggle("quiet", ref.state !== "ok" && ref.state !== "unreliable");
+  el.classList.toggle("quiet", ref.state !== "ok" && ref.state !== "holdover" && ref.state !== "unreliable");
 }
 
 // Programs on this machine reading the channel audio stream that said who they are:

@@ -16,6 +16,13 @@ internal enum ReferenceState
 
     /// <summary>The display says it cannot (<c>reference_ok</c> false).</summary>
     Unreliable,
+
+    /// <summary>
+    /// The GPSDO has lost its PPS or its discipline, but its oscillator is still producing a good
+    /// 10 MHz and is coasting on it (issue #807): fine to transmit on, and said so the operator
+    /// still sees it.
+    /// </summary>
+    Holdover,
 }
 
 /// <summary>One reading of the reference: the verdict, why, and since when.</summary>
@@ -31,24 +38,33 @@ internal enum ReferenceState
 /// </param>
 internal sealed record ReferenceVerdict(ReferenceState State, string Detail, DateTimeOffset Since, string? Radio = null)
 {
-    /// <summary>The verdict as <c>/api/txlease</c> spells it: <c>ok</c>, <c>unreliable</c> or <c>unknown</c>.</summary>
+    /// <summary>The verdict as <c>/api/txlease</c> spells it: <c>ok</c>, <c>holdover</c>,
+    /// <c>unreliable</c> or <c>unknown</c>.</summary>
     internal string Word => Words(State);
 
     internal static string Words(ReferenceState state) => state switch
     {
         ReferenceState.Ok => "ok",
+        ReferenceState.Holdover => "holdover",
         ReferenceState.Unreliable => "unreliable",
         _ => "unknown",
     };
 
     /// <summary>The verdict in a sentence's own case, for the journal and the page.</summary>
-    internal static string Spoken(ReferenceState state) => state == ReferenceState.Ok ? "OK" : Words(state);
+    internal static string Spoken(ReferenceState state) => state switch
+    {
+        ReferenceState.Ok => "OK",
+        ReferenceState.Holdover => "in holdover",
+        _ => Words(state),
+    };
 
     /// <summary>What the page's top bar shows: <c>10 MHz OK</c>, <c>10 MHz unreliable: GPS LOST</c>,
-    /// <c>10 MHz unknown</c>, <c>10 MHz OK, holding</c> during a short GPS spell, with a Flex's part
-    /// after it: <c>10 MHz OK (Flex on TCXO)</c>.</summary>
+    /// <c>10 MHz unknown</c>, <c>10 MHz OK, holding</c> during a short GPS spell, <c>10 MHz OK,
+    /// holdover: UNLOCKED</c> while the GPSDO coasts, with a Flex's part after it: <c>10 MHz OK
+    /// (Flex on TCXO)</c>.</summary>
     internal string Chip =>
         (State == ReferenceState.Unreliable ? $"10 MHz unreliable: {Detail}"
+            : State == ReferenceState.Holdover ? $"10 MHz OK, holdover: {Detail}"
             : State == ReferenceState.Ok && Detail.EndsWith(GpsdoReference.Holding, StringComparison.Ordinal) ? "10 MHz OK, holding"
             : $"10 MHz {Spoken(State)}")
         + (Radio is null ? "" : $" ({Radio})");
@@ -119,6 +135,27 @@ internal sealed record RadioOscillator(string? Source, bool Locked)
         : $"flex: its {Named} reference is not locked; the reference is judged unknown unless the GPSDO says unreliable";
 }
 
+/// <summary>One <c>&lt;prefix&gt;/state</c> report's fields of interest, as gpsdo-cyd's
+/// <c>state_json.cpp</c> names them; null where a field is absent or not of its type.</summary>
+/// <param name="StateText">The display's state text (<c>LOCKED</c>, <c>UNLOCKED</c>), shown, not parsed.</param>
+/// <param name="ReferenceOk"><c>reference_ok</c>, the one field the spec says to act on.</param>
+/// <param name="Locked"><c>locked</c>.</param>
+/// <param name="Alarms"><c>alarms</c>' strings, empty when there is none.</param>
+/// <param name="TimeErrorNs"><c>tic_error_ns</c>, the OCXO's phase against GPS time.</param>
+/// <param name="DacNearLimit"><c>dac_near_limit</c>.</param>
+/// <param name="LockCounter"><c>lock_counter</c>, the GPSDO's relock count in seconds.</param>
+/// <param name="LockTarget"><c>lock_target</c>, what it must reach to say <c>LOCKED</c>.</param>
+/// <param name="WarmUpSeconds"><c>warmup_remaining_s</c>, present while the OCXO warms up.</param>
+/// <param name="GpsdoRestarts"><c>gpsdo_restarts</c>.</param>
+internal sealed record GpsdoReport(
+    string? StateText, bool? ReferenceOk, bool? Locked, IReadOnlyList<string> Alarms,
+    double? TimeErrorNs = null, bool? DacNearLimit = null, long? LockCounter = null, long? LockTarget = null,
+    long? WarmUpSeconds = null, long? GpsdoRestarts = null)
+{
+    /// <summary>Nothing read.</summary>
+    internal static GpsdoReport Empty { get; } = new(null, null, null, []);
+}
+
 /// <summary>
 /// The GPSDO's 10 MHz reference state, from the topics a display watching it publishes (issue
 /// #789): <c>&lt;prefix&gt;/status</c> (<c>online</c>, or <c>offline</c> as its MQTT last will) and
@@ -151,8 +188,8 @@ internal sealed record RadioOscillator(string? Source, bool Locked)
 /// cref="GpsSide"/> alarms, or <c>no_pps</c>) with the GPSDO still <c>locked</c>, stays OK
 /// ("GPS LOST for 12 s, GPSDO still locked, holding") until it has lasted <see cref="Grace"/>,
 /// checked by the same 1 s clock as staleness. A spell is continuous: it ends only when
-/// <c>reference_ok</c> is true again, and the next one starts its own count. Unreliable at once,
-/// and for the rest of the spell: <c>locked</c> false (<c>UNLOCKED</c>, <c>HOLD</c>, <c>WARM
+/// <c>reference_ok</c> is true again, and the next one starts its own count. Not held, and
+/// unreliable at once unless it is holdover (below): <c>locked</c> false (<c>UNLOCKED</c>, <c>HOLD</c>, <c>WARM
 /// UP</c>, <c>NO DATA</c>) or absent; any other alarm (<c>no_10mhz</c>, <c>gpsdo_silent</c>,
 /// <c>dac_near_limit</c>, one not known here) or none at all; and a spell not seen to start, that
 /// is, one whose first report was retained or did not follow a fresh <c>reference_ok</c> true
@@ -160,6 +197,17 @@ internal sealed record RadioOscillator(string? Source, bool Locked)
 /// display sends <c>locked</c> false after 3 s only because the GPSDO prints no report line
 /// without a PPS, so <c>locked</c> false with <c>no_pps</c> is held too, but only in a spell
 /// seen to start from a good report, which a cold or unlocked GPSDO never gives.</para>
+/// <para><b>Holdover is fine to transmit on</b> (issue #807). One missed PPS drops this GPSDO's
+/// firmware to <c>UNLOCKED</c> for the 25 minutes its lock counter takes to reach 1500 again,
+/// while its OCXO stays within tens of nanoseconds of GPS time; receivers tolerate about 20 Hz,
+/// and a Flex on its own TCXO is already OK. So a spell seen to start from a good report, whose
+/// every report still shows a good 10 MHz (<see cref="WhyNotHoldover"/>: no alarm but the GPS
+/// side's, <c>no_pps</c> and <c>unlocked</c>, a <c>tic_error_ns</c> within <see
+/// cref="MaxTimeErrorNs"/>, no warm-up, no GPSDO restart), is <see cref="ReferenceState.Holdover"/>
+/// once it is not held as above, until it has lasted the holdover limit (<see
+/// cref="GpsdoConfig.HoldoverHours"/>) from the last good report, and unreliable after that. One
+/// report that does not show a good 10 MHz makes the rest of the spell unreliable. On a Flex,
+/// holdover needs the radio locked to REF IN (<see cref="Combine"/>).</para>
 /// <para>The MQTT side is <see cref="GpsdoFeed"/>; this class has no network, so a test drives it
 /// with topics and payloads and a fake clock.</para>
 /// </remarks>
@@ -185,6 +233,26 @@ internal sealed class GpsdoReference : IDisposable
 
     /// <summary>How often staleness and held spells are checked between messages.</summary>
     internal static readonly TimeSpan CheckEvery = TimeSpan.FromSeconds(1);
+
+    /// <summary>How long a spell may be holdover, counted from the last good report, when the
+    /// <c>gpsdo</c> section does not say: <see cref="GpsdoConfig.HoldoverHours"/>.</summary>
+    internal static readonly TimeSpan DefaultHoldover = TimeSpan.FromHours(GpsdoConfig.DefaultHoldoverHours);
+
+    /// <summary>
+    /// The largest time-interval error (<c>tic_error_ns</c>, the OCXO's phase against GPS time)
+    /// that still counts as a good 10 MHz in holdover. 1 microsecond is about 0.1 ppb if it built
+    /// up over three hours, which is milli-hertz at 7 MHz; a GPSDO this far off has a fault, not
+    /// a missed pulse. Fixed, not a setting.
+    /// </summary>
+    internal const double MaxTimeErrorNs = 1000;
+
+    /// <summary>The alarms a holdover may carry: the GPS side's, a missing PPS, and
+    /// <c>unlocked</c>, which is what holdover is. Anything else (<c>no_10mhz</c>,
+    /// <c>gpsdo_silent</c>, <c>dac_near_limit</c>, one not known here) is a fault.</summary>
+    internal static readonly IReadOnlySet<string> HoldoverAlarms = new HashSet<string>(GpsSide, StringComparer.Ordinal)
+    {
+        "no_pps", "unlocked",
+    };
 
     private readonly string _statusTopic;
     private readonly string _stateTopic;
@@ -215,6 +283,19 @@ internal sealed class GpsdoReference : IDisposable
     /// <summary>The spell's latest report has the <c>no_pps</c> alarm, for its wording.</summary>
     private bool _spellNoPps;
 
+    /// <summary>The current spell has had a report that does not show a good 10 MHz, or was not
+    /// seen to start, so it is not holdover again until it ends.</summary>
+    private bool _spellFaulted;
+
+    /// <summary>The spell's latest report, for the holdover's wording.</summary>
+    private GpsdoReport? _spellReport;
+
+    /// <summary>The GPSDO's restart count in the last good report: a restart since then means its
+    /// OCXO may have gone cold, which is not holdover.</summary>
+    private long? _restartsWhenGood;
+
+    private readonly TimeSpan _holdover;
+
     /// <summary>When the last report that counts arrived, on the monotonic clock.</summary>
     private long? _reportedAt;
 
@@ -239,7 +320,11 @@ internal sealed class GpsdoReference : IDisposable
     /// <param name="topicPrefix">What the display's topics start with, without a trailing slash.</param>
     /// <param name="journal">Where the one line per change goes.</param>
     /// <param name="time">The clock (FakeTimeProvider under test).</param>
-    internal GpsdoReference(string topicPrefix, StationJournal journal, TimeProvider time)
+    /// <param name="holdover">
+    /// How long a spell may be holdover, counted from the last good report; null for <see
+    /// cref="DefaultHoldover"/>, zero for none, which was the behaviour before issue #807.
+    /// </param>
+    internal GpsdoReference(string topicPrefix, StationJournal journal, TimeProvider time, TimeSpan? holdover = null)
     {
         ArgumentNullException.ThrowIfNull(topicPrefix);
         ArgumentNullException.ThrowIfNull(journal);
@@ -248,6 +333,7 @@ internal sealed class GpsdoReference : IDisposable
         _stateTopic = $"{topicPrefix}/state";
         _journal = journal;
         _time = time;
+        _holdover = holdover ?? DefaultHoldover;
         _since = time.GetUtcNow();
         _sinceStamp = time.GetTimestamp();
         _check = time.CreateTimer(_ => Tick(), null, CheckEvery, CheckEvery);
@@ -373,7 +459,7 @@ internal sealed class GpsdoReference : IDisposable
         }
         else if (topic == _stateTopic)
         {
-            if (!TryRead(payload, out string? text, out bool? referenceOk, out bool? locked, out IReadOnlyList<string> alarms))
+            if (!TryRead(payload, out GpsdoReport report))
             {
                 bool say;
                 lock (_gate)
@@ -397,33 +483,43 @@ internal sealed class GpsdoReference : IDisposable
             {
                 _saidUnreadable = false;
                 _stateHeard = true;
-                _stateText = text;
+                _stateText = report.StateText;
                 bool lastWasGood = _referenceOk == true && _reportedAt is long last
                     && _time.GetElapsedTime(last) <= StaleAfter;
-                _referenceOk = referenceOk;
+                _referenceOk = report.ReferenceOk;
                 long now = _time.GetTimestamp();
-                if (referenceOk == false)
+                if (report.ReferenceOk == false)
                 {
                     if (_spellStart is null)
                     {
-                        // A spell is held only if it was seen to start: live, straight after a
-                        // fresh good report. A retained one, or the first after a restart or a
-                        // gap, may have been going for hours.
+                        // A spell is held, or holdover, only if it was seen to start: live,
+                        // straight after a fresh good report. A retained one, or the first after a
+                        // restart or a gap, may have been going for hours, or be a cold GPSDO.
                         _spellStart = now;
                         _spellTripped = retained || !lastWasGood;
+                        _spellFaulted = _spellTripped;
                     }
 
-                    if (!Holds(locked, alarms))
+                    if (!Holds(report.Locked, report.Alarms))
                     {
                         _spellTripped = true;
                     }
 
-                    _spellNoPps = alarms.Contains("no_pps");
+                    if (WhyNotHoldover(report, _restartsWhenGood) is not null)
+                    {
+                        _spellFaulted = true;
+                    }
+
+                    _spellNoPps = report.Alarms.Contains("no_pps");
+                    _spellReport = report;
                 }
-                else if (referenceOk == true)
+                else if (report.ReferenceOk == true)
                 {
                     _spellStart = null;
                     _spellTripped = false;
+                    _spellFaulted = false;
+                    _spellReport = null;
+                    _restartsWhenGood = report.GpsdoRestarts;
                 }
                 // A retained state is fresh at receipt only while the display's status is online:
                 // a display that dies has its last will published as "offline" within about 1.5
@@ -535,11 +631,11 @@ internal sealed class GpsdoReference : IDisposable
         {
             flexLines = [.. _flexLines];
             _flexLines.Clear();
-            (ReferenceState state, _, string shown) = Judge();
+            (ReferenceState state, string detail, string shown) = Judge();
             string? radio = _flex?.Chip;
             if (state != _state || shown != _detail || radio != _radio)
             {
-                changed = Moved(state, shown, radio, out line, out problem);
+                changed = Moved(state, detail, shown, radio, out line, out problem);
             }
         }
 
@@ -578,13 +674,16 @@ internal sealed class GpsdoReference : IDisposable
 
     /// <summary>Takes a new verdict or shown reason on; caller holds <c>_gate</c>. The journal line
     /// is for a change of verdict only.</summary>
-    private ReferenceVerdict Moved(ReferenceState state, string shown, string? radio, out string? line, out bool problem)
+    private ReferenceVerdict Moved(
+        ReferenceState state, string detail, string shown, string? radio, out string? line, out bool problem)
     {
         line = null;
         problem = false;
         if (state != _state)
         {
-            line = $"10 MHz reference {ReferenceVerdict.Spoken(state)}: {shown} "
+            // Holdover's line has the lock counter and the time-interval error, which its shown
+            // reason leaves out so they do not reach the page every report.
+            line = $"10 MHz reference {ReferenceVerdict.Spoken(state)}: {(state == ReferenceState.Holdover ? detail : shown)} "
                 + $"(was {ReferenceVerdict.Spoken(_state)} for {Span(_time.GetElapsedTime(_sinceStamp))})";
             problem = state != ReferenceState.Ok;
             _since = _time.GetUtcNow();
@@ -608,7 +707,8 @@ internal sealed class GpsdoReference : IDisposable
     /// The GPSDO's verdict as the Flex's oscillator makes it count. No Flex: the GPSDO's alone.
     /// The Flex on its own TCXO, OCXO or internal GPSDO, locked: OK, whatever the GPSDO says. On
     /// the external reference, locked: the GPSDO's. Not locked, or not said: unknown, unless the GPSDO says
-    /// unreliable, which stands.
+    /// unreliable, which stands, or holdover, which needs the Flex to say it is locked to REF IN
+    /// and so is unreliable without it.
     /// </summary>
     internal static (ReferenceState State, string Detail, string Shown) Combine(
         (ReferenceState State, string Detail, string Shown) gpsdo, RadioOscillator? flex)
@@ -632,6 +732,12 @@ internal sealed class GpsdoReference : IDisposable
         string why = flex.Source is null
             ? "Flex has not said which oscillator it is on"
             : $"Flex reports its {flex.Named} reference not locked";
+        if (gpsdo.State == ReferenceState.Holdover)
+        {
+            // A GPSDO in holdover is only good enough while the radio says it is locked to it.
+            return (ReferenceState.Unreliable, $"{gpsdo.Detail}, in holdover, and {why}", $"{gpsdo.Shown}, in holdover, and {why}");
+        }
+
         return (ReferenceState.Unknown, why, why);
     }
 
@@ -663,15 +769,29 @@ internal sealed class GpsdoReference : IDisposable
         }
 
         string text = _stateText ?? "no state text";
-        if (_referenceOk == false && _spellStart is long start && !_spellTripped)
+        bool mayHoldover = !_spellFaulted && _holdover > TimeSpan.Zero;
+        if (_referenceOk == false && _spellStart is long start && (!_spellTripped || mayHoldover))
         {
             TimeSpan lasted = _time.GetElapsedTime(start);
-            if (lasted < Grace)
+            if (!_spellTripped && lasted < Grace)
             {
                 string seconds = Math.Floor(lasted.TotalSeconds).ToString("0", CultureInfo.InvariantCulture);
                 // During NO PPS the display cannot say the GPSDO is still locked, so this does not.
                 string still = _spellNoPps ? "" : ", GPSDO still locked";
                 return (ReferenceState.Ok, $"{text} for {seconds} s{still}{Holding}", $"{text}{still}{Holding}");
+            }
+
+            if (mayHoldover)
+            {
+                if (lasted < _holdover)
+                {
+                    // The shown reason is the state text alone, so the lock counter and the
+                    // time-interval error moving every report do not tell the page each time.
+                    return (ReferenceState.Holdover, HoldoverDetail(text, _spellReport), text);
+                }
+
+                string expired = $"{text}, in holdover for over {Span(_holdover)}";
+                return (ReferenceState.Unreliable, expired, expired);
             }
 
             string over = $"{text} for over {Grace.TotalSeconds:0} s";
@@ -705,44 +825,96 @@ internal sealed class GpsdoReference : IDisposable
     }
 
     /// <summary>
-    /// Reads a state payload's fields of interest. False for anything that is not a JSON object. A
-    /// field that is absent, or not of its type, is null: absent means unknown. <paramref
-    /// name="alarms"/> is the <c>alarms</c> array's strings, empty when there is none.
+    /// Whether a report of <c>reference_ok</c> false still shows a good 10 MHz, so its spell may be
+    /// holdover (issue #807): null if it does, or why not. All of: no alarm but the GPS side's,
+    /// <c>no_pps</c> and <c>unlocked</c> (so no <c>no_10mhz</c>, <c>gpsdo_silent</c> or
+    /// <c>dac_near_limit</c>); <c>dac_near_limit</c> not true; a <c>tic_error_ns</c> within <see
+    /// cref="MaxTimeErrorNs"/>; no warm-up under way; and no GPSDO restart since the last good
+    /// report (<paramref name="restartsWhenGood"/>). A report with no <c>tic_error_ns</c> cannot
+    /// vouch for the oscillator, so it is not holdover. Whether the spell was seen to start, and
+    /// on a Flex whether the radio is locked to REF IN, are the caller's.
     /// </summary>
-    internal static bool TryRead(
-        string payload, out string? stateText, out bool? referenceOk, out bool? locked, out IReadOnlyList<string> alarms)
+    internal static string? WhyNotHoldover(GpsdoReport report, long? restartsWhenGood)
     {
-        stateText = null;
-        referenceOk = null;
-        locked = null;
-        alarms = [];
+        foreach (string alarm in report.Alarms)
+        {
+            if (!HoldoverAlarms.Contains(alarm))
+            {
+                return $"alarm {TxTestRunner.Printable(alarm)}";
+            }
+        }
+
+        if (report.DacNearLimit == true)
+        {
+            return "DAC near its limit";
+        }
+
+        if (report.TimeErrorNs is not double error)
+        {
+            return "no time-interval error";
+        }
+
+        if (Math.Abs(error) > MaxTimeErrorNs)
+        {
+            return $"time-interval error {Ns(error)} ns";
+        }
+
+        if (report.WarmUpSeconds is > 0)
+        {
+            return "warming up";
+        }
+
+        if (restartsWhenGood is long before && report.GpsdoRestarts is long now && now > before)
+        {
+            return "GPSDO restarted";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// A holdover's reason: the display's state text, how far the GPSDO's relock count has got
+    /// when it is counting, and the time-interval error: <c>UNLOCKED, relocking 1124/1500 s, TIE
+    /// -33 ns</c>.
+    /// </summary>
+    internal static string HoldoverDetail(string text, GpsdoReport? report)
+    {
+        string relocking = report is { LockCounter: long counter, LockTarget: long target } && counter < target
+            ? $", relocking {counter.ToString(CultureInfo.InvariantCulture)}/{target.ToString(CultureInfo.InvariantCulture)} s"
+            : "";
+        string error = report?.TimeErrorNs is double tie ? $", TIE {Ns(tie)} ns" : "";
+        return text + relocking + error;
+    }
+
+    /// <summary>A time in nanoseconds to the nearest one: <c>-33</c>.</summary>
+    private static string Ns(double ns) => Math.Round(ns, MidpointRounding.AwayFromZero).ToString("0", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Reads a state payload's fields of interest. False for anything that is not a JSON object. A
+    /// field that is absent, or not of its type, is null: absent means unknown. <c>alarms</c> is the
+    /// array's strings, empty when there is none.
+    /// </summary>
+    internal static bool TryRead(string payload, out GpsdoReport report)
+    {
+        report = GpsdoReport.Empty;
         try
         {
             using JsonDocument document = JsonDocument.Parse(payload);
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
             {
                 return false;
             }
 
-            if (document.RootElement.TryGetProperty("state", out JsonElement state) && state.ValueKind == JsonValueKind.String)
+            string? stateText = null;
+            if (root.TryGetProperty("state", out JsonElement state) && state.ValueKind == JsonValueKind.String)
             {
                 string printable = TxTestRunner.Printable(state.GetString());
                 stateText = printable.Length > 0 ? printable : null;
             }
 
-            if (document.RootElement.TryGetProperty("reference_ok", out JsonElement ok)
-                && ok.ValueKind is JsonValueKind.True or JsonValueKind.False)
-            {
-                referenceOk = ok.GetBoolean();
-            }
-
-            if (document.RootElement.TryGetProperty("locked", out JsonElement lockedElement)
-                && lockedElement.ValueKind is JsonValueKind.True or JsonValueKind.False)
-            {
-                locked = lockedElement.GetBoolean();
-            }
-
-            if (document.RootElement.TryGetProperty("alarms", out JsonElement array) && array.ValueKind == JsonValueKind.Array)
+            IReadOnlyList<string> alarms = [];
+            if (root.TryGetProperty("alarms", out JsonElement array) && array.ValueKind == JsonValueKind.Array)
             {
                 var named = new List<string>();
                 foreach (JsonElement alarm in array.EnumerateArray())
@@ -754,12 +926,34 @@ internal sealed class GpsdoReference : IDisposable
                 alarms = named;
             }
 
+            report = new GpsdoReport(
+                stateText, Flag(root, "reference_ok"), Flag(root, "locked"), alarms,
+                Number(root, "tic_error_ns"), Flag(root, "dac_near_limit"),
+                Whole(root, "lock_counter"), Whole(root, "lock_target"),
+                Whole(root, "warmup_remaining_s"), Whole(root, "gpsdo_restarts"));
             return true;
         }
         catch (JsonException)
         {
             return false;
         }
+
+        static bool? Flag(JsonElement root, string name) =>
+            root.TryGetProperty(name, out JsonElement value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? value.GetBoolean()
+                : null;
+
+        static double? Number(JsonElement root, string name) =>
+            root.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Number
+                && value.TryGetDouble(out double number) && double.IsFinite(number)
+                ? number
+                : null;
+
+        static long? Whole(JsonElement root, string name) =>
+            root.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Number
+                && value.TryGetInt64(out long number)
+                ? number
+                : null;
     }
 
     /// <summary>A length of time the way the journal says it: <c>3h12m</c>, <c>5m03s</c>, <c>12s</c>.</summary>
