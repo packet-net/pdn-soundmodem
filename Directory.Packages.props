@@ -73,7 +73,7 @@
     <!-- A JavaScript interpreter in .NET (BSD-2-Clause), tests only: ConfigPageTests runs the
          configuration page's own form model, so a key the page cannot show fails the suite on
          runners that have no browser and no node. -->
-    <PackageVersion Include="Jint" Version="4.17.0" />
+    <PackageVersion Include="Jint" Version="4.18.0" />
     <!-- Drives a real browser (MIT), tests only: ConfigPageBrowserTests opens the configuration
          page against a running daemon. scripts/install-playwright-browser.cs installs the
          matching Chromium from this same pin, so the two cannot drift apart. -->
