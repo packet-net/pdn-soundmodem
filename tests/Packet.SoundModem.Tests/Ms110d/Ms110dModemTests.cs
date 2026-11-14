@@ -55,6 +55,42 @@ public class Ms110dModemTests
     }
 
     [Fact]
+    public void A_Received_Frame_Is_Named_For_The_Waveform_Heard_Not_The_One_Sent()
+    {
+        // The receiver at the bench: it transmits WN 6 (the default) and hears a WN 4 burst.
+        // Mode stays the transmit waveform; the frame names what was on the air.
+        const int rate = 48000;
+        var sender = new Ms110dModem(rate, _ => { }, new Ms110dTxSettings { WaveformNumber = 4 });
+        var listener = new Ms110dModem(rate, _ => { }, new Ms110dTxSettings { WaveformNumber = 6 });
+        var heard = new List<FrameQuality>();
+        listener.FrameDecoded += (_, q) => heard.Add(q);
+
+        listener.Process(new float[rate / 10]);
+        listener.Process(sender.Modulate(TestFrame(120, 4), txDelayMilliseconds: 50));
+        listener.Process(new float[rate / 2]);
+
+        heard.Should().ContainSingle().Which.Mode.Should().Be("ms110d-wn4");
+        listener.Mode.Should().Be("ms110d-wn6");
+    }
+
+    [Fact]
+    public void A_Frame_Heard_On_The_Long_Interleaver_Says_So()
+    {
+        var sender = new Ms110dModem(
+            9600, _ => { }, new Ms110dTxSettings { WaveformNumber = 4, Interleaver = Ms110dInterleaverKind.Long });
+        var listener = new Ms110dModem(9600, _ => { });
+        var heard = new List<FrameQuality>();
+        listener.FrameDecoded += (_, q) => heard.Add(q);
+
+        listener.Process(new float[1000]);
+        listener.Process(sender.Modulate(TestFrame(40, 6), 0));
+        listener.Process(new float[4800]);
+
+        heard.Should().ContainSingle().Which.Mode.Should().Be("ms110d-wn4-long");
+        ModeNames.Display(heard[0].Mode).Should().Be("MS110D WN4 long");
+    }
+
+    [Fact]
     public void FrameDecoded_Reports_Il2p_Quality_And_Cfo()
     {
         byte[] frame = TestFrame(60, 3);

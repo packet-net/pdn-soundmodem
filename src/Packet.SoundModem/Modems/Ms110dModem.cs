@@ -47,6 +47,12 @@ public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingMo
     private Ms110dTxSettings _txSettings;
     private FramePacking? _packing;
     private readonly Ms110dDemodulator _rx;
+
+    /// <summary>The mode name of the burst being heard, from its preamble's WID: what each
+    /// received frame's <see cref="FrameQuality.Mode"/> carries. Set on the thread calling
+    /// <see cref="Process"/> when a burst locks and kept until the next one does, so a frame the
+    /// deframer completes at the very end of a burst still has it.</summary>
+    private string? _heardMode;
     private readonly Il2pReceiver _deframer;
     private readonly EnergyBusyDetector _energyBusy;
     private readonly FirFilter _busyBandpass;
@@ -96,13 +102,14 @@ public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingMo
                 }
 
                 FrameDecoded?.Invoke(frame, new FrameQuality(
-                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                    _heardMode ?? Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                     FrequencyOffsetHz: _rx.Lock?.CfoHz,
                     PlainIl2p: delivery.PlainIl2p,
                     TrailerNearBits: delivery.TrailerNearBits,
                     MonitorOnly: delivery.MonitorOnly));
             },
             crcMode: true, acceptPlainIl2p: acceptPlainIl2p);
+        _rx.BurstStarted += start => _heardMode = HeardMode(start.Lock);
         _rx.BlockDecoded += block =>
         {
             foreach (byte bit in block.Bits)
@@ -138,8 +145,22 @@ public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingMo
     /// <summary>The receiver, for instruments and tests.</summary>
     internal Ms110dDemodulator Receiver => _rx;
 
-    /// <inheritdoc />
+    /// <summary>The TRANSMIT waveform: <c>ms110d-wnN</c> for what <see cref="Modulate"/> sends.
+    /// Receive is autobaud and does not follow it, so a received frame's
+    /// <see cref="FrameQuality.Mode"/> names the waveform that frame's burst announced instead
+    /// (see <see cref="HeardMode"/>).</summary>
     public string Mode => $"ms110d-wn{Volatile.Read(ref _tx).Mode.Wn}";
+
+    /// <summary>
+    /// The name a received frame's <see cref="FrameQuality.Mode"/> carries: the waveform number
+    /// the burst's preamble announced, <c>ms110d-wn4</c>, with the interleaver after it when it is
+    /// not the short one this modem sends by default, <c>ms110d-wn4-long</c>. That is the
+    /// spelling pdn-mailcast's head end configures a long-interleaver waveform with, and the
+    /// catalogue name is what is left with the suffix taken off.
+    /// </summary>
+    internal static string HeardMode(Ms110dLockInfo locked) => locked.Interleaver == Ms110dInterleaverKind.Short
+        ? $"ms110d-wn{locked.WaveformNumber}"
+        : $"ms110d-wn{locked.WaveformNumber}-{locked.Interleaver.ToString().ToLowerInvariant()}";
 
     /// <summary>
     /// The waveform number the receiver has locked to, read from the preamble of the burst it is
@@ -147,7 +168,8 @@ public sealed class Ms110dModem : IModem, IHardwareControllable, IFramePackingMo
     /// </summary>
     /// <remarks>
     /// This is the receive side's autobaud result, and it is not <see cref="Mode"/>, which names
-    /// the transmit waveform (as each frame's <see cref="FrameQuality.Mode"/> does). A receiver
+    /// the transmit waveform. Each received frame's <see cref="FrameQuality.Mode"/> names the
+    /// waveform its burst announced, so it agrees with this, not with <see cref="Mode"/>. A receiver
     /// that wants the speed it is hearing reads this. It is updated on the thread calling
     /// <see cref="Process"/> and read through a volatile read, so another thread sees the latest
     /// lock, at most one block behind.
