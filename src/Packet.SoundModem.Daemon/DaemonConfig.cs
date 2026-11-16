@@ -542,6 +542,17 @@ public sealed class GpsdoConfig
     /// </summary>
     public string TopicPrefix { get; set; } = "gpsdo";
 
+    /// <summary>The default for <see cref="HoldoverHours"/>.</summary>
+    public const double DefaultHoldoverHours = 6;
+
+    /// <summary>
+    /// How long, in hours from its last good report, a GPSDO that has lost its PPS or its lock but
+    /// still shows a good 10 MHz counts as holdover, which is fine to transmit on, before it is
+    /// unreliable (issue #807). Default 6: a disciplined OCXO coasting on its last steering stays
+    /// within a few parts in 10^10 for far longer. 0 turns holdover off.
+    /// </summary>
+    public double HoldoverHours { get; set; } = DefaultHoldoverHours;
+
     /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
@@ -3068,6 +3079,12 @@ public sealed class DaemonConfig
         }
 
         gpsdo.TopicPrefix = prefix;
+        if (!double.IsFinite(gpsdo.HoldoverHours) || gpsdo.HoldoverHours < 0 || gpsdo.HoldoverHours > 24 * 365)
+        {
+            throw new InvalidDataException(
+                $"\"gpsdo\".\"holdoverHours\" is {gpsdo.HoldoverHours.ToString(System.Globalization.CultureInfo.InvariantCulture)}: "
+                + $"use hours from 0 (no holdover) up, or remove it for {GpsdoConfig.DefaultHoldoverHours:0}.");
+        }
     }
 
     /// <summary>

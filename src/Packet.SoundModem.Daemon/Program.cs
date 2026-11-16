@@ -2753,7 +2753,8 @@ runtimeApi?.ServeTxLease(
 GpsdoReference? gpsdoReference = null;
 if (benchTxTest is null && gpsdoConfig is not null)
 {
-    gpsdoReference = new GpsdoReference(gpsdoConfig.TopicPrefix, stationJournal, TimeProvider.System);
+    gpsdoReference = new GpsdoReference(
+        gpsdoConfig.TopicPrefix, stationJournal, TimeProvider.System, TimeSpan.FromHours(gpsdoConfig.HoldoverHours));
 
     // A Flex only uses the GPSDO when it found it on REF IN at power-up; on its own TCXO the
     // GPSDO's state is beside the point. Followed live from the radio's status (the session the

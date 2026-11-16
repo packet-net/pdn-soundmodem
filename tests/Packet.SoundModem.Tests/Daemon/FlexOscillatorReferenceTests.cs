@@ -56,6 +56,7 @@ public sealed class FlexOscillatorReferenceTests
     {
         "ok" => ReferenceState.Ok,
         "unreliable" => ReferenceState.Unreliable,
+        "holdover" => ReferenceState.Holdover,
         _ => ReferenceState.Unknown,
     };
 
@@ -89,6 +90,14 @@ public sealed class FlexOscillatorReferenceTests
     [InlineData("not-said", "ok", "LOCKED", "unknown", "Flex has not said which oscillator it is on")]
     [InlineData("not-said", "unknown", "display offline", "unknown", "Flex has not said which oscillator it is on")]
     [InlineData("not-said", "unreliable", "GPS LOST", "unreliable", "GPS LOST")]
+    // A GPSDO in holdover (issue #807) is good enough only while the Flex says it is locked to it.
+    [InlineData("none", "holdover", "UNLOCKED", "holdover", "UNLOCKED")]
+    [InlineData("external", "holdover", "UNLOCKED", "holdover", "UNLOCKED")]
+    [InlineData("tcxo", "holdover", "UNLOCKED", "ok", "Flex on its own TCXO (GPSDO not in use)")]
+    [InlineData("gpsdo", "holdover", "UNLOCKED", "ok", "Flex on its own internal GPSDO (external GPSDO not in use)")]
+    [InlineData("external-unlocked", "holdover", "UNLOCKED", "unreliable", "UNLOCKED, in holdover, and Flex reports its external reference not locked")]
+    [InlineData("tcxo-unlocked", "holdover", "UNLOCKED", "unreliable", "UNLOCKED, in holdover, and Flex reports its TCXO reference not locked")]
+    [InlineData("not-said", "holdover", "UNLOCKED", "unreliable", "UNLOCKED, in holdover, and Flex has not said which oscillator it is on")]
     public void The_Flex_Oscillator_Decides_How_Much_The_Gpsdo_Counts(
         string flex, string gpsdo, string gpsdoDetail, string expected, string expectedDetail)
     {
@@ -266,6 +275,32 @@ public sealed class FlexOscillatorReferenceTests
         reference.FlexOscillator(() => Tcxo);
         reference.Current.State.Should().Be(ReferenceState.Ok, "on its own TCXO the GPSDO does not count, held or not");
         reference.Current.Chip.Should().Be("10 MHz OK (Flex on TCXO)");
+    }
+
+    [Fact]
+    public void A_Gpsdo_In_Holdover_Counts_While_The_Flex_Stays_Locked_To_It()
+    {
+        // The 14:00 slot on 2026-11-14: the Flex said "external 10 MHz, locked" throughout.
+        using GpsdoReference reference = Reference();
+        reference.FlexOscillator(() => External);
+        reference.Receive("gpsdo/status", "online", retained: false);
+        reference.Receive("gpsdo/state", "{\"state\":\"LOCKED\",\"reference_ok\":true,\"locked\":true}", retained: false);
+
+        const string relocking = "{\"state\":\"UNLOCKED\",\"reference_ok\":false,\"locked\":false,\"tic_error_ns\":-33.0,"
+            + "\"dac_near_limit\":false,\"lock_counter\":1124,\"lock_target\":1500,\"alarms\":[\"unlocked\"]}";
+        reference.Receive("gpsdo/state", relocking, retained: false);
+        reference.Current.State.Should().Be(ReferenceState.Holdover);
+        reference.Current.Chip.Should().Be("10 MHz OK, holdover: UNLOCKED, relocking 1124/1500 s, TIE -33 ns (Flex on external)");
+        reference.Describe().ToJsonString().Should().Be(
+            """{"state":"holdover","detail":"UNLOCKED, relocking 1124/1500 s, TIE -33 ns","since":"2026-11-09T12:00:00Z","oscillator":"external"}""");
+
+        reference.FlexOscillator(() => ExternalUnlocked);
+        reference.Current.State.Should().Be(ReferenceState.Unreliable);
+        Journal.Last().Should().Be(
+            "10 MHz reference unreliable: UNLOCKED, in holdover, and Flex reports its external reference not locked (was in holdover for 0s)");
+
+        reference.FlexOscillator(() => External);
+        reference.Current.State.Should().Be(ReferenceState.Holdover, "the GPSDO's own spell never faulted");
     }
 
     // ---------------------------------------------------------------- the lease
