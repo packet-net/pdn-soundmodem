@@ -33,6 +33,12 @@ public sealed partial class OfdmFmBurstCodec
     /// </summary>
     public static bool MeasuredNoiseWeighting { get; set; } = true;
 
+    /// <summary>
+    /// Diagnostic switch for offline tools: whether a carrier whose measured noise stands well
+    /// clear of its neighbours' is weighted by its own figure. Process-wide and not for a station.
+    /// </summary>
+    public static bool MeasuredSpurWeighting { get; set; } = true;
+
     /// <summary>Taps either side of the interpolation point in the resampler's windowed sinc.
     /// The occupied band stops at a third of the sample rate, so sixteen is far more than the
     /// interpolation error needs to sit below everything else in the burst.</summary>
@@ -83,6 +89,7 @@ public sealed partial class OfdmFmBurstCodec
     /// <param name="tables">Constellation points by bits per carrier.</param>
     /// <param name="weight">Per-carrier soft-bit weights for the read that comes back.</param>
     /// <param name="track">What was measured about the clock.</param>
+    /// <param name="state">What this read arrived at, for a second pass to start from.</param>
     private (double Re, double Im)[][]? ClockTracked(
         ReadOnlySpan<float> audio,
         Layout layout,
@@ -97,10 +104,12 @@ public sealed partial class OfdmFmBurstCodec
         int[] carrierBits,
         Dictionary<int, (float I, float Q)[]> tables,
         out double[] weight,
-        out OfdmFmClockTrack? track)
+        out OfdmFmClockTrack? track,
+        out TrackedState? state)
     {
         weight = [];
         track = null;
+        state = null;
         int period = _parameters.SymbolSamples;
         int end = payloadStart + (symbols * period);
         if (estimateStart < 0 || end > audio.Length || symbols < 1)
@@ -285,6 +294,7 @@ public sealed partial class OfdmFmBurstCodec
         }
 
         track = new OfdmFmClockTrack(meanRate, wander, delay);
+        state = new TrackedState(resampled, knotAt, knotDelay, retrained, estimateStart, first, delay);
         return read;
     }
 
@@ -370,7 +380,8 @@ public sealed partial class OfdmFmBurstCodec
         Dictionary<int, (float I, float Q)[]> tables,
         (double Re, double Im)[][] read,
         double[] delay,
-        bool accumulate)
+        bool accumulate,
+        (double Re, double Im)[][]? known = null)
     {
         for (int s = 0; s < read.Length; s++)
         {
@@ -382,7 +393,7 @@ public sealed partial class OfdmFmBurstCodec
             }
 
             double residual = MeasureDelay(
-                layout, raw, channel, null, carrierBits, tables, 0, iterations: 2);
+                layout, raw, channel, known?[s], carrierBits, tables, 0, iterations: 2);
             Turn(layout, raw, residual);
             read[s] = raw;
             if (accumulate)
@@ -517,6 +528,106 @@ public sealed partial class OfdmFmBurstCodec
             fineAt.Add(at);
             fineDelay.Add(CurveAt(knotAt, knotDelay, at) + fine);
         }
+    }
+
+    /// <summary>What the clock-tracked read arrived at, kept so that a second pass can start
+    /// from it and not from the raw audio.</summary>
+    private sealed record TrackedState(
+        float[] Resampled,
+        List<double> KnotAt,
+        List<double> KnotDelay,
+        (double Re, double Im)[] Channel,
+        int EstimateStart,
+        int First,
+        double[] Delay);
+
+    /// <summary>
+    /// Diagnostic switch for offline tools: whether a clock-tracked read that fails its CRC is
+    /// read once more against what the decoder made of it. Process-wide and not for a station.
+    /// </summary>
+    public static bool DecodeFeedback { get; set; } = true;
+
+    /// <summary>
+    /// The clock-tracked read, taken again against the decoder's own output.
+    /// </summary>
+    /// <remarks>
+    /// A decode that fails its CRC is still mostly right: the code corrected most of what the
+    /// demapper got wrong before it ran out. Re-encoded, its output names the point on every
+    /// carrier of every symbol with far fewer mistakes than deciding each carrier alone did, and
+    /// everything the tracked read measured from decisions can be measured again from that: the
+    /// clock inside each symbol, the channel from every symbol and not only the estimate symbol,
+    /// and the noise on each carrier without a wrong decision flattering it. The payload CRC
+    /// arbitrates as it does for every other reading.
+    /// </remarks>
+    private (double Re, double Im)[][]? Polished(
+        ReadOnlySpan<float> audio,
+        Layout layout,
+        double noise,
+        TrackedState state,
+        (double Re, double Im)[][] points,
+        int[] carrierBits,
+        Dictionary<int, (float I, float Q)[]> tables,
+        out double[] weight)
+    {
+        weight = [];
+        int period = _parameters.SymbolSamples;
+        int symbols = points.Length;
+        var read = new (double Re, double Im)[symbols][];
+        var delay = new double[symbols];
+        if (!ReadResampled(
+            layout, state.Resampled, state.First, state.Channel, carrierBits, tables, read, delay,
+            accumulate: false, points))
+        {
+            return null;
+        }
+
+        float[] resampled = state.Resampled;
+        (double Re, double Im)[] channel = state.Channel;
+        if (SubSymbolTracking)
+        {
+            var fineAt = new List<double>();
+            var fineDelay = new List<double>();
+            AddFineKnots(
+                layout, resampled, 0, channel, layout.Reference, null, null, state.EstimateStart,
+                state.KnotAt, state.KnotDelay, fineAt, fineDelay);
+            for (int s = 0; s < symbols; s++)
+            {
+                AddFineKnots(
+                    layout, resampled, state.First + (s * period), channel, points[s], null, null,
+                    state.EstimateStart, state.KnotAt, state.KnotDelay, fineAt, fineDelay);
+            }
+
+            if (fineAt.Count >= 2)
+            {
+                resampled = ResampleAlong(audio, state.EstimateStart, resampled.Length, fineAt, fineDelay);
+                (double Re, double Im)[]? again = ChannelEstimate(layout, resampled, 0, noise);
+                if (again is null)
+                {
+                    return null;
+                }
+
+                channel = again;
+                if (!ReadResampled(
+                    layout, resampled, state.First, channel, carrierBits, tables, read, delay,
+                    accumulate: false, points))
+                {
+                    return null;
+                }
+            }
+        }
+
+        channel = RefineChannel(layout, read, channel, carrierBits, tables, points);
+        if (!ReadResampled(
+            layout, resampled, state.First, channel, carrierBits, tables, read, delay,
+            accumulate: false, points))
+        {
+            return null;
+        }
+
+        weight = MeasuredNoiseWeighting
+            ? NoiseWeights(layout, read, channel, carrierBits, tables, points)
+            : PowerWeights(channel);
+        return read;
     }
 
     /// <summary>One symbol's occupied carriers divided by the channel estimate, and nothing else:
@@ -756,20 +867,26 @@ public sealed partial class OfdmFmBurstCodec
         (double Re, double Im)[][] read,
         (double Re, double Im)[] channel,
         int[] carrierBits,
-        Dictionary<int, (float I, float Q)[]> tables)
+        Dictionary<int, (float I, float Q)[]> tables,
+        (double Re, double Im)[][]? known = null)
     {
         int n = channel.Length;
         var ratioRe = new double[n];
         var ratioIm = new double[n];
         var power = new double[n];
-        foreach ((double Re, double Im)[] symbol in read)
+        for (int s = 0; s < read.Length; s++)
         {
+            (double Re, double Im)[] symbol = read[s];
             int data = 0;
             for (int c = 0; c < n; c++)
             {
                 double pointRe;
                 double pointIm;
-                if (layout.PilotMap[c])
+                if (known is not null)
+                {
+                    (pointRe, pointIm) = known[s][c];
+                }
+                else if (layout.PilotMap[c])
                 {
                     (pointRe, pointIm) = (layout.Reference[c].Re, 0);
                 }
@@ -851,18 +968,24 @@ public sealed partial class OfdmFmBurstCodec
         (double Re, double Im)[][] read,
         (double Re, double Im)[] channel,
         int[] carrierBits,
-        Dictionary<int, (float I, float Q)[]> tables)
+        Dictionary<int, (float I, float Q)[]> tables,
+        (double Re, double Im)[][]? known = null)
     {
         int n = channel.Length;
         var error = new double[n];
-        foreach ((double Re, double Im)[] symbol in read)
+        for (int s = 0; s < read.Length; s++)
         {
+            (double Re, double Im)[] symbol = read[s];
             int data = 0;
             for (int c = 0; c < n; c++)
             {
                 double pointRe;
                 double pointIm;
-                if (layout.PilotMap[c])
+                if (known is not null)
+                {
+                    (pointRe, pointIm) = known[s][c];
+                }
+                else if (layout.PilotMap[c])
                 {
                     (pointRe, pointIm) = (layout.Reference[c].Re, 0);
                 }
@@ -879,20 +1002,32 @@ public sealed partial class OfdmFmBurstCodec
             }
         }
 
+        // The level across the band is the median over a run of neighbours, not the mean: a
+        // receiver's own spur sits on one or two carriers (the bench's second radio has one at
+        // 3.66 kHz, 15 dB over its noise), a mean smears it over the whole run so that the carrier
+        // under it is trusted far too much and its neighbours too little, and a median does not
+        // see it at all. The carrier that stands well clear of its neighbours' level is then
+        // taken at its own figure. Few symbols make one carrier's own figure a rough one, so it
+        // has to stand clear by a wide margin before it is believed over the run.
         const int HalfSpan = 8;
+        const double StandsClear = 4.0;
         var weight = new double[n];
+        var run = new double[(2 * HalfSpan) + 1];
         double mean = 0;
         for (int c = 0; c < n; c++)
         {
-            double sum = 0;
-            int count = 0;
-            for (int k = Math.Max(0, c - HalfSpan); k <= Math.Min(n - 1, c + HalfSpan); k++)
+            int from = Math.Max(0, c - HalfSpan);
+            int to = Math.Min(n - 1, c + HalfSpan);
+            int count = to - from + 1;
+            Array.Copy(error, from, run, 0, count);
+            Array.Sort(run, 0, count);
+            double level = run[count / 2];
+            if (MeasuredSpurWeighting && error[c] > StandsClear * level)
             {
-                sum += error[k];
-                count++;
+                level = error[c];
             }
 
-            weight[c] = 1.0 / Math.Max(sum / count, 1e-12);
+            weight[c] = 1.0 / Math.Max(level, 1e-12);
             mean += weight[c];
         }
 

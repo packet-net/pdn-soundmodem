@@ -49,6 +49,8 @@ foreach (string off in options.GetValueOrDefault("off", "").Split(',', StringSpl
         case "noiseweight": OfdmFmBurstCodec.MeasuredNoiseWeighting = false; break;
         case "tilt": OfdmFmBurstCodec.ClockTiltCorrection = false; break;
         case "fine": OfdmFmBurstCodec.SubSymbolTracking = false; break;
+        case "spur": OfdmFmBurstCodec.MeasuredSpurWeighting = false; break;
+        case "feedback": OfdmFmBurstCodec.DecodeFeedback = false; break;
         default: Console.Error.WriteLine($"unknown switch {off}"); return 2;
     }
 }

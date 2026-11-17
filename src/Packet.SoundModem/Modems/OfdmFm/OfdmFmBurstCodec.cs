@@ -1520,6 +1520,7 @@ public sealed partial class OfdmFmBurstCodec
         (double Re, double Im)[][]? tracked = null;
         double[] trackedWeight = weight;
         OfdmFmClockTrack? clockTrack = null;
+        TrackedState? trackedState = null;
         if (ClockTracking && headerInFit && !_parameters.FollowOnFrames)
         {
             var headerKnown = new (double Re, double Im)[_headerSymbols][];
@@ -1539,7 +1540,7 @@ public sealed partial class OfdmFmBurstCodec
                 audio, layout, channel, noise,
                 payloadStart - ((firstPayloadSymbol + 1) * _parameters.SymbolSamples),
                 headerStart, headerKnown, acquisitionChannel, payloadStart, symbols, carrierBits,
-                tables, out trackedWeight, out clockTrack);
+                tables, out trackedWeight, out clockTrack, out trackedState);
         }
 
         bool decided = false;
@@ -1551,6 +1552,7 @@ public sealed partial class OfdmFmBurstCodec
                 continue;
             }
 
+            (double Re, double Im)[][] taken = candidate;
             (byte[]? Payload, double? PreFec, byte[] Sent) attempt = Decoded(
                 candidate, ReferenceEquals(candidate, tracked) ? trackedWeight : weight);
             if (attempt.Payload is not null)
@@ -1559,11 +1561,29 @@ public sealed partial class OfdmFmBurstCodec
                     : ReferenceEquals(candidate, refined) ? "refined"
                     : ReferenceEquals(candidate, corrected) ? "corrected" : "plain";
             }
+            else if (ReferenceEquals(candidate, tracked) && trackedState is not null && DecodeFeedback)
+            {
+                // The tracked read once more, against what the decoder made of it: see Polished.
+                (double Re, double Im)[][]? polished = Polished(
+                    audio, layout, noise, trackedState,
+                    KnownPoints(layout, symbols, carrierBits, tables, attempt.Sent, codedBits),
+                    carrierBits, tables, out double[] polishedWeight);
+                if (polished is not null)
+                {
+                    (byte[]? Payload, double? PreFec, byte[] Sent) second = Decoded(polished, polishedWeight);
+                    if (second.Payload is not null)
+                    {
+                        attempt = second;
+                        taken = polished;
+                        reading = "polished";
+                    }
+                }
+            }
 
             if (!decided || attempt.Payload is not null)
             {
                 outcome = attempt;
-                read = candidate;
+                read = taken;
                 decided = true;
             }
 
