@@ -55,7 +55,18 @@ public sealed record OfdmFmBurst(
     IReadOnlyList<double>? CarrierSnrDb = null,
     IReadOnlyList<double>? CarrierGainDb = null,
     bool FollowOn = false,
-    bool AskedFullBursts = false);
+    bool AskedFullBursts = false)
+{
+    /// <summary>What the clock-tracked read measured about the sample clock, or null when that
+    /// read was not taken (a follow-on burst, or the read switched off). Present whether or not
+    /// the payload decoded, because a burst that failed is the one whose clock is worth seeing.
+    /// </summary>
+    public OfdmFmClockTrack? Clock { get; init; }
+
+    /// <summary>Which reading of the payload passed its CRC: "tracked", "refined", "corrected",
+    /// "plain", or "none". For telling apart what each stage of the receiver is worth.</summary>
+    public string Reading { get; init; } = "none";
+}
 
 /// <summary>What a burst's header announced about the payload behind it.</summary>
 /// <param name="Geometry">Which entry of the station's <see cref="OfdmFmGeometryTable"/> the
@@ -140,7 +151,7 @@ public readonly record struct OfdmFmHeader(
 /// <c>RemoveSampleClockTilt</c>, which records what it cost before it existed. A future version
 /// wanting to work over SSB would need real frequency recovery.</para>
 /// </remarks>
-public sealed class OfdmFmBurstCodec
+public sealed partial class OfdmFmBurstCodec
 {
     /// <summary>How many clip-and-restore passes the peak reducer makes. Three is where the
     /// returns flatten: the first pass does most of the work and the spectrum restoration undoes
@@ -1414,7 +1425,8 @@ public sealed class OfdmFmBurstCodec
             equalised[s] = symbol;
         }
 
-        (byte[]? Payload, double? PreFec, byte[] Sent) Decoded((double Re, double Im)[][] source)
+        (byte[]? Payload, double? PreFec, byte[] Sent) Decoded(
+            (double Re, double Im)[][] source, double[] weight)
         {
             var llrs = new float[symbols * perSymbol];
             int written = 0;
@@ -1500,15 +1512,54 @@ public sealed class OfdmFmBurstCodec
         (double Re, double Im)[][]? refined = ClockTiltCorrection
             ? PerSymbolTiltRefined(layout, corrected ?? equalised, channel, out refinedRamp)
             : null;
+
+        // The clock-tracked read, first: see ClockTracked. Only for a full burst, whose estimate
+        // symbol is in the audio to be resampled with the payload, and not on a profile that
+        // sends follow-on frames, whose keyup state is refreshed below on the older reads' own
+        // timing.
+        (double Re, double Im)[][]? tracked = null;
+        double[] trackedWeight = weight;
+        OfdmFmClockTrack? clockTrack = null;
+        if (ClockTracking && headerInFit && !_parameters.FollowOnFrames)
+        {
+            var headerKnown = new (double Re, double Im)[_headerSymbols][];
+            for (int h = 0; h < _headerSymbols; h++)
+            {
+                headerKnown[h] = new (double Re, double Im)[_acquisition.TotalCarriers];
+                int data = 0;
+                for (int c = 0; c < headerKnown[h].Length; c++)
+                {
+                    headerKnown[h][c] = _acquisition.PilotMap[c]
+                        ? (_acquisition.Reference[c].Re, 0)
+                        : (headerCoded[HeaderBitAt(h, data++)] == 1 ? 1 : -1, 0);
+                }
+            }
+
+            tracked = ClockTracked(
+                audio, layout, channel, noise,
+                payloadStart - ((firstPayloadSymbol + 1) * _parameters.SymbolSamples),
+                headerStart, headerKnown, acquisitionChannel, payloadStart, symbols, carrierBits,
+                tables, out trackedWeight, out clockTrack);
+        }
+
         bool decided = false;
-        foreach ((double Re, double Im)[][]? candidate in new[] { refined, corrected, equalised })
+        string reading = "none";
+        foreach ((double Re, double Im)[][]? candidate in new[] { tracked, refined, corrected, equalised })
         {
             if (candidate is null)
             {
                 continue;
             }
 
-            (byte[]? Payload, double? PreFec, byte[] Sent) attempt = Decoded(candidate);
+            (byte[]? Payload, double? PreFec, byte[] Sent) attempt = Decoded(
+                candidate, ReferenceEquals(candidate, tracked) ? trackedWeight : weight);
+            if (attempt.Payload is not null)
+            {
+                reading = ReferenceEquals(candidate, tracked) ? "tracked"
+                    : ReferenceEquals(candidate, refined) ? "refined"
+                    : ReferenceEquals(candidate, corrected) ? "corrected" : "plain";
+            }
+
             if (!decided || attempt.Payload is not null)
             {
                 outcome = attempt;
@@ -1576,7 +1627,11 @@ public sealed class OfdmFmBurstCodec
             outcome.Payload, constellation, sync, header.Coding, outcome.PreFec,
             header.Recommendation, header.Geometry, header.RecommendedGeometry,
             carrierSnr, carrierGain,
-            FollowOn: !headerInFit, AskedFullBursts: header.AskedFullBursts);
+            FollowOn: !headerInFit, AskedFullBursts: header.AskedFullBursts)
+        {
+            Clock = clockTrack,
+            Reading = reading,
+        };
     }
 
     /// <summary>

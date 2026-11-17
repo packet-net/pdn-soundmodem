@@ -91,6 +91,105 @@ public class ClockSkewTests
     }
 
     /// <summary>
+    /// The shipped 8 kHz preset, in the shipped table, read through a clock difference far
+    /// outside what the pilot fits were built for.
+    /// </summary>
+    /// <remarks>
+    /// Measured on the two-Tait bench in November 2026: a CM108B's playback clock has been seen
+    /// more than 600 ppm off for the first half second of a transmission, and a board without its
+    /// "MIC PLL Adjust" EEPROM bit captures 520 ppm away from every other board's playback. The
+    /// pilot fits lose the default preset by 300 ppm. The clock-tracked read measures each
+    /// symbol's delay from all of its carriers and resamples, so the rate is simply a number it
+    /// reports.
+    /// </remarks>
+    [Theory]
+    [InlineData(520)]
+    [InlineData(-520)]
+    [InlineData(1000)]
+    [InlineData(-1000)]
+    public void A_Clock_Hundreds_Of_Parts_Per_Million_Out_Is_Measured_And_Taken_Out(int ppm)
+    {
+        var codec = new OfdmFmBurstCodec(OfdmFmPresets.Default8k, OfdmFmPresets.Table);
+        var payload = new byte[1024];
+        new Random(520).NextBytes(payload);
+        float[] clean = codec.Modulate(payload, OfdmFmConstellation.Qam64, 2);
+        var padded = new float[clean.Length + 4096];
+        clean.CopyTo(padded, 2048);
+
+        OfdmFmBurst? burst = codec.Demodulate(Resample(padded, 1.0 + (ppm * 1e-6)));
+
+        burst.Should().NotBeNull();
+        burst!.Payload.Should().Equal(payload);
+        burst.Reading.Should().Be("tracked");
+        burst.PreFecBitErrorRate.Should().BeLessThan(0.002);
+
+        // A receiver clock running slow by so many ppm takes fewer samples than were played, so
+        // the burst arrives compressed and the measured rate is the negative of the resampling
+        // ratio's excess.
+        burst.Clock.Should().NotBeNull();
+        burst.Clock!.RatePpm.Should().BeApproximately(-ppm, 15);
+        burst.Clock.WanderMicroseconds.Should().BeLessThan(2);
+    }
+
+    /// <summary>
+    /// A clock that changes rate sharply and repeatedly inside one burst, which is what a
+    /// CM108B's does: measured against the samples that were played, its rate steps by several
+    /// hundred ppm every few tens of milliseconds. One rate per burst does not describe that and
+    /// a prediction from the symbol before is wrong by half a sample at every turn, which is why
+    /// each symbol's delay is searched for and not only refined.
+    /// </summary>
+    [Fact]
+    public void A_Clock_That_Zig_Zags_Inside_A_Burst_Is_Followed_Symbol_By_Symbol()
+    {
+        var codec = new OfdmFmBurstCodec(OfdmFmPresets.Default8k, OfdmFmPresets.Table);
+        var payload = new byte[1024];
+        new Random(300).NextBytes(payload);
+        float[] clean = codec.Modulate(payload, OfdmFmConstellation.Qam64, 2);
+        var padded = new float[clean.Length + 4096];
+        clean.CopyTo(padded, 2048);
+
+        // 100 ppm mean, switching 300 ppm either side of it every 60 ms.
+        float[] heard = ResampleAlong(
+            padded, 48000, seconds => 100 + (((int)(seconds / 0.06) % 2) == 0 ? 300 : -300));
+        OfdmFmBurst? burst = codec.Demodulate(heard);
+
+        burst.Should().NotBeNull();
+        burst!.Payload.Should().Equal(payload);
+        burst.Reading.Should().Be("tracked");
+        burst.PreFecBitErrorRate.Should().BeLessThan(0.01);
+        burst.Clock!.WanderMicroseconds.Should().BeGreaterThan(5);
+    }
+
+    /// <summary>A burst as a receiver would capture it if its clock ran at a rate, in parts per
+    /// million against the sender's, given as a function of time.</summary>
+    internal static float[] ResampleAlong(float[] audio, int sampleRate, Func<double, double> ppmAt)
+    {
+        const int HalfTaps = 16;
+        var output = new List<float>(audio.Length);
+        double position = HalfTaps + 4;
+        int i = 0;
+        while (position < audio.Length - HalfTaps - 4)
+        {
+            int centre = (int)Math.Floor(position);
+            double fraction = position - centre;
+            double sum = 0;
+            for (int t = -HalfTaps; t <= HalfTaps; t++)
+            {
+                double x = t - fraction;
+                double sinc = Math.Abs(x) < 1e-12 ? 1.0 : Math.Sin(Math.PI * x) / (Math.PI * x);
+                double window = 0.5 + (0.5 * Math.Cos(Math.PI * x / (HalfTaps + 1)));
+                sum += sinc * window * audio[centre + t];
+            }
+
+            output.Add((float)sum);
+            position += 1.0 + (ppmAt(i / (double)sampleRate) * 1e-6);
+            i++;
+        }
+
+        return [.. output];
+    }
+
+    /// <summary>
     /// The same resampler with the clock ratio varying along the burst: a constant part in ppm
     /// and a sinusoidal wobble on top, which is what the bench's soundcards were measured doing.
     /// </summary>
