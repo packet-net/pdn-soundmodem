@@ -39,6 +39,14 @@ public sealed partial class OfdmFmBurstCodec
     /// </summary>
     public static bool MeasuredSpurWeighting { get; set; } = true;
 
+    /// <summary>
+    /// Diagnostic switch for offline tools: whether the pilot-fitted reads are still tried after
+    /// a clock-tracked read that failed. Process-wide and not for a station. Off, because they
+    /// were measured never to help there and to cost three more decodes; a tool can turn it on
+    /// to repeat that measurement.
+    /// </summary>
+    public static bool OlderReadsAfterTracked { get; set; }
+
     /// <summary>Taps either side of the interpolation point in the resampler's windowed sinc.
     /// The occupied band stops at a third of the sample rate, so sixteen is far more than the
     /// interpolation error needs to sit below everything else in the burst.</summary>
@@ -548,6 +556,13 @@ public sealed partial class OfdmFmBurstCodec
     public static bool DecodeFeedback { get; set; } = true;
 
     /// <summary>
+    /// Diagnostic setting for offline tools: how many times a failed clock-tracked read is read
+    /// again against the decoder's output. Process-wide and not for a station. One is what was
+    /// measured to be worth having; see docs/dev/ofdm-fm/receiver-findings.md.
+    /// </summary>
+    public static int DecodeFeedbackPasses { get; set; } = 1;
+
+    /// <summary>
     /// The clock-tracked read, taken again against the decoder's own output.
     /// </summary>
     /// <remarks>
@@ -567,9 +582,11 @@ public sealed partial class OfdmFmBurstCodec
         (double Re, double Im)[][] points,
         int[] carrierBits,
         Dictionary<int, (float I, float Q)[]> tables,
-        out double[] weight)
+        out double[] weight,
+        out TrackedState? next)
     {
         weight = [];
+        next = null;
         int period = _parameters.SymbolSamples;
         int symbols = points.Length;
         var read = new (double Re, double Im)[symbols][];
@@ -583,6 +600,8 @@ public sealed partial class OfdmFmBurstCodec
 
         float[] resampled = state.Resampled;
         (double Re, double Im)[] channel = state.Channel;
+        List<double> curveAt = state.KnotAt;
+        List<double> curveDelay = state.KnotDelay;
         if (SubSymbolTracking)
         {
             var fineAt = new List<double>();
@@ -607,6 +626,8 @@ public sealed partial class OfdmFmBurstCodec
                 }
 
                 channel = again;
+                curveAt = fineAt;
+                curveDelay = fineDelay;
                 if (!ReadResampled(
                     layout, resampled, state.First, channel, carrierBits, tables, read, delay,
                     accumulate: false, points))
@@ -627,6 +648,7 @@ public sealed partial class OfdmFmBurstCodec
         weight = MeasuredNoiseWeighting
             ? NoiseWeights(layout, read, channel, carrierBits, tables, points)
             : PowerWeights(channel);
+        next = state with { Resampled = resampled, KnotAt = curveAt, KnotDelay = curveDelay, Channel = channel };
         return read;
     }
 
@@ -827,27 +849,77 @@ public sealed partial class OfdmFmBurstCodec
         }
     }
 
+    /// <summary>Fractional positions the resampler's kernel is tabulated at. Between two of them
+    /// the kernel is interpolated linearly, which at this many leaves an error far below the
+    /// windowed sinc's own.</summary>
+    private const int ResamplerPhases = 256;
+
+    /// <summary>
+    /// The resampler's kernel, tabulated: row p holds the Hann-windowed sinc taps for a fraction
+    /// of p / <see cref="ResamplerPhases"/> of a sample, and there is one row more than there are
+    /// phases so that the last interval has an upper neighbour.
+    /// </summary>
+    /// <remarks>
+    /// Tabulated because the kernel is evaluated for every output sample of every burst, twice or
+    /// three times over, and computing a sine and a cosine per tap there cost a Raspberry Pi 4
+    /// more than the rest of the read put together.
+    /// </remarks>
+    private static readonly float[] _resamplerKernel = BuildResamplerKernel();
+
+    private static float[] BuildResamplerKernel()
+    {
+        int taps = 2 * ResamplerHalfTaps;
+        var kernel = new float[(ResamplerPhases + 1) * taps];
+        for (int p = 0; p <= ResamplerPhases; p++)
+        {
+            double fraction = p / (double)ResamplerPhases;
+            for (int t = 0; t < taps; t++)
+            {
+                double x = t - ResamplerHalfTaps + 1 - fraction;
+                double window = Math.Abs(x) < ResamplerHalfTaps
+                    ? 0.5 + (0.5 * Math.Cos(Math.PI * x / ResamplerHalfTaps))
+                    : 0;
+                double sinc = Math.Abs(x) < 1e-9 ? 1 : Math.Sin(Math.PI * x) / (Math.PI * x);
+                kernel[(p * taps) + t] = (float)(sinc * window);
+            }
+        }
+
+        return kernel;
+    }
+
     /// <summary>The audio at a fractional sample index, by a Hann-windowed sinc.</summary>
     private static float Interpolate(ReadOnlySpan<float> audio, double at)
     {
         int whole = (int)Math.Floor(at);
-        double fraction = at - whole;
-        double sum = 0;
-        for (int k = -ResamplerHalfTaps + 1; k <= ResamplerHalfTaps; k++)
+        double scaled = (at - whole) * ResamplerPhases;
+        int phase = (int)scaled;
+        float blend = (float)(scaled - phase);
+        int taps = 2 * ResamplerHalfTaps;
+        ReadOnlySpan<float> low = _resamplerKernel.AsSpan(phase * taps, taps);
+        ReadOnlySpan<float> high = _resamplerKernel.AsSpan((phase + 1) * taps, taps);
+        int first = whole - ResamplerHalfTaps + 1;
+        float sum = 0;
+        if (first >= 0 && first + taps <= audio.Length)
         {
-            int index = whole + k;
-            if (index < 0 || index >= audio.Length)
+            ReadOnlySpan<float> window = audio.Slice(first, taps);
+            for (int t = 0; t < taps; t++)
             {
-                continue;
+                sum += window[t] * (low[t] + (blend * (high[t] - low[t])));
             }
 
-            double x = k - fraction;
-            double window = 0.5 + (0.5 * Math.Cos(Math.PI * x / ResamplerHalfTaps));
-            double sinc = Math.Abs(x) < 1e-9 ? 1 : Math.Sin(Math.PI * x) / (Math.PI * x);
-            sum += audio[index] * sinc * window;
+            return sum;
         }
 
-        return (float)sum;
+        for (int t = 0; t < taps; t++)
+        {
+            int index = first + t;
+            if (index >= 0 && index < audio.Length)
+            {
+                sum += audio[index] * (low[t] + (blend * (high[t] - low[t])));
+            }
+        }
+
+        return sum;
     }
 
     /// <summary>

@@ -1545,7 +1545,19 @@ public sealed partial class OfdmFmBurstCodec
 
         bool decided = false;
         string reading = "none";
-        foreach ((double Re, double Im)[][]? candidate in new[] { tracked, refined, corrected, equalised })
+
+        // Once the clock-tracked read has been taken, the older reads are not tried after it.
+        // Measured, not assumed: over 1360 bursts recorded on the two-Tait bench, and over the
+        // same bursts with noise added until nearly all of them failed, the older reads never
+        // once decoded a burst the tracked read and its second pass had lost. What they did do
+        // was treble the cost of every burst that fails, and a receive thread that spends longer
+        // on a failed burst than the burst took to arrive falls behind its sound card and loses
+        // the bursts after it. They remain the whole receiver wherever the tracked read is not
+        // taken.
+        (double Re, double Im)[][]?[] candidates = tracked is not null && !OlderReadsAfterTracked
+            ? [tracked]
+            : [tracked, refined, corrected, equalised];
+        foreach ((double Re, double Im)[][]? candidate in candidates)
         {
             if (candidate is null)
             {
@@ -1564,19 +1576,30 @@ public sealed partial class OfdmFmBurstCodec
             else if (ReferenceEquals(candidate, tracked) && trackedState is not null && DecodeFeedback)
             {
                 // The tracked read once more, against what the decoder made of it: see Polished.
-                (double Re, double Im)[][]? polished = Polished(
-                    audio, layout, noise, trackedState,
-                    KnownPoints(layout, symbols, carrierBits, tables, attempt.Sent, codedBits),
-                    carrierBits, tables, out double[] polishedWeight);
-                if (polished is not null)
+                TrackedState from = trackedState;
+                byte[] sent = attempt.Sent;
+                for (int pass = 0; pass < DecodeFeedbackPasses; pass++)
                 {
+                    (double Re, double Im)[][]? polished = Polished(
+                        audio, layout, noise, from,
+                        KnownPoints(layout, symbols, carrierBits, tables, sent, codedBits),
+                        carrierBits, tables, out double[] polishedWeight, out TrackedState? next);
+                    if (polished is null || next is null)
+                    {
+                        break;
+                    }
+
                     (byte[]? Payload, double? PreFec, byte[] Sent) second = Decoded(polished, polishedWeight);
                     if (second.Payload is not null)
                     {
                         attempt = second;
                         taken = polished;
                         reading = "polished";
+                        break;
                     }
+
+                    from = next;
+                    sent = second.Sent;
                 }
             }
 
