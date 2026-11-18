@@ -70,6 +70,144 @@ public sealed partial class OfdmFmBurstCodec
     /// interpolation error needs to sit below everything else in the burst.</summary>
     private const int ResamplerHalfTaps = 16;
 
+    /// <summary>The rate, in samples per symbol, above which the audio is first resampled at
+    /// the one rate the header gives before the symbol-by-symbol read is taken from it. Half a
+    /// sample a symbol is about 240 ppm.</summary>
+    private const double PreResampleAbove = 0.5;
+
+    /// <summary>
+    /// The clock-tracked read, with a first step for a clock that is a long way out.
+    /// </summary>
+    /// <remarks>
+    /// <para>The symbol-by-symbol walk in <see cref="ClockTrackedCore"/> decides each symbol's
+    /// carriers on audio that has not been resampled yet. That is sound while the signal slides
+    /// a fraction of a sample through each transform window. Two CM108B cards without their
+    /// "MIC PLL Adjust" bit were measured 1930 ppm apart, which is four samples a symbol: every
+    /// carrier is smeared across its neighbours, the decisions the walk leans on are poor, and
+    /// in simulation it lost its way on a quarter of bursts at that rate while reading the rest
+    /// without a single bit error.</para>
+    /// <para>The header already gives the rate to a few ppm before any payload symbol is looked
+    /// at (and a follow-on burst inherits it from the frame before). So when it is large the
+    /// audio is resampled once at that constant rate, the walk is taken on the result, where
+    /// only the clock's wander is left, and what it measures is added back to the line.</para>
+    /// </remarks>
+    private (double Re, double Im)[][]? ClockTracked(
+        ReadOnlySpan<float> audio,
+        Layout layout,
+        (double Re, double Im)[] channel,
+        double noise,
+        int estimateStart,
+        int headerStart,
+        (double Re, double Im)[][] headerKnown,
+        (double Re, double Im)[] acquisitionChannel,
+        int payloadStart,
+        int symbols,
+        int[] carrierBits,
+        Dictionary<int, (float I, float Q)[]> tables,
+        bool estimateInAudio,
+        double startRate,
+        out double[] weight,
+        out OfdmFmClockTrack? track,
+        out TrackedState? state)
+    {
+        weight = [];
+        track = null;
+        state = null;
+        int period = _parameters.SymbolSamples;
+        int centre = _parameters.CyclicPrefix + (_parameters.FftSize / 2);
+        int end = payloadStart + (symbols * period);
+        double rate = startRate;
+        if (estimateInAudio)
+        {
+            rate = 0;
+            double rateWeight = 0;
+            for (int h = 0; h < headerKnown.Length; h++)
+            {
+                (double Re, double Im)[]? raw = ZeroForced(
+                    _acquisition, audio, headerStart + (h * period), acquisitionChannel);
+                if (raw is null)
+                {
+                    return null;
+                }
+
+                double delay = MeasureDelay(
+                    _acquisition, raw, acquisitionChannel, headerKnown[h], null, null,
+                    rate * (h + 1), iterations: 3);
+                rate = ((rate * rateWeight) + delay) / (rateWeight + h + 1);
+                rateWeight += h + 1;
+            }
+        }
+
+        if (Math.Abs(rate) < PreResampleAbove)
+        {
+            return ClockTrackedCore(
+                audio, layout, channel, noise, estimateStart, headerStart, headerKnown,
+                acquisitionChannel, payloadStart, symbols, carrierBits, tables, estimateInAudio,
+                startRate, out weight, out track, out state);
+        }
+
+        // The stretch of audio the read needs, resampled along one straight line that is zero at
+        // the channel estimate's own epoch: the estimate symbol of a full burst, the last symbol
+        // of the frame before for a follow-on one.
+        int basis = estimateInAudio ? Math.Max(0, headerStart - period) : headerStart;
+        double origin = estimateInAudio ? estimateStart + centre : headerStart - period + centre;
+        if (basis < 0 || end > audio.Length || (estimateInAudio && estimateStart < 0))
+        {
+            return null;
+        }
+
+        var straightened = new float[end - basis];
+        for (int i = 0; i < straightened.Length; i++)
+        {
+            double n = basis + i;
+            straightened[i] = Interpolate(audio, n + (rate * (n - origin) / period), _parameters.FftSize);
+        }
+
+        // The channel estimate the caller holds was taken from the estimate symbol as it arrived,
+        // with the signal sliding through that symbol's window as it does through every other,
+        // so it is smeared too, and the walk divides by it before it decides anything. Taken
+        // again from the straightened estimate symbol it is clean. (A follow-on burst's channel
+        // came from the frame before, already in this form.)
+        if (estimateInAudio)
+        {
+            (double Re, double Im)[]? clean = ChannelEstimate(layout, straightened, estimateStart - basis, noise);
+            if (clean is null)
+            {
+                return null;
+            }
+
+            channel = clean;
+        }
+
+        // The header's delays mean something to the walk only where the payload's channel is the
+        // preamble's own, so that the line is zero where they were measured from. Anywhere else
+        // they were taken against another epoch, and the straightened audio has no rate left for
+        // them to give.
+        // (There the header is read against the same re-taken channel, the one it was sent on.)
+        bool sharedEpoch = estimateInAudio && estimateStart == headerStart - period;
+        (double Re, double Im)[][]? read = ClockTrackedCore(
+            straightened, layout, channel, noise, estimateStart - basis, headerStart - basis,
+            sharedEpoch ? headerKnown : [], sharedEpoch ? channel : acquisitionChannel,
+            payloadStart - basis, symbols, carrierBits, tables, estimateInAudio, 0, out weight,
+            out OfdmFmClockTrack? inner, out TrackedState? innerState);
+        if (read is null || inner is null || innerState is null)
+        {
+            return null;
+        }
+
+        var delays = new double[symbols];
+        for (int s = 0; s < symbols; s++)
+        {
+            double at = payloadStart + (s * period) + centre;
+            delays[s] = inner.DelaySamples[s] + (rate * (at - origin) / period);
+        }
+
+        track = new OfdmFmClockTrack(
+            inner.RatePpm + (rate / period * 1e6), inner.WanderMicroseconds, delays);
+        state = innerState with { Source = straightened, Delay = delays, Rate = innerState.Rate + rate };
+        return read;
+    }
+
     /// <summary>
     /// Reads a burst's payload on a sample clock measured from the burst itself, symbol by
     /// symbol, and taken out in the time domain before the transforms.
@@ -117,9 +255,13 @@ public sealed partial class OfdmFmBurstCodec
     /// <param name="carrierBits">Bits on each data carrier of the payload layout.</param>
     /// <param name="tables">Constellation points by bits per carrier.</param>
     /// <param name="weight">Per-carrier soft-bit weights for the read that comes back.</param>
+    /// <param name="estimateInAudio">Whether the symbol the channel estimate came from is in this
+    /// audio, which it is for a full burst and is not for a follow-on one.</param>
+    /// <param name="startRate">For a follow-on burst, the clock rate the frame before ended on,
+    /// in samples per symbol.</param>
     /// <param name="track">What was measured about the clock.</param>
     /// <param name="state">What this read arrived at, for a second pass to start from.</param>
-    private (double Re, double Im)[][]? ClockTracked(
+    private (double Re, double Im)[][]? ClockTrackedCore(
         ReadOnlySpan<float> audio,
         Layout layout,
         (double Re, double Im)[] channel,
@@ -132,6 +274,8 @@ public sealed partial class OfdmFmBurstCodec
         int symbols,
         int[] carrierBits,
         Dictionary<int, (float I, float Q)[]> tables,
+        bool estimateInAudio,
+        double startRate,
         out double[] weight,
         out OfdmFmClockTrack? track,
         out TrackedState? state)
@@ -141,6 +285,15 @@ public sealed partial class OfdmFmBurstCodec
         state = null;
         int period = _parameters.SymbolSamples;
         int end = payloadStart + (symbols * period);
+
+        // A follow-on burst has no estimate symbol of its own: its channel is the one the frame
+        // before handed on, taken at that frame's last symbol, and its audio is resampled from
+        // its first payload symbol. Everything else is the same read.
+        if (!estimateInAudio)
+        {
+            estimateStart = payloadStart;
+        }
+
         if (estimateStart < 0 || end > audio.Length || symbols < 1)
         {
             return null;
@@ -175,9 +328,18 @@ public sealed partial class OfdmFmBurstCodec
         int centre = _parameters.CyclicPrefix + (_parameters.FftSize / 2);
         var knotAt = new List<double>();
         var knotDelay = new List<double>();
-        bool sharedEpoch = estimateStart == preambleStart;
-        knotAt.Add(estimateStart + centre);
-        knotDelay.Add(0);
+        bool sharedEpoch = estimateInAudio && estimateStart == preambleStart;
+        if (estimateInAudio)
+        {
+            knotAt.Add(estimateStart + centre);
+            knotDelay.Add(0);
+        }
+        else
+        {
+            // The rate the frame before ended on is the best guess at this one's.
+            rate = startRate;
+        }
+
         if (sharedEpoch)
         {
             // The payload is on the acquisition layout and its channel is the preamble's, so the
@@ -193,8 +355,13 @@ public sealed partial class OfdmFmBurstCodec
         // decided on carriers already turned by the prediction, and measured against its own
         // decisions; the measurement then corrects the rate the next prediction uses.
         var delay = new double[symbols];
-        double previousAt = knotAt[^1];
-        double previousDelay = knotDelay[^1];
+
+        // For a follow-on burst the walk starts from the handed-on channel's own epoch, the last
+        // symbol of the frame before, which is this burst's header symbols and one more back.
+        double previousAt = estimateInAudio
+            ? knotAt[^1]
+            : headerStart - period + centre;
+        double previousDelay = estimateInAudio ? knotDelay[^1] : 0;
         for (int s = 0; s < symbols; s++)
         {
             int offset = payloadStart + (s * period);
@@ -206,8 +373,11 @@ public sealed partial class OfdmFmBurstCodec
 
             double at = offset + centre;
             double predicted = previousDelay + (rate * (at - previousAt) / period);
+            // A follow-on burst is found by a search that is good to a few samples, not by a sync
+            // symbol, so its first symbol is looked for twice as far from the prediction.
             delay[s] = MeasureDelay(
-                layout, raw, channel, null, carrierBits, tables, predicted, iterations: 4, search: true);
+                layout, raw, channel, null, carrierBits, tables, predicted, iterations: 4, search: true,
+                searchSteps: !estimateInAudio && s == 0 ? 2 * SearchSteps : SearchSteps);
             double measuredRate = (delay[s] - previousDelay) * period / (at - previousAt);
             rate = (0.5 * rate) + (0.5 * measuredRate);
             previousAt = at;
@@ -222,7 +392,9 @@ public sealed partial class OfdmFmBurstCodec
         int length = end - estimateStart;
         int first = payloadStart - estimateStart;
         float[] resampled = ResampleAlong(audio, estimateStart, length, knotAt, knotDelay);
-        (double Re, double Im)[]? retrained = ChannelEstimate(layout, resampled, 0, noise);
+        (double Re, double Im)[]? retrained = estimateInAudio
+            ? ChannelEstimate(layout, resampled, 0, noise)
+            : channel;
         if (retrained is null)
         {
             return null;
@@ -247,9 +419,13 @@ public sealed partial class OfdmFmBurstCodec
         {
             var fineAt = new List<double>();
             var fineDelay = new List<double>();
-            AddFineKnots(
-                layout, resampled, 0, retrained, layout.Reference, null, null, estimateStart,
-                knotAt, knotDelay, fineAt, fineDelay);
+            if (estimateInAudio)
+            {
+                AddFineKnots(
+                    layout, resampled, 0, retrained, layout.Reference, null, null, estimateStart,
+                    knotAt, knotDelay, fineAt, fineDelay);
+            }
+
             for (int s = 0; s < symbols; s++)
             {
                 AddFineKnots(
@@ -262,10 +438,13 @@ public sealed partial class OfdmFmBurstCodec
                 knotAt = fineAt;
                 knotDelay = fineDelay;
                 resampled = ResampleAlong(audio, estimateStart, length, knotAt, knotDelay);
-                retrained = ChannelEstimate(layout, resampled, 0, noise);
-                if (retrained is null)
+                if (estimateInAudio)
                 {
-                    return null;
+                    retrained = ChannelEstimate(layout, resampled, 0, noise);
+                    if (retrained is null)
+                    {
+                        return null;
+                    }
                 }
 
                 for (int s = 0; s < symbols; s++)
@@ -323,7 +502,8 @@ public sealed partial class OfdmFmBurstCodec
         }
 
         track = new OfdmFmClockTrack(meanRate, wander, delay);
-        state = new TrackedState(resampled, knotAt, knotDelay, retrained, estimateStart, first, delay);
+        state = new TrackedState(
+            resampled, knotAt, knotDelay, retrained, estimateStart, first, delay, estimateInAudio, rate);
         return read;
     }
 
@@ -568,7 +748,14 @@ public sealed partial class OfdmFmBurstCodec
         (double Re, double Im)[] Channel,
         int EstimateStart,
         int First,
-        double[] Delay);
+        double[] Delay,
+        bool EstimateInAudio,
+        double Rate)
+    {
+        /// <summary>The audio the state's positions index, when that is not the audio the burst
+        /// arrived in but a copy already resampled at one rate; null otherwise.</summary>
+        public float[]? Source { get; init; }
+    }
 
     /// <summary>
     /// Diagnostic switch for offline tools: whether a clock-tracked read that fails its CRC is
@@ -608,6 +795,11 @@ public sealed partial class OfdmFmBurstCodec
     {
         weight = [];
         next = null;
+        if (state.Source is not null)
+        {
+            audio = state.Source;
+        }
+
         int period = _parameters.SymbolSamples;
         int symbols = points.Length;
         var read = new (double Re, double Im)[symbols][];
@@ -627,9 +819,13 @@ public sealed partial class OfdmFmBurstCodec
         {
             var fineAt = new List<double>();
             var fineDelay = new List<double>();
-            AddFineKnots(
-                layout, resampled, 0, channel, layout.Reference, null, null, state.EstimateStart,
-                state.KnotAt, state.KnotDelay, fineAt, fineDelay);
+            if (state.EstimateInAudio)
+            {
+                AddFineKnots(
+                    layout, resampled, 0, channel, layout.Reference, null, null, state.EstimateStart,
+                    state.KnotAt, state.KnotDelay, fineAt, fineDelay);
+            }
+
             for (int s = 0; s < symbols; s++)
             {
                 AddFineKnots(
@@ -640,13 +836,17 @@ public sealed partial class OfdmFmBurstCodec
             if (fineAt.Count >= 2)
             {
                 resampled = ResampleAlong(audio, state.EstimateStart, resampled.Length, fineAt, fineDelay);
-                (double Re, double Im)[]? again = ChannelEstimate(layout, resampled, 0, noise);
-                if (again is null)
+                if (state.EstimateInAudio)
                 {
-                    return null;
+                    (double Re, double Im)[]? again = ChannelEstimate(layout, resampled, 0, noise);
+                    if (again is null)
+                    {
+                        return null;
+                    }
+
+                    channel = again;
                 }
 
-                channel = again;
                 curveAt = fineAt;
                 curveDelay = fineDelay;
                 if (!ReadResampled(
@@ -717,6 +917,8 @@ public sealed partial class OfdmFmBurstCodec
     /// </param>
     /// <param name="search">Whether to search for the starting point first, for a symbol whose
     /// delay may be far from the prediction.</param>
+    /// <param name="searchSteps">How many steps either side of the prediction the search tries.
+    /// </param>
     private double MeasureDelay(
         Layout layout,
         (double Re, double Im)[] raw,
@@ -726,7 +928,8 @@ public sealed partial class OfdmFmBurstCodec
         Dictionary<int, (float I, float Q)[]>? tables,
         double start,
         int iterations,
-        bool search = false)
+        bool search = false,
+        int searchSteps = SearchSteps)
     {
         double perBin = 2 * Math.PI / _parameters.FftSize;
         double delay = start;
@@ -746,7 +949,7 @@ public sealed partial class OfdmFmBurstCodec
         {
             double best = double.MaxValue;
             double bestDelay = start;
-            for (int step = -SearchSteps; step <= SearchSteps; step++)
+            for (int step = -searchSteps; step <= searchSteps; step++)
             {
                 double candidate = start + (step * SearchStepSamples);
                 double total = 0;
@@ -855,6 +1058,56 @@ public sealed partial class OfdmFmBurstCodec
     /// <summary>The search's step, in samples: fine enough that the fit which follows starts
     /// inside every carrier's decision region.</summary>
     private const double SearchStepSamples = 0.2;
+
+    /// <summary>Quarter-sample steps either side of zero the header's delay is looked for over:
+    /// eight samples, which one symbol after the preamble is a clock nearly 4000 ppm out.</summary>
+    private const int HeaderSearchSteps = 32;
+
+    /// <summary>
+    /// The delay of one header symbol against the acquisition channel, in samples, found without
+    /// knowing what the header says.
+    /// </summary>
+    /// <remarks>
+    /// <para>The header is read before anything is known about the clock, one symbol after the
+    /// preamble its channel came from. At 500 ppm it has slid a sample by then, which BPSK does
+    /// not notice. At 2000 ppm it has slid four, the top of the acquisition span is turned by
+    /// more than a quarter cycle, and those carriers read as the opposite bit: the header fails
+    /// its CRC and the burst is never looked at. Two CM108B cards without their "MIC PLL Adjust"
+    /// EEPROM bit were measured 1930 ppm apart (2026-11-18), so that is not a corner case.</para>
+    /// <para>Every header carrier is plus or minus one, so its square is one whatever it carries,
+    /// turned by twice the delay's angle. The delay that turns the squares back onto the real
+    /// axis is the header's, and a search for it needs no decisions and no pilots. Tried only
+    /// after the plain read has failed, so a header that reads as it always did is untouched.
+    /// </para>
+    /// </remarks>
+    private double HeaderDelay((double Re, double Im)[] raw, (double Re, double Im)[] channel)
+    {
+        double perBin = 2 * Math.PI / _parameters.FftSize;
+        double best = double.MinValue;
+        double bestDelay = 0;
+        for (int step = -HeaderSearchSteps; step <= HeaderSearchSteps; step++)
+        {
+            double delay = step * 0.25;
+            double sum = 0;
+            for (int c = 0; c < raw.Length; c++)
+            {
+                (double re, double im) = raw[c];
+                double squareRe = (re * re) - (im * im);
+                double squareIm = 2 * re * im;
+                double angle = 2 * perBin * (_acquisition.FirstCarrier + c) * delay;
+                double w = (channel[c].Re * channel[c].Re) + (channel[c].Im * channel[c].Im);
+                sum += w * ((squareRe * Math.Cos(angle)) - (squareIm * Math.Sin(angle)));
+            }
+
+            if (sum > best)
+            {
+                best = sum;
+                bestDelay = delay;
+            }
+        }
+
+        return bestDelay;
+    }
 
     /// <summary>A channel estimate taken on resampled audio, as it stands in the audio as it
     /// arrived at a point where the clock had put the signal so many samples late: every carrier

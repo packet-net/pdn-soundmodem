@@ -941,6 +941,17 @@ public sealed partial class OfdmFmBurstCodec
     {
         ArgumentNullException.ThrowIfNull(keyup);
         start = expected;
+
+        // Where the clock the last burst measured says this one starts, when that is somewhere
+        // else: see OfdmFmKeyupState.ClockShift.
+        int shifted = expected + keyup.ClockShift;
+        if (keyup.ClockShift != 0 && shifted >= 0 && shifted + FollowOnHeaderSamples <= audio.Length
+            && ReadFollowOnHeader(audio, shifted, keyup) is OfdmFmHeader moved)
+        {
+            start = shifted;
+            return moved;
+        }
+
         if (ReadFollowOnHeader(audio, expected, keyup) is OfdmFmHeader exact)
         {
             return exact;
@@ -1516,19 +1527,18 @@ public sealed partial class OfdmFmBurstCodec
             ? PerSymbolTiltRefined(layout, corrected ?? equalised, channel, out refinedRamp)
             : null;
 
-        // The clock-tracked read, first: see ClockTracked. Only for a full burst, whose estimate
-        // symbol is in the audio to be resampled with the payload, and not on a profile that
-        // sends follow-on frames, whose keyup state is refreshed below on the older reads' own
-        // timing.
+        // The clock-tracked read, first: see ClockTracked. A full burst is resampled from its
+        // estimate symbol on; a follow-on burst has none, and is read against the channel the
+        // frame before handed on, from its first payload symbol.
         (double Re, double Im)[][]? tracked = null;
         double[] trackedWeight = weight;
         OfdmFmClockTrack? clockTrack = null;
         TrackedState? trackedState = null;
         TrackedState? takenState = null;
-        if (ClockTracking && headerInFit && !_parameters.FollowOnFrames)
+        if (ClockTracking)
         {
-            var headerKnown = new (double Re, double Im)[_headerSymbols][];
-            for (int h = 0; h < _headerSymbols; h++)
+            var headerKnown = new (double Re, double Im)[headerInFit ? _headerSymbols : 0][];
+            for (int h = 0; h < headerKnown.Length; h++)
             {
                 headerKnown[h] = new (double Re, double Im)[_acquisition.TotalCarriers];
                 int data = 0;
@@ -1544,7 +1554,8 @@ public sealed partial class OfdmFmBurstCodec
                 audio, layout, channel, noise,
                 payloadStart - ((firstPayloadSymbol + 1) * _parameters.SymbolSamples),
                 headerStart, headerKnown, acquisitionChannel, payloadStart, symbols, carrierBits,
-                tables, out trackedWeight, out clockTrack, out trackedState);
+                tables, estimateInAudio: headerInFit, startRate: keyup.ClockRate,
+                out trackedWeight, out clockTrack, out trackedState);
         }
 
         bool decided = false;
@@ -1679,12 +1690,26 @@ public sealed partial class OfdmFmBurstCodec
             // channel is already refined from every payload symbol; what the next frame needs is
             // that channel at the last symbol's timing in the audio as it arrived, which is the
             // same channel turned by the last symbol's measured delay.
+            //
+            // And the burst did not end where its announced length says: by the end of its last
+            // symbol the clock has carried it some samples on or back, twenty of them in half a
+            // second at 800 ppm, which is further than the search for the next frame's header
+            // was built to look. So the next frame's grid is moved by the whole samples of that,
+            // the channel is turned by what is left, and the header is looked for there first.
+            int shift = 0;
+            if (takenState is not null)
+            {
+                shift = (int)Math.Round(takenState.Delay[^1] + (0.5 * takenState.Rate));
+            }
+
+            keyup.ClockShift = shift;
             keyup.PayloadChannels[header.Geometry] = takenState is not null
-                ? AtDelay(layout, takenState.Channel, takenState.Delay[^1])
+                ? AtDelay(layout, takenState.Channel, takenState.Delay[^1] - shift)
                 : DecisionDirectedEstimate(
                     layout, read, channel, points, ramp, PilotCentre(layout, channel), noise);
             keyup.PayloadNoise[header.Geometry] = noise;
             keyup.Geometry = header.Geometry;
+            keyup.ClockRate = takenState?.Rate ?? 0;
 
             // Measured over the last symbols, which is where the next burst of the keyup takes
             // its alignment from: over a long burst the clocks drift, and the boundary at the end
@@ -2216,6 +2241,22 @@ public sealed partial class OfdmFmBurstCodec
         double noise,
         out byte[] decodedBits)
     {
+        // As it has always been read first. Then, if that fails its CRC, once more with each
+        // header symbol's delay looked for and turned out: see HeaderDelay.
+        OfdmFmHeader? plain = ReadHeaderWith(audio, headerStart, channel, noise, searched: false, out decodedBits);
+        return plain is not null || !ClockTracking
+            ? plain
+            : ReadHeaderWith(audio, headerStart, channel, noise, searched: true, out decodedBits);
+    }
+
+    private OfdmFmHeader? ReadHeaderWith(
+        ReadOnlySpan<float> audio,
+        int headerStart,
+        (double Re, double Im)[] channel,
+        double noise,
+        bool searched,
+        out byte[] decodedBits)
+    {
         decodedBits = [];
 
         // Soft metrics for the coded header bits, accumulated over every copy of every bit in
@@ -2224,12 +2265,26 @@ public sealed partial class OfdmFmBurstCodec
         var soft = new double[_headerCodedBits];
         for (int s = 0; s < _headerSymbols; s++)
         {
-            (double Re, double Im)[]? headerSymbol = Equalised(
-                _acquisition,
-                audio,
-                headerStart + (s * _parameters.SymbolSamples),
-                channel,
-                noise);
+            (double Re, double Im)[]? headerSymbol;
+            if (searched)
+            {
+                headerSymbol = ZeroForced(
+                    _acquisition, audio, headerStart + (s * _parameters.SymbolSamples), channel);
+                if (headerSymbol is not null)
+                {
+                    Turn(_acquisition, headerSymbol, HeaderDelay(headerSymbol, channel));
+                }
+            }
+            else
+            {
+                headerSymbol = Equalised(
+                    _acquisition,
+                    audio,
+                    headerStart + (s * _parameters.SymbolSamples),
+                    channel,
+                    noise);
+            }
+
             if (headerSymbol is null)
             {
                 return null;

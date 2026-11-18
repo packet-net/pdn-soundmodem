@@ -277,58 +277,107 @@ int Sim()
 
 int Keyup()
 {
-    // sm-ofdmlab keyup --ppm 200 [--frames 4] [--bytes 1024]: a keyup from a station on the
-    // follow-on preset, heard through a clock difference by a station on the default preset.
+    // sm-ofdmlab keyup --mode RX-PRESET [--tx TX-PRESET] --ppm 200 [--zigzag 300] [--snr 30]
+    //                  [--frames 8] [--bytes 1024] [--seeds 1] [--quiet]
+    // A keyup of several frames from one station (the follow-on preset unless told otherwise),
+    // heard through a clock difference, a clock that zig-zags and noise, by another.
     int bytes = int.Parse(options.GetValueOrDefault("bytes", "1024"));
-    int count = int.Parse(options.GetValueOrDefault("frames", "4"));
+    int count = int.Parse(options.GetValueOrDefault("frames", "8"));
+    int seeds = int.Parse(options.GetValueOrDefault("seeds", "1"));
     double ppm = double.Parse(options.GetValueOrDefault("ppm", "200"));
-    var sender = new OfdmFmModem("tx", OfdmFmPresets.Follow8k, _ => { }, geometryTable: OfdmFmPresets.Table);
-    int delivered = 0;
-    var receiver = new OfdmFmModem("rx", OfdmFmPresets.Default8k, _ => delivered++, geometryTable: OfdmFmPresets.Table);
-    receiver.BurstHeard += b => Console.WriteLine(JsonSerializer.Serialize(new
+    double zigzag = double.Parse(options.GetValueOrDefault("zigzag", "0"));
+    double snr = double.Parse(options.GetValueOrDefault("snr", "100"));
+    bool quiet = options.ContainsKey("quiet") || positional.Contains("--quiet");
+    string txMode = options.GetValueOrDefault("tx", "ofdm-fm-8k-follow");
+    OfdmFmParameters tx = OfdmFmPresets.ByMode[txMode];
+    int total = 0;
+    var readings = new SortedDictionary<string, int>(StringComparer.Ordinal);
+    for (int seed = 0; seed < seeds; seed++)
     {
-        ok = b.Payload is not null, followOn = b.FollowOn, reading = b.Reading, preFec = b.PreFecBitErrorRate,
-        ppm = b.Clock?.RatePpm, lastDelay = b.Clock?.DelaySamples[^1],
-    }));
-    var audio = new List<float>();
-    for (int i = 0; i < count; i++)
-    {
-        var frame = new byte[bytes];
-        new Random(800 + i).NextBytes(frame);
-        audio.AddRange(sender.Modulate(frame, i == 0 ? 300 : OfdmFmModem.HostLeadInWithinKeyupMs));
-    }
-
-    audio.AddRange(new float[parameters.SymbolSamples * 6]);
-    double ratio = 1.0 + (ppm * 1e-6);
-    var heard = new float[(int)(audio.Count / ratio) - 64];
-    float[] source = [.. audio];
-    for (int i = 0; i < heard.Length; i++)
-    {
-        double at = (i * ratio) + 20;
-        int whole = (int)at;
-        double sum = 0;
-        for (int t = -15; t <= 16; t++)
+        var sender = new OfdmFmModem("tx", tx, _ => { }, geometryTable: OfdmFmPresets.Table);
+        int delivered = 0;
+        var receiver = new OfdmFmModem("rx", parameters, _ => delivered++, geometryTable: OfdmFmPresets.Table);
+        receiver.BurstHeard += b =>
         {
-            int index = whole + t;
-            if (index < 0 || index >= source.Length)
+            string key = (b.FollowOn ? "follow-on " : "full ") + b.Reading;
+            readings[key] = readings.GetValueOrDefault(key) + 1;
+            if (!quiet)
             {
-                continue;
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    ok = b.Payload is not null, followOn = b.FollowOn, reading = b.Reading,
+                    preFec = b.PreFecBitErrorRate, ppm = b.Clock?.RatePpm, wanderUs = b.Clock?.WanderMicroseconds,
+                }));
             }
-
-            double x = t - (at - whole);
-            double sinc = Math.Abs(x) < 1e-12 ? 1 : Math.Sin(Math.PI * x) / (Math.PI * x);
-            sum += source[index] * sinc * (0.5 + (0.5 * Math.Cos(Math.PI * x / 16.5)));
+        };
+        var audio = new List<float>(new float[4096]);
+        for (int i = 0; i < count; i++)
+        {
+            var frame = new byte[bytes];
+            new Random((1000 * seed) + 800 + i).NextBytes(frame);
+            audio.AddRange(sender.Modulate(frame, i == 0 ? 300 : OfdmFmModem.HostLeadInWithinKeyupMs));
         }
 
-        heard[i] = (float)sum;
+        audio.AddRange(new float[parameters.SymbolSamples * 6]);
+        float[] source = [.. audio];
+        double power = 0;
+        int active = 0;
+        foreach (float x in source)
+        {
+            if (x != 0)
+            {
+                power += x * x;
+                active++;
+            }
+        }
+
+        double sigma = Math.Sqrt(power / Math.Max(1, active)) * Math.Pow(10, -snr / 20);
+        var noise = new Random(99 + seed);
+        var heard = new List<float>(source.Length);
+        double at = 20;
+        int n = 0;
+        while (at < source.Length - 20)
+        {
+            int whole = (int)at;
+            double sum = 0;
+            for (int t = -15; t <= 16; t++)
+            {
+                double x = t - (at - whole);
+                double sinc = Math.Abs(x) < 1e-12 ? 1 : Math.Sin(Math.PI * x) / (Math.PI * x);
+                sum += source[whole + t] * sinc * (0.5 + (0.5 * Math.Cos(Math.PI * x / 16.5)));
+            }
+
+            double u1 = 1.0 - noise.NextDouble();
+            double gauss = Math.Sqrt(-2 * Math.Log(u1)) * Math.Cos(2 * Math.PI * noise.NextDouble());
+            heard.Add((float)(sum + (sigma * gauss)));
+            double now = ppm + ((((int)(n / 2880.0)) % 2) == 0 ? zigzag : -zigzag);
+            at += 1.0 + (now * 1e-6);
+            n++;
+        }
+
+        float[] samples = [.. heard];
+        if (options.ContainsKey("whole"))
+        {
+            // The whole-buffer read of the same audio, for telling the streaming search's choice
+            // of sync position apart from everything after it.
+            var codec = new OfdmFmBurstCodec(parameters, OfdmFmPresets.Table);
+            int sync = codec.FindSyncIn(samples);
+            OfdmFmBurst? whole = sync < 0 ? null : codec.DecodeAt(samples, sync);
+            Console.WriteLine($"whole-buffer: sync {sync} ok {whole?.Payload is not null} reading {whole?.Reading} ppm {whole?.Clock?.RatePpm:F0}");
+            receiver.BurstHeard += b => Console.WriteLine($"streaming: start {b.StartSample} ok {b.Payload is not null}");
+        }
+
+        for (int i = 0; i < samples.Length; i += 960)
+        {
+            receiver.Process(samples.AsSpan(i, Math.Min(960, samples.Length - i)));
+        }
+
+        total += delivered;
     }
 
-    for (int at = 0; at < heard.Length; at += 960)
-    {
-        receiver.Process(heard.AsSpan(at, Math.Min(960, heard.Length - at)));
-    }
-
-    Console.WriteLine($"delivered {delivered} of {count} at {ppm} ppm");
+    Console.WriteLine(
+        $"rx {mode}, tx {txMode}, {ppm} ppm, zigzag {zigzag}, snr {snr}: delivered {total} of {count * seeds}; "
+        + string.Join(", ", readings.Select(r => $"{r.Key} {r.Value}")));
     return 0;
 }
 
