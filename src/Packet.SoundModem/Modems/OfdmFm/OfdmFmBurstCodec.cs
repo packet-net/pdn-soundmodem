@@ -58,7 +58,7 @@ public sealed record OfdmFmBurst(
     bool AskedFullBursts = false)
 {
     /// <summary>What the clock-tracked read measured about the sample clock, or null when that
-    /// read was not taken (a follow-on burst, or the read switched off). Present whether or not
+    /// read was not taken (the read switched off, or too little audio for it). Present whether or not
     /// the payload decoded, because a burst that failed is the one whose clock is worth seeing.
     /// </summary>
     public OfdmFmClockTrack? Clock { get; init; }

@@ -25,7 +25,7 @@ A rate error tilts the phase across the band, which the pilot fits partly undo, 
 
 ## What the read does
 
-Only for a full burst, and only at a station whose own profile does not send follow-on frames. Nothing on the air changes. A follow-on frame is read by the pilot-fitted reads as before, whoever sent it; when the full burst before it was read this way, the channel handed on to it is this read's own, turned to the last symbol's timing.
+For every burst, full or follow-on, on every preset. Nothing on the air changes.
 
 1. **Each symbol's delay is measured from all of its carriers.** A delay of d samples turns carrier k by 2 pi k d / N through the origin (an FM audio path has no carrier offset), so there is one unknown per symbol. The header's carriers are known once its CRC has passed and give the starting rate. A payload carrier is known once it has been decided. The delay is searched for over two samples either side of the prediction before it is fitted: a clock that has just changed rate leaves the top carriers outside their decision regions, the wrong decisions read as small turns about the wrong points, and a fit from the prediction alone followed a third of the change.
 2. **The audio is resampled along the delay curve**, from the estimate symbol to the end of the payload, and the channel estimate and every symbol are read again from the resampled audio.
@@ -34,6 +34,49 @@ Only for a full burst, and only at a station whose own profile does not send fol
 5. **The channel estimate is refined** from the payload's own symbols.
 6. **A read that fails its CRC is read once more against the decoder's own output**, re-encoded: fewer wrong points than slicing each carrier alone. Steps 3 to 5 are repeated from those points.
 7. **If that fails too, the tracked symbols are decoded once more on channel-power weights.**
+
+Four more things were needed once the clocks were allowed to be far apart (see the 1930 ppm section below). None of them does anything at the 50 ppm of a normal pair of cards.
+
+- **The header is looked for along a delay too.** Its carriers are BPSK, so squaring them removes the data and leaves twice the delay's turn; a search over 8 samples either side finds it when the plain read fails.
+- **A burst whose rate is over half a sample a symbol (about 240 ppm) is straightened first**: resampled once along a straight line at the header's rate, and the noise figure and channel estimate are taken again from the straightened sync and estimate symbols. Taken from the audio as it arrived they are smeared like everything else; at 1930 ppm the sync symbol's empty bins read 15 dB of noise that was not there, and the estimate's denoiser, shrinking by that figure, cost the band edges 11 dB.
+- **The modem waits for a stretched burst's tail.** A burst from a slow clock ends later than its announced length; the receiver now holds on for the samples the measured rate says are still to come. And it looks for the next sync from where the burst really ended.
+- **A sync run is released at 0.7, not 0.8.** The Schmidl-Cox plateau of a sync symbol read 1930 ppm off dips at its middle; committing at the first dip put the burst 415 samples early about one time in five.
+
+## Follow-on frames
+
+A follow-on frame has no sync, preamble or estimate symbol. It is found where the frame before ended and read against the channel that frame handed on, so the read above runs on it with three differences: the walk starts from the rate the frame before ended on, the first symbol's delay is searched twice as far, and the channel is not estimated again but carried.
+
+What is handed from frame to frame is the refined channel, turned to the last symbol's timing, and the whole samples the clock has moved the burst's end by (`OfdmFmKeyupState`). Two things in that hand-on added up through a long keyup. Both were found on air with twenty frames to the keyup, and neither shows in eight:
+
+- **The grid crept.** Half a symbol's drift was added to the grid at every frame where it is owed once. With the cards 1600 ppm apart that is 1.7 samples a frame, and by the fifteenth frame the read window had left the cyclic prefix. The lead of the grid over the signal is now carried in the keyup state and each frame moves the grid only by what brings it back.
+- **The channel refinement fed on itself.** It smooths its correction across nine carriers. A flat run of nine passes ripple of about six carriers' period with its sign turned over, so applied to its own result at every frame it added to that part of the error by a fifth each time, whatever the clock. The run is now a triangle, which passes nothing with its sign turned over.
+
+Together they took the raw error rate from 0.1% at the first frame of a keyup to 5% at the eighteenth; the second alone still reaches 4% by the twentieth. With both fixed the rate falls through the keyup (the estimate keeps improving): 0.1% at the first frame, under 0.05% at the twentieth. `A_Long_Follow_On_Keyup_Ends_As_Clean_As_It_Starts` holds 30 frames at 0, 50 and 1930 ppm either way and fails without either fix.
+
+End to end through two running daemons with the cards as normal (bit set, about 50 ppm), the builds interleaved cell by cell, 30 frames of 1024 bytes each way a cell, three rounds:
+
+| | main | this branch |
+|---|---|---|
+| `ofdm-fm-8k-follow`, radio1 to radio2 | 76 of 90 | 90 of 90 |
+| `ofdm-fm-8k-follow`, radio2 to radio1 | 82 of 90 | 90 of 90 |
+| `ofdm-fm-8k-adaptive`, radio1 to radio2 | 83 of 90 | 90 of 90 |
+| `ofdm-fm-8k-adaptive`, radio2 to radio1 | 77 of 90 | 90 of 90 |
+
+A last run of the finished build on all four 8 kHz presets, 30 frames each way: 240 of 240.
+
+## Two cards without "MIC PLL Adjust": 1930 ppm
+
+The CM108B's EEPROM has a bit that locks its microphone clock to the USB frame rate. Both bench boards have it set. With it cleared on both (word 0x2B from 7A12 to 7A02) and the boards power-cycled, measured 18 November 2026:
+
+- **The two cards run 1700 to 1930 ppm apart, not the 520 ppm the bench factsheet quotes**, and the figure moves: 1890 ppm just after power-up, 1690 ppm ten minutes later.
+- **The clock is a little steadier, not steady.** Within a two-minute round the rate from burst to burst spread by 12 to 31 ppm, drift included, against 25 to 39 ppm with the bit set. Inside a burst the median wander is the same 10 microseconds with fewer large excursions (nine in ten under 13 microseconds, against 20 to 31). Inside one long transmission the rate still steps by 50 to 100 ppm from frame to frame, so the zig-zag is not the microphone PLL's doing alone.
+- **The receiver as it stood decodes nothing**: 0 of 600 recorded bursts, 0 of 320 frames live.
+- **This read decodes what it decodes with the bit set.** Recorded bursts, drive from full to -9 dB: `ofdm-fm-8k` 240 of 240 and `ofdm-fm-8k-r78` 237 of 240 (239 of 240 on the same design with the bit set), the other six cells 120 of 120. Raw error rate 0.13% either way.
+- **Margin is the same either way.** Decoded of 60 at +0, +6, +8, +10, +12, +14 and +16 dB of added path loss: `ofdm-fm-8k` 60, 60, 60, 59, 59, 58, 13 with the bit clear and 60, 60, 60, 60, 60, 53, 12 with it set; `ofdm-fm-8k-r78` 60, 60, 57, 24, 0 and 60, 60, 57, 15, 0.
+- **Live through two daemons with the bit clear**, frames counted byte-identical: `ofdm-fm-8k` 80 of 80, `ofdm-fm-8k-r78` 80 of 80, `ofdm-fm-8k-follow` 180 of 180 and `ofdm-fm-8k-adaptive` 180 of 180 (30 frames to a transmission), against 0 of 320 for main.
+- **Follow-on keyups hold to 2500 ppm in simulation**, as full bursts do, once the follow-on header's delay search was widened from 8 samples to 16.
+
+So the bit costs this receiver nothing and clearing it buys nothing: the bends it adds are tracked, and the steadier clock without it does not turn into margin. It stays worth setting, because without it nothing older than this read decodes at all, and a card that has just been powered up moves 200 ppm in its first ten minutes. (With the bit set a card also takes about a minute after power-up to pull in: the first three bursts after a power cycle read -674, -190 and -76 ppm.)
 
 Each stage, added in turn, on a session recorded after the work was done (240 bursts a preset, drive from full to -9 dB):
 
@@ -110,7 +153,7 @@ About 5 dB more margin on the default preset (nine in ten still decoding at abou
 | 14 | | | | | 47 | 48 |
 | 12 | | | | | 2 | 17 |
 
-**Clock tolerance** on synthetic bursts: the new read decodes at a constant 1000 ppm either way and through a rate that flips 300 ppm either side of 100 ppm every 60 ms. The reads as they stood are lost by 300 ppm. 520 ppm is the fixed offset of a CM108B whose "MIC PLL Adjust" EEPROM bit is clear, which until now stopped OFDM-FM outright; that case is covered by `ClockSkewTests` but has not been tried on such a board.
+**Clock tolerance** on synthetic bursts: the new read decodes at a constant 2500 ppm either way, full bursts and follow-on keyups, and through a rate that flips 300 ppm either side of 100 ppm every 60 ms. It is lost at 3000 ppm. The reads as they stood are lost by 300 ppm.
 
 ## What it costs, and two things it replaces
 
@@ -132,7 +175,6 @@ Two changes keep a failing burst inside its own air time, because a receive thre
 
 ## Not done
 
-- **Follow-on frames.** A follow-on frame is read against a channel estimate inherited from the frame before, and the tracked read as built wants the estimate symbol in the audio it resamples. So follow-on frames are read as before, and a station on `ofdm-fm-8k-follow` or `ofdm-fm-8k-adaptive` reads its full bursts as before too. A station on any other preset hears follow-on frames from one that sends them, after a full burst the tracked read took: `FollowOnFrameTests` holds that pairing through 300 ppm, and it was not tried on air.
 - **Which card wanders.** Both do. An SDR listening off air shows the sending card's playback clock moving by tens of microseconds on its own, but the split was not pinned down, and it no longer decides anything here.
 - **Weak signals on air.** Margin was measured by adding noise to recordings and through the simulated link, not by adding attenuation.
 - **The coded FM ladder** (`OfdmFmFmLadderTests.The_Coded_Ladder_Still_Holds_Through_The_Fm_Link` with `OFDMFM_LADDER=1`) decodes nothing at any level on main before this change: it puts the 8 kHz layout through the microphone-and-speaker link profile, whose audio passband is a fraction of that span. It was no use as a cross-check and is left as found.
