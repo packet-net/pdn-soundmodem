@@ -203,6 +203,55 @@ public class FollowOnFrameTests
     }
 
     /// <summary>
+    /// A keyup between two stations on the follow-on preset, through clock differences from the
+    /// ordinary to the 1930 ppm of two CM108B cards without their "MIC PLL Adjust" bit, in
+    /// noise.
+    /// </summary>
+    /// <remarks>
+    /// A follow-on frame has no sync symbol, no preamble and no estimate symbol: it is found
+    /// where the frame before ended and read against the channel that frame handed on. Both
+    /// depend on the clock. The frame before ends tens of samples away from where its announced
+    /// length says, further than the search for the next header was built to look, and the
+    /// channel has to be at the last symbol's timing. The clock-tracked read measures both and
+    /// hands them on (see <c>OfdmFmKeyupState.ClockShift</c>); before it did, the pilot-fitted
+    /// reads lost every follow-on frame from 500 ppm.
+    /// </remarks>
+    [Theory]
+    [InlineData(100)]
+    [InlineData(-500)]
+    [InlineData(1000)]
+    [InlineData(1930)]
+    [InlineData(-1930)]
+    public void A_Follow_On_Keyup_Is_Read_By_The_Tracked_Read_Whatever_The_Clock(int ppm)
+    {
+        var sender = new OfdmFmModem(
+            "ofdm-fm:tx", OfdmFmPresets.Follow8k, _ => { }, geometryTable: OfdmFmPresets.Table);
+        var delivered = new List<byte[]>();
+        var readings = new List<string>();
+        var receiver = new OfdmFmModem(
+            "ofdm-fm:rx", OfdmFmPresets.Follow8k, delivered.Add, geometryTable: OfdmFmPresets.Table);
+        receiver.BurstHeard += burst => readings.Add((burst.FollowOn ? "follow-on " : "full ") + burst.Reading);
+        byte[][] frames = Enumerable.Range(0, 8).Select(i => Frame(1024, 800 + i)).ToArray();
+
+        float[] clean = [.. Keyup(sender, frames).SelectMany(b => b)];
+        float[] keyup = [.. new float[4096], .. clean, .. new float[OfdmFmPresets.Follow8k.SymbolSamples * 6]];
+        float[] heard = ClockSkewTests.WithNoise(
+            ClockSkewTests.Resample(keyup, 1.0 + (ppm * 1e-6)), clean, 28, 99);
+
+        Stream(receiver, [heard], block: 960);
+
+        delivered.Should().HaveCount(frames.Length, "{0} ppm across a keyup of {1} frames", ppm, frames.Length);
+        for (int i = 0; i < frames.Length; i++)
+        {
+            delivered[i].Should().Equal(frames[i]);
+        }
+
+        readings.Count(r => r.StartsWith("follow-on ", StringComparison.Ordinal)).Should().Be(frames.Length - 1);
+        readings.Should().OnlyContain(r => r.EndsWith("tracked", StringComparison.Ordinal)
+            || r.EndsWith("polished", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// A station on the default 8 kHz preset, which sends no follow-on frames of its own, hearing
     /// a keyup from one on the follow-on preset through a clock difference.
     /// </summary>
