@@ -8,6 +8,11 @@
 //       Runs the shipping streaming receiver over a recording and prints one JSON line per burst
 //       it heard (decoded or not) and a summary line.
 //
+//   sm-ofdmlab sim --mode ofdm-fm-8k --bytes 1024 --cnr 30,24,20,18,16,14 --seeds 32 [--dev 4500] [--ifbw 15000]
+//       The same bursts through the simulated FM link at each carrier-to-noise ratio, read by the
+//       receiver as shipped, by the clock-tracked receiver, and by the clock-tracked receiver
+//       with the pilot-fitted reads still tried after it: the weak-signal regime, clicks and all.
+//
 //   sm-ofdmlab at --mode ofdm-fm-8k CAPTURE.wav
 //       Whole-buffer read: the sync search and the decode at the position it finds, with the
 //       stage each burst got to.
@@ -53,6 +58,8 @@ foreach (string off in options.GetValueOrDefault("off", "").Split(',', StringSpl
         case "fine": OfdmFmBurstCodec.SubSymbolTracking = false; break;
         case "spur": OfdmFmBurstCodec.MeasuredSpurWeighting = false; break;
         case "feedback": OfdmFmBurstCodec.DecodeFeedback = false; break;
+        case "satguard": OfdmFmBurstCodec.SaturationGuard = false; break;
+        case "plainretry": OfdmFmBurstCodec.PlainWeightRetry = false; break;
         default: Console.Error.WriteLine($"unknown switch {off}"); return 2;
     }
 }
@@ -70,6 +77,8 @@ switch (command)
         return Decode();
     case "at":
         return At();
+    case "sim":
+        return Sim();
     default:
         Console.Error.WriteLine($"unknown command {command}");
         return 2;
@@ -213,6 +222,53 @@ int At()
     }
 
     Console.WriteLine(JsonSerializer.Serialize(Describe(burst)));
+    return 0;
+}
+
+int Sim()
+{
+    int bytes = int.Parse(options.GetValueOrDefault("bytes", "1024"));
+    int seeds = int.Parse(options.GetValueOrDefault("seeds", "32"));
+    double deviation = double.Parse(options.GetValueOrDefault("dev", "4500"));
+    double ifBandwidth = double.Parse(options.GetValueOrDefault("ifbw", "15000"));
+    double[] cnrs = [.. options.GetValueOrDefault("cnr", "30,24,20,18,16,14").Split(',').Select(double.Parse)];
+    var link = M0LTE.Fm.FmLinkProfile.DataPort(deviation, ifBandwidthHz: ifBandwidth);
+    var codec = new OfdmFmBurstCodec(parameters, OfdmFmPresets.Table);
+    Console.WriteLine($"{mode} {bytes} B, {seeds} bursts a cell, data-port link, {deviation} Hz peak deviation, {ifBandwidth} Hz IF");
+    Console.WriteLine("CNR dB | shipped | tracked | tracked, older reads after | decoded only by the older reads");
+    foreach (double cnr in cnrs)
+    {
+        int shipped = 0;
+        int tracked = 0;
+        int both = 0;
+        int olderOnly = 0;
+        for (int seed = 0; seed < seeds; seed++)
+        {
+            var payload = new byte[bytes];
+            new Random(7000 + seed).NextBytes(payload);
+            float[] clean = codec.Modulate(payload, parameters.Constellation, 2);
+            float[] heard = new M0LTE.Fm.FmChannel(link, parameters.SampleRate, seed).Apply(clean, cnr);
+
+            bool Read(bool tracking, bool older)
+            {
+                OfdmFmBurstCodec.ClockTracking = tracking;
+                OfdmFmBurstCodec.OlderReadsAfterTracked = older;
+                byte[]? got = codec.Demodulate(heard)?.Payload;
+                return got is not null && got.AsSpan().SequenceEqual(payload);
+            }
+
+            bool a = Read(false, false);
+            bool b = Read(true, false);
+            bool c = Read(true, true);
+            shipped += a ? 1 : 0;
+            tracked += b ? 1 : 0;
+            both += c ? 1 : 0;
+            olderOnly += c && !b ? 1 : 0;
+        }
+
+        Console.WriteLine($"{cnr,6} | {shipped,7} | {tracked,7} | {both,26} | {olderOnly}");
+    }
+
     return 0;
 }
 

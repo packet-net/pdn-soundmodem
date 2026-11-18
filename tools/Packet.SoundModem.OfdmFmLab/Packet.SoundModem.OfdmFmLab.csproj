@@ -8,6 +8,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
+    <!-- The simulated FM link, for the regime a bench at one signal level cannot reach. -->
+    <PackageReference Include="M0LTE.FmChannel" />
   </ItemGroup>
 
 </Project>

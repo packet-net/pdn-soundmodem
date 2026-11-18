@@ -47,6 +47,24 @@ public sealed partial class OfdmFmBurstCodec
     /// </summary>
     public static bool OlderReadsAfterTracked { get; set; }
 
+    /// <summary>
+    /// Diagnostic switch for offline tools: whether a carrier whose decision-measured scatter is
+    /// near the limit a decision cell allows falls back to the channel-power model. Process-wide
+    /// and not for a station.
+    /// </summary>
+    public static bool SaturationGuard { get; set; } = true;
+
+    /// <summary>The share of a decision cell's own limit (a sixth of the squared spacing between
+    /// points) at which a carrier's measured scatter is taken to be saturated.</summary>
+    private const double SaturatedFraction = 0.5;
+
+    /// <summary>
+    /// Diagnostic switch for offline tools: whether a clock-tracked read that has failed with its
+    /// measured weights, and failed its second pass, is decoded once more with channel-power
+    /// weights. Process-wide and not for a station.
+    /// </summary>
+    public static bool PlainWeightRetry { get; set; } = true;
+
     /// <summary>Taps either side of the interpolation point in the resampler's windowed sinc.
     /// The occupied band stops at a third of the sample rate, so sixteen is far more than the
     /// interpolation error needs to sit below everything else in the burst.</summary>
@@ -1083,9 +1101,8 @@ public sealed partial class OfdmFmBurstCodec
         // has to stand clear by a wide margin before it is believed over the run.
         const int HalfSpan = 8;
         const double StandsClear = 4.0;
-        var weight = new double[n];
+        var level = new double[n];
         var run = new double[(2 * HalfSpan) + 1];
-        double mean = 0;
         for (int c = 0; c < n; c++)
         {
             int from = Math.Max(0, c - HalfSpan);
@@ -1093,13 +1110,69 @@ public sealed partial class OfdmFmBurstCodec
             int count = to - from + 1;
             Array.Copy(error, from, run, 0, count);
             Array.Sort(run, 0, count);
-            double level = run[count / 2];
-            if (MeasuredSpurWeighting && error[c] > StandsClear * level)
+            level[c] = run[count / 2];
+            if (MeasuredSpurWeighting && error[c] > StandsClear * level[c])
             {
-                level = error[c];
+                level[c] = error[c];
             }
 
-            weight[c] = 1.0 / Math.Max(level, 1e-12);
+            level[c] /= Math.Max(1, read.Length);
+        }
+
+        // A decision hides its own error. Scatter measured against the nearest point can never
+        // exceed the size of a decision cell, so a carrier that is really 20 dB worse than its
+        // neighbours measures as only a little worse, and weighted on that figure it is trusted
+        // nearly as much as they are. That is harmless on the path this was first measured on,
+        // whose worst carrier still has 23 dB, and it was ruinous on the simulated link, whose
+        // band edges are far down: there this weighting lost half the bursts the channel-power
+        // weight decodes. So a carrier whose scatter is within sight of the cell's limit is taken
+        // to be saturated, and for it the figure is not allowed below what the channel-power
+        // model says: the noise the unsaturated carriers show before equalisation, over this
+        // carrier's own gain. With the points known (the second pass) nothing saturates.
+        if (known is null && SaturationGuard)
+        {
+            var power = new double[n];
+            var saturated = new bool[n];
+            var reference = new List<double>(n);
+            int data = 0;
+            for (int c = 0; c < n; c++)
+            {
+                power[c] = (channel[c].Re * channel[c].Re) + (channel[c].Im * channel[c].Im);
+                if (layout.PilotMap[c])
+                {
+                    reference.Add(level[c] * power[c]);
+                    continue;
+                }
+
+                double distance = OfdmFmMapper.MinimumDistance((OfdmFmConstellation)carrierBits[data++]);
+                saturated[c] = level[c] > SaturatedFraction * distance * distance / 6;
+                if (!saturated[c])
+                {
+                    reference.Add(level[c] * power[c]);
+                }
+            }
+
+            if (reference.Count < 4)
+            {
+                return PowerWeights(channel);
+            }
+
+            reference.Sort();
+            double typical = reference[reference.Count / 2];
+            for (int c = 0; c < n; c++)
+            {
+                if (saturated[c])
+                {
+                    level[c] = power[c] > 0 ? Math.Max(level[c], typical / power[c]) : double.MaxValue;
+                }
+            }
+        }
+
+        var weight = new double[n];
+        double mean = 0;
+        for (int c = 0; c < n; c++)
+        {
+            weight[c] = 1.0 / Math.Max(level[c], 1e-12);
             mean += weight[c];
         }
 

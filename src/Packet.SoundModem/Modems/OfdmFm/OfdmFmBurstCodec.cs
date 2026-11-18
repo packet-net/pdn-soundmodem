@@ -1601,6 +1601,21 @@ public sealed partial class OfdmFmBurstCodec
                     from = next;
                     sent = second.Sent;
                 }
+
+                // And once more with the channel-power weights the pilot-fitted reads use, on the
+                // tracked symbols as they stand: one more decode and no more transforms. The
+                // measured weights are the better ones wherever the measurement can be trusted,
+                // which is nearly always; this is for the burst where it could not be.
+                if (attempt.Payload is null && PlainWeightRetry)
+                {
+                    (byte[]? Payload, double? PreFec, byte[] Sent) plain =
+                        Decoded(tracked!, PowerWeights(trackedState.Channel));
+                    if (plain.Payload is not null)
+                    {
+                        attempt = plain;
+                        reading = "tracked-plain";
+                    }
+                }
             }
 
             if (!decided || attempt.Payload is not null)
