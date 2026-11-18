@@ -161,48 +161,44 @@ public class ClockSkewTests
     }
 
     /// <summary>
-    /// A burst that arrives stretched, read by a receiver that holds exactly the burst's nominal
-    /// length and no more, which is what the streaming modem holds at the instant it decodes when
-    /// a block boundary falls there.
+    /// A burst that arrives stretched, through the streaming receiver fed one sample at a time,
+    /// so that it could decode at the very instant the burst's announced length has arrived.
     /// </summary>
     /// <remarks>
-    /// The tail of the last symbol is then past the end of what the receiver holds, and the
-    /// resampler has to find those samples one transform earlier, where the symbol's own
-    /// periodicity put a copy. Read against zeros instead, the last symbol cost about half a per
-    /// cent of the burst's bits at 600 ppm and beyond: nothing on this preset, a lost burst on a
-    /// rate with less to spare.
+    /// The tail of a stretched burst's last symbol lies past its announced end: fifty-odd samples
+    /// at the 1930 ppm two CM108B cards were measured apart with their "MIC PLL Adjust" bit
+    /// clear. A receiver that reads the burst before those samples have arrived reads zeros for
+    /// them, which costs the last symbol and, at a rate with little to spare, the burst. So it
+    /// waits for them, and this is the block size at which not waiting shows every time.
     /// </remarks>
     [Theory]
-    [InlineData(-600)]
     [InlineData(-1000)]
-    public void A_Stretched_Burst_Is_Read_Cleanly_With_No_Audio_After_Its_Nominal_End(int ppm)
+    [InlineData(-1930)]
+    public void A_Stretched_Burst_Is_Not_Read_Until_Its_Tail_Has_Arrived(int ppm)
     {
-        var codec = new OfdmFmBurstCodec(OfdmFmPresets.Default8k, OfdmFmPresets.Table);
-        const int LeadIn = 2;
-        double ratio = 1.0 + (ppm * 1e-6);
+        var payload = new byte[1900];
+        new Random(1900).NextBytes(payload);
+        var codec = new OfdmFmBurstCodec(OfdmFmPresets.Edge8k, OfdmFmPresets.Table);
+        float[] clean = codec.Modulate(payload, OfdmFmConstellation.Qam64, 2);
+        var padded = new float[clean.Length + 8192];
+        clean.CopyTo(padded, 2048);
+        float[] heard = Resample(padded, 1.0 + (ppm * 1e-6));
 
-        // Several payloads: how much a clipped tail costs depends on what the last symbol carries.
-        for (int seed = 0; seed < 4; seed++)
+        var delivered = new List<byte[]>();
+        var bursts = new List<OfdmFmBurst>();
+        var receiver = new OfdmFmModem(
+            "ofdm-fm:rx", OfdmFmPresets.Edge8k, delivered.Add, geometryTable: OfdmFmPresets.Table);
+        receiver.BurstHeard += bursts.Add;
+        var one = new float[1];
+        foreach (float sample in heard)
         {
-            var payload = new byte[1900];
-            new Random(1900 + seed).NextBytes(payload);
-            float[] clean = codec.Modulate(payload, OfdmFmConstellation.Qam64, LeadIn);
-            var padded = new float[clean.Length + 8192];
-            clean.CopyTo(padded, 2048);
-            float[] heard = Resample(padded, ratio);
-
-            // Cut exactly where the streaming receiver stops collecting: the burst's announced
-            // length on from where its own sync search commits.
-            int sync = codec.FindSyncIn(heard);
-            OfdmFmHeader header = codec.ReadHeader(heard, sync)!.Value;
-            float[] held = heard[..(sync + codec.BurstSamples(header))];
-
-            OfdmFmBurst? burst = codec.Demodulate(held);
-
-            burst.Should().NotBeNull("payload {0}", seed);
-            burst!.Payload.Should().Equal(payload);
-            burst.PreFecBitErrorRate.Should().BeLessThan(0.001, "payload {0}", seed);
+            one[0] = sample;
+            receiver.Process(one);
         }
+
+        delivered.Should().ContainSingle().Which.Should().Equal(payload);
+        bursts.Should().ContainSingle();
+        bursts[0].PreFecBitErrorRate.Should().BeLessThan(0.001);
     }
 
     /// <summary>A burst as a receiver would capture it if its clock ran at a rate, in parts per

@@ -114,6 +114,10 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
     // How far before the announced end of the last burst the hunt for the next one resumes when
     // no follow-on header is found there: zero or negative. See ClockDrift.
     private int _huntEarly;
+
+    // Samples past the announced end of the burst being collected that are waited for before it
+    // is read, because its clock says it arrives stretched: see OfdmFmBurstCodec.StretchTail.
+    private int _tail;
     private bool _exhausted;
 
     private bool _collecting;
@@ -589,6 +593,7 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
             // so the burst starts that many samples earlier in the audio the decoder reads.
             _burstAt = Math.Max(0, _peakAt - _bandLimit.Delay);
             _need = _codec.HeaderEndOffset;
+            _tail = 0;
             _header = null;
             _tracking = false;
             _trackedFor = 0;
@@ -605,7 +610,7 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
     /// </summary>
     private bool Collect()
     {
-        if (_windowCount - _burstAt < _need)
+        if (_windowCount - _burstAt < _need + _tail)
         {
             return false;
         }
@@ -621,7 +626,7 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
             // much more to wait for. A burst that will not fit is abandoned here, before anything
             // is sized from it.
             HeaderReads++;
-            OfdmFmHeader? read = _codec.ReadHeader(_window.AsSpan(0, _windowCount), _burstAt);
+            OfdmFmHeader? read = _codec.ReadHeader(_window.AsSpan(0, _windowCount), _burstAt, out int tail);
             if (read is not OfdmFmHeader header || header.PayloadLength > MaxPayloadBytes)
             {
                 // A false sync, or a header the noise got to. Resume the search from one sample
@@ -632,6 +637,7 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
 
             _header = header;
             _need = _codec.BurstSamples(header);
+            _tail = tail;
             return true;
         }
 
@@ -746,6 +752,7 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
         _collecting = true;
         _burstAt = at;
         _need = _codec.FollowOnSearchSamples;
+        _tail = 0;
         _header = null;
         _tracking = false;
         _trackedFor = 0;
@@ -781,6 +788,7 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
             _burstAt = start;
             _header = header;
             _need = _codec.FollowOnBurstSamples(header);
+            _tail = _codec.StretchTail(_keyup!.ClockRate, _need);
             return true;
         }
 

@@ -160,7 +160,8 @@ public sealed partial class OfdmFmBurstCodec
         for (int i = 0; i < straightened.Length; i++)
         {
             double n = basis + i;
-            straightened[i] = Interpolate(audio, n + (rate * (n - origin) / period), _parameters.FftSize);
+            double at = n + (rate * (n - origin) / period);
+            straightened[i] = Interpolate(audio, at);
         }
 
         // The channel estimate the caller holds was taken from the estimate symbol as it arrived,
@@ -567,7 +568,7 @@ public sealed partial class OfdmFmBurstCodec
                 d += slope * (n - knotAt[knot]);
             }
 
-            resampled[i] = Interpolate(audio, n + d, _parameters.FftSize);
+            resampled[i] = Interpolate(audio, n + d);
         }
 
         return resampled;
@@ -1171,17 +1172,95 @@ public sealed partial class OfdmFmBurstCodec
         return kernel;
     }
 
+    /// <summary>
+    /// How many samples past a burst's announced length a receiver should hold before it reads
+    /// the burst, for a clock running at <paramref name="ratePerSymbol"/> samples a symbol.
+    /// </summary>
+    /// <remarks>
+    /// A burst that arrives stretched ends later than its announced length says, and the
+    /// resampler reads the tail of its last symbol from there. A receiver that decodes the moment
+    /// the announced length has arrived does not hold that tail yet and the read takes zeros for
+    /// it: at 1930 ppm that is fifty-odd samples of the last symbol, enough to cost a rate 7/8
+    /// burst outright, about one burst in thirteen with 20 ms blocks. Nothing can be made up for
+    /// samples that have not arrived (the symbol's own periodicity does not reach that far
+    /// once the receiver's grid sits early in the cyclic prefix, which it does), so the receiver
+    /// waits for them. Zero unless the stretch is worth waiting for, so a burst on an ordinary
+    /// clock is read exactly when it always was.
+    /// </remarks>
+    internal int StretchTail(double ratePerSymbol, int burstSamples)
+    {
+        double stretch = ratePerSymbol * burstSamples / _parameters.SymbolSamples;
+        return stretch > StretchWorthWaitingFor
+            ? (int)Math.Ceiling(stretch) + ResamplerHalfTaps + 1
+            : 0;
+    }
+
+    /// <summary>Samples of stretch over a burst below which the receiver does not wait for
+    /// more audio than the burst's announced length.</summary>
+    private const double StretchWorthWaitingFor = 8;
+
+    /// <summary>
+    /// As <see cref="ReadHeader(ReadOnlySpan{float}, int)"/>, and also how many samples past the
+    /// burst's announced length the receiver should hold before reading it: see
+    /// <see cref="StretchTail"/>. The rate is the header's own, measured against the preamble.
+    /// </summary>
+    public OfdmFmHeader? ReadHeader(ReadOnlySpan<float> audio, int sync, out int tail)
+    {
+        tail = 0;
+        double noise = NoiseVariance(_acquisition, audio, sync);
+        (double Re, double Im)[]? channel =
+            ChannelEstimate(_acquisition, audio, sync + _parameters.SymbolSamples, noise);
+        if (channel is null)
+        {
+            return null;
+        }
+
+        int headerStart = sync + (2 * _parameters.SymbolSamples);
+        if (ReadHeaderAt(audio, headerStart, channel, noise, out byte[] bits) is not OfdmFmHeader header)
+        {
+            return null;
+        }
+
+        if (!ClockTracking)
+        {
+            return header;
+        }
+
+        (double Re, double Im)[]? raw = ZeroForced(_acquisition, audio, headerStart, channel);
+        if (raw is not null)
+        {
+            double rate = MeasureDelay(
+                _acquisition, raw, channel, HeaderKnown(bits)[0], null, null, 0, iterations: 3);
+            tail = StretchTail(rate, BurstSamples(header));
+        }
+
+        return header;
+    }
+
+    /// <summary>The header's carriers as they were transmitted, per header symbol, from the
+    /// header's decoded bits: pilots at the reference pattern, data carriers at plus or minus
+    /// one.</summary>
+    private (double Re, double Im)[][] HeaderKnown(byte[] headerBits)
+    {
+        byte[] coded = _headerCodec.Encode(headerBits.AsSpan(0, HeaderBits));
+        var known = new (double Re, double Im)[_headerSymbols][];
+        for (int h = 0; h < _headerSymbols; h++)
+        {
+            known[h] = new (double Re, double Im)[_acquisition.TotalCarriers];
+            int data = 0;
+            for (int c = 0; c < known[h].Length; c++)
+            {
+                known[h][c] = _acquisition.PilotMap[c]
+                    ? (_acquisition.Reference[c].Re, 0)
+                    : (coded[HeaderBitAt(h, data++)] == 1 ? 1 : -1, 0);
+            }
+        }
+
+        return known;
+    }
+
     /// <summary>The audio at a fractional sample index, by a Hann-windowed sinc.</summary>
-    /// <param name="audio">The audio.</param>
-    /// <param name="at">Where in it.</param>
-    /// <param name="wrap">When not zero, a sample asked for past the end of the audio is taken
-    /// from this many samples earlier. A burst that arrives stretched has the tail of its last
-    /// symbol past the burst's nominal end, and a receiver that starts decoding the moment the
-    /// nominal length has arrived may not hold it yet; but an OFDM symbol repeats with the period
-    /// of its transform, so the missing samples are the ones one transform earlier, which it
-    /// does hold. Without this the last symbol of such a burst was read against zeros there and
-    /// cost about a symbol's share of bit errors at 600 ppm and beyond.</param>
-    private static float Interpolate(ReadOnlySpan<float> audio, double at, int wrap = 0)
+    private static float Interpolate(ReadOnlySpan<float> audio, double at)
     {
         int whole = (int)Math.Floor(at);
         double scaled = (at - whole) * ResamplerPhases;
@@ -1206,11 +1285,6 @@ public sealed partial class OfdmFmBurstCodec
         for (int t = 0; t < taps; t++)
         {
             int index = first + t;
-            if (index >= audio.Length)
-            {
-                index -= wrap;
-            }
-
             if (index >= 0 && index < audio.Length)
             {
                 sum += audio[index] * (low[t] + (blend * (high[t] - low[t])));

@@ -1537,18 +1537,7 @@ public sealed partial class OfdmFmBurstCodec
         TrackedState? takenState = null;
         if (ClockTracking)
         {
-            var headerKnown = new (double Re, double Im)[headerInFit ? _headerSymbols : 0][];
-            for (int h = 0; h < headerKnown.Length; h++)
-            {
-                headerKnown[h] = new (double Re, double Im)[_acquisition.TotalCarriers];
-                int data = 0;
-                for (int c = 0; c < headerKnown[h].Length; c++)
-                {
-                    headerKnown[h][c] = _acquisition.PilotMap[c]
-                        ? (_acquisition.Reference[c].Re, 0)
-                        : (headerCoded[HeaderBitAt(h, data++)] == 1 ? 1 : -1, 0);
-                }
-            }
+            (double Re, double Im)[][] headerKnown = headerInFit ? HeaderKnown(headerBits) : [];
 
             tracked = ClockTracked(
                 audio, layout, channel, noise,
