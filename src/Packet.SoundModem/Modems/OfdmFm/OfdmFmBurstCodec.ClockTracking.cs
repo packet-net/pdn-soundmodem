@@ -1083,8 +1083,11 @@ public sealed partial class OfdmFmBurstCodec
     private const double SearchStepSamples = 0.2;
 
     /// <summary>Quarter-sample steps either side of zero the header's delay is looked for over:
-    /// eight samples, which one symbol after the preamble is a clock nearly 4000 ppm out.</summary>
-    private const int HeaderSearchSteps = 32;
+    /// sixteen samples. A full burst's header is one symbol after the preamble and needs a
+    /// fraction of that. A follow-on frame's header is read on the grid the frame before handed
+    /// on, which is set for the payload and leaves the header a symbol and a half of drift out:
+    /// at eight samples the first follow-on header of a keyup was not found from 2300 ppm.</summary>
+    private const int HeaderSearchSteps = 64;
 
     /// <summary>
     /// The delay of one header symbol against the acquisition channel, in samples, found without

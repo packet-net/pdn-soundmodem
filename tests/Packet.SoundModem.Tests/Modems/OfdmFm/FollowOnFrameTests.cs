@@ -222,6 +222,8 @@ public class FollowOnFrameTests
     [InlineData(1000)]
     [InlineData(1930)]
     [InlineData(-1930)]
+    [InlineData(2500)]
+    [InlineData(-2500)]
     public void A_Follow_On_Keyup_Is_Read_By_The_Tracked_Read_Whatever_The_Clock(int ppm)
     {
         var sender = new OfdmFmModem(
@@ -263,7 +265,8 @@ public class FollowOnFrameTests
     /// cyclic prefix by the fifteenth frame. And the channel refinement, applied to its own
     /// result frame after frame, smoothed across carriers with a flat run whose response is
     /// negative for some ripple, so that ripple grew by a fifth a frame whatever the clock.
-    /// Either one took the raw error rate from 0.1% at the first frame to 4% at the eighteenth.
+    /// Together they took the raw error rate from 0.1% at the first frame to 5% at the
+    /// eighteenth.
     /// </remarks>
     [Theory]
     [InlineData(0)]
