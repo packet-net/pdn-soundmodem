@@ -203,6 +203,10 @@ Against the table above: thirteen more frames over the eight skew cells at 100 p
 
 With M0LTE.FmChannel 0.7.0 pinned, the probe now takes its skew from the model's own `ReceiverClockOffsetPpm` rather than resampling the output itself - the identical composition, differing only in sub-sample alignment, which re-rolls each seed's noise phasing. Re-measured through the knob the after state reads 184 and 156 over the same eight cells at 100 and 200 ppm, the same shape and a few frames kinder, about two sigma of that re-roll; the knob run is the record future re-runs compare against. The paired before-and-after above was taken with one instrument throughout, which is why it is the one carrying the comparison. What remains is an honest residual: at one dB of margin an ordinary 100 ppm still costs a third to a half of the marginal frames, so two ends on separate clocks should still price the top rungs about a decibel dearer - down from one to two. The next lever, recorded rather than built: once a payload decodes, its carriers are known too, and a second pass could fit the drift from everything - though under the CRC arbitration it could only ever rescue bursts that failed both of today's reads.
 
+### The clock-tracked read (in)
+
+Added 2026-11-18, and it supersedes the section above for every full burst on a profile that does not send follow-on frames. Measured against the played samples on two CM108B cards, the rate inside a burst is anywhere within 300 ppm of nominal, differs on every burst and bends inside it, and the pilot fits above were losing a third of the bursts they were given. The read measures each symbol's delay from all of its carriers, resamples the audio along the measured curve before the transforms, weights each carrier's soft bits by the noise it showed, and reads a failed burst once more against the decoder's own output. On 1360 recorded bursts it took the count decoded from 929 to 1358. [clock-tracking.md](clock-tracking.md) has the measurements, the stages and what each is worth, and the two entries below that it revisits.
+
 ## Tried, measured, not in the code
 
 ### MMSE equalisation (out)
@@ -226,6 +230,8 @@ The decisive experiment is why this entry is worth having: a three-arm run with 
 
 It is the MMSE lesson one layer up, and the two entries should be read together: knowing which carriers to trust is already taken by the channel-power weight, and sharpening that knowledge past what the noise's tails support buys a negative number. The 18.4 dB tilt is real and stays measured; what failed is the assumption that it maps onto per-carrier confidence.
 
+**Revisited 2026-11-18, and the result above stands for what it tested.** The clock-tracked read weights by a different measurement: not the noise in the sync symbol's empty bins before the payload, but the scatter of the payload's own points about the points they were decided to be. On a real path that scatter is mostly things the earlier measurement cannot see (receiver distortion that follows the signal, a spur on one carrier, what the clock leaves behind), and weighting by it took rate 7/8 from 149 to 213 of 240 on recordings. It also failed in this link model at first, for a reason the genie above could not have shown: a decision hides its own error, so the measured scatter saturates on the worst carriers and they are trusted. It is guarded now, and through the same model it is ahead of the channel-power weight. See [clock-tracking.md](clock-tracking.md).
+
 ### Decision-directed second pass (out)
 
 When a payload fails its CRC, slice every equalised carrier of every symbol to its nearest constellation point, average the residual over all of them, fold that into the estimate and decode again. The pilots come free, being known exactly. In principle this beats the single-symbol preamble estimate by roughly the square root of the number of symbols.
@@ -235,6 +241,8 @@ It won **0 of about 30 attempts**, across the plain ladder and across a flutter 
 The reason is visible in the failure budget below. By the time a payload fails, it is not marginally wrong, and slicing then gives a reference too corrupt to improve anything. The cases where a better estimate would have helped are already being caught by the denoiser, which is cheap, runs on every burst, and needs no second decode.
 
 Do not rebuild this without first checking the failure budget still looks like the table below. If payload failures ever come to dominate, it is worth another look, ideally re-encoding the decoder's output rather than slicing raw, so the coding gain is in the reference.
+
+**Rebuilt 2026-11-18 as that last sentence asks.** On real recordings every failure is a payload failure (no burst in 1360 was lost to sync or header), and the clock-tracked read's second pass re-encodes the decoder's output and measures the clock, the channel and the per-carrier noise again from it. It is worth about 1 dB at each preset's cliff: 4 to 37 of 160 at +16 dB of added path loss on `ofdm-fm-8k`, 27 to 72 at +10 dB on `ofdm-fm-8k-r78`. A second and third repeat add nothing. See [clock-tracking.md](clock-tracking.md).
 
 ### Lowering the sync threshold (out)
 
