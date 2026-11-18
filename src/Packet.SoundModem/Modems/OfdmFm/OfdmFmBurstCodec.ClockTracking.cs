@@ -149,7 +149,8 @@ public sealed partial class OfdmFmBurstCodec
         // The stretch of audio the read needs, resampled along one straight line that is zero at
         // the channel estimate's own epoch: the estimate symbol of a full burst, the last symbol
         // of the frame before for a follow-on one.
-        int basis = estimateInAudio ? Math.Max(0, headerStart - period) : headerStart;
+        int syncStart = headerStart - (2 * period);
+        int basis = estimateInAudio ? Math.Max(0, syncStart) : headerStart;
         double origin = estimateInAudio ? estimateStart + centre : headerStart - period + centre;
         if (basis < 0 || end > audio.Length || (estimateInAudio && estimateStart < 0))
         {
@@ -169,8 +170,20 @@ public sealed partial class OfdmFmBurstCodec
         // so it is smeared too, and the walk divides by it before it decides anything. Taken
         // again from the straightened estimate symbol it is clean. (A follow-on burst's channel
         // came from the frame before, already in this form.)
+        //
+        // The noise figure with it. That is read from the bins the sync symbol leaves empty, and
+        // in the audio as it arrived they are not empty: the sync symbol is smeared into them
+        // like everything else, which at 1930 ppm read as noise fifteen decibels over the truth.
+        // The estimate's denoiser shrinks by that figure, and shrinking by too much cost the
+        // dozen carriers at each edge of the band most of their signal to noise (measured on
+        // air: 8 dB at the top carrier against 19 dB with the clocks 50 ppm apart).
         if (estimateInAudio)
         {
+            if (syncStart >= basis)
+            {
+                noise = NoiseVariance(layout, straightened, syncStart - basis);
+            }
+
             (double Re, double Im)[]? clean = ChannelEstimate(layout, straightened, estimateStart - basis, noise);
             if (clean is null)
             {
@@ -205,7 +218,10 @@ public sealed partial class OfdmFmBurstCodec
 
         track = new OfdmFmClockTrack(
             inner.RatePpm + (rate / period * 1e6), inner.WanderMicroseconds, delays);
-        state = innerState with { Source = straightened, Delay = delays, Rate = innerState.Rate + rate };
+        state = innerState with
+        {
+            Source = straightened, Delay = delays, Rate = innerState.Rate + rate, Noise = noise,
+        };
         return read;
     }
 
@@ -756,6 +772,10 @@ public sealed partial class OfdmFmBurstCodec
         /// <summary>The audio the state's positions index, when that is not the audio the burst
         /// arrived in but a copy already resampled at one rate; null otherwise.</summary>
         public float[]? Source { get; init; }
+
+        /// <summary>The noise figure measured from that copy, when there is one: the one read
+        /// from the audio as it arrived is inflated by the clock's own smear.</summary>
+        public double? Noise { get; init; }
     }
 
     /// <summary>
@@ -800,6 +820,8 @@ public sealed partial class OfdmFmBurstCodec
         {
             audio = state.Source;
         }
+
+        noise = state.Noise ?? noise;
 
         int period = _parameters.SymbolSamples;
         int symbols = points.Length;
