@@ -80,6 +80,8 @@ switch (command)
         return At();
     case "sim":
         return Sim();
+    case "keyup":
+        return Keyup();
     default:
         Console.Error.WriteLine($"unknown command {command}");
         return 2;
@@ -270,6 +272,63 @@ int Sim()
         Console.WriteLine($"{cnr,6} | {shipped,7} | {tracked,7} | {both,26} | {olderOnly}");
     }
 
+    return 0;
+}
+
+int Keyup()
+{
+    // sm-ofdmlab keyup --ppm 200 [--frames 4] [--bytes 1024]: a keyup from a station on the
+    // follow-on preset, heard through a clock difference by a station on the default preset.
+    int bytes = int.Parse(options.GetValueOrDefault("bytes", "1024"));
+    int count = int.Parse(options.GetValueOrDefault("frames", "4"));
+    double ppm = double.Parse(options.GetValueOrDefault("ppm", "200"));
+    var sender = new OfdmFmModem("tx", OfdmFmPresets.Follow8k, _ => { }, geometryTable: OfdmFmPresets.Table);
+    int delivered = 0;
+    var receiver = new OfdmFmModem("rx", OfdmFmPresets.Default8k, _ => delivered++, geometryTable: OfdmFmPresets.Table);
+    receiver.BurstHeard += b => Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        ok = b.Payload is not null, followOn = b.FollowOn, reading = b.Reading, preFec = b.PreFecBitErrorRate,
+        ppm = b.Clock?.RatePpm, lastDelay = b.Clock?.DelaySamples[^1],
+    }));
+    var audio = new List<float>();
+    for (int i = 0; i < count; i++)
+    {
+        var frame = new byte[bytes];
+        new Random(800 + i).NextBytes(frame);
+        audio.AddRange(sender.Modulate(frame, i == 0 ? 300 : OfdmFmModem.HostLeadInWithinKeyupMs));
+    }
+
+    audio.AddRange(new float[parameters.SymbolSamples * 6]);
+    double ratio = 1.0 + (ppm * 1e-6);
+    var heard = new float[(int)(audio.Count / ratio) - 64];
+    float[] source = [.. audio];
+    for (int i = 0; i < heard.Length; i++)
+    {
+        double at = (i * ratio) + 20;
+        int whole = (int)at;
+        double sum = 0;
+        for (int t = -15; t <= 16; t++)
+        {
+            int index = whole + t;
+            if (index < 0 || index >= source.Length)
+            {
+                continue;
+            }
+
+            double x = t - (at - whole);
+            double sinc = Math.Abs(x) < 1e-12 ? 1 : Math.Sin(Math.PI * x) / (Math.PI * x);
+            sum += source[index] * sinc * (0.5 + (0.5 * Math.Cos(Math.PI * x / 16.5)));
+        }
+
+        heard[i] = (float)sum;
+    }
+
+    for (int at = 0; at < heard.Length; at += 960)
+    {
+        receiver.Process(heard.AsSpan(at, Math.Min(960, heard.Length - at)));
+    }
+
+    Console.WriteLine($"delivered {delivered} of {count} at {ppm} ppm");
     return 0;
 }
 

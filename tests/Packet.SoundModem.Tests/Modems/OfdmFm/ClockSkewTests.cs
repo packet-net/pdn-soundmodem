@@ -160,6 +160,51 @@ public class ClockSkewTests
         burst.Clock!.WanderMicroseconds.Should().BeGreaterThan(5);
     }
 
+    /// <summary>
+    /// A burst that arrives stretched, read by a receiver that holds exactly the burst's nominal
+    /// length and no more, which is what the streaming modem holds at the instant it decodes when
+    /// a block boundary falls there.
+    /// </summary>
+    /// <remarks>
+    /// The tail of the last symbol is then past the end of what the receiver holds, and the
+    /// resampler has to find those samples one transform earlier, where the symbol's own
+    /// periodicity put a copy. Read against zeros instead, the last symbol cost about half a per
+    /// cent of the burst's bits at 600 ppm and beyond: nothing on this preset, a lost burst on a
+    /// rate with less to spare.
+    /// </remarks>
+    [Theory]
+    [InlineData(-600)]
+    [InlineData(-1000)]
+    public void A_Stretched_Burst_Is_Read_Cleanly_With_No_Audio_After_Its_Nominal_End(int ppm)
+    {
+        var codec = new OfdmFmBurstCodec(OfdmFmPresets.Default8k, OfdmFmPresets.Table);
+        const int LeadIn = 2;
+        double ratio = 1.0 + (ppm * 1e-6);
+
+        // Several payloads: how much a clipped tail costs depends on what the last symbol carries.
+        for (int seed = 0; seed < 4; seed++)
+        {
+            var payload = new byte[1900];
+            new Random(1900 + seed).NextBytes(payload);
+            float[] clean = codec.Modulate(payload, OfdmFmConstellation.Qam64, LeadIn);
+            var padded = new float[clean.Length + 8192];
+            clean.CopyTo(padded, 2048);
+            float[] heard = Resample(padded, ratio);
+
+            // Cut exactly where the streaming receiver stops collecting: the burst's announced
+            // length on from where its own sync search commits.
+            int sync = codec.FindSyncIn(heard);
+            OfdmFmHeader header = codec.ReadHeader(heard, sync)!.Value;
+            float[] held = heard[..(sync + codec.BurstSamples(header))];
+
+            OfdmFmBurst? burst = codec.Demodulate(held);
+
+            burst.Should().NotBeNull("payload {0}", seed);
+            burst!.Payload.Should().Equal(payload);
+            burst.PreFecBitErrorRate.Should().BeLessThan(0.001, "payload {0}", seed);
+        }
+    }
+
     /// <summary>A burst as a receiver would capture it if its clock ran at a rate, in parts per
     /// million against the sender's, given as a function of time.</summary>
     internal static float[] ResampleAlong(float[] audio, int sampleRate, Func<double, double> ppmAt)

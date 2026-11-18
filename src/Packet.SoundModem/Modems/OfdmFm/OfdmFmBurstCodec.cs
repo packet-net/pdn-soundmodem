@@ -63,8 +63,11 @@ public sealed record OfdmFmBurst(
     /// </summary>
     public OfdmFmClockTrack? Clock { get; init; }
 
-    /// <summary>Which reading of the payload passed its CRC: "tracked", "refined", "corrected",
-    /// "plain", or "none". For telling apart what each stage of the receiver is worth.</summary>
+    /// <summary>Which reading of the payload passed its CRC. From the clock-tracked read:
+    /// "tracked" (first time), "polished" (its second pass, against the decoder's own output) or
+    /// "tracked-plain" (its symbols on channel-power weights). From the pilot-fitted reads:
+    /// "refined", "corrected" or "plain". "none" when nothing did. For telling apart what each
+    /// stage of the receiver is worth; more may be added.</summary>
     public string Reading { get; init; } = "none";
 }
 
@@ -1521,6 +1524,7 @@ public sealed partial class OfdmFmBurstCodec
         double[] trackedWeight = weight;
         OfdmFmClockTrack? clockTrack = null;
         TrackedState? trackedState = null;
+        TrackedState? takenState = null;
         if (ClockTracking && headerInFit && !_parameters.FollowOnFrames)
         {
             var headerKnown = new (double Re, double Im)[_headerSymbols][];
@@ -1569,6 +1573,7 @@ public sealed partial class OfdmFmBurstCodec
                 candidate, ReferenceEquals(candidate, tracked) ? trackedWeight : weight);
             if (attempt.Payload is not null)
             {
+                takenState = ReferenceEquals(candidate, tracked) ? trackedState : null;
                 reading = ReferenceEquals(candidate, tracked) ? "tracked"
                     : ReferenceEquals(candidate, refined) ? "refined"
                     : ReferenceEquals(candidate, corrected) ? "corrected" : "plain";
@@ -1594,6 +1599,7 @@ public sealed partial class OfdmFmBurstCodec
                     {
                         attempt = second;
                         taken = polished;
+                        takenState = next;
                         reading = "polished";
                         break;
                     }
@@ -1613,6 +1619,7 @@ public sealed partial class OfdmFmBurstCodec
                     if (plain.Payload is not null)
                     {
                         attempt = plain;
+                        takenState = trackedState;
                         reading = "tracked-plain";
                     }
                 }
@@ -1662,8 +1669,20 @@ public sealed partial class OfdmFmBurstCodec
                 }
             }
 
-            keyup.PayloadChannels[header.Geometry] = DecisionDirectedEstimate(
-                layout, read, channel, points, ramp, PilotCentre(layout, channel), noise);
+            // A tracked read is different in kind. Its symbols were read from resampled audio
+            // against a channel estimate retaken there, each with its delay already out, so they
+            // carry no rotation to align by and the estimate above would come out at the estimate
+            // symbol's timing with the whole burst's drift left out of it. A station that does
+            // not send follow-on frames still hears them from one that does, and read against
+            // that estimate every follow-on frame of a keyup was lost from 200 ppm (measured:
+            // 6 of 24 frames where the pilot-fitted reads delivered 24). The tracked read's own
+            // channel is already refined from every payload symbol; what the next frame needs is
+            // that channel at the last symbol's timing in the audio as it arrived, which is the
+            // same channel turned by the last symbol's measured delay.
+            keyup.PayloadChannels[header.Geometry] = takenState is not null
+                ? AtDelay(layout, takenState.Channel, takenState.Delay[^1])
+                : DecisionDirectedEstimate(
+                    layout, read, channel, points, ramp, PilotCentre(layout, channel), noise);
             keyup.PayloadNoise[header.Geometry] = noise;
             keyup.Geometry = header.Geometry;
 

@@ -367,7 +367,7 @@ public sealed partial class OfdmFmBurstCodec
 
     /// <summary>The audio from <paramref name="start"/> for <paramref name="length"/> samples,
     /// each read at its own delay along the curve.</summary>
-    private static float[] ResampleAlong(
+    private float[] ResampleAlong(
         ReadOnlySpan<float> audio, int start, int length, List<double> knotAt, List<double> knotDelay)
     {
         var resampled = new float[length];
@@ -387,7 +387,7 @@ public sealed partial class OfdmFmBurstCodec
                 d += slope * (n - knotAt[knot]);
             }
 
-            resampled[i] = Interpolate(audio, n + d);
+            resampled[i] = Interpolate(audio, n + d, _parameters.FftSize);
         }
 
         return resampled;
@@ -856,6 +856,16 @@ public sealed partial class OfdmFmBurstCodec
     /// inside every carrier's decision region.</summary>
     private const double SearchStepSamples = 0.2;
 
+    /// <summary>A channel estimate taken on resampled audio, as it stands in the audio as it
+    /// arrived at a point where the clock had put the signal so many samples late: every carrier
+    /// turned by that delay, the opposite way to taking it out.</summary>
+    private (double Re, double Im)[] AtDelay(Layout layout, (double Re, double Im)[] channel, double delay)
+    {
+        var turned = ((double Re, double Im)[])channel.Clone();
+        Turn(layout, turned, -delay);
+        return turned;
+    }
+
     /// <summary>Turns a symbol's carriers to take a delay of so many samples out.</summary>
     private void Turn(Layout layout, (double Re, double Im)[] carriers, double delay)
     {
@@ -909,7 +919,16 @@ public sealed partial class OfdmFmBurstCodec
     }
 
     /// <summary>The audio at a fractional sample index, by a Hann-windowed sinc.</summary>
-    private static float Interpolate(ReadOnlySpan<float> audio, double at)
+    /// <param name="audio">The audio.</param>
+    /// <param name="at">Where in it.</param>
+    /// <param name="wrap">When not zero, a sample asked for past the end of the audio is taken
+    /// from this many samples earlier. A burst that arrives stretched has the tail of its last
+    /// symbol past the burst's nominal end, and a receiver that starts decoding the moment the
+    /// nominal length has arrived may not hold it yet; but an OFDM symbol repeats with the period
+    /// of its transform, so the missing samples are the ones one transform earlier, which it
+    /// does hold. Without this the last symbol of such a burst was read against zeros there and
+    /// cost about a symbol's share of bit errors at 600 ppm and beyond.</param>
+    private static float Interpolate(ReadOnlySpan<float> audio, double at, int wrap = 0)
     {
         int whole = (int)Math.Floor(at);
         double scaled = (at - whole) * ResamplerPhases;
@@ -934,6 +953,11 @@ public sealed partial class OfdmFmBurstCodec
         for (int t = 0; t < taps; t++)
         {
             int index = first + t;
+            if (index >= audio.Length)
+            {
+                index -= wrap;
+            }
+
             if (index >= 0 && index < audio.Length)
             {
                 sum += audio[index] * (low[t] + (blend * (high[t] - low[t])));
@@ -1147,8 +1171,13 @@ public sealed partial class OfdmFmBurstCodec
                     continue;
                 }
 
-                double distance = OfdmFmMapper.MinimumDistance((OfdmFmConstellation)carrierBits[data++]);
-                saturated[c] = level[c] > SaturatedFraction * distance * distance / 6;
+                // Only where a decision cell is bounded on every side, which from QAM-16 up it
+                // mostly is. BPSK's and QPSK's cells run to infinity and 8PSK's are wedges: the
+                // scatter measured there has no such ceiling, and the same threshold would only
+                // switch the measured weights off near those constellations' own cliffs.
+                int bits = carrierBits[data++];
+                double distance = OfdmFmMapper.MinimumDistance((OfdmFmConstellation)bits);
+                saturated[c] = bits >= 4 && level[c] > SaturatedFraction * distance * distance / 6;
                 if (!saturated[c])
                 {
                     reference.Add(level[c] * power[c]);

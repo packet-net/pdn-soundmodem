@@ -202,6 +202,47 @@ public class FollowOnFrameTests
         }
     }
 
+    /// <summary>
+    /// A station on the default 8 kHz preset, which sends no follow-on frames of its own, hearing
+    /// a keyup from one on the follow-on preset through a clock difference.
+    /// </summary>
+    /// <remarks>
+    /// The two presets differ only in that flag, so on the air this is an ordinary pairing. The
+    /// first frame of the keyup is a full burst and is read by the clock-tracked read, whose
+    /// symbols come from resampled audio with their delays already out. The channel handed on
+    /// for the follow-on frames has to be put back at the last symbol's timing in the audio as it
+    /// arrived; left at the estimate symbol's, every follow-on frame of the keyup was lost from
+    /// 200 ppm (6 of 24 frames delivered where the pilot-fitted reads delivered 24).
+    /// </remarks>
+    [Theory]
+    [InlineData(200)]
+    [InlineData(300)]
+    [InlineData(-300)]
+    public void A_Station_That_Sends_No_Follow_On_Frames_Still_Reads_Them_Through_A_Clock_Difference(int ppm)
+    {
+        var sender = new OfdmFmModem(
+            "ofdm-fm:tx", OfdmFmPresets.Follow8k, _ => { }, geometryTable: OfdmFmPresets.Table);
+        var delivered = new List<byte[]>();
+        var receiver = new OfdmFmModem(
+            "ofdm-fm:rx", OfdmFmPresets.Default8k, delivered.Add, geometryTable: OfdmFmPresets.Table);
+        byte[][] frames = Enumerable.Range(0, 4).Select(i => Frame(1024, 800 + i)).ToArray();
+
+        float[] keyup =
+        [
+            .. Keyup(sender, frames).SelectMany(b => b),
+            .. new float[OfdmFmPresets.Default8k.SymbolSamples * 6],
+        ];
+        float[] heard = ClockSkewTests.Resample(keyup, 1.0 + (ppm * 1e-6));
+
+        Stream(receiver, [heard], block: 960);
+
+        delivered.Should().HaveCount(frames.Length, "{0} ppm across a keyup of {1} frames", ppm, frames.Length);
+        for (int i = 0; i < frames.Length; i++)
+        {
+            delivered[i].Should().Equal(frames[i]);
+        }
+    }
+
     [Fact]
     public void Without_The_Option_Every_Frame_Of_A_Keyup_Is_A_Full_Burst()
     {

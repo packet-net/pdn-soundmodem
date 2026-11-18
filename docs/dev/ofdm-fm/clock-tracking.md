@@ -25,7 +25,7 @@ A rate error tilts the phase across the band, which the pilot fits partly undo, 
 
 ## What the read does
 
-Only for a full burst on a profile that does not send follow-on frames. Nothing on the air changes.
+Only for a full burst, and only at a station whose own profile does not send follow-on frames. Nothing on the air changes. A follow-on frame is read by the pilot-fitted reads as before, whoever sent it; when the full burst before it was read this way, the channel handed on to it is this read's own, turned to the last symbol's timing.
 
 1. **Each symbol's delay is measured from all of its carriers.** A delay of d samples turns carrier k by 2 pi k d / N through the origin (an FM audio path has no carrier offset), so there is one unknown per symbol. The header's carriers are known once its CRC has passed and give the starting rate. A payload carrier is known once it has been decided. The delay is searched for over two samples either side of the prediction before it is fitted: a clock that has just changed rate leaves the top carriers outside their decision regions, the wrong decisions read as small turns about the wrong points, and a fit from the prediction alone followed a third of the change.
 2. **The audio is resampled along the delay curve**, from the estimate symbol to the end of the payload, and the channel estimate and every symbol are read again from the resampled audio.
@@ -132,7 +132,7 @@ Two changes keep a failing burst inside its own air time, because a receive thre
 
 ## Not done
 
-- **Follow-on frames.** `ofdm-fm-8k-follow` and `ofdm-fm-8k-adaptive` read a follow-on frame against a channel estimate inherited from the frame before, and the tracked read as built wants the estimate symbol in the audio it resamples. Those two presets are read as before.
+- **Follow-on frames.** A follow-on frame is read against a channel estimate inherited from the frame before, and the tracked read as built wants the estimate symbol in the audio it resamples. So follow-on frames are read as before, and a station on `ofdm-fm-8k-follow` or `ofdm-fm-8k-adaptive` reads its full bursts as before too. A station on any other preset hears follow-on frames from one that sends them, after a full burst the tracked read took: `FollowOnFrameTests` holds that pairing through 300 ppm, and it was not tried on air.
 - **Which card wanders.** Both do. An SDR listening off air shows the sending card's playback clock moving by tens of microseconds on its own, but the split was not pinned down, and it no longer decides anything here.
 - **Weak signals on air.** Margin was measured by adding noise to recordings and through the simulated link, not by adding attenuation.
 - **The coded FM ladder** (`OfdmFmFmLadderTests.The_Coded_Ladder_Still_Holds_Through_The_Fm_Link` with `OFDMFM_LADDER=1`) decodes nothing at any level on main before this change: it puts the 8 kHz layout through the microphone-and-speaker link profile, whose audio passband is a fraction of that span. It was no use as a cross-check and is left as found.
