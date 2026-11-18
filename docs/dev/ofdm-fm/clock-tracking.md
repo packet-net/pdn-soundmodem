@@ -44,7 +44,7 @@ Four more things were needed once the clocks were allowed to be far apart (see t
 
 ## Follow-on frames
 
-A follow-on frame has no sync, preamble or estimate symbol. It is found where the frame before ended and read against the channel that frame handed on, so the read above runs on it with three differences: the walk starts from the rate the frame before ended on, the first symbol's delay is searched twice as far, and the channel is not estimated again but carried.
+A follow-on frame has no sync, preamble or estimate symbol. It is found where the frame before ended and read against the channel that frame handed on, so the read above runs on it with three differences: the walk starts from the rate the frame before ended on, the first symbol's delay is searched over sixteen samples either side, and the channel is not estimated again but carried.
 
 What is handed from frame to frame is the refined channel, turned to the last symbol's timing, and the whole samples the clock has moved the burst's end by (`OfdmFmKeyupState`). Two things in that hand-on added up through a long keyup. Both were found on air with twenty frames to the keyup, and neither shows in eight:
 
@@ -52,6 +52,13 @@ What is handed from frame to frame is the refined channel, turned to the last sy
 - **The channel refinement fed on itself.** It smooths its correction across nine carriers. A flat run of nine passes ripple of about six carriers' period with its sign turned over, so applied to its own result at every frame it added to that part of the error by a fifth each time, whatever the clock. The run is now a triangle, which passes nothing with its sign turned over.
 
 Together they took the raw error rate from 0.1% at the first frame of a keyup to 5% at the eighteenth; the second alone still reaches 4% by the twentieth. With both fixed the rate falls through the keyup (the estimate keeps improving): 0.1% at the first frame, under 0.05% at the twentieth. `A_Long_Follow_On_Keyup_Ends_As_Clean_As_It_Starts` holds 30 frames at 0, 50 and 1930 ppm either way and fails without either fix.
+
+A second independent review of this part found the hand-on wrong in two cases the tests and the bench had not met, both fixed with tests that fail on the code before:
+
+- **A frame that fails in the middle of a keyup.** Nothing was handed on from it, so the grid kept the move the last good frame had earned. After a long frame and a short lost one that was tens of samples wrong and every frame to the end of the keyup went with it (1 of 5 delivered from 300 ppm). A failed frame now hands on what the rate predicts over its length.
+- **Silence between frames.** A host that drains its sound card between frames leaves a gap, and the frame after it is found by a header some samples off or by its cyclic prefixes. That path was wrong in four ways on the 8 kHz presets, two of them with no clock difference at all and older than this work (2 frames of 6 delivered across a silence of ten samples or of 1500): the alignment the prefixes are referred to was measured over a burst's last symbols, where a receiver that reads a burst the moment it has arrived has nothing to search into; a frame so found is placed to within about eight samples and its first symbol was looked for over four; the frame was put on the grid as it stood before the clock moved it; and between cards far apart a prefix's copy is not a transform later in the audio but some samples short of it, so the prefixes found nothing from about 1000 ppm. The alignment is now measured over a burst's first symbols and carried to its end by the measured delays, the prefix search takes the keyup's rate, and a header that read only by search is checked against where the prefixes put the frame.
+
+Simulated, six frames of 1024 bytes with silence between them, 28 dB: every frame delivered at 0, 50, 300 and -300 ppm for every gap tried from 1 to 4200 samples, and at 1000 and 1930 ppm either way for gaps under 14 samples and over 40. **One corner still loses frames and is not root-caused**: clocks 1000 ppm or more apart with the sender's the faster, and a silence of 14 to 40 samples (a third to four fifths of a millisecond), where between a third and nine tenths of the frames arrive. pdn-soundmodem's own transmissions are continuous, so this needs another host and two cards without the lock bit.
 
 End to end through two running daemons with the cards as normal (bit set, about 50 ppm), the builds interleaved cell by cell, 30 frames of 1024 bytes each way a cell, three rounds:
 

@@ -910,7 +910,7 @@ public sealed partial class OfdmFmBurstCodec
     {
         ArgumentNullException.ThrowIfNull(keyup);
         if (ReadHeaderAt(audio, start, keyup.AcquisitionChannel, keyup.AcquisitionNoise,
-            out byte[] headerBits) is not OfdmFmHeader header)
+            out byte[] headerBits, out _) is not OfdmFmHeader header)
         {
             return null;
         }
@@ -943,30 +943,61 @@ public sealed partial class OfdmFmBurstCodec
         start = expected;
 
         // Where the clock the last burst measured says this one starts, when that is somewhere
-        // else: see OfdmFmKeyupState.ClockShift.
+        // else: see OfdmFmKeyupState.ClockShift. Then where its announced length says.
+        //
+        // A header that reads plainly at either is where the grid says to the sample. One that
+        // reads only with its delay searched for is up to sixteen samples from there, and that
+        // may be the clock (the first follow-on header of a keyup between cards far apart is a
+        // symbol and a half of drift out) or a short silence the host left. The prefixes tell
+        // the two apart: where they put the frame within a few samples of the grid's own place
+        // the grid's is the better, and where they do not, theirs is.
+        //
+        // The acquisition channel is refreshed from a header only once its place is settled: a
+        // header read by search and then set aside must not leave the channel turned to where
+        // it was read.
         int shifted = expected + keyup.ClockShift;
+        (int At, OfdmFmHeader Header, byte[] Bits)? loose = null;
         if (keyup.ClockShift != 0 && shifted >= 0 && shifted + FollowOnHeaderSamples <= audio.Length
-            && ReadFollowOnHeader(audio, shifted, keyup) is OfdmFmHeader moved)
+            && ReadHeaderAt(audio, shifted, keyup.AcquisitionChannel, keyup.AcquisitionNoise,
+                out byte[] movedBits, out bool movedSearched) is OfdmFmHeader moved)
         {
-            start = shifted;
-            return moved;
+            loose = (shifted, moved, movedBits);
+            if (!movedSearched)
+            {
+                return Settled(audio, keyup, loose.Value, out start);
+            }
         }
 
-        if (ReadFollowOnHeader(audio, expected, keyup) is OfdmFmHeader exact)
+        if (loose is null && expected + FollowOnHeaderSamples <= audio.Length
+            && ReadHeaderAt(audio, expected, keyup.AcquisitionChannel, keyup.AcquisitionNoise,
+                out byte[] exactBits, out bool exactSearched) is OfdmFmHeader exact)
         {
-            return exact;
+            loose = (expected, exact, exactBits);
+            if (!exactSearched)
+            {
+                return Settled(audio, keyup, loose.Value, out start);
+            }
         }
 
-        foreach (int boundary in FollowOnStartCandidates(audio, expected))
+        foreach (int boundary in FollowOnStartCandidates(audio, Math.Max(0, shifted), keyup.ClockRate))
         {
             // The prefixes place the boundary itself; the keyup's estimates were made a little
-            // off it, and the header must be read where they were.
-            int aligned = boundary + keyup.Alignment;
+            // off it, and the header must be read where they were. That is on the grid the frame
+            // before handed on, which the clock it measured has moved (ClockShift): the channel
+            // that frame handed on is turned for that grid and no other, and a frame found after
+            // a silence but put on the unmoved grid was a frame's drift off its channel, which
+            // lost frames from 100 ppm.
+            int aligned = boundary + keyup.Alignment + keyup.ClockShift;
+            if (loose is not null && Math.Abs(aligned - loose.Value.At) <= LooseHeaderAgreement)
+            {
+                break;
+            }
+
             for (int i = 0; i <= 2 * FollowOnFineTries; i++)
             {
                 // 0, -1, +1, -2, +2, ...: nearest first.
                 int at = aligned + ((i + 1) / 2 * ((i & 1) == 0 ? 1 : -1));
-                if (at == expected || at < 0 || at + FollowOnHeaderSamples > audio.Length)
+                if (at == expected || at == shifted || at < 0 || at + FollowOnHeaderSamples > audio.Length)
                 {
                     continue;
                 }
@@ -989,25 +1020,40 @@ public sealed partial class OfdmFmBurstCodec
             }
         }
 
-        return null;
+        return loose is null ? null : Settled(audio, keyup, loose.Value, out start);
     }
+
+    /// <summary>Takes a follow-on header at the place it was read, refreshing the keyup's
+    /// acquisition channel from it there.</summary>
+    private OfdmFmHeader Settled(
+        ReadOnlySpan<float> audio, OfdmFmKeyupState keyup, (int At, OfdmFmHeader Header, byte[] Bits) read,
+        out int start)
+    {
+        start = read.At;
+        keyup.AcquisitionChannel = AcquisitionFromHeader(audio, read.At, read.Bits, keyup.AcquisitionNoise);
+        return read.Header;
+    }
+
+    /// <summary>How near the prefixes must put a follow-on frame to where its header read by
+    /// search for the two to be taken as the same place: the prefixes' own accuracy.</summary>
+    private const int LooseHeaderAgreement = 8;
 
     /// <summary>
     /// Samples from <paramref name="start"/> to the symbol boundary nearest it as the prefixes of
     /// the <paramref name="symbols"/> symbols from there place it, within a prefix either way.
     /// </summary>
-    private int BoundaryOffset(ReadOnlySpan<float> audio, int start, int symbols)
+    private int BoundaryOffset(ReadOnlySpan<float> audio, int start, int symbols, double rate, int reach)
     {
         int cp = _parameters.CyclicPrefix;
-        int span = symbols * _parameters.SymbolSamples;
-        int low = Math.Max(-cp, -start);
-        int high = Math.Min(cp, audio.Length - start - span);
+        int span = (symbols * _parameters.SymbolSamples) + (int)Math.Ceiling(Math.Abs(rate) * (symbols + 1));
+        int low = Math.Max(-reach, -start);
+        int high = Math.Min(reach, audio.Length - start - span);
         int best = 0;
         double bestSimilarity = double.NegativeInfinity;
         for (int offset = low; offset <= high; offset++)
         {
             double similarity = PrefixSimilarity(
-                audio, start + offset, cp, _parameters.FftSize, symbols);
+                audio, start + offset, cp, _parameters.FftSize, symbols, rate);
             if (similarity > bestSimilarity)
             {
                 bestSimilarity = similarity;
@@ -1078,7 +1124,7 @@ public sealed partial class OfdmFmBurstCodec
     /// caller applies to each in turn, so a wrong first candidate costs a header read and not the
     /// keyup.</para>
     /// </remarks>
-    internal IReadOnlyList<int> FollowOnStartCandidates(ReadOnlySpan<float> audio, int expected)
+    internal IReadOnlyList<int> FollowOnStartCandidates(ReadOnlySpan<float> audio, int expected, double rate = 0)
     {
         int cp = _parameters.CyclicPrefix;
         int fft = _parameters.FftSize;
@@ -1106,7 +1152,7 @@ public sealed partial class OfdmFmBurstCodec
                 break;
             }
 
-            double similarity = PrefixSimilarity(limited, at, cp, fft, FollowOnFineSymbols);
+            double similarity = PrefixSimilarity(limited, at, cp, fft, FollowOnFineSymbols, rate);
             if (similarity >= SymbolStartThreshold)
             {
                 peaks.Add((s, similarity));
@@ -1133,7 +1179,7 @@ public sealed partial class OfdmFmBurstCodec
             int last = Math.Min(coarse + (cp / 2), audio.Length - reach);
             for (int s = Math.Max(0, coarse - (cp / 2)); s <= last; s++)
             {
-                double similarity = PrefixSimilarity(audio, s, cp, fft, FollowOnFineSymbols);
+                double similarity = PrefixSimilarity(audio, s, cp, fft, FollowOnFineSymbols, rate);
                 if (similarity > best)
                 {
                     best = similarity;
@@ -1154,18 +1200,30 @@ public sealed partial class OfdmFmBurstCodec
     /// scale-free and the ring of a filter against a burst can correlate as well as anything
     /// while being no symbol start at all.</summary>
     private static double PrefixSimilarity(
-        ReadOnlySpan<float> audio, int start, int cp, int fft, int symbols)
+        ReadOnlySpan<float> audio, int start, int cp, int fft, int symbols, double rate = 0)
     {
+        // Between cards whose clocks differ, a prefix's copy is not a transform later in the
+        // audio as it arrived but a transform and the clock's drift over it: four samples short
+        // at 1930 ppm, which for a signal eight kilohertz wide is no correlation at all. So the
+        // copy is looked for where the rate the keyup has measured puts it, and the symbols at
+        // the spacing it gives them.
+        int period = fft + cp;
+        int copy = fft + (int)Math.Round(rate * fft / period);
         double dot = 0;
         double energyA = 0;
         double energyB = 0;
         for (int s = 0; s < symbols; s++)
         {
-            int at = start + (s * (fft + cp));
+            int at = start + (s * period) + (int)Math.Round(rate * s);
+            if (at < 0 || at + copy + cp > audio.Length)
+            {
+                continue;
+            }
+
             for (int k = 0; k < cp; k++)
             {
                 double a = audio[at + k];
-                double b = audio[at + fft + k];
+                double b = audio[at + copy + k];
                 dot += a * b;
                 energyA += a * a;
                 energyB += b * b;
@@ -1713,16 +1771,71 @@ public sealed partial class OfdmFmBurstCodec
                 ? AtDelay(layout, takenState.Channel, takenState.Delay[^1] - shift)
                 : DecisionDirectedEstimate(
                     layout, read, channel, points, ramp, PilotCentre(layout, channel), noise);
-            keyup.PayloadNoise[header.Geometry] = noise;
+
+            // The noise figure a straightened read took again from the straightened sync symbol
+            // is the true one; the one it was given was read through the smear.
+            keyup.PayloadNoise[header.Geometry] = takenState?.Noise ?? noise;
             keyup.Geometry = header.Geometry;
             keyup.ClockRate = takenState?.Rate ?? 0;
 
-            // Measured over the last symbols, which is where the next burst of the keyup takes
-            // its alignment from: over a long burst the clocks drift, and the boundary at the end
-            // is not quite the boundary at the start.
-            int measured = Math.Min(symbols, DecisionDirectedSymbols);
-            keyup.Alignment = -BoundaryOffset(
-                audio, payloadStart + ((symbols - measured) * _parameters.SymbolSamples), measured);
+            // Where the next burst of the keyup takes its alignment from when it is found by
+            // its prefixes: how far the symbol boundary the prefixes give lies from the grid.
+            if (takenState is null)
+            {
+                // Measured over the last symbols: over a long burst the clocks drift, and the
+                // boundary at the end is not quite the boundary at the start.
+                int measured = Math.Min(symbols, DecisionDirectedSymbols);
+                keyup.Alignment = -BoundaryOffset(
+                    audio, payloadStart + ((symbols - measured) * _parameters.SymbolSamples), measured, 0,
+                    _parameters.CyclicPrefix);
+            }
+            else
+            {
+                // A tracked read knows each symbol's delay, so the boundary can be measured where
+                // the measurement is good and referred to where it is wanted. It is measured over
+                // the first symbols and not the last: the search reaches a prefix either way and
+                // a receiver that reads a burst the moment it has all arrived has nothing after
+                // the last symbol to reach into, which clipped the answer by tens of samples
+                // (measured: 12 where 39 was the truth, and the frame after a silence was put
+                // 25 samples off its channel). It is looked for where those symbols have drifted
+                // to, with the prefix's copy taken at the distance the clock puts it. Then it is
+                // carried to the symbol after the last by the delays themselves.
+                int measured = Math.Max(1, Math.Min(symbols - 1, DecisionDirectedSymbols));
+                double mean = 0;
+                for (int s = 0; s < measured; s++)
+                {
+                    mean += takenState.Delay[s];
+                }
+
+                mean /= measured;
+                int lean = (int)Math.Round(mean);
+
+                // Two prefixes either way, where the search was one: a sync symbol from a clock
+                // far out is committed early or late by tens of samples, the read measures its
+                // way from there, and the boundary was 78 samples from the grid where the search
+                // stopped at 64.
+                int offset = BoundaryOffset(
+                    audio, payloadStart + lean, measured, takenState.Rate, 2 * _parameters.CyclicPrefix);
+                keyup.Alignment = -(int)Math.Round(
+                    offset + lean - mean + takenState.Delay[^1] + takenState.Rate);
+            }
+        }
+        else if (!headerInFit && ClockTracking && keyup.ClockRate != 0
+            && keyup.PayloadChannels.TryGetValue(header.Geometry, out (double Re, double Im)[]? held))
+        {
+            // A follow-on frame that did not decode still took its time on the air, and the clock
+            // went on through it. Left alone, the grid stays moved by what the last good frame
+            // measured, which is right for the next frame only if this one was that frame's
+            // length: after a long frame and a short lost one the grid was tens of samples out
+            // and every frame to the end of the keyup went with it (1 of 5 delivered from
+            // 300 ppm). So the hand-on is made as for a frame that decoded, with the drift the
+            // rate predicts over this frame's length in place of a measured one.
+            double drift = keyup.ClockRate * (_headerSymbols + symbols);
+            int shift = (int)Math.Round(drift - keyup.ClockLead + (0.5 * keyup.ClockRate));
+            keyup.Alignment += keyup.ClockShift - (int)Math.Round(drift);
+            keyup.ClockLead += shift - drift;
+            keyup.ClockShift = shift;
+            keyup.PayloadChannels[header.Geometry] = AtDelay(layout, held, drift - shift);
         }
 
         var carrierGain = new double[weight.Length];
@@ -2245,14 +2358,30 @@ public sealed partial class OfdmFmBurstCodec
         int headerStart,
         (double Re, double Im)[] channel,
         double noise,
-        out byte[] decodedBits)
+        out byte[] decodedBits) =>
+        ReadHeaderAt(audio, headerStart, channel, noise, out decodedBits, out _);
+
+    /// <summary>As above, and says whether the header read only once its symbols' delays had
+    /// been looked for: a header some samples off the channel it was read against.</summary>
+    private OfdmFmHeader? ReadHeaderAt(
+        ReadOnlySpan<float> audio,
+        int headerStart,
+        (double Re, double Im)[] channel,
+        double noise,
+        out byte[] decodedBits,
+        out bool searched)
     {
         // As it has always been read first. Then, if that fails its CRC, once more with each
         // header symbol's delay looked for and turned out: see HeaderDelay.
+        searched = false;
         OfdmFmHeader? plain = ReadHeaderWith(audio, headerStart, channel, noise, searched: false, out decodedBits);
-        return plain is not null || !ClockTracking
-            ? plain
-            : ReadHeaderWith(audio, headerStart, channel, noise, searched: true, out decodedBits);
+        if (plain is not null || !ClockTracking)
+        {
+            return plain;
+        }
+
+        searched = true;
+        return ReadHeaderWith(audio, headerStart, channel, noise, searched: true, out decodedBits);
     }
 
     private OfdmFmHeader? ReadHeaderWith(

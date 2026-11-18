@@ -390,11 +390,11 @@ public sealed partial class OfdmFmBurstCodec
 
             double at = offset + centre;
             double predicted = previousDelay + (rate * (at - previousAt) / period);
-            // A follow-on burst is found by a search that is good to a few samples, not by a sync
-            // symbol, so its first symbol is looked for twice as far from the prediction.
+            // A follow-on burst is found by where the frame before ended or by a search, not by a
+            // sync symbol, so its first symbol is looked for further from the prediction.
             delay[s] = MeasureDelay(
                 layout, raw, channel, null, carrierBits, tables, predicted, iterations: 4, search: true,
-                searchSteps: !estimateInAudio && s == 0 ? 2 * SearchSteps : SearchSteps);
+                searchSteps: !estimateInAudio && s == 0 ? FollowOnSearchSteps : SearchSteps);
             double measuredRate = (delay[s] - previousDelay) * period / (at - previousAt);
             rate = (0.5 * rate) + (0.5 * measuredRate);
             previousAt = at;
@@ -892,7 +892,26 @@ public sealed partial class OfdmFmBurstCodec
         weight = MeasuredNoiseWeighting
             ? NoiseWeights(layout, read, channel, carrierBits, tables, points)
             : PowerWeights(channel);
-        next = state with { Resampled = resampled, KnotAt = curveAt, KnotDelay = curveDelay, Channel = channel };
+
+        // The delays handed on to the next frame of a keyup are this pass's, not the pass's that
+        // failed: where the curve was measured again, each symbol's delay moves by what the
+        // curve moved at its centre.
+        double[] delays = state.Delay;
+        if (!ReferenceEquals(curveAt, state.KnotAt))
+        {
+            int centre = _parameters.CyclicPrefix + (_parameters.FftSize / 2);
+            delays = new double[state.Delay.Length];
+            for (int s = 0; s < delays.Length; s++)
+            {
+                double at = state.EstimateStart + state.First + (s * period) + centre;
+                delays[s] = state.Delay[s] + CurveAt(curveAt, curveDelay, at) - CurveAt(state.KnotAt, state.KnotDelay, at);
+            }
+        }
+
+        next = state with
+        {
+            Resampled = resampled, KnotAt = curveAt, KnotDelay = curveDelay, Channel = channel, Delay = delays,
+        };
         return read;
     }
 
@@ -1077,6 +1096,21 @@ public sealed partial class OfdmFmBurstCodec
 
     /// <summary>Steps either side of the prediction the delay search tries.</summary>
     private const int SearchSteps = 10;
+
+    /// <summary>Steps either side of the prediction a follow-on burst's first symbol is searched
+    /// over: sixteen samples.</summary>
+    /// <remarks>
+    /// A follow-on burst is not placed by a sync symbol. Where the frame before ended it is
+    /// placed to a sample, but a host may leave silence between frames, and then it is placed by
+    /// a header that reads some samples off, or by its cyclic prefixes, which are good to a few
+    /// samples and are referred to an alignment that is itself measured from prefixes. Between
+    /// them those were eight samples out on a clean signal. The pilot-fitted reads took that in
+    /// their stride; a search of four samples did not (2 frames of 6 delivered across a silence
+    /// of ten samples, or of 1500, with no clock difference at all). Looking this far costs
+    /// nothing at the cliff: 12, 36, 73 and 79 frames of 96 with either reach, in noise where
+    /// about half of all frames are lost.
+    /// </remarks>
+    private const int FollowOnSearchSteps = 8 * SearchSteps;
 
     /// <summary>The search's step, in samples: fine enough that the fit which follows starts
     /// inside every carrier's decision region.</summary>

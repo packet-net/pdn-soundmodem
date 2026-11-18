@@ -278,7 +278,7 @@ int Sim()
 int Keyup()
 {
     // sm-ofdmlab keyup --mode RX-PRESET [--tx TX-PRESET] --ppm 200 [--zigzag 300] [--snr 30]
-    //                  [--frames 8] [--bytes 1024] [--seeds 1] [--quiet]
+    //                  [--frames 8] [--bytes 1024] [--seeds 1] [--gap SAMPLES] [--quiet]
     // A keyup of several frames from one station (the follow-on preset unless told otherwise),
     // heard through a clock difference, a clock that zig-zags and noise, by another.
     int bytes = int.Parse(options.GetValueOrDefault("bytes", "1024"));
@@ -287,6 +287,7 @@ int Keyup()
     double ppm = double.Parse(options.GetValueOrDefault("ppm", "200"));
     double zigzag = double.Parse(options.GetValueOrDefault("zigzag", "0"));
     double snr = double.Parse(options.GetValueOrDefault("snr", "100"));
+    int gap = int.Parse(options.GetValueOrDefault("gap", "0"));
     bool quiet = options.ContainsKey("quiet") || positional.Contains("--quiet");
     string txMode = options.GetValueOrDefault("tx", "ofdm-fm-8k-follow");
     OfdmFmParameters tx = OfdmFmPresets.ByMode[txMode];
@@ -315,6 +316,11 @@ int Keyup()
         {
             var frame = new byte[bytes];
             new Random((1000 * seed) + 800 + i).NextBytes(frame);
+            if (i > 0 && gap > 0)
+            {
+                audio.AddRange(new float[gap]);
+            }
+
             audio.AddRange(sender.Modulate(frame, i == 0 ? 300 : OfdmFmModem.HostLeadInWithinKeyupMs));
         }
 
