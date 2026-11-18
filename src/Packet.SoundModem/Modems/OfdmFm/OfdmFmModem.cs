@@ -655,8 +655,33 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
             Report(burst);
         }
 
+        // That reasoning is about the pilot-fitted reads, which take the burst's timing from where
+        // the sync committed. The clock-tracked read does not: it measures every symbol's delay
+        // itself, so the same burst read again a sample further on is very nearly the same read.
+        // Not exactly: measured on 320 recorded bursts with noise added until one in eight
+        // decoded, the full budget of four attempts decoded 42, two attempts 35 and one 33, each
+        // attempt being one more draw at the cliff. But every attempt is a full decode, and
+        // measured on a Raspberry Pi 4 a 1900-byte burst at rate 7/8 that fails all four cost
+        // 0.71 s against 0.57 s on the air; a receive thread that takes longer over a burst than
+        // the burst took to arrive falls behind its sound card and loses the bursts after it.
+        // Two attempts is what fits inside the air time with room to spare. After the second the
+        // hunt resumes past this burst's sync symbol: far enough that the same sync is not
+        // committed again, and no further, so a burst that starts inside this one's announced
+        // length is still found.
+        if (burst?.Clock is not null && _attemptsThisRun >= TrackedReadAttempts)
+        {
+            return Abandon(SearchPositionOf(_burstAt) + _parameters.SymbolSamples);
+        }
+
         return Abandon(SearchPositionOf(_burstAt) + 1);
     }
+
+    /// <summary>
+    /// How many times one run of correlated samples may be committed and read when the read is
+    /// the clock-tracked one. Internal and settable so an offline tool can repeat the measurement
+    /// that chose it; a station never changes it.
+    /// </summary>
+    internal static int TrackedReadAttempts { get; set; } = 2;
 
     /// <summary>
     /// Arms the follow-on expectation at <paramref name="at"/> with the keyup state a decoded

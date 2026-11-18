@@ -45,6 +45,7 @@ for (int i = 1; i < args.Length; i++)
 string mode = options.GetValueOrDefault("mode", "ofdm-fm-8k");
 OfdmFmBurstCodec.DecodeFeedbackPasses = int.Parse(options.GetValueOrDefault("feedback-passes", "1"));
 OfdmFmBurstCodec.OlderReadsAfterTracked = options.GetValueOrDefault("older-reads", "off") == "on";
+OfdmFmModem.TrackedReadAttempts = int.Parse(options.GetValueOrDefault("attempts", "2"));
 
 // Receiver switches, for telling apart what each stage is worth: --off tracking,ddchannel,noiseweight
 foreach (string off in options.GetValueOrDefault("off", "").Split(',', StringSplitOptions.RemoveEmptyEntries))
