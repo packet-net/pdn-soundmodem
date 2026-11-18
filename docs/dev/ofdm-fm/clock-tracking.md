@@ -69,7 +69,7 @@ End to end through two running daemons with the cards as normal (bit set, about 
 | `ofdm-fm-8k-adaptive`, radio1 to radio2 | 83 of 90 | 90 of 90 |
 | `ofdm-fm-8k-adaptive`, radio2 to radio1 | 77 of 90 | 90 of 90 |
 
-A last run of the finished build on all four 8 kHz presets, 30 frames each way: 240 of 240.
+A last run of the finished build on all four 8 kHz presets, 30 frames each way, after the review fixes above: 480 of 480.
 
 ## Two cards without "MIC PLL Adjust": 1930 ppm
 
