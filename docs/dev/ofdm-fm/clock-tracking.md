@@ -75,7 +75,7 @@ A last run of the finished build on all four 8 kHz presets, 30 frames each way, 
 
 The CM108B's EEPROM has a bit that locks its microphone clock to the USB frame rate. Both bench boards have it set. With it cleared on both (word 0x2B from 7A12 to 7A02) and the boards power-cycled, measured 18 November 2026:
 
-- **The two cards run 1700 to 1930 ppm apart, not the 520 ppm the bench factsheet quotes**, and the figure moves: 1890 ppm just after power-up, 1690 ppm ten minutes later.
+- **The two cards ran 1410 to 1930 ppm apart, and the figure moves**: 1890 ppm three minutes after power-up, 1690 ppm ten minutes later, 1800 to 1470 ppm across thirty seconds of carrier. The bench factsheet measured about 520 ppm on the same two boards three days before. The capture clock without the bit is not a fixed offset; it coasts.
 - **The clock is a little steadier, not steady.** Within a two-minute round the rate from burst to burst spread by 12 to 31 ppm, drift included, against 25 to 39 ppm with the bit set. Inside a burst the median wander is the same 10 microseconds with fewer large excursions (nine in ten under 13 microseconds, against 20 to 31). Inside one long transmission the rate still steps by 50 to 100 ppm from frame to frame, so the zig-zag is not the microphone PLL's doing alone.
 - **The receiver as it stood decodes nothing**: 0 of 600 recorded bursts, 0 of 320 frames live.
 - **This read decodes what it decodes with the bit set.** Recorded bursts, drive from full to -9 dB: `ofdm-fm-8k` 240 of 240 and `ofdm-fm-8k-r78` 237 of 240 (239 of 240 on the same design with the bit set), the other six cells 120 of 120. Raw error rate 0.13% either way.
