@@ -77,28 +77,31 @@ public sealed partial class OfdmFmBurstCodec
     /// <remarks>
     /// <para><b>Why this exists.</b> Measured on the two-Tait bench in November 2026 against the
     /// samples that were actually played: the rate between one CM108B's playback clock and
-    /// another's capture clock is not a constant. It sits tens of parts per million either side
-    /// of its mean from one burst to the next, and bends inside a burst. A rate error does two
+    /// another's capture clock is not a constant. Inside one burst it was anywhere from 278 ppm
+    /// slow to 312 ppm fast, a different figure for every burst, and it bends inside a burst by
+    /// hundreds of parts per million for tens of milliseconds at a time. A rate error does two
     /// things to an OFDM symbol. It tilts the phase across the band by an amount that grows
     /// through the burst, which a rotation per symbol can undo. And it slides the signal through
     /// the transform window WITHIN each symbol, which smears every carrier into its neighbours
-    /// and which no rotation after the transform can undo. The second is what the pilot fits
-    /// before this left on the table: the same recordings read with the measured clock taken out
-    /// first spent a quarter of the code's correcting power that the plain read did.</para>
+    /// and which no rotation after the transform can undo. Of 431 recorded bursts the pilot fits
+    /// lost, 254 decode once the measured clock is taken out of the audio first.</para>
     /// <para><b>How.</b> A delay of d samples turns carrier k by 2 pi k d / N, through the origin:
     /// an FM audio path has no carrier offset, so there is one unknown per symbol, not two. It is
     /// measured from every carrier of every symbol, not from the pilots alone: the header's
     /// carriers are known once its CRC has passed, and a payload carrier is known as soon as it
     /// has been decided, which at any signal a dense constellation can be read at is nearly
-    /// always right. Three hundred carriers measure a symbol's delay to a few nanoseconds where
-    /// ten pilots could not tell it from noise. The symbols are walked in order, each predicted
-    /// from the ones before, so the decisions are taken on carriers already turned to within a
-    /// fraction of a decision region. The delays then become a curve through the burst, the
-    /// audio is resampled along it, and the channel estimate and every symbol are read again
-    /// from the resampled audio.</para>
-    /// <para><b>The payload CRC still arbitrates.</b> This read is tried first and the older
-    /// ones after it, so a burst the older reads would have copied is never lost to this one.
-    /// </para>
+    /// always right. Three hundred carriers measure a symbol's delay to a few thousandths of a
+    /// sample where ten pilots could not tell it from noise. The symbols are walked in order,
+    /// each predicted from the ones before and then searched for, so the decisions are taken on
+    /// carriers already turned to within a fraction of a decision region. The delays then become
+    /// a curve through the burst, the audio is resampled along it, the curve is measured again
+    /// inside each symbol, and the channel estimate and every symbol are read again from the
+    /// resampled audio.</para>
+    /// <para><b>The payload CRC arbitrates.</b> The caller decodes what this returns, and on a
+    /// failure reads it again against the decoder's own output (<see cref="Polished"/>) and then
+    /// once more on channel-power weights. The pilot-fitted reads are not tried after it; see
+    /// <see cref="OlderReadsAfterTracked"/> for the measurement behind that.
+    /// docs/dev/ofdm-fm/clock-tracking.md has the whole record.</para>
     /// </remarks>
     /// <param name="audio">The audio the burst is in.</param>
     /// <param name="layout">The payload's layout.</param>
