@@ -48,6 +48,12 @@ public sealed class OfdmFmKeyupState
     /// starts there. Zero when the last burst was not read that way.</summary>
     internal int ClockShift { get; set; }
 
+    /// <summary>How far, in samples, the grid has moved beyond what the signal itself moved
+    /// since the keyup's last full burst: the sum of every <see cref="ClockShift"/> less the
+    /// sum of the drift measured. Carried so that the shifts cannot add up to a creep of the
+    /// read window through a long keyup of follow-on frames.</summary>
+    internal double ClockLead { get; set; }
+
     /// <summary>
     /// Samples from a symbol boundary as the symbols' own cyclic prefixes place it to the position
     /// this keyup's estimates are aligned to: negative when the sync search committed early, which

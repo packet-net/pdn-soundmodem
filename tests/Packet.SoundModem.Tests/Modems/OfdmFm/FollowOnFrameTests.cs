@@ -252,6 +252,56 @@ public class FollowOnFrameTests
     }
 
     /// <summary>
+    /// A long keyup of follow-on frames is read as well at its end as at its start.
+    /// </summary>
+    /// <remarks>
+    /// Everything a follow-on frame is read with comes from the frame before, so anything the
+    /// hand-on gets slightly wrong is wrong again at the next frame, and a keyup is as long as
+    /// the queue behind it. Two things did add up, both found on air with twenty frames to the
+    /// keyup and neither visible in eight. The grid was moved on by half a symbol's drift at
+    /// every frame where it was owed once, which at 1600 ppm walked the read window out of the
+    /// cyclic prefix by the fifteenth frame. And the channel refinement, applied to its own
+    /// result frame after frame, smoothed across carriers with a flat run whose response is
+    /// negative for some ripple, so that ripple grew by a fifth a frame whatever the clock.
+    /// Either one took the raw error rate from 0.1% at the first frame to 4% at the eighteenth.
+    /// </remarks>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(50)]
+    [InlineData(1930)]
+    [InlineData(-1930)]
+    public void A_Long_Follow_On_Keyup_Ends_As_Clean_As_It_Starts(int ppm)
+    {
+        var sender = new OfdmFmModem(
+            "ofdm-fm:tx", OfdmFmPresets.Follow8k, _ => { }, geometryTable: OfdmFmPresets.Table);
+        var delivered = new List<byte[]>();
+        var errors = new List<double>();
+        var receiver = new OfdmFmModem(
+            "ofdm-fm:rx", OfdmFmPresets.Follow8k, delivered.Add, geometryTable: OfdmFmPresets.Table);
+        receiver.BurstHeard += burst => errors.Add(burst.PreFecBitErrorRate ?? 1);
+        byte[][] frames = Enumerable.Range(0, 30).Select(i => Frame(1024, 900 + i)).ToArray();
+
+        float[] clean = [.. Keyup(sender, frames).SelectMany(b => b)];
+        float[] keyup = [.. new float[4096], .. clean, .. new float[OfdmFmPresets.Follow8k.SymbolSamples * 6]];
+        float[] heard = ClockSkewTests.WithNoise(
+            ClockSkewTests.Resample(keyup, 1.0 + (ppm * 1e-6)), clean, 28, 77);
+
+        Stream(receiver, [heard], block: 960);
+
+        delivered.Should().HaveCount(frames.Length, "{0} ppm across a keyup of {1} frames", ppm, frames.Length);
+        for (int i = 0; i < frames.Length; i++)
+        {
+            delivered[i].Should().Equal(frames[i]);
+        }
+
+        errors.Should().HaveCount(frames.Length);
+        double start = errors.Take(5).Average();
+        double end = errors.TakeLast(5).Average();
+        end.Should().BeLessThan(
+            (2 * start) + 0.002, "the last frames of the keyup ({0:P2} raw errors) against the first ({1:P2})", end, start);
+    }
+
+    /// <summary>
     /// A station on the default 8 kHz preset, which sends no follow-on frames of its own, hearing
     /// a keyup from one on the follow-on preset through a clock difference.
     /// </summary>

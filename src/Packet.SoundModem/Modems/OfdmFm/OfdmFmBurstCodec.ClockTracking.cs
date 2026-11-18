@@ -1322,11 +1322,19 @@ public sealed partial class OfdmFmBurstCodec
     /// carriers.
     /// </summary>
     /// <remarks>
-    /// The estimate symbol is one look at the channel and carries one symbol's noise, which
+    /// <para>The estimate symbol is one look at the channel and carries one symbol's noise, which
     /// zero forcing then adds to every payload symbol. The payload is several more looks at the
     /// same channel for nothing. A wrong decision pulls its carrier's average the wrong way, so
     /// the correction is a ratio near one that is averaged over the symbols and then over a run
-    /// of carriers, where the channel is smooth and the decision errors are not.
+    /// of carriers, where the channel is smooth and the decision errors are not.</para>
+    /// <para>The run of carriers is tapered, and has to be. Through a keyup of follow-on frames
+    /// this is applied again at every frame to what the frame before left, so whatever part of
+    /// the estimate's error the smoothing passes with its sign turned over is not corrected but
+    /// added to, frame after frame. A flat run of nine does that to ripple of about six
+    /// carriers' period, by a fifth each time, and it showed on air as a keyup whose frames
+    /// lost half a decibel and then two decibels each (28 dB at the first frame, 18 dB at the
+    /// twentieth, with the grid held still). A triangle passes nothing with its sign turned
+    /// over, so each frame can only leave the error where it was or reduce it.</para>
     /// </remarks>
     private static (double Re, double Im)[] RefineChannel(
         Layout layout,
@@ -1380,9 +1388,10 @@ public sealed partial class OfdmFmBurstCodec
             double total = 0;
             for (int k = Math.Max(0, c - HalfSpan); k <= Math.Min(n - 1, c + HalfSpan); k++)
             {
-                re += ratioRe[k] + 1;
-                im += ratioIm[k];
-                total += power[k] + 1;
+                int taper = HalfSpan + 1 - Math.Abs(k - c);
+                re += taper * (ratioRe[k] + 1);
+                im += taper * ratioIm[k];
+                total += taper * (power[k] + 1);
             }
 
             re /= total;

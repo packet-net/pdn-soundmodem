@@ -1685,13 +1685,30 @@ public sealed partial class OfdmFmBurstCodec
             // second at 800 ppm, which is further than the search for the next frame's header
             // was built to look. So the next frame's grid is moved by the whole samples of that,
             // the channel is turned by what is left, and the header is looked for there first.
+            //
+            // The grid must not gain on the signal from frame to frame, though. The channel handed
+            // on is on the new grid, so the new grid is where every symbol of the next frame is
+            // read from, and whatever the grid has moved beyond what the signal moved is how far
+            // the read window has left the place the sync symbol put it. Half a symbol's drift
+            // of lead is wanted once (the delay is measured at the last symbol's centre and the
+            // burst ends half a symbol on); added at every frame it is a creep, 1.7 samples a
+            // frame with the cards 1600 ppm apart, which walked the window out of the cyclic
+            // prefix by the fifteenth frame of a keyup (measured on air: 28 dB at the first frame,
+            // 17 dB at the eighteenth, the last two frames of twenty lost). So the lead is carried,
+            // and each frame moves the grid only by what brings it back to that half symbol.
             int shift = 0;
+            double lead = 0;
             if (takenState is not null)
             {
-                shift = (int)Math.Round(takenState.Delay[^1] + (0.5 * takenState.Rate));
+                double drift = takenState.Delay[^1];
+                double carried = headerInFit ? 0 : keyup.ClockLead;
+                shift = (int)Math.Round(drift - carried + (0.5 * takenState.Rate));
+                lead = carried + shift - drift;
             }
 
             keyup.ClockShift = shift;
+            keyup.ClockLead = lead;
+
             keyup.PayloadChannels[header.Geometry] = takenState is not null
                 ? AtDelay(layout, takenState.Channel, takenState.Delay[^1] - shift)
                 : DecisionDirectedEstimate(
