@@ -45,11 +45,19 @@ DATADIR=/usr/share/pdn-soundmodem
 UNITDIR=/usr/lib/systemd/system
 UDEVDIR=/usr/lib/udev/rules.d
 
+# ReadyToRun: the daemon's own code is compiled ahead of time as well as the runtime's. Without
+# it every code path is compiled the first time it runs, and a modem's decode path first runs
+# when the first frame arrives: measured on a Raspberry Pi 4 (2026-11-18, OFDM-FM, a 20-frame
+# transmission starting 14 s after the daemon did), the second frame was logged 1.5 s after the
+# first where the frames were 0.57 s apart on the air, the 500 ms capture buffer overran, and 2 to
+# 6 of the 20 frames were lost - in 6 starts of 6. Built this way: none lost in 6 of 6. It costs
+# about 5 MB of package.
 dotnet publish "$ROOT/src/Packet.SoundModem.Daemon/Packet.SoundModem.Daemon.csproj" \
   --configuration Release \
   --runtime "$RID" \
   --self-contained true \
   -p:PublishSingleFile=true \
+  -p:PublishReadyToRun=true \
   -p:Version="$VERSION" \
   -p:DebugType=none \
   -p:GenerateDocumentationFile=false \
