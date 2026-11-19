@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>sm-ofdmlab</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
+    <!-- The simulated FM link, for the regime a bench at one signal level cannot reach. -->
+    <PackageReference Include="M0LTE.FmChannel" />
+  </ItemGroup>
+
+</Project>

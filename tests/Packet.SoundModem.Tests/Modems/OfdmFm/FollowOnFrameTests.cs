@@ -202,6 +202,251 @@ public class FollowOnFrameTests
         }
     }
 
+    /// <summary>
+    /// A keyup between two stations on the follow-on preset, through clock differences from the
+    /// ordinary to the 1930 ppm of two CM108B cards without their "MIC PLL Adjust" bit, in
+    /// noise.
+    /// </summary>
+    /// <remarks>
+    /// A follow-on frame has no sync symbol, no preamble and no estimate symbol: it is found
+    /// where the frame before ended and read against the channel that frame handed on. Both
+    /// depend on the clock. The frame before ends tens of samples away from where its announced
+    /// length says, further than the search for the next header was built to look, and the
+    /// channel has to be at the last symbol's timing. The clock-tracked read measures both and
+    /// hands them on (see <c>OfdmFmKeyupState.ClockShift</c>); before it did, the pilot-fitted
+    /// reads lost every follow-on frame from 500 ppm.
+    /// </remarks>
+    [Theory]
+    [InlineData(100)]
+    [InlineData(-500)]
+    [InlineData(1000)]
+    [InlineData(1930)]
+    [InlineData(-1930)]
+    [InlineData(2500)]
+    [InlineData(-2500)]
+    public void A_Follow_On_Keyup_Is_Read_By_The_Tracked_Read_Whatever_The_Clock(int ppm)
+    {
+        var sender = new OfdmFmModem(
+            "ofdm-fm:tx", OfdmFmPresets.Follow8k, _ => { }, geometryTable: OfdmFmPresets.Table);
+        var delivered = new List<byte[]>();
+        var readings = new List<string>();
+        var receiver = new OfdmFmModem(
+            "ofdm-fm:rx", OfdmFmPresets.Follow8k, delivered.Add, geometryTable: OfdmFmPresets.Table);
+        receiver.BurstHeard += burst => readings.Add((burst.FollowOn ? "follow-on " : "full ") + burst.Reading);
+        byte[][] frames = Enumerable.Range(0, 8).Select(i => Frame(1024, 800 + i)).ToArray();
+
+        float[] clean = [.. Keyup(sender, frames).SelectMany(b => b)];
+        float[] keyup = [.. new float[4096], .. clean, .. new float[OfdmFmPresets.Follow8k.SymbolSamples * 6]];
+        float[] heard = ClockSkewTests.WithNoise(
+            ClockSkewTests.Resample(keyup, 1.0 + (ppm * 1e-6)), clean, 28, 99);
+
+        Stream(receiver, [heard], block: 960);
+
+        delivered.Should().HaveCount(frames.Length, "{0} ppm across a keyup of {1} frames", ppm, frames.Length);
+        for (int i = 0; i < frames.Length; i++)
+        {
+            delivered[i].Should().Equal(frames[i]);
+        }
+
+        readings.Count(r => r.StartsWith("follow-on ", StringComparison.Ordinal)).Should().Be(frames.Length - 1);
+        readings.Should().OnlyContain(r => r.EndsWith("tracked", StringComparison.Ordinal)
+            || r.EndsWith("polished", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A long keyup of follow-on frames is read as well at its end as at its start.
+    /// </summary>
+    /// <remarks>
+    /// Everything a follow-on frame is read with comes from the frame before, so anything the
+    /// hand-on gets slightly wrong is wrong again at the next frame, and a keyup is as long as
+    /// the queue behind it. Two things did add up, both found on air with twenty frames to the
+    /// keyup and neither visible in eight. The grid was moved on by half a symbol's drift at
+    /// every frame where it was owed once, which at 1600 ppm walked the read window out of the
+    /// cyclic prefix by the fifteenth frame. And the channel refinement, applied to its own
+    /// result frame after frame, smoothed across carriers with a flat run whose response is
+    /// negative for some ripple, so that ripple grew by a fifth a frame whatever the clock.
+    /// Together they took the raw error rate from 0.1% at the first frame to 5% at the
+    /// eighteenth.
+    /// </remarks>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(50)]
+    [InlineData(1930)]
+    [InlineData(-1930)]
+    public void A_Long_Follow_On_Keyup_Ends_As_Clean_As_It_Starts(int ppm)
+    {
+        var sender = new OfdmFmModem(
+            "ofdm-fm:tx", OfdmFmPresets.Follow8k, _ => { }, geometryTable: OfdmFmPresets.Table);
+        var delivered = new List<byte[]>();
+        var errors = new List<double>();
+        var receiver = new OfdmFmModem(
+            "ofdm-fm:rx", OfdmFmPresets.Follow8k, delivered.Add, geometryTable: OfdmFmPresets.Table);
+        receiver.BurstHeard += burst => errors.Add(burst.PreFecBitErrorRate ?? 1);
+        byte[][] frames = Enumerable.Range(0, 30).Select(i => Frame(1024, 900 + i)).ToArray();
+
+        float[] clean = [.. Keyup(sender, frames).SelectMany(b => b)];
+        float[] keyup = [.. new float[4096], .. clean, .. new float[OfdmFmPresets.Follow8k.SymbolSamples * 6]];
+        float[] heard = ClockSkewTests.WithNoise(
+            ClockSkewTests.Resample(keyup, 1.0 + (ppm * 1e-6)), clean, 28, 77);
+
+        Stream(receiver, [heard], block: 960);
+
+        delivered.Should().HaveCount(frames.Length, "{0} ppm across a keyup of {1} frames", ppm, frames.Length);
+        for (int i = 0; i < frames.Length; i++)
+        {
+            delivered[i].Should().Equal(frames[i]);
+        }
+
+        errors.Should().HaveCount(frames.Length);
+        double start = errors.Take(5).Average();
+        double end = errors.TakeLast(5).Average();
+        end.Should().BeLessThan(
+            (2 * start) + 0.002, "the last frames of the keyup ({0:P2} raw errors) against the first ({1:P2})", end, start);
+    }
+
+    /// <summary>
+    /// A keyup whose frames have silence between them, as a host that drains its sound card
+    /// between frames plays them, heard through a clock difference.
+    /// </summary>
+    /// <remarks>
+    /// <para>A frame that is not where the one before ended is found by its header a few samples
+    /// off, or by its symbols' cyclic prefixes, and then has to be read on the grid the frame
+    /// before handed its channel on for. Four things were wrong with that on the 8 kHz preset,
+    /// the first two with no clock difference at all (2 frames of 6 delivered before this read
+    /// existed):</para>
+    /// <para>the alignment the prefixes are referred to was measured over a burst's last symbols,
+    /// where a receiver that reads a burst the moment it has arrived has no audio to search into,
+    /// and came out tens of samples short; a frame so found is placed to within eight samples or
+    /// so, and its first symbol was looked for over four; the grid has been moved by what the
+    /// clock measured and the frame was put on the unmoved one, which lost frames from 100 ppm;
+    /// and between cards far apart a prefix's copy is not a transform later in the audio but
+    /// some samples short of it, so the prefixes found nothing at all from about 1000 ppm.</para>
+    /// </remarks>
+    [Theory]
+    [InlineData(0, 1500)]
+    [InlineData(100, 1500)]
+    [InlineData(300, 1500)]
+    [InlineData(-300, 1500)]
+    [InlineData(1000, 1500)]
+    [InlineData(1930, 1500)]
+    [InlineData(-1930, 1500)]
+    [InlineData(0, 10)]
+    [InlineData(300, 10)]
+    [InlineData(50, 17)]
+    [InlineData(-300, 40)]
+    [InlineData(0, 4200)]
+    public void A_Keyup_With_Silence_Between_Its_Frames_Is_Read_Through_A_Clock_Difference(int ppm, int gap)
+    {
+        var sender = new OfdmFmModem(
+            "ofdm-fm:tx", OfdmFmPresets.Follow8k, _ => { }, geometryTable: OfdmFmPresets.Table);
+        var delivered = new List<byte[]>();
+        var receiver = new OfdmFmModem(
+            "ofdm-fm:rx", OfdmFmPresets.Follow8k, delivered.Add, geometryTable: OfdmFmPresets.Table);
+        byte[][] frames = Enumerable.Range(0, 6).Select(i => Frame(1024, 700 + i)).ToArray();
+
+        float[] clean = [.. KeyupWithGaps(sender, frames, _ => gap).SelectMany(b => b)];
+        float[] keyup = [.. new float[4096], .. clean, .. new float[OfdmFmPresets.Follow8k.SymbolSamples * 6]];
+        float[] heard = ClockSkewTests.WithNoise(
+            ClockSkewTests.Resample(keyup, 1.0 + (ppm * 1e-6)), clean, 28, 55);
+
+        Stream(receiver, [heard], block: 960);
+
+        delivered.Should().HaveCount(frames.Length, "{0} ppm, {1} samples of silence between frames", ppm, gap);
+        for (int i = 0; i < frames.Length; i++)
+        {
+            delivered[i].Should().Equal(frames[i]);
+        }
+    }
+
+    /// <summary>
+    /// A follow-on frame that is lost, after a frame of another length, costs that frame and not
+    /// the rest of the keyup.
+    /// </summary>
+    /// <remarks>
+    /// The grid the next frame is read on is moved by what the clock did over the frame before.
+    /// A frame whose payload fails measured nothing to move it by, and left alone the grid kept
+    /// the move the last good frame earned, a long one's where a short one's was owed. Every
+    /// frame after it was then tens of samples off its channel.
+    /// </remarks>
+    [Theory]
+    [InlineData(300)]
+    [InlineData(800)]
+    [InlineData(1930)]
+    [InlineData(-1930)]
+    public void A_Lost_Follow_On_Frame_Of_Another_Length_Costs_Only_Itself(int ppm)
+    {
+        var sender = new OfdmFmModem(
+            "ofdm-fm:tx", OfdmFmPresets.Follow8k, _ => { }, geometryTable: OfdmFmPresets.Table);
+        var delivered = new List<byte[]>();
+        var receiver = new OfdmFmModem(
+            "ofdm-fm:rx", OfdmFmPresets.Follow8k, delivered.Add, geometryTable: OfdmFmPresets.Table);
+        byte[][] frames =
+        [
+            Frame(1900, 600), Frame(300, 601), Frame(300, 602), Frame(300, 603), Frame(300, 604), Frame(300, 605),
+        ];
+
+        // The second frame's payload, wrecked from its second symbol on; its header is left.
+        List<float[]> bursts = Keyup(sender, frames);
+        int header = new OfdmFmBurstCodec(OfdmFmPresets.Follow8k, OfdmFmPresets.Table).FollowOnHeaderSamples;
+        int from = header + OfdmFmPresets.Follow8k.SymbolSamples;
+        Array.Clear(bursts[1], from, bursts[1].Length - from);
+
+        float[] clean = [.. bursts.SelectMany(b => b)];
+        float[] keyup = [.. new float[4096], .. clean, .. new float[OfdmFmPresets.Follow8k.SymbolSamples * 6]];
+        float[] heard = ClockSkewTests.WithNoise(
+            ClockSkewTests.Resample(keyup, 1.0 + (ppm * 1e-6)), clean, 28, 56);
+
+        Stream(receiver, [heard], block: 960);
+
+        delivered.Should().HaveCount(frames.Length - 1, "{0} ppm, the second frame of six lost", ppm);
+        delivered[0].Should().Equal(frames[0]);
+        for (int i = 2; i < frames.Length; i++)
+        {
+            delivered[i - 1].Should().Equal(frames[i]);
+        }
+    }
+
+    /// <summary>
+    /// A station on the default 8 kHz preset, which sends no follow-on frames of its own, hearing
+    /// a keyup from one on the follow-on preset through a clock difference.
+    /// </summary>
+    /// <remarks>
+    /// The two presets differ only in that flag, so on the air this is an ordinary pairing. The
+    /// first frame of the keyup is a full burst and is read by the clock-tracked read, whose
+    /// symbols come from resampled audio with their delays already out. The channel handed on
+    /// for the follow-on frames has to be put back at the last symbol's timing in the audio as it
+    /// arrived; left at the estimate symbol's, every follow-on frame of the keyup was lost from
+    /// 200 ppm (6 of 24 frames delivered where the pilot-fitted reads delivered 24).
+    /// </remarks>
+    [Theory]
+    [InlineData(200)]
+    [InlineData(300)]
+    [InlineData(-300)]
+    public void A_Station_That_Sends_No_Follow_On_Frames_Still_Reads_Them_Through_A_Clock_Difference(int ppm)
+    {
+        var sender = new OfdmFmModem(
+            "ofdm-fm:tx", OfdmFmPresets.Follow8k, _ => { }, geometryTable: OfdmFmPresets.Table);
+        var delivered = new List<byte[]>();
+        var receiver = new OfdmFmModem(
+            "ofdm-fm:rx", OfdmFmPresets.Default8k, delivered.Add, geometryTable: OfdmFmPresets.Table);
+        byte[][] frames = Enumerable.Range(0, 4).Select(i => Frame(1024, 800 + i)).ToArray();
+
+        float[] keyup =
+        [
+            .. Keyup(sender, frames).SelectMany(b => b),
+            .. new float[OfdmFmPresets.Default8k.SymbolSamples * 6],
+        ];
+        float[] heard = ClockSkewTests.Resample(keyup, 1.0 + (ppm * 1e-6));
+
+        Stream(receiver, [heard], block: 960);
+
+        delivered.Should().HaveCount(frames.Length, "{0} ppm across a keyup of {1} frames", ppm, frames.Length);
+        for (int i = 0; i < frames.Length; i++)
+        {
+            delivered[i].Should().Equal(frames[i]);
+        }
+    }
+
     [Fact]
     public void Without_The_Option_Every_Frame_Of_A_Keyup_Is_A_Full_Burst()
     {

@@ -111,6 +111,9 @@
          decision/dibit observer seams over a WAV file, which is the only way to see what the
          receiver made of a real off-air burst. Bench instrument, not deployment surface. -->
     <InternalsVisibleTo Include="sm-c4fskprobe" />
+    <!-- The OFDM-FM bench instrument (tools/Packet.SoundModem.OfdmFmLab) renders bursts and reads
+         recordings stage by stage. Bench instrument, not deployment surface. -->
+    <InternalsVisibleTo Include="sm-ofdmlab" />
   </ItemGroup>
 
 </Project>

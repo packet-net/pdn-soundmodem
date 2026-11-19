@@ -37,6 +37,23 @@ public sealed class OfdmFmKeyupState
     /// <summary>The table entry the last decoded burst's payload was on.</summary>
     public int Geometry { get; internal set; }
 
+    /// <summary>The sample-clock rate the last clock-tracked read of this keyup ended on, in
+    /// samples per symbol: where the next frame's read starts its prediction from. Zero until a
+    /// tracked read has been taken.</summary>
+    internal double ClockRate { get; set; }
+
+    /// <summary>How many whole samples later (or, negative, sooner) than its announced length
+    /// the last burst really ended, by the clock its tracked read measured: where the next
+    /// frame's header is looked for first. The payload channel handed on is on the grid that
+    /// starts there. Zero when the last burst was not read that way.</summary>
+    internal int ClockShift { get; set; }
+
+    /// <summary>How far, in samples, the grid has moved beyond what the signal itself moved
+    /// since the keyup's last full burst: the sum of every <see cref="ClockShift"/> less the
+    /// sum of the drift measured. Carried so that the shifts cannot add up to a creep of the
+    /// read window through a long keyup of follow-on frames.</summary>
+    internal double ClockLead { get; set; }
+
     /// <summary>
     /// Samples from a symbol boundary as the symbols' own cyclic prefixes place it to the position
     /// this keyup's estimates are aligned to: negative when the sync search committed early, which
