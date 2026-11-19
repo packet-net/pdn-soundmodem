@@ -1,10 +1,10 @@
 # OFDM-FM design notes
 
-Status: current as of 2026-09-20. Describes the design notes and measurement records behind the OFDM-FM modes: what was measured, on what rig, what was tried and reverted, and what still limits the waveform. The modem itself is in this repository at `src/Packet.SoundModem/Modems/OfdmFm/` and ships as the `ofdm-fm-*` modes; the operator-facing description is [docs/05-modes.md](../../05-modes.md).
+Status: current as of 2026-11-18. Describes the design notes and measurement records behind the OFDM-FM modes: what was measured, on what rig, what was tried and reverted, and what still limits the waveform. The modem itself is in this repository at `src/Packet.SoundModem/Modems/OfdmFm/` and ships as the `ofdm-fm-*` modes; the operator-facing description is [docs/05-modes.md](../../05-modes.md).
 
 OFDM across the audio path of an ordinary FM transceiver. These pages are the working notes behind the modes.
 
-Almost everything here was measured on one bench, two Tait TM8110s on CM108 interfaces at 25 kHz channel spacing, in September 2026. Where a figure comes from simulation the page says so.
+Almost everything here was measured on one bench, two Tait TM8110s on CM108 interfaces at 25 kHz channel spacing, in September 2026; the clock-tracking page is from November 2026, on the same radios with tait-cm108 boards. Where a figure comes from simulation the page says so.
 
 ## Start here
 
@@ -13,6 +13,7 @@ Almost everything here was measured on one bench, two Tait TM8110s on CM108 inte
 | [profile-set.md](profile-set.md) | The shipped presets, what each one is, and what each one measured. The short answer to "which mode should I run". |
 | [preset-design.md](preset-design.md) | How the 8 kHz preset was arrived at, on air, and what still limits it. The single densest page here. |
 | [receiver-findings.md](receiver-findings.md) | Everything tried on the receive path, including the four things that looked obviously right, were built, measured no better, and were reverted. The rate ladder, the margin measure, the LDPC comparison and the decode-cost bound live here. |
+| [clock-tracking.md](clock-tracking.md) | Why bursts were being lost on a real pair of sound cards (the sample clock, and carriers weighted alike), measured burst by burst against the played samples, and the receive path that fixed it, follow-on frames included. Also what two cards 1930 ppm apart need. November 2026. |
 
 ## The campaign, in order
 

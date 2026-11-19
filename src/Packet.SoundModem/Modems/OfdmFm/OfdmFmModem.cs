@@ -87,6 +87,12 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
     /// </summary>
     internal const int MaxSyncAttemptsPerRun = 4;
 
+    /// <summary>The correlation a tracked run has to fall below before the search takes the run
+    /// to be over and commits to its peak. Under <see cref="OfdmFmBurstCodec.SyncThreshold"/>,
+    /// which is what starts a run, so that noise on the way up to a low plateau does not end
+    /// it.</summary>
+    internal const double SyncReleaseThreshold = 0.7;
+
     /// <summary>
     /// The lead-in the host asks for before every frame after the first in a keyup: pdn-soundmodem
     /// passes 30 ms there and the station's full TXDELAY before the first (its
@@ -104,6 +110,14 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
 
     /// <summary>Header reads spent on the current run of correlation, and whether they are gone.</summary>
     private int _attemptsThisRun;
+
+    // How far before the announced end of the last burst the hunt for the next one resumes when
+    // no follow-on header is found there: zero or negative. See ClockDrift.
+    private int _huntEarly;
+
+    // Samples past the announced end of the burst being collected that are waited for before it
+    // is read, because its clock says it arrives stretched: see OfdmFmBurstCodec.StretchTail.
+    private int _tail;
     private bool _exhausted;
 
     private bool _collecting;
@@ -517,6 +531,22 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
                     _exhausted = false;
                     continue;
                 }
+
+                // And not at the first dip either. The plateau is only as high as the sync
+                // symbol's two halves are alike, and between two cards a couple of thousand ppm
+                // apart they are two samples out of step by the second half: the plateau tops out
+                // near 0.9 and the approach to it sits at the threshold for hundreds of samples,
+                // where noise takes the score under it and back. Committing at the first dip
+                // committed 415 samples before the burst, with a score of 0.800 after four
+                // samples of tracking, on one burst in five at 1930 ppm (and the header's code is
+                // strong enough to read from there, so the payload was then decoded against
+                // nothing). So a run that is being tracked is held until the score has clearly
+                // left, or the run has gone on longer than any plateau.
+                if (score >= SyncReleaseThreshold && _trackedFor <= _parameters.SymbolSamples)
+                {
+                    _trackedFor++;
+                    continue;
+                }
             }
             else
             {
@@ -563,6 +593,7 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
             // so the burst starts that many samples earlier in the audio the decoder reads.
             _burstAt = Math.Max(0, _peakAt - _bandLimit.Delay);
             _need = _codec.HeaderEndOffset;
+            _tail = 0;
             _header = null;
             _tracking = false;
             _trackedFor = 0;
@@ -579,7 +610,7 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
     /// </summary>
     private bool Collect()
     {
-        if (_windowCount - _burstAt < _need)
+        if (_windowCount - _burstAt < _need + _tail)
         {
             return false;
         }
@@ -595,7 +626,7 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
             // much more to wait for. A burst that will not fit is abandoned here, before anything
             // is sized from it.
             HeaderReads++;
-            OfdmFmHeader? read = _codec.ReadHeader(_window.AsSpan(0, _windowCount), _burstAt);
+            OfdmFmHeader? read = _codec.ReadHeader(_window.AsSpan(0, _windowCount), _burstAt, out int tail);
             if (read is not OfdmFmHeader header || header.PayloadLength > MaxPayloadBytes)
             {
                 // A false sync, or a header the noise got to. Resume the search from one sample
@@ -606,6 +637,7 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
 
             _header = header;
             _need = _codec.BurstSamples(header);
+            _tail = tail;
             return true;
         }
 
@@ -634,7 +666,7 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
             // It copied, so a burst really was here. The next frame of this keyup, if there is
             // one, starts where this one ended and may carry only its header: expect it there
             // rather than hunting for a sync symbol it will not have.
-            return ExpectFollowOn(_burstAt + _need, keyup);
+            return ExpectFollowOn(_burstAt + _need, keyup, ClockDrift(burst));
         }
 
         // A header that read and a payload that did not is NOT proof the timing was right, which
@@ -655,18 +687,64 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
             Report(burst);
         }
 
+        // That reasoning is about the pilot-fitted reads, which take the burst's timing from where
+        // the sync committed. The clock-tracked read does not: it measures every symbol's delay
+        // itself, so the same burst read again a sample further on is very nearly the same read.
+        // Not exactly: measured on 320 recorded bursts with noise added until one in eight
+        // decoded, the full budget of four attempts decoded 42, two attempts 35 and one 33, each
+        // attempt being one more draw at the cliff. But every attempt is a full decode, and
+        // measured on a Raspberry Pi 4 a 1900-byte burst at rate 7/8 that fails all four cost
+        // 0.71 s against 0.57 s on the air; a receive thread that takes longer over a burst than
+        // the burst took to arrive falls behind its sound card and loses the bursts after it.
+        // Two attempts is what fits inside the air time with room to spare. After the second the
+        // hunt resumes past this burst's sync symbol: far enough that the same sync is not
+        // committed again, and no further, so a burst that starts inside this one's announced
+        // length is still found.
+        if (burst?.Clock is not null && _attemptsThisRun >= TrackedReadAttempts)
+        {
+            return Abandon(SearchPositionOf(_burstAt) + _parameters.SymbolSamples);
+        }
+
         return Abandon(SearchPositionOf(_burstAt) + 1);
     }
+
+    /// <summary>
+    /// How many times one run of correlated samples may be committed and read when the read is
+    /// the clock-tracked one. Internal and settable so an offline tool can repeat the measurement
+    /// that chose it; a station never changes it.
+    /// </summary>
+    internal static int TrackedReadAttempts { get; set; } = 2;
+
+    /// <summary>
+    /// How many samples sooner or later than its announced length a burst really ended, by the
+    /// clock its own read measured: where the next burst of the keyup starts.
+    /// </summary>
+    /// <remarks>
+    /// The next burst is looked for from where this one ended, and "where this one ended" was its
+    /// start plus its nominal length. Between two sound cards a thousand parts per million apart
+    /// a half-second burst is 27 samples shorter or longer than that. Shorter, and the hunt began
+    /// 27 samples into the next burst's sync symbol: the search committed late on what was left
+    /// of the plateau, every transform window of that burst ran into the symbol after, and the
+    /// burst was lost with its clock measured perfectly (one frame in six of a noiseless keyup at
+    /// 1000 ppm). Zero when the read measured no clock. Used only to start the hunt for a sync
+    /// symbol sooner, never later, and never to move where a follow-on header is looked for.
+    /// </remarks>
+    private int ClockDrift(OfdmFmBurst? burst) =>
+        burst?.Clock is OfdmFmClockTrack clock ? (int)Math.Round(clock.RatePpm * 1e-6 * _need) : 0;
 
     /// <summary>
     /// Arms the follow-on expectation at <paramref name="at"/> with the keyup state a decoded
     /// burst handed back, or resumes hunting there when there is no state to read one with.
     /// </summary>
-    private bool ExpectFollowOn(int at, OfdmFmKeyupState? keyup)
+    private bool ExpectFollowOn(int at, OfdmFmKeyupState? keyup, int drift = 0)
     {
+        // Only ever earlier: a hunt that starts before the next sync symbol finds it, and one
+        // that starts inside it commits late. The follow-on header is still looked for where
+        // the announced length puts it, because that search does its own aligning.
+        _huntEarly = Math.Min(0, drift);
         if (keyup is null)
         {
-            return Abandon(SearchPositionOf(at));
+            return Abandon(SearchPositionOf(Math.Max(0, at + _huntEarly)));
         }
 
         _keyup = keyup;
@@ -674,6 +752,7 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
         _collecting = true;
         _burstAt = at;
         _need = _codec.FollowOnSearchSamples;
+        _tail = 0;
         _header = null;
         _tracking = false;
         _trackedFor = 0;
@@ -703,12 +782,13 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
             {
                 _followOn = false;
                 _keyup = null;
-                return Abandon(SearchPositionOf(_burstAt));
+                return Abandon(SearchPositionOf(_burstAt + _huntEarly));
             }
 
             _burstAt = start;
             _header = header;
             _need = _codec.FollowOnBurstSamples(header);
+            _tail = _codec.StretchTail(_keyup!.ClockRate, _need);
             return true;
         }
 
@@ -727,7 +807,7 @@ public sealed class OfdmFmModem : IModem, CarrierSense.IBusyReadingSource
             _exhausted = false;
         }
 
-        return ExpectFollowOn(_burstAt + _need, _keyup);
+        return ExpectFollowOn(_burstAt + _need, _keyup, ClockDrift(burst));
     }
 
     /// <summary>
