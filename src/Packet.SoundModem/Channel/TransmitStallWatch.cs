@@ -46,7 +46,7 @@ public readonly record struct TransmitStallReport(
 /// thread; <see cref="Snapshot"/> is read by the metrics listener, so the totals are written
 /// with <see cref="Interlocked"/>.</para>
 /// </remarks>
-public sealed class TransmitStallWatch : IAudioOutput, IDisposable
+public sealed class TransmitStallWatch : IAudioOutput, ITransmitLead, IDisposable
 {
     /// <summary>
     /// How far behind counts as a stall. One DAX packet is 5.3 ms, and the pacing itself wakes a
@@ -166,6 +166,9 @@ public sealed class TransmitStallWatch : IAudioOutput, IDisposable
                 _keyedAt, _time.GetElapsedTime(_startedAt), _keyupStalls, _keyupWorst));
         }
     }
+
+    /// <summary>The inner output's answer, or none if it has no lead to offer.</summary>
+    public TimeSpan PromiseLead() => (_inner as ITransmitLead)?.PromiseLead() ?? TimeSpan.Zero;
 
     /// <inheritdoc />
     public void Dispose() => (_inner as IDisposable)?.Dispose();

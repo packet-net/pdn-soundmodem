@@ -73,6 +73,9 @@ public class AlsaHardwareTests
         pcm.Drain();
         TimeSpan second = clock.Elapsed;
 
+        // However much of the queued silence this device gave back at the start of the
+        // transmission, no more than the queue can have been ahead of it.
+        pcm.TransmitLeadFrames.Should().BeInRange(0, 48000 * 60 / 1000);
         first.Should().BeGreaterThan(TimeSpan.FromMilliseconds(95), "PTT is released when the drain returns");
         second.Should().BeGreaterThan(TimeSpan.FromMilliseconds(95));
         pcm.Xruns.Should().Be(0, "nothing that was transmitted was lost");

@@ -31,6 +31,15 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
     /// latency and the buffer is not.</summary>
     public const int DefaultPeriodMicroseconds = 30_000;
 
+    /// <summary>Default period for playback, in microseconds. Shorter than capture's because of
+    /// what the start of a transmission does: it takes back the silence queued ahead of it
+    /// (<see cref="ContinuousPlayback"/>), and how much the card will give back, and how soon
+    /// the frames written after it are picked up, both go by the period. On the bench CM108B
+    /// (2026-11-23) a 30 ms period left more silence ahead than 10 ms or 5 ms did and underran
+    /// straight after the rewind more often, and 2 ms was worse again. At 10 ms, with the guard
+    /// the rewind keeps, 13 to 19 ms is left ahead.</summary>
+    public const int DefaultPlaybackPeriodMicroseconds = 10_000;
+
     private const string Lib = "libasound.so.2";
     private const int FormatS16Le = 2;
     private const int AccessRwInterleaved = 3;
@@ -106,6 +115,12 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
     /// restarted the card's clock, which keeping the stream running exists to avoid.</summary>
     public int IdleUnderruns => _playback?.IdleUnderruns ?? 0;
 
+    /// <summary>Frames of silence that were ahead of the first frame of the transmission in
+    /// progress, or of the last one, when it started (playback; always 0 on capture). It is the
+    /// carrier a keyup spends before any of its audio, over and above what the transmitter wrote
+    /// itself.</summary>
+    public int TransmitLeadFrames => (int)(_playback?.LeadFrames ?? 0);
+
     /// <inheritdoc />
     bool IPcmTransfer.IsCapture => Dir == Direction.Capture;
 
@@ -121,7 +136,8 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
     /// it is how much has to be written before the stream starts again, so the two are not set
     /// alike.</param>
     /// <param name="periodMicroseconds">How often the card wakes us, and the granularity of a
-    /// blocking transfer. 0 takes the default, or a quarter of the buffer if that is shorter.</param>
+    /// blocking transfer. 0 takes the default for the direction, or a quarter of the buffer if
+    /// that is shorter.</param>
     /// <exception cref="InvalidOperationException">The device could not be opened or
     /// configured.</exception>
     public static AlsaPcm Open(
@@ -129,9 +145,13 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
         int bufferMicroseconds = DefaultBufferMicroseconds,
         int periodMicroseconds = 0)
     {
-        int period = periodMicroseconds > 0
+        // What this daemon shipped with for both directions, and still capture's.
+        int shipped = periodMicroseconds > 0
             ? periodMicroseconds
             : Math.Min(DefaultPeriodMicroseconds, Math.Max(1, bufferMicroseconds / 4));
+        int period = periodMicroseconds <= 0 && direction == Direction.Playback
+            ? Math.Min(shipped, DefaultPlaybackPeriodMicroseconds)
+            : shipped;
 
         int err = snd_pcm_open(out IntPtr pcm, device, (int)direction, 0);
         Throw(err, $"snd_pcm_open({device})");
@@ -155,7 +175,11 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
         // the period asked for and NOT the deep buffer: snd_pcm_set_params derives one from the
         // other, and handing it 500 ms here would buy the buffer back at the price of a 125 ms
         // period, which is the thing the hand-rolled path exists to avoid.
-        int fallbackLatency = Math.Min(bufferMicroseconds, period * 4);
+        //
+        // From the shipped period and not playback's shorter one: snd_pcm_set_params would turn a
+        // 10 ms period into a 40 ms buffer, and a transmitter that pauses for 40 ms between two
+        // frames of a keyup is not unusual.
+        int fallbackLatency = Math.Min(bufferMicroseconds, shipped * 4);
 
         // Playback cannot be left half-configured. alsa-lib's default after a hand-rolled
         // snd_pcm_hw_params is a start threshold of 1, which on playback means transmitting from
@@ -199,7 +223,7 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
             // being transmitted (issue #828): a CM108B's playback clock runs hundreds of ppm slow
             // for the first burst after a restart. The start is by hand, after the first silence
             // is in, so it does not depend on which of the two configurations above took.
-            opened._playback = new ContinuousPlayback(opened, sampleRate, periodFrames, bufferFrames);
+            opened._playback = new ContinuousPlayback(opened, sampleRate, bufferFrames);
         }
 
         if (direction == Direction.Capture && !startsOnFirstRead)
@@ -255,6 +279,18 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
     {
         ObjectDisposedException.ThrowIf(_pcm == IntPtr.Zero, this);
         _ = Transfer(interleaved, "snd_pcm_writei");
+    }
+
+    /// <summary>How much silence will be ahead of the next transmission's first frame, in frames
+    /// (playback; 0 on capture and inside a transmission). The stream keeps silence queued so
+    /// that it never stops, and the first write of a transmission takes back what the card has
+    /// not yet taken, but some is always left. A transmitter that was going to begin with silence
+    /// of its own can leave this much of it out: no less than this is left ahead when the
+    /// transmission starts.</summary>
+    public int PromiseTransmitLead()
+    {
+        ObjectDisposedException.ThrowIf(_pcm == IntPtr.Zero, this);
+        return (int)(_playback?.PromiseLead() ?? 0);
     }
 
     /// <summary>Blocks until everything written has actually played (playback only) -
@@ -348,6 +384,13 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
             }
         }
     }
+
+    /// <inheritdoc />
+    long IPlaybackPcm.Rewindable() => (long)snd_pcm_rewindable(_pcm).Value;
+
+    /// <inheritdoc />
+    long IPlaybackPcm.Rewind(long frames) =>
+        (long)snd_pcm_rewind(_pcm, new CULong((nuint)frames)).Value;
 
     private static void Throw(int err, string operation)
     {
@@ -654,6 +697,12 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
     // snd_pcm_sframes_t, so CLong: see snd_pcm_get_params above.
     [DllImport(Lib)]
     private static extern int snd_pcm_delay(IntPtr pcm, out CLong frames);
+
+    [DllImport(Lib)]
+    private static extern CLong snd_pcm_rewindable(IntPtr pcm);
+
+    [DllImport(Lib)]
+    private static extern CLong snd_pcm_rewind(IntPtr pcm, CULong frames);
 
     [DllImport(Lib)]
     private static extern int snd_pcm_close(IntPtr pcm);

@@ -9,7 +9,7 @@ namespace Packet.SoundModem.Channel;
 /// Needed because consumer audio devices commonly refuse to open at 12 kHz directly
 /// (observed: "snd_pcm_set_params: Invalid argument" for 12 kHz playback on an HDA codec).
 /// </summary>
-public sealed class UpsamplingAudioOutput : IAudioOutput, IDisposable
+public sealed class UpsamplingAudioOutput : IAudioOutput, ITransmitLead, IDisposable
 {
     private readonly IAudioOutput _inner;
     private readonly Upsampler _upsampler;
@@ -49,6 +49,9 @@ public sealed class UpsamplingAudioOutput : IAudioOutput, IDisposable
 
     /// <inheritdoc />
     public void Drain() => _inner.Drain();
+
+    /// <summary>The inner output's answer, or none if it has no lead to offer.</summary>
+    public TimeSpan PromiseLead() => (_inner as ITransmitLead)?.PromiseLead() ?? TimeSpan.Zero;
 
     /// <inheritdoc />
     public void Dispose() => (_inner as IDisposable)?.Dispose();

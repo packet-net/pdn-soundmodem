@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Channel;
 /// <summary>ALSA-backed <see cref="IAudioOutput"/>. The stream runs from the moment it is opened
 /// until it is disposed, playing silence between transmissions (issue #828): a transmission is
 /// everything from a first <see cref="Write"/> to the <see cref="Drain"/> that follows it.</summary>
-public sealed class AlsaAudioOutput : IAudioOutput, IDisposable
+public sealed class AlsaAudioOutput : IAudioOutput, ITransmitLead, IDisposable
 {
     private readonly AlsaPcm _pcm;
     private short[] _buffer = [];
@@ -49,9 +49,19 @@ public sealed class AlsaAudioOutput : IAudioOutput, IDisposable
     /// <see cref="AlsaPcm.ConfigurationWarning"/>.</summary>
     public string? ConfigurationWarning => _pcm.ConfigurationWarning;
 
+    /// <summary>How much silence was ahead of the first sample of the transmission in progress,
+    /// or of the last one, when it started - see <see cref="AlsaPcm.TransmitLeadFrames"/>.</summary>
+    public TimeSpan TransmitLead => Frames(_pcm.TransmitLeadFrames);
+
+    /// <inheritdoc />
+    public TimeSpan PromiseLead() => Frames(_pcm.PromiseTransmitLead());
+
     /// <summary>Blocks until the last frame written has played. The stream is not stopped.</summary>
     public void Drain() => _pcm.Drain();
 
     /// <inheritdoc />
     public void Dispose() => _pcm.Dispose();
+
+    private TimeSpan Frames(int frames) =>
+        TimeSpan.FromTicks(frames * TimeSpan.TicksPerSecond / SampleRate);
 }

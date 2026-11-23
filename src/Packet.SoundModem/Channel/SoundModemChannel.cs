@@ -2511,8 +2511,12 @@ public sealed class SoundModemChannel
                 }
 
                 StartPackedRenders(toStart);
+                // Rendered before the key with the TXDELAY the channel has now (a burst rendered
+                // for another is not taken), so that is the lead there is to credit.
+                int credit = LeadCredit(output, burst.Audio, Csma.TxDelayMilliseconds);
                 int sentSamples = WriteStoppably(
-                    output, burst.Audio, null, null, announce: mem => TransmittedAudio?.Invoke(mem), stopping);
+                    output, burst.Audio, credit, null, null,
+                    announce: mem => TransmittedAudio?.Invoke(mem), stopping);
                 bool cutShort = sentSamples < burst.Audio.Length;
                 foreach (TxItem sent in items)
                 {
@@ -3199,7 +3203,8 @@ public sealed class SoundModemChannel
                         inFlight = item;
                         Finish(item);
                         // Subsequent frames in one keyup need only a token preamble.
-                        int txDelay = keyupSource is null ? Csma.TxDelayMilliseconds : 30;
+                        bool opensKeyup = keyupSource is null;
+                        int txDelay = opensKeyup ? Csma.TxDelayMilliseconds : 30;
                         // How long the channel held this frame, measured here: the wait ends when
                         // the transmitter picks the frame up, not when the audio finishes. Taken
                         // before Modulate so that rendering - which can be milliseconds of DSP for
@@ -3249,8 +3254,12 @@ public sealed class SoundModemChannel
                         // count) closed for however much of the nominal burst was left unplayed - a
                         // stop 2 s into a 30 s test left 28 s of a tone nobody was sending painted on
                         // the waterfall with nothing behind it.
+                        //
+                        // The first burst of a keyup is not given the leading silence the device
+                        // already has ahead of it: see LeadCredit.
+                        int credit = opensKeyup ? LeadCredit(output, samples, txDelay) : 0;
                         int sentSamples = WriteStoppably(
-                            output, samples, item.StopEarly, item.Written,
+                            output, samples, credit, item.StopEarly, item.Written,
                             announce: mem => TransmittedAudio?.Invoke(mem), cancellation);
 
                         if (sentSamples < samples.Length && cancellation.IsCancellationRequested
@@ -3510,13 +3519,23 @@ public sealed class SoundModemChannel
     /// burst is never broken into mid-way; only <see cref="IAudioOutput.Write"/> is called more
     /// than once, which every multi-frame keyup already does today, once per queued frame.</para>
     /// </remarks>
-    /// <returns>How many samples went to the device: all of them unless a stop cut it short.</returns>
+    /// <param name="output">The device.</param>
+    /// <param name="samples">The item's audio.</param>
+    /// <param name="credit">Leading samples, all silence, that are not written because the
+    /// device already has that much silence ahead of this audio (<see cref="LeadCredit"/>). They
+    /// are announced and counted as if they had been: they go out on the air all the same.</param>
+    /// <param name="stopEarly">See above; null for everything but the test transmission.</param>
+    /// <param name="written">Told how far through <paramref name="samples"/> the write got.</param>
+    /// <param name="announce">Told what is about to go out.</param>
+    /// <param name="stopping">The station stopping.</param>
+    /// <returns>How far through <paramref name="samples"/> the write got: all of it unless a stop
+    /// cut it short.</returns>
     private static int WriteStoppably(
-        IAudioOutput output, float[] samples, Func<bool>? stopEarly, Action<int>? written,
+        IAudioOutput output, float[] samples, int credit, Func<bool>? stopEarly, Action<int>? written,
         Action<ReadOnlyMemory<float>> announce, CancellationToken stopping)
     {
         int block = Math.Max(1, output.SampleRate * StopCheckMilliseconds / 1000);
-        int offset = 0;
+        int offset = credit;
         if (stopEarly is null)
         {
             // Announced whole and up front as it always was, and written in one call for anything
@@ -3529,7 +3548,7 @@ public sealed class SoundModemChannel
             int chunk = Math.Max(block, output.SampleRate * StopLatencySeconds);
             while (offset < samples.Length)
             {
-                if (offset > 0 && stopping.IsCancellationRequested)
+                if (offset > credit && stopping.IsCancellationRequested)
                 {
                     int last = Math.Min(block, samples.Length - offset);
                     FadeToSilence(samples.AsSpan(offset, last));
@@ -3545,6 +3564,11 @@ public sealed class SoundModemChannel
 
             written?.Invoke(offset);
             return offset;
+        }
+
+        if (credit > 0)
+        {
+            announce(samples.AsMemory(0, credit));
         }
 
         while (offset < samples.Length)
@@ -3569,6 +3593,58 @@ public sealed class SoundModemChannel
 
         written?.Invoke(offset);
         return offset;
+    }
+
+    /// <summary>
+    /// How many leading samples of a keyup's first burst need not be written, because the device
+    /// already has that much silence ahead of it (issue #828).
+    /// </summary>
+    /// <remarks>
+    /// <para>The ALSA output keeps its stream running on silence between transmissions, and some
+    /// of that silence is still ahead of a transmission when it starts: 13 to 19 ms on a CM108B
+    /// where the card gives the rest back, 45 to 60 ms where it will not, and a different figure
+    /// at every keyup, which is why the output is asked each time. Left alone it is
+    /// carrier with nothing on it in front of every keyup, on top of TXDELAY. So where a burst
+    /// spends its TXDELAY on silence of its own (OFDM-FM's lead-in symbols, the CW ident, the
+    /// test tone, a STANAG 5066 burst), that silence is not written twice: the device's counts
+    /// towards it, and the keyup has the lead that was configured. Where TXDELAY is shorter than
+    /// what the device has ahead there is nothing more to give, and the lead is the device's.</para>
+    /// <para>Only silence is ever left out, and only as much as the output promises to have
+    /// ahead, so what goes out on the air begins with at least the silence the burst was
+    /// rendered with. A burst whose TXDELAY is a modulated preamble has none to leave out and is
+    /// written whole: its preamble is what the far end synchronises on, and is not this code's to
+    /// shorten. An output that does not say what it has ahead gets everything, as before.</para>
+    /// </remarks>
+    /// <param name="output">The device.</param>
+    /// <param name="samples">The burst, at the device's rate.</param>
+    /// <param name="txDelayMilliseconds">The TXDELAY the burst was rendered with: no more than
+    /// this is ever credited.</param>
+    /// <returns>Samples to leave out: no more than the burst's leading silence, than TXDELAY, or
+    /// than what the output has ahead, and never the whole burst.</returns>
+    internal static int LeadCredit(IAudioOutput output, ReadOnlySpan<float> samples, int txDelayMilliseconds)
+    {
+        if (output is not ITransmitLead lead)
+        {
+            return 0;
+        }
+
+        int limit = Math.Min(
+            samples.Length - 1,
+            (int)((long)output.SampleRate * Math.Max(0, txDelayMilliseconds) / 1000));
+        int silent = 0;
+        while (silent < limit && samples[silent] == 0f)
+        {
+            silent++;
+        }
+
+        if (silent == 0)
+        {
+            // Nothing to trade, so nothing is asked of the output.
+            return 0;
+        }
+
+        long ahead = lead.PromiseLead().Ticks * output.SampleRate / TimeSpan.TicksPerSecond;
+        return (int)Math.Min(silent, Math.Max(0, ahead));
     }
 
     /// <summary>Raised-cosine fade from full amplitude at the first sample to silence at the
