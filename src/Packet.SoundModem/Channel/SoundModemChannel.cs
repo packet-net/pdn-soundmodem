@@ -3601,9 +3601,9 @@ public sealed class SoundModemChannel
     /// </summary>
     /// <remarks>
     /// <para>The ALSA output keeps its stream running on silence between transmissions, and some
-    /// of that silence is still ahead of a transmission when it starts: 13 to 19 ms on a CM108B
-    /// where the card gives the rest back, 45 to 60 ms where it will not, and a different figure
-    /// at every keyup, which is why the output is asked each time. Left alone it is
+    /// of that silence is still ahead of a transmission when it starts: 14 to 15 ms on a CM108B
+    /// where the card gives the rest back, 45 to 60 ms where it will not. The output is asked at
+    /// every keyup, since the figure is measured and not a constant. Left alone it is
     /// carrier with nothing on it in front of every keyup, on top of TXDELAY. So where a burst
     /// spends its TXDELAY on silence of its own (OFDM-FM's lead-in symbols, the CW ident, the
     /// test tone, a STANAG 5066 burst), that silence is not written twice: the device's counts

@@ -17,26 +17,33 @@ namespace Packet.SoundModem.Tests.Audio;
 /// the last transmitted frame has played, since releasing PTT waits on it, and no later; and an
 /// underrun in the silence is not reported as audio the transmitter did not send.</para>
 /// <para>And a transmission must not wait behind the silence. Its first write takes back what
-/// the card has not yet taken, less a guard (on the bench CM108B that leaves 13 to 19 ms ahead
-/// of 60), the count of frames written goes back with it so the drain is still exact, a card
-/// that will not rewind is simply written behind the silence, and a transmitter that was
+/// is still in the card's ring, less a guard, and on the bench CM108B that leaves 14 to 15 ms
+/// ahead of 60. The count of frames written goes back with it so the drain is still exact, a
+/// card that will not rewind is simply written behind the silence, and a transmitter that was
 /// promised a lead finds no less than that ahead of its audio.</para>
-/// <para>The guard is kept clear of what the card's driver has taken, not of the play point.
-/// The first version rewound to the driver's position whenever that was the nearer limit, which
-/// on a USB card is always: the driver came for its next piece, found nothing, and about one
-/// burst in ten on the rig began with an underrun. The guard is 7 ms because that piece is
-/// 6 ms.</para>
+/// <para>How much to take back was got wrong three times against the real card, and each of
+/// these is pinned. The guard is left in the ring, clear of what the driver has taken, not
+/// measured from the play point. It is bigger than one of the pieces the driver takes, which
+/// is a period long and 6 ms at most, because the driver can come for one between the rewind
+/// and the first frame. And what is in the ring is read from the kernel (the buffer less
+/// snd_pcm_avail) at that moment: snd_pcm_rewindable answers from a copy that can be a piece
+/// old, and a rewind sized from it went through the guard in one burst of ten.</para>
 /// </remarks>
 public class ContinuousPlaybackTests
 {
     private const int Rate = 48000;
     private const int BufferFrames = 5760;
     private const int QueueFrames = Rate * ContinuousPlayback.QueueMilliseconds / 1000;
-    private const int GuardFrames = Rate * ContinuousPlayback.GuardMilliseconds / 1000;
+
+    /// <summary>The period the bench cards give: 1 ms, so the driver's pieces are 1 ms.</summary>
+    private const int PeriodFrames = 48;
+
+    /// <summary>The guard for that period: a piece and 2 ms, which is 3 ms.</summary>
+    private const int GuardFrames = PeriodFrames + (Rate * ContinuousPlayback.GuardMarginMilliseconds / 1000);
     private const int Feed = ContinuousPlayback.FeedMilliseconds;
 
-    /// <summary>What the card's driver has already taken and will not give back: 6 to 12 ms
-    /// on the CM108B, 12 here.</summary>
+    /// <summary>What the card's driver has already taken out of the ring and will not give
+    /// back: about 12 ms on the CM108B.</summary>
     private const int Taken = 576;
 
     /// <summary>What is left ahead of a transmission on such a card: that, and the guard.</summary>
@@ -130,8 +137,11 @@ public class ContinuousPlaybackTests
         card.SilenceAheadOfAudio.Should().Be(
             Ahead, "the guard is left between the frames about to be written and what the driver has taken");
         playback.LeadFrames.Should().Be(Ahead, "and the transmitter can be told what was left");
-        card.Order.SkipWhile(call => call != "rewind").Take(2).Should().Equal(
-            ["rewind", "transfer"], "nothing is asked of the card between the rewind and the first frames");
+        card.Written.Should().Contain(
+            ('r', QueueFrames - Ahead), "what was taken back is what was in the ring, less the guard");
+        card.Order.TakeLast(3).Should().Equal(
+            ["avail", "rewind", "transfer"],
+            "the ring is read and rewound as the last thing before the first frames, with nothing between");
 
         // The frames taken back were never played, so they come off the count the drain works
         // from. Left on it, the drain would come back that much early, with PTT.
@@ -143,22 +153,49 @@ public class ContinuousPlaybackTests
         playback.IdleUnderruns.Should().Be(0);
     }
 
-    [Fact]
-    public void A_Guard_Is_Left_Ahead_Of_A_Transmission_Where_The_Card_Would_Give_Everything_Back()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(288)]
+    [InlineData(576)]
+    [InlineData(1200)]
+    public void What_Is_Taken_Back_Is_What_Is_In_The_Ring_Less_The_Guard(int withDriver)
     {
-        // Not a USB card, say: nothing in flight, and the play point itself on offer.
-        var card = new ClockedCard { Unrewindable = 0 };
+        // Whatever the driver is holding, the guard is left in the ring behind it: between the
+        // frames about to be written and the position the driver takes its next piece from.
+        var card = new ClockedCard { WithDriver = withDriver };
         ContinuousPlayback playback = Open(card);
 
-        playback.Write(4800, out _);
+        playback.Write(2400, out _);
 
-        card.SilenceAheadOfAudio.Should().Be(GuardFrames);
+        card.Written.Should().Equal(
+            ('s', QueueFrames), ('r', QueueFrames - withDriver - GuardFrames), ('a', 2400));
+        card.SilenceAheadOfAudio.Should().Be(withDriver + GuardFrames);
+        card.SilenceInTheRingAheadOfAudio.Should().Be(GuardFrames);
+    }
+
+    [Theory]
+    [InlineData(48, 144)]   // 1 ms: pieces of 1 ms, so 3 ms
+    [InlineData(144, 240)]  // 3 ms: 5 ms
+    [InlineData(288, 384)]  // 6 ms: 8 ms
+    [InlineData(480, 384)]  // 10 ms: a piece is never more than 6 ms, so 8 ms still
+    [InlineData(1440, 384)] // the 30 ms of the fallback configuration
+    [InlineData(0, 384)]    // a card that would not say: the largest piece is assumed
+    public void The_Guard_Is_One_Of_The_Drivers_Pieces_And_Two_Milliseconds_By_The_Period_Given(
+        int periodFrames, int guardFrames)
+    {
+        var card = new ClockedCard();
+        var playback = new ContinuousPlayback(card, Rate, BufferFrames, periodFrames, startFeeder: false);
+
+        playback.Write(2400, out _);
+
+        playback.GuardFrames.Should().Be(guardFrames);
+        card.SilenceInTheRingAheadOfAudio.Should().Be(guardFrames);
     }
 
     [Fact]
-    public void A_Card_With_Less_Than_The_Guard_To_Give_Back_Is_Not_Rewound()
+    public void A_Card_With_Less_Than_The_Guard_In_Its_Ring_Is_Not_Rewound()
     {
-        var card = new ClockedCard { Unrewindable = QueueFrames - (GuardFrames / 2) };
+        var card = new ClockedCard { WithDriver = QueueFrames - (GuardFrames / 2) };
         ContinuousPlayback playback = Open(card);
 
         playback.Write(2400, out _);
@@ -168,17 +205,44 @@ public class ContinuousPlaybackTests
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(-38)] // ENOSYS
-    [InlineData(-22)] // EINVAL
-    public void A_Card_That_Will_Not_Rewind_Is_Written_Behind_The_Silence_As_Before(int rewindable)
+    [InlineData(-5)]  // EIO
+    [InlineData(-32)] // EPIPE
+    public void A_Ring_That_Cannot_Be_Read_Is_Not_Rewound(int availAnswer)
     {
-        // A plug layer that resamples offers nothing. That is not a fault: the transmission
-        // waits behind the queue, and everything else is as it was.
-        var card = new ClockedCard { RewindableAnswer = rewindable };
+        // Without the pointer there is no telling where the guard would be.
+        var card = new ClockedCard { AvailAnswer = availAnswer };
         ContinuousPlayback playback = Open(card);
 
         playback.PromiseLead().Should().Be(QueueFrames, "all of it stays ahead, and can be counted on");
+        playback.Write(2400, out int failure).Should().Be(2400);
+
+        failure.Should().Be(0);
+        card.Written.Should().Equal(('s', QueueFrames), ('a', 2400));
+        playback.LeadFrames.Should().Be(QueueFrames);
+    }
+
+    [Fact]
+    public void A_Card_That_Would_Not_Say_How_Big_Its_Buffer_Is_Is_Not_Rewound()
+    {
+        var card = new ClockedCard();
+        var playback = new ContinuousPlayback(card, Rate, bufferFrames: 0, PeriodFrames, startFeeder: false);
+
+        playback.Write(2400, out _);
+
+        card.Written.Should().Equal(('s', QueueFrames), ('a', 2400));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-38)] // ENOSYS
+    [InlineData(-22)] // EINVAL
+    public void A_Card_That_Will_Not_Rewind_Is_Written_Behind_The_Silence_As_Before(int rewindAnswer)
+    {
+        // A plug layer that resamples takes nothing back. That is not a fault: the transmission
+        // waits behind the queue, and everything else is as it was.
+        var card = new ClockedCard { RewindAnswer = rewindAnswer };
+        ContinuousPlayback playback = Open(card);
+
         playback.Write(2400, out int failure).Should().Be(2400);
         failure.Should().Be(0);
 
@@ -190,6 +254,12 @@ public class ContinuousPlaybackTests
         card.SilencePlayedSinceAudio.Should().BeLessThan(Rate / 1000);
         card.Xruns.Should().Be(0);
         playback.IdleUnderruns.Should().Be(0);
+
+        // And having refused once, it is not expected to give anything back the next time: a
+        // transmitter is told that all of the queue will be ahead of it, and can use all of it.
+        card.Advance(Feed);
+        playback.Feed();
+        playback.PromiseLead().Should().Be(QueueFrames);
     }
 
     [Fact]
@@ -235,7 +305,7 @@ public class ContinuousPlaybackTests
         ContinuousPlayback playback = Open(card);
 
         long promised = playback.PromiseLead();
-        card.Unrewindable = 0;
+        card.WithDriver = 0;
         playback.Write(4800, out _);
 
         card.SilenceAheadOfAudio.Should().Be(promised, "not the guard alone, which is less");
@@ -248,7 +318,7 @@ public class ContinuousPlaybackTests
         ContinuousPlayback playback = Open(card);
 
         long promised = playback.PromiseLead();
-        card.Unrewindable = 864;
+        card.WithDriver = 864;
         playback.Write(2400, out _);
 
         card.SilenceAheadOfAudio.Should().Be(864 + GuardFrames);
@@ -447,7 +517,7 @@ public class ContinuousPlaybackTests
     public void The_Feeder_Thread_Feeds_While_Idle_And_Not_At_All_During_A_Transmission()
     {
         var card = new SinkCard();
-        var playback = new ContinuousPlayback(card, Rate, BufferFrames);
+        var playback = new ContinuousPlayback(card, Rate, BufferFrames, PeriodFrames);
         try
         {
             WaitFor(() => card.SilenceWrites >= 3).Should().BeTrue("the feeder runs on its own");
@@ -481,7 +551,7 @@ public class ContinuousPlaybackTests
     public void Stopping_Ends_The_Feeder()
     {
         var card = new SinkCard();
-        var playback = new ContinuousPlayback(card, Rate, BufferFrames);
+        var playback = new ContinuousPlayback(card, Rate, BufferFrames, PeriodFrames);
         WaitFor(() => card.SilenceWrites >= 3).Should().BeTrue();
 
         playback.Stop().Should().BeTrue("the feeder is never far from the gate");
@@ -499,14 +569,14 @@ public class ContinuousPlaybackTests
     {
         // Disposed mid-keyup: the feeder is parked until a drain that is never going to come.
         var card = new SinkCard();
-        var playback = new ContinuousPlayback(card, Rate, BufferFrames);
+        var playback = new ContinuousPlayback(card, Rate, BufferFrames, PeriodFrames);
         playback.Write(480, out _);
 
         playback.Stop().Should().BeTrue();
     }
 
     private static ContinuousPlayback Open(ClockedCard card, int bufferFrames = BufferFrames) =>
-        new(card, Rate, bufferFrames, startFeeder: false);
+        new(card, Rate, bufferFrames, PeriodFrames, startFeeder: false);
 
     private static bool WaitFor(Func<bool> condition) => SpinWait.SpinUntil(condition, Patience);
 
@@ -537,15 +607,19 @@ public class ContinuousPlaybackTests
         /// entry per call, and what was taken back again ('r').</summary>
         internal List<(char Kind, long Frames)> Written { get; } = [];
 
-        /// <summary>Queued frames the card's driver has already taken and will not give back.</summary>
-        internal int Unrewindable { get; set; } = Taken;
+        /// <summary>Queued frames the card's driver has already taken out of the ring, which do
+        /// not come back.</summary>
+        internal int WithDriver { get; set; } = Taken;
 
         /// <summary>The calls that touch what is queued, in order.</summary>
         internal List<string> Order { get; } = [];
 
-        /// <summary>Set to answer snd_pcm_rewindable with this whatever is queued: 0 or an errno
-        /// from a layer that cannot rewind.</summary>
-        internal int? RewindableAnswer { get; init; }
+        /// <summary>Set to answer snd_pcm_avail with this errno.</summary>
+        internal int? AvailAnswer { get; init; }
+
+        /// <summary>Set to answer every snd_pcm_rewind with this: 0 or an errno from a layer that
+        /// cannot rewind.</summary>
+        internal int? RewindAnswer { get; init; }
 
         /// <summary>A rewind takes back this many frames fewer than it was asked for.</summary>
         internal int RewindShortfall { get; init; }
@@ -563,6 +637,10 @@ public class ContinuousPlaybackTests
         internal long Queued => _queue.Sum(run => run.Frames);
 
         internal long AudioQueued => _queue.Where(run => run.Kind == 'a').Sum(run => run.Frames);
+
+        /// <summary>Silence between the first audio frame and what the driver has taken: what a
+        /// rewind left in the ring for the driver to find.</summary>
+        internal long SilenceInTheRingAheadOfAudio => Math.Max(0, SilenceAheadOfAudio - WithDriver);
 
         /// <summary>Silence queued in front of the first audio frame.</summary>
         internal long SilenceAheadOfAudio => _queue.TakeWhile(run => run.Kind == 's').Sum(run => run.Frames);
@@ -599,18 +677,23 @@ public class ContinuousPlaybackTests
             return frames;
         }
 
-        public long Rewindable()
+        public long Avail()
         {
-            Order.Add("rewindable");
-            return CanGiveBack;
+            Order.Add("avail");
+            return AvailAnswer ?? (_state == State.Xrun ? Epipe : bufferFrames - InRing);
         }
 
-        private long CanGiveBack =>
-            RewindableAnswer ?? (_state == State.Xrun ? Epipe : Math.Max(0, Queued - Unrewindable));
+        /// <summary>Queued frames still in the ring: the kernel gives back no more than these.</summary>
+        private long InRing => Math.Max(0, Queued - WithDriver);
 
         public long Rewind(long frames)
         {
-            long taken = Math.Min(frames, CanGiveBack) - RewindShortfall;
+            if (RewindAnswer is int refusal)
+            {
+                return refusal;
+            }
+
+            long taken = Math.Min(frames, InRing) - RewindShortfall;
             if (taken <= 0)
             {
                 return 0;
@@ -816,7 +899,7 @@ public class ContinuousPlaybackTests
             return 0;
         }
 
-        public long Rewindable() => 0;
+        public long Avail() => 0;
 
         public long Rewind(long frames) => 0;
 

@@ -31,14 +31,19 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
     /// latency and the buffer is not.</summary>
     public const int DefaultPeriodMicroseconds = 30_000;
 
-    /// <summary>Default period for playback, in microseconds. Shorter than capture's because of
-    /// what the start of a transmission does: it takes back the silence queued ahead of it
-    /// (<see cref="ContinuousPlayback"/>), and how much the card will give back, and how soon
-    /// the frames written after it are picked up, both go by the period. On the bench CM108B
-    /// (2026-11-23) a 30 ms period left more silence ahead than 10 ms or 5 ms did and underran
-    /// straight after the rewind more often, and 2 ms was worse again. At 10 ms, with the guard
-    /// the rewind keeps, 13 to 19 ms is left ahead.</summary>
-    public const int DefaultPlaybackPeriodMicroseconds = 10_000;
+    /// <summary>Default period for playback, in microseconds. As short as a full-speed USB card
+    /// goes, because of what the start of a transmission does: it takes back the silence queued
+    /// ahead of it, all but a guard that has to cover one of the pieces the card's driver takes
+    /// its audio in, and those pieces are a period long, up to 6 ms
+    /// (<see cref="ContinuousPlayback.GuardFrames"/>). On the two bench CM108Bs with capture
+    /// running (2026-11-23) a 1 ms period and its 3 ms guard left 14 to 15 ms of silence ahead of
+    /// the audio, the same to within a millisecond at every keyup and with no underruns; a 10 ms
+    /// period and its 8 ms guard left 17 to 22. About 12 ms of either is already with the USB
+    /// driver and does not come back at any setting. A card that will not go this short gives
+    /// its nearest, and the guard follows what it gave. The cost is in wake-ups: the card's
+    /// driver completes a piece every millisecond for as long as the stream is open, and a
+    /// blocking write is woken as often during a transmission.</summary>
+    public const int DefaultPlaybackPeriodMicroseconds = 1_000;
 
     private const string Lib = "libasound.so.2";
     private const int FormatS16Le = 2;
@@ -167,6 +172,26 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
         if (refused >= 0)
         {
             ReadParams(pcm, out bufferFrames, out periodFrames);
+            long wanted = (long)sampleRate * bufferMicroseconds / 1_000_000;
+            if (period != shipped && bufferFrames > 0 && bufferFrames < wanted / 2)
+            {
+                // Playback's short period, on a card that allows only so many periods to a
+                // buffer (an HDA codec stops at 32): it answered with a buffer to match, and the
+                // buffer is the one that matters. It is how long the transmitter may pause in a
+                // keyup, and the silence kept queued between keyups has to fit in half of it. So
+                // the period goes back to the one this daemon always used and the buffer comes
+                // back with it.
+                period = shipped;
+                refused = ConfigureHardware(pcm, channels, sampleRate, bufferMicroseconds, period);
+                if (refused >= 0)
+                {
+                    ReadParams(pcm, out bufferFrames, out periodFrames);
+                }
+            }
+        }
+
+        if (refused >= 0)
+        {
             refused = ConfigureSoftware(pcm, direction, bufferFrames, periodFrames);
             startsOnFirstRead = refused >= 0 && direction == Direction.Capture;
         }
@@ -177,8 +202,7 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
         // period, which is the thing the hand-rolled path exists to avoid.
         //
         // From the shipped period and not playback's shorter one: snd_pcm_set_params would turn a
-        // 10 ms period into a 40 ms buffer, and a transmitter that pauses for 40 ms between two
-        // frames of a keyup is not unusual.
+        // 1 ms period into a 4 ms buffer.
         int fallbackLatency = Math.Min(bufferMicroseconds, shipped * 4);
 
         // Playback cannot be left half-configured. alsa-lib's default after a hand-rolled
@@ -223,7 +247,7 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
             // being transmitted (issue #828): a CM108B's playback clock runs hundreds of ppm slow
             // for the first burst after a restart. The start is by hand, after the first silence
             // is in, so it does not depend on which of the two configurations above took.
-            opened._playback = new ContinuousPlayback(opened, sampleRate, bufferFrames);
+            opened._playback = new ContinuousPlayback(opened, sampleRate, bufferFrames, periodFrames);
         }
 
         if (direction == Direction.Capture && !startsOnFirstRead)
@@ -386,7 +410,7 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
     }
 
     /// <inheritdoc />
-    long IPlaybackPcm.Rewindable() => (long)snd_pcm_rewindable(_pcm).Value;
+    long IPlaybackPcm.Avail() => (long)snd_pcm_avail(_pcm).Value;
 
     /// <inheritdoc />
     long IPlaybackPcm.Rewind(long frames) =>
@@ -699,7 +723,7 @@ public sealed class AlsaPcm : IDisposable, IPlaybackPcm
     private static extern int snd_pcm_delay(IntPtr pcm, out CLong frames);
 
     [DllImport(Lib)]
-    private static extern CLong snd_pcm_rewindable(IntPtr pcm);
+    private static extern CLong snd_pcm_avail(IntPtr pcm);
 
     [DllImport(Lib)]
     private static extern CLong snd_pcm_rewind(IntPtr pcm, CULong frames);

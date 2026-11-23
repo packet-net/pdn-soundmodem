@@ -14,9 +14,9 @@ internal interface IPlaybackPcm : IPcmTransfer
     /// <summary><c>snd_pcm_writei</c> of silence: frames taken, or a negative errno.</summary>
     long WriteSilence(int frames);
 
-    /// <summary><c>snd_pcm_rewindable</c>: how many of the frames written the card has not yet
-    /// taken and would give back. 0 or a negative errno from a layer that cannot rewind.</summary>
-    long Rewindable();
+    /// <summary><c>snd_pcm_avail</c>: how much room the card's ring has, in frames, read from the
+    /// kernel at the moment of asking, or a negative errno.</summary>
+    long Avail();
 
     /// <summary><c>snd_pcm_rewind</c>: frames actually taken back off the end of what was
     /// written, which can be fewer than asked, or a negative errno.</summary>
@@ -43,16 +43,16 @@ internal interface IPlaybackPcm : IPcmTransfer
 /// returns when the card has played that far. It does not stop the stream.</para>
 /// <para><b>The start of a transmission.</b> Its audio would otherwise wait behind the queued
 /// silence, 45 to 60 ms of carrier with nothing on it at the front of every keyup. So the first
-/// write takes the silence back first (<c>snd_pcm_rewind</c>): what the card will give up
-/// (<c>snd_pcm_rewindable</c>) less <see cref="GuardMilliseconds"/>. The guard is kept clear of
-/// what the card's driver has already taken, not of the play point, and that is the whole point
-/// of it; see the constant. On a CM108B what is left ahead is the guard plus the 6 to 12 ms the
-/// USB driver is holding at that moment: 13 to 19 ms, about 16 typical (bench, 2026-11-23). It
-/// differs from one keyup to the next, so it is measured at each. A layer that cannot rewind
-/// says so by offering nothing, and the transmission goes behind the silence as before.
-/// Whatever is taken back comes off the count of frames written, which is what the drain's
-/// arithmetic stands on. Nothing is asked of the card between the rewind and the first frame,
-/// and nothing slow is done there.</para>
+/// write takes the silence back first (<c>snd_pcm_rewind</c>): everything still in the card's
+/// ring, which is the buffer size less <c>snd_pcm_avail</c>, short of a guard. See
+/// <see cref="GuardFrames"/> for the guard and for why the ring is measured that way and no
+/// other. What cannot come back is what the driver has already taken out of the ring, about
+/// 12 ms on a CM108B, so with a 1 ms period and its 3 ms guard 14 to 15 ms of silence is left
+/// ahead, the same to within a millisecond at every keyup (two boards, 2026-11-23). A layer
+/// that will not rewind takes nothing back, and the transmission goes behind the silence as
+/// before. Whatever is taken back comes off the count of frames written, which is what the
+/// drain's arithmetic stands on. Nothing is asked of the card between the rewind and the first
+/// frame, and nothing slow is done there.</para>
 /// <para><b>The lead a transmitter can count on.</b> <see cref="PromiseLead"/> says, before the
 /// audio is rendered, how much silence will be ahead of the next transmission, so the
 /// transmitter can leave that much of its own leading silence out. Nothing is rewound then: the
@@ -77,22 +77,12 @@ internal sealed class ContinuousPlayback : IPcmTransfer
     /// quarter between looks.</summary>
     internal const int FeedMilliseconds = 15;
 
-    /// <summary>
-    /// How far short of everything the card would give back a rewind stops.
-    /// </summary>
-    /// <remarks>
-    /// <para><b>Measured from what is rewindable, not from the play point.</b> The card's driver
-    /// takes its next piece of audio from the position a rewind can go back to. A rewind that
-    /// went all the way there left it nothing to take if the transmission's first frames had not
-    /// landed yet: an underrun at the start of about one burst in ten on the bench CM108B
-    /// (2026-11-23). A guard kept from the play point, as it first was, does nothing about that,
-    /// because on a USB card what is rewindable is always the nearer limit.</para>
-    /// <para><b>More than one piece.</b> A full-speed USB card's driver takes 6 ms at a time (one
-    /// URB of six 1 ms packets), whenever the piece before completes. If that falls between the
-    /// rewind and the first write it wants 6 ms and must find them. With 4 ms kept back, one
-    /// card of two underran in 3 transmissions of 48; hence 7.</para>
-    /// </remarks>
-    internal const int GuardMilliseconds = 7;
+    /// <summary>The largest piece a full-speed USB card's driver takes from the ring at once:
+    /// one URB of six 1 ms packets.</summary>
+    internal const int DriverPieceMilliseconds = 6;
+
+    /// <summary>What a rewind leaves in the ring over and above one of the driver's pieces.</summary>
+    internal const int GuardMarginMilliseconds = 2;
 
     /// <summary>How long past the time the audio should have taken a drain goes on waiting
     /// before it gives the card up as stalled. The old <c>snd_pcm_drain</c> gave up too, after
@@ -110,7 +100,7 @@ internal sealed class ContinuousPlayback : IPcmTransfer
     private readonly IPlaybackPcm _pcm;
     private readonly int _sampleRate;
     private readonly int _queueFrames;
-    private readonly int _guardFrames;
+    private readonly int _bufferFrames;
     private readonly Thread? _feeder;
 
     // Written under the gate, or by the transmitter while _keyed keeps the feeder away.
@@ -121,19 +111,28 @@ internal sealed class ContinuousPlayback : IPcmTransfer
     private long _transmitEnd;
     private long _promised;
     private long _lead;
+    private bool _rewindRefused;
     private int _idleUnderruns;
 
     /// <summary>Queues the first silence, starts the stream and starts the feeder.</summary>
     /// <param name="pcm">The stream, prepared and not yet started.</param>
     /// <param name="sampleRate">Frames per second.</param>
-    /// <param name="bufferFrames">The card's buffer, or 0 if it would not say.</param>
+    /// <param name="bufferFrames">The buffer the card gave, or 0 if it would not say. Nothing
+    /// is rewound without it.</param>
+    /// <param name="periodFrames">The period the card gave, which is not always the one asked
+    /// for, or 0 if it would not say.</param>
     /// <param name="startFeeder">False leaves the feeder thread out, for a test that calls
     /// <see cref="Feed"/> itself.</param>
     internal ContinuousPlayback(
-        IPlaybackPcm pcm, int sampleRate, int bufferFrames, bool startFeeder = true)
+        IPlaybackPcm pcm, int sampleRate, int bufferFrames, int periodFrames, bool startFeeder = true)
     {
         _pcm = pcm;
         _sampleRate = sampleRate;
+        _bufferFrames = bufferFrames;
+
+        int piece = (int)((long)sampleRate * DriverPieceMilliseconds / 1000);
+        GuardFrames = (periodFrames > 0 ? Math.Min(piece, periodFrames) : piece)
+            + (int)((long)sampleRate * GuardMarginMilliseconds / 1000);
 
         int queue = Math.Max(1, (int)((long)sampleRate * QueueMilliseconds / 1000));
         if (bufferFrames > 0)
@@ -143,7 +142,6 @@ internal sealed class ContinuousPlayback : IPcmTransfer
         }
 
         _queueFrames = queue;
-        _guardFrames = (int)((long)sampleRate * GuardMilliseconds / 1000);
 
         lock (_gate)
         {
@@ -164,6 +162,29 @@ internal sealed class ContinuousPlayback : IPcmTransfer
 
     /// <summary>Silence kept queued while idle, in frames.</summary>
     internal int QueueFrames => _queueFrames;
+
+    /// <summary>
+    /// How much a rewind leaves in the card's ring, in frames: one of the driver's pieces and
+    /// <see cref="GuardMarginMilliseconds"/> more.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>More than one piece.</b> The card's driver takes its audio out of the ring a piece
+    /// at a time, whenever the piece before has gone. On a full-speed USB card a piece is as many
+    /// 1 ms packets as fit in a period, six at most. That can fall between the rewind and the
+    /// first frame of the transmission, and the piece has to be there: with less in the ring the
+    /// transmission begins with an underrun. So the guard is the smaller of 6 ms and the period,
+    /// and 2 ms. It follows the period the card actually gave, read back after the open, since a
+    /// card that would not take the period asked for takes bigger pieces.</para>
+    /// <para><b>Measured from the kernel's own pointer.</b> What is in the ring is the buffer size
+    /// less <c>snd_pcm_avail</c>, which asks the kernel. <c>snd_pcm_rewindable</c> looks like the
+    /// call for this and is not: it answers from a copy of the driver's position that can be a
+    /// whole piece old, and <c>snd_pcm_delay</c> does not refresh that copy. A rewind sized from
+    /// it went up to 6 ms too far, through the guard, and one burst in ten began with an underrun
+    /// on the bench CM108B, with a 4 ms guard and a 7 ms one alike. Sized from
+    /// <c>snd_pcm_avail</c> there were none in over 500 transmissions on two boards
+    /// (2026-11-23).</para>
+    /// </remarks>
+    internal int GuardFrames { get; }
 
     /// <summary>Frames of silence that were ahead of the first frame of the transmission in
     /// progress, or of the last one, when it started: what was left after the rewind.</summary>
@@ -194,8 +215,10 @@ internal sealed class ContinuousPlayback : IPcmTransfer
                 return 0;
             }
 
+            // What is with the driver and the guard, which is what the rewind will leave. A card
+            // that would not rewind last time is not expected to this time, so all of it stays.
             long queued = _pcm.Delay();
-            _promised = queued <= 0 ? 0 : queued - Spare(queued, 0);
+            _promised = queued <= 0 ? 0 : queued - (_rewindRefused ? 0 : Spare(queued, 0));
             return _promised;
         }
     }
@@ -370,8 +393,9 @@ internal sealed class ContinuousPlayback : IPcmTransfer
 
     /// <summary>The start of a transmission, immediately before its first frame is written:
     /// takes back the queued silence, as far as the guard and what was promised allow. The
-    /// rewind, when there is one, is the last call made on the card here, so the first frames
-    /// follow it with nothing in between.</summary>
+    /// reading of the ring and the rewind are the last calls made on the card here, so the
+    /// rewind is sized from a pointer that is as fresh as it can be and the first frames follow
+    /// it with nothing in between.</summary>
     private void StartLocked()
     {
         long promised = _promised;
@@ -394,6 +418,7 @@ internal sealed class ContinuousPlayback : IPcmTransfer
         if (spare > 0)
         {
             long taken = _pcm.Rewind(spare);
+            _rewindRefused = taken <= 0;
             if (taken > 0)
             {
                 // Those frames were never played and never will be.
@@ -418,23 +443,23 @@ internal sealed class ContinuousPlayback : IPcmTransfer
     }
 
     /// <summary>How many of the <paramref name="queued"/> frames a rewind may take back: what
-    /// the card would give up less the guard, and never so many that fewer than
-    /// <paramref name="keep"/> are left ahead. 0 from a card that cannot rewind.</summary>
+    /// is in the card's ring this instant less the guard, and never so many that fewer than
+    /// <paramref name="keep"/> are left ahead. 0 where the ring cannot be read.</summary>
     private long Spare(long queued, long keep)
     {
-        if (queued <= keep)
+        if (_bufferFrames <= 0 || queued <= keep)
         {
             return 0;
         }
 
-        long rewindable = _pcm.Rewindable();
-        if (rewindable <= 0)
+        long avail = _pcm.Avail();
+        if (avail < 0)
         {
             return 0;
         }
 
-        long spare = Math.Min(Math.Min(rewindable, queued) - _guardFrames, queued - keep);
-        return Math.Max(0, spare);
+        long inRing = _bufferFrames - avail;
+        return Math.Max(0, Math.Min(inRing - GuardFrames, queued - keep));
     }
 
     /// <summary>Tops the queue up with silence and makes sure the stream is running.</summary>

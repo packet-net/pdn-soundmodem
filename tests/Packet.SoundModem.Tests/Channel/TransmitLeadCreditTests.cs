@@ -11,7 +11,7 @@ namespace Packet.SoundModem.Tests.Channel;
 /// </summary>
 /// <remarks>
 /// The ALSA output keeps its stream running on silence so that the card's clock never restarts,
-/// and 13 to 19 ms of that silence is still ahead of a transmission when it starts on a CM108B
+/// and 14 to 15 ms of that silence is still ahead of a transmission when it starts on a CM108B
 /// (45 to 60 ms where the card will not give any back). Written behind it, a burst that opens
 /// with TXDELAY of silence of its own has that much carrier with nothing on it twice over. These
 /// pin what may be left out: silence only, no more than TXDELAY, no more than the device says it
