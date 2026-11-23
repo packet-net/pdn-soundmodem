@@ -3269,9 +3269,11 @@ public sealed class SoundModemChannel
                         }
 
                         // Not drained here. A drain waits for the card to play everything it
-                        // holds, stops the stream and re-arms it, and ALSA pads the last period
-                        // with silence on the way; the next frame is then modulated, written and
-                        // the stream restarted only once all of that has happened. Done per frame,
+                        // holds, and when this was measured it also stopped the stream and re-armed
+                        // it, ALSA padding the last period with silence on the way; the next frame
+                        // was then modulated, written and the stream restarted only once all of
+                        // that had happened. (Since #828 the stream is not stopped, but a drain
+                        // still ends the transmission and lets silence in behind it.) Done per frame,
                         // that put 30 to 35 ms of carrier-up silence between every frame of a keyup
                         // and the next (raw capture on radio2, 2026-09-19 17:36 UTC) - a hole in a
                         // waveform the token preamble presumes is continuous, and airtime spent on
@@ -3501,10 +3503,11 @@ public sealed class SoundModemChannel
     /// it is written keeps the display, the receive gate and the device in step regardless of
     /// where a stop lands.</para>
     /// <para><b>Nothing is drained between these blocks.</b> That is what the class remarks on
-    /// <c>TxTestRunner</c> warn against - draining stops and re-primes a real card's PCM, and a
-    /// burst with a hole in it every few hundred milliseconds is a poor instrument. These blocks
+    /// <c>TxTestRunner</c> warn against - a drain ends the transmission on a real card and lets
+    /// silence in behind it, and a burst with a hole in it every few hundred milliseconds is a
+    /// poor instrument. These blocks
     /// share one continuous write with no drain until the caller's own drain afterwards, so the
-    /// stream is never stopped mid-burst; only <see cref="IAudioOutput.Write"/> is called more
+    /// burst is never broken into mid-way; only <see cref="IAudioOutput.Write"/> is called more
     /// than once, which every multi-frame keyup already does today, once per queued frame.</para>
     /// </remarks>
     /// <returns>How many samples went to the device: all of them unless a stop cut it short.</returns>

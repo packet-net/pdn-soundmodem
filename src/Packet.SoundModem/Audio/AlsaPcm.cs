@@ -9,7 +9,7 @@ namespace Packet.SoundModem.Audio;
 /// for separately through hw_params, because a capture stream wants a deep buffer and short
 /// periods at the same time and <c>snd_pcm_set_params</c> cannot say that.
 /// </summary>
-public sealed class AlsaPcm : IDisposable, IPcmTransfer
+public sealed class AlsaPcm : IDisposable, IPlaybackPcm
 {
     /// <summary>PCM direction.</summary>
     public enum Direction
@@ -22,7 +22,8 @@ public sealed class AlsaPcm : IDisposable, IPcmTransfer
     }
 
     /// <summary>Default buffer, in microseconds. What the daemon ran on before the capture buffer
-    /// was deepened, and still what playback uses.</summary>
+    /// was deepened, and still what playback uses: how much of a transmission can be handed over
+    /// ahead of the card, and so how long the transmitter can be away between two writes.</summary>
     public const int DefaultBufferMicroseconds = 120_000;
 
     /// <summary>Default period, in microseconds: how often the card wakes the reader, and the
@@ -41,8 +42,15 @@ public sealed class AlsaPcm : IDisposable, IPcmTransfer
     // Only meaningful inside Read/Write, where it points at the caller's pinned span. A field
     // rather than an argument so the transfer loop can be shared without a per-call closure:
     // Read is on the receive hot path and must not allocate. One AlsaPcm is one direction and
-    // one thread, which the wrappers above it already assume (they reuse one scratch buffer).
+    // one caller's thread, which the wrappers above it already assume (they reuse one scratch
+    // buffer). A playback stream has a second thread, the one that feeds it silence, which
+    // ContinuousPlayback keeps off the handle while the caller is using it.
     private IntPtr _transferBuffer;
+
+    // Playback only: what keeps the stream running between transmissions, and the silence it
+    // plays.
+    private ContinuousPlayback? _playback;
+    private short[] _silence = [];
 
     private AlsaPcm(
         IntPtr pcm, Direction direction, int channels, int sampleRate,
@@ -88,8 +96,15 @@ public sealed class AlsaPcm : IDisposable, IPcmTransfer
     /// underruns. Recovery is lossy: the stream restarts, so every xrun is a
     /// discontinuity in the sample stream and can corrupt a frame in flight. Non-zero
     /// here means the machine is not keeping up, and long frames (300 baud runs for
-    /// seconds) are hit hardest.</summary>
+    /// seconds) are hit hardest. On playback only an underrun inside a transmission is
+    /// counted here; one in the silence between transmissions is in
+    /// <see cref="IdleUnderruns"/>.</summary>
     public int Xruns => _xruns;
+
+    /// <summary>Playback underruns recovered while the stream was playing silence between
+    /// transmissions (always 0 on capture). No transmit audio was lost to them, but each one
+    /// restarted the card's clock, which keeping the stream running exists to avoid.</summary>
+    public int IdleUnderruns => _playback?.IdleUnderruns ?? 0;
 
     /// <inheritdoc />
     bool IPcmTransfer.IsCapture => Dir == Direction.Capture;
@@ -101,8 +116,10 @@ public sealed class AlsaPcm : IDisposable, IPcmTransfer
     /// <param name="sampleRate">Requested rate; capture at the card-native 48000 and
     /// decimate in the DSP rather than letting the plug layer's linear resampler run.</param>
     /// <param name="bufferMicroseconds">How much audio the card holds for us. On capture this is
-    /// how long the receive loop may be away before an overrun; on playback it is also how long
-    /// after the first write the transmission starts, so the two are not set alike.</param>
+    /// how long the receive loop may be away before an overrun. On playback it is how long the
+    /// transmitter may be away in the middle of a transmission before an underrun, and after one
+    /// it is how much has to be written before the stream starts again, so the two are not set
+    /// alike.</param>
     /// <param name="periodMicroseconds">How often the card wakes us, and the granularity of a
     /// blocking transfer. 0 takes the default, or a quarter of the buffer if that is shorter.</param>
     /// <exception cref="InvalidOperationException">The device could not be opened or
@@ -176,6 +193,15 @@ public sealed class AlsaPcm : IDisposable, IPcmTransfer
         var opened = new AlsaPcm(
             pcm, direction, channels, sampleRate, bufferFrames, periodFrames, refusal);
 
+        if (direction == Direction.Playback)
+        {
+            // Started now and kept running until it is closed, on silence whenever nothing is
+            // being transmitted (issue #828): a CM108B's playback clock runs hundreds of ppm slow
+            // for the first burst after a restart. The start is by hand, after the first silence
+            // is in, so it does not depend on which of the two configurations above took.
+            opened._playback = new ContinuousPlayback(opened, sampleRate, periodFrames, bufferFrames);
+        }
+
         if (direction == Direction.Capture && !startsOnFirstRead)
         {
             // Only when the start threshold is not ours. With it set to 1 the stream starts on
@@ -222,7 +248,9 @@ public sealed class AlsaPcm : IDisposable, IPcmTransfer
 
     /// <summary>Writes interleaved frames (playback PCM). Blocks until consumed -
     /// device-paced, which is exactly what sample-accurate PTT timing needs.
-    /// Recovers from underruns transparently.</summary>
+    /// Recovers from underruns transparently. The first write begins a transmission, which
+    /// lasts until <see cref="Drain"/>: the stream plays silence between transmissions and none
+    /// inside one, whatever gaps the caller leaves between writes.</summary>
     public void Write(ReadOnlySpan<short> interleaved)
     {
         ObjectDisposedException.ThrowIf(_pcm == IntPtr.Zero, this);
@@ -230,15 +258,22 @@ public sealed class AlsaPcm : IDisposable, IPcmTransfer
     }
 
     /// <summary>Blocks until everything written has actually played (playback only) -
-    /// the sample-domain part of releasing PTT.</summary>
+    /// the sample-domain part of releasing PTT. The stream is not stopped: it goes on playing
+    /// silence, so the next transmission does not begin on a restarted clock.</summary>
     public void Drain()
     {
         ObjectDisposedException.ThrowIf(_pcm == IntPtr.Zero, this);
+        if (_playback is { } playback)
+        {
+            playback.Drain();
+            return;
+        }
+
+        // Capture, which nothing here drains; left as it always was.
         _ = snd_pcm_drain(_pcm);
 
         // Draining leaves the PCM in SETUP state; without a re-prepare the next
-        // writei fails with EBADFD. Re-arm so the handle stays reusable across
-        // transmissions.
+        // transfer fails with EBADFD. Re-arm so the handle stays reusable.
         _ = snd_pcm_prepare(_pcm);
     }
 
@@ -247,7 +282,13 @@ public sealed class AlsaPcm : IDisposable, IPcmTransfer
     {
         if (_pcm != IntPtr.Zero)
         {
-            snd_pcm_close(_pcm);
+            // The feeder first. If it will not stop it may be inside a call on the handle, and
+            // a handle left open is better than one closed under a thread that is using it.
+            if (_playback is null || _playback.Stop())
+            {
+                snd_pcm_close(_pcm);
+            }
+
             _pcm = IntPtr.Zero;
         }
     }
@@ -275,6 +316,38 @@ public sealed class AlsaPcm : IDisposable, IPcmTransfer
 
     /// <inheritdoc />
     void IPcmTransfer.Pause(int milliseconds) => Thread.Sleep(milliseconds);
+
+    /// <inheritdoc />
+    long IPlaybackPcm.Delay()
+    {
+        int err = snd_pcm_delay(_pcm, out CLong delay);
+        if (err < 0)
+        {
+            return err;
+        }
+
+        // Below zero is a card that has played past what was written and not yet said so.
+        return Math.Max(0, (long)delay.Value);
+    }
+
+    /// <inheritdoc />
+    long IPlaybackPcm.WriteSilence(int frames)
+    {
+        int samples = frames * Channels;
+        if (_silence.Length < samples)
+        {
+            // Once: the feeder asks for the same amount or less from then on.
+            _silence = new short[samples];
+        }
+
+        unsafe
+        {
+            fixed (short* p = _silence)
+            {
+                return snd_pcm_writei(_pcm, (IntPtr)p, (ulong)frames);
+            }
+        }
+    }
 
     private static void Throw(int err, string operation)
     {
@@ -427,7 +500,9 @@ public sealed class AlsaPcm : IDisposable, IPcmTransfer
             // starts when the audio is wanted.
             //
             // Playback is the opposite case and keeps set_params' answer: starting on the first
-            // frame written would underrun on the next one.
+            // frame written would underrun on the next one. It only decides anything after an
+            // underrun in the middle of a transmission, though. The stream is started by hand
+            // when it is opened and fed silence from then on (ContinuousPlayback).
             err = snd_pcm_sw_params_set_start_threshold(
                 pcm, sw, new CULong((nuint)(direction == Direction.Capture ? 1 : bufferFrames)));
             if (err < 0)
@@ -463,7 +538,9 @@ public sealed class AlsaPcm : IDisposable, IPcmTransfer
             fixed (short* p = interleaved)
             {
                 _transferBuffer = (IntPtr)p;
-                moved = PcmTransfer.Run(this, frameCount, out failure, stopAtXrun, ref _deferredHole);
+                moved = _playback is { } playback
+                    ? playback.Write(frameCount, out failure)
+                    : PcmTransfer.Run(this, frameCount, out failure, stopAtXrun, ref _deferredHole);
                 _transferBuffer = IntPtr.Zero;
             }
         }
@@ -573,6 +650,10 @@ public sealed class AlsaPcm : IDisposable, IPcmTransfer
 
     [DllImport(Lib)]
     private static extern int snd_pcm_drain(IntPtr pcm);
+
+    // snd_pcm_sframes_t, so CLong: see snd_pcm_get_params above.
+    [DllImport(Lib)]
+    private static extern int snd_pcm_delay(IntPtr pcm, out CLong frames);
 
     [DllImport(Lib)]
     private static extern int snd_pcm_close(IntPtr pcm);

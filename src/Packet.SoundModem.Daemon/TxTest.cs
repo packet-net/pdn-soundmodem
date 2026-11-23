@@ -30,7 +30,7 @@ namespace Packet.SoundModem.Daemon;
 /// so there is nothing to render incrementally against. That is not the same as it going to the
 /// device in one call nothing can interrupt any more (#425): the channel writes it to the device
 /// in blocks with a stop check between them, and nothing is drained until the whole write is
-/// over, so a real card is never stopped and re-primed mid-burst the way draining between queued
+/// over, so a real card never has silence let into the burst the way draining between queued
 /// items would - see <c>SoundModemChannel.WriteStoppably</c>. The length is still capped rather
 /// than merely defaulted, because the render itself is instant and unbounded airtime would still
 /// be a licensing problem even though a stop can now cut it short.</para>

@@ -3,7 +3,9 @@ using Packet.SoundModem.Audio;
 
 namespace Packet.SoundModem.Channel;
 
-/// <summary>ALSA-backed <see cref="IAudioOutput"/>.</summary>
+/// <summary>ALSA-backed <see cref="IAudioOutput"/>. The stream runs from the moment it is opened
+/// until it is disposed, playing silence between transmissions (issue #828): a transmission is
+/// everything from a first <see cref="Write"/> to the <see cref="Drain"/> that follows it.</summary>
 public sealed class AlsaAudioOutput : IAudioOutput, IDisposable
 {
     private readonly AlsaPcm _pcm;
@@ -39,11 +41,15 @@ public sealed class AlsaAudioOutput : IAudioOutput, IDisposable
     /// Every one is audio the transmitter did not send, recovered silently.</summary>
     public int Xruns => _pcm.Xruns;
 
+    /// <summary>Underruns recovered in the silence between transmissions - see
+    /// <see cref="AlsaPcm.IdleUnderruns"/>. No transmit audio was lost to them.</summary>
+    public int IdleUnderruns => _pcm.IdleUnderruns;
+
     /// <summary>Why the buffer asked for was not the one used, or null when it was - see
     /// <see cref="AlsaPcm.ConfigurationWarning"/>.</summary>
     public string? ConfigurationWarning => _pcm.ConfigurationWarning;
 
-    /// <inheritdoc />
+    /// <summary>Blocks until the last frame written has played. The stream is not stopped.</summary>
     public void Drain() => _pcm.Drain();
 
     /// <inheritdoc />
