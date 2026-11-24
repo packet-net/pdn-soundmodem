@@ -111,7 +111,7 @@ Three separate ways for the protocol to grow, so that the expensive one is rarel
   - traffic for everyone uses nothing optional;
   - a sender told to use a format it does not know uses the fastest one it does know that is no faster. Format numbers are given out so that this is always well defined.
 
-With the destination (below) the header is 51 bits, from 42 in the prototype today, at a cost of about half a decibel of header reach.
+With the destination (below) the header is 51 bits, from 42 in the prototype before this. Measured in simulation, that costs half to three quarters of a decibel of header reach (on the full band, 172 headers read of 200 against 192 with each carrier 4 dB under the noise).
 
 | Burst type | Header | Payload |
 |---|---|---|
