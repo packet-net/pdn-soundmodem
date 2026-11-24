@@ -33,24 +33,25 @@ For each neighbour, from the bursts heard from them:
 1. Keep a running estimate of quality on each carrier, weighted towards recent bursts. A decoded payload gives an accurate one; a burst whose payload failed still gives a coarse one from its training symbol and header.
 2. For each standard format, work out the margin that estimate leaves it.
 3. Recommend the fastest format whose margin is at least M.
-4. **M is steered by results**, per neighbour: a payload that fails at or below the recommended format raises M by half a decibel; each one that succeeds lowers it by a hundredth. That settles where about one burst in fifty fails. M starts at 3 dB.
+4. **M is steered by results**, per neighbour: a payload that fails at or below the recommended format raises M by half a decibel, unless the failure is put down to something else on the channel or cannot be explained (see Loss, below); each one that succeeds lowers it by a hundredth. That settles where about one burst in fifty fails. M starts at 3 dB.
 5. Step down at once. Step up only when the faster format has had its margin for two bursts running.
 
 ## How the recommendation gets back: the report
 
-Two ways, the same content: the recommended format (8 bits), and one bit saying "your last burst reached me and I could not decode it". Three more bits are spare.
+Two ways, the same content: the recommended format (8 bits), and one bit saying "your last burst reached me and I could not decode it".
 
-- **Riding on traffic.** Every burst addressed to one station begins its payload with a two-byte prelude: a "report wanted" flag and the sender's report for the destination. So wherever traffic flows both ways, as it does under AX.25 with its acknowledgements, reports cost nothing extra.
-- **By itself, as a header with no payload.** The burst type says "report", and the header's format and burst-number fields carry the recommended format and the failed bit. It is the shortest burst the modem can make (silence, training, header: under 0.2 s on the full band) and the most robust, since a header reads below any payload. It is sent in the header layout the reverse path supports, narrow if need be.
+- **Riding on traffic.** Every burst addressed to one station begins its payload with a two-byte prelude: flags ("report wanted", "a capability word follows", "a recommendation is given", "failed") and the sender's recommendation for the destination. A station with nothing to recommend yet, as at first contact, leaves "a recommendation is given" clear. So wherever traffic flows both ways, as it does under AX.25 with its acknowledgements, reports cost nothing extra.
+- **By itself, as a header with no payload.** The burst type says "report", and the header's format and burst-number fields carry the recommended format and the failed bit. It is the shortest burst the modem can make (silence, training, header: under 0.2 s on the full band) and the most robust, since a header reads below any payload. A burst opens either on the full band or, for the formats that keep to the low carriers, on those carriers only with a longer opening, and a receiver looks for both. A lone report opens the way the reporting station's own data to that neighbour would (by the sender's rules below), so it reaches as far as that data does: about half a second with the long narrow opening.
 
 **When a station sends a report by itself:**
 
 - at once, when a payload addressed to it failed to decode;
-- at once, when the sender asked ("report wanted");
+- when the sender asked ("report wanted") and the burst decoded: the report rides on whatever the host sends back in the first slot, and if the host sends nothing in that slot the modem sends it alone;
 - at once, when its recommendation for a station that is sending to it has dropped;
-- otherwise not: a recommendation that has only risen waits for traffic to ride on, or for the sender to ask.
+- otherwise not: a recommendation that has only risen waits for traffic to ride on, or for the sender to ask;
+- never for a burst addressed to everyone.
 
-A report sent in answer to a burst goes out in the first slot after that burst ends, the slot AX.25 already reserves for acknowledgements (its priority acknowledge, section 6.4.3). The two do not compete: when the burst decoded, the layer above's acknowledgement takes that slot and carries the report; when it did not, there is no acknowledgement and the slot is free for the report.
+"The first slot" is the one AX.25 already reserves for acknowledgements after a frame (its priority acknowledge, section 6.4.3). The modem's lone reports use it and nothing else of the modem's does. When a burst fails there is no acknowledgement to come, so the slot is free for the report. When it decodes, the slot belongs to the layer above, and whatever that sends, then or later, carries the report in its prelude.
 
 ## How the sender chooses a format
 
@@ -59,7 +60,7 @@ For each neighbour the sender holds the last report received and when.
 | What it has | What it sends at |
 |---|---|
 | A report less than 30 s old | the recommended format |
-| An older report | the recommended format, one rung slower for each further 30 s, down to the estimate below |
+| An older report | the recommended format, one rung slower for each further 30 s, down to the estimate in the next row, or to the first-contact format if it has none |
 | No report, but it has heard the neighbour | its own recommendation for the opposite direction, two rungs slower, with "report wanted" set |
 | Nothing at all | the first-contact format (#835), with "report wanted" set |
 
@@ -78,21 +79,21 @@ What the receiver can tell, and what it does:
 |---|---|---|
 | Quality low and even through the burst | the path cannot carry this format | reports "failed", with a slower recommendation, and raises M |
 | Quality good at the start and falling suddenly part-way, or another burst's training appearing inside this one | something else came on the channel | reports "failed" with the recommendation unchanged; M does not move |
-| A header and nothing decodable after it, with no measurement worth having | cannot say | reports "failed" with the recommendation unchanged |
+| A header and nothing decodable after it, with no measurement worth having | cannot say | reports "failed" with the recommendation unchanged; M does not move |
 | Nothing | nothing | nothing: it cannot report what it did not hear |
 
 And the sender:
 
 - **"Failed", with a slower format:** use it.
 - **"Failed", format unchanged:** the same format again for whatever comes next. Going slower would make the burst longer and the next overlap more likely.
-- **No report at all** when one was due: the burst may never have been heard (captured from the start, or the station gone), or the report was lost. The next burst goes at the same format once; if that too is met with silence, two rungs slower; after that, the first-contact format. Silence never moves M, which is the receiver's alone.
+- **No report at all** when one was due, which is when the burst had "report wanted" set: the burst may never have been heard (captured from the start, or the station gone), or the report was lost. The next burst goes at the same format once; if that too is met with silence, two rungs slower; after that, the first-contact format. These steps take the place of the table above until a report arrives. Silence never moves M, which is the receiver's alone.
 
 A report is a header, the most robust thing the modem sends, so it gets through over a weaker overlapping signal that would spoil data. How much weaker an interferer must be for each format to survive has not been measured on these radios; #835 needs a third station and should measure it.
 
 ## What each end remembers, and for how long
 
 - **As a receiver, per neighbour:** the quality estimate, M, the current recommendation. Forgotten after ten minutes without hearing them.
-- **As a sender, per neighbour:** the last report and its age. Useless after about two minutes (see the table).
+- **As a sender, per neighbour:** the last report and its age, which counts for less every 30 s until the sender is back on its own estimate (see the table).
 - **Nothing is negotiated**, so nothing has to survive a restart. A station that restarts knows nothing, uses the cold rules, and is told what it needs within one exchange. The other end notices nothing.
 - The two directions of a link are entirely separate. Each has its own estimate, margin and format.
 
@@ -104,24 +105,43 @@ Three separate ways for the protocol to grow, so that the expensive one is rarel
 
 - **Version: 2 bits at the front of every header, in the same place for good.** It changes only when something every station must parse changes: the header's layout, the training, the meaning of the base formats. This document is version 0. Value 3 is kept as an escape meaning "a longer version field follows", so the field cannot run out. A station that reads a version it does not know decodes nothing more of that burst and treats the channel as busy for as long as it hears signal. (802.11 has carried a 2-bit version since 1997 and has moved it once, because nearly everything since has been added the two ways below.)
 - **Burst type: 3 bits, widened from 2.** New kinds of burst are the likeliest additions (parity for a repeat, a private table, a sounding burst). A station that meets a type it does not know can still read who sent it and whom it is for, and stays off the channel while it lasts. Types so far: data, report, identification.
-- **Feature flags: a 16-bit capability word that each station advertises, outside the header.** Four bits give the revision of the standard format list the station knows; twelve are one flag per optional feature (none defined yet; tables private to a link and repeats inside the modem would be the first). It travels in the payload prelude of a data burst when a prelude bit says so (at first contact, with "report wanted", and after a neighbour has been forgotten) and in every identification burst. The rules:
+- **Feature flags: a 16-bit capability word that each station advertises, outside the header.** Four bits give the revision of the standard format list the station knows; twelve are one flag per optional feature (none defined yet; tables private to a link and repeats inside the modem would be the first). It travels in the payload prelude of a data burst when a prelude flag says so, which is whenever "report wanted" is set (so at first contact, and on the first burst to a neighbour that had been forgotten), and in every identification burst. The rules:
   - an optional feature is used towards a neighbour only after that neighbour has shown the flag for it;
   - a flag a station does not know is ignored;
   - a neighbour whose capability word has not been heard is assumed to have none, which is always safe;
   - traffic for everyone uses nothing optional;
-  - a sender told to use a format it does not know uses the fastest one it does know that is no faster. Format numbers are given out so that this is always well defined.
+  - a receiver recommends only formats from a list revision the sender has shown it knows, and from revision 0 until it has shown anything. Revision 0 gives all 256 numbers a meaning, so in this version there is no such thing as a number a station does not know.
 
-With the destination (below) the header is 51 bits, from 42 in the prototype before this. Measured in simulation, that costs half to three quarters of a decibel of header reach (on the full band, 172 headers read of 200 against 192 with each carrier 4 dB under the noise).
+### The header, field by field
+
+In the order sent:
+
+| Field | Bits | What it holds |
+|---|---|---|
+| Version | 2 | 0. Value 3 is the escape. |
+| Burst type | 3 | 0 data, 1 report, 2 identification. The rest are spare. |
+| Sender | 6 | the sending station's number, 1 to 63 |
+| Destination | 6 | the station it is for, or 0 for everyone |
+| Format | 8 | the standard format of the payload (#831). In a report: the format recommended to the destination. |
+| Length | 6 | payload symbols, in fours (so 0 to 252). In a report: 0. |
+| Burst number | 4 | on data, a count that goes up by one with each data burst a station sends, round and round; nothing in this version depends on it. In a report: the top bit is "failed" and the other three are 0. |
+| Check | 16 | over the 35 bits before it |
+
+That is 51 bits, from 42 in the prototype before this. Measured in simulation, the nine added bits (version, a wider burst type, destination) cost half to three quarters of a decibel of header reach (on the full band, 172 headers read of 200 against 192 with each carrier 4 dB under the noise).
+
+The payload prelude of a data burst to one station is two bytes. First byte, from the top bit: "report wanted", "a capability word follows", "a recommendation is given", "failed", and four spare bits sent as 0. Second byte: the recommended format. The capability word, when flagged, is the next two bytes.
+
+Station numbers are set at both ends for the bench. How a station comes by its number on a shared channel is #835.
 
 | Burst type | Header | Payload |
 |---|---|---|
-| Data to one station | version, type, sender, destination, format, length, burst number, check | prelude (report wanted, report for the destination, and the capability word when flagged), then one or more whole datagrams |
+| Data to one station | every field | the prelude, then one or more whole datagrams |
 | Data to everyone | the same, with destination 0 | datagrams. No prelude, no report. |
-| Report | version, type, sender, destination; the recommended format and the failed bit in place of format and burst number | none |
-| Identification (optional) | sender, destination 0 | the station's callsign and capability word, in the first-contact format |
+| Report | every field, with the recommended format and the failed bit in the format and burst-number fields, and length 0 | none |
+| Identification (optional) | as data, with destination 0 | the station's callsign and capability word, in the first-contact format |
 
 - **The destination is in the header** (6 bits, with 0 meaning everyone). The first draft kept it in the payload to save header bits. That does not survive more than two stations: when a payload fails, nobody could tell whom it was for, so either every station that heard it reports at once in the same slot, or nobody does. In the header, exactly one station knows the failure is its to report.
-- A burst carries whole datagrams, several if they fit. The modem never splits a datagram across bursts. AX.25 has its own segmenter (section 2.4), and the host is told how much one burst can carry to each neighbour now (#822) so that it can size its frames to suit.
+- A burst carries whole datagrams, several if they fit. The modem never splits a datagram across bursts. AX.25 sizes its own frames (N1) and has its own segmenter (section 2.4), and the host is told how much one burst can carry to each neighbour now (#822) so that it can size its frames to suit.
 
 ## Under a link layer such as AX.25: what the modem must not do
 
@@ -131,12 +151,12 @@ AX.25 2.3 was read against this design as the client that matters most today, so
 
 | AX.25 has | So the modem does not |
 |---|---|
-| Acknowledgement of every I frame, by N(R) on any frame coming back (6.4.6) | acknowledge bursts. A report is about the path, not about a frame. |
-| Recovery: REJ and SREJ for gaps, and on a timeout a poll and a checkpoint (4.4.5, 6.4.11) | send anything again by its own decision, or keep sequence numbers of its own |
+| Acknowledgement of every I frame, by N(R) on any I or S frame coming back (6.4.6) | acknowledge bursts. A report is about the path, not about a frame. |
+| Recovery: REJ and SREJ for gaps (4.4.3, 4.4.4, 6.4.4), and on a timeout a poll and a checkpoint (4.4.5, 6.4.11) | send anything again by its own decision, or keep sequence numbers of its own |
 | The poll and final bits, for "where are you up to?" | ask for delivery status. "Report wanted" asks only about the path, and an AX.25 poll already brings a burst back that carries the report. |
 | The idle poll, T3 | keep links alive |
 | RNR and the window k, for flow | hold traffic back for the far end's sake. It tells the host what a link carries and leaves the pacing to it. |
-| A segmenter (2.4) | split datagrams |
+| Its own frame size (N1) and a segmenter (2.4) | split datagrams |
 | A slot reserved for acknowledgements (6.4.3, T101) | invent a second priority scheme. Its lone reports use that slot. |
 
 Three places where the first draft of this document had strayed, now corrected: a status field that named the burst being reported on (an acknowledgement by another name); an option to report after every burst so the host could be told "delivered"; and "send again two rungs slower", which read as the modem retransmitting.
@@ -144,7 +164,7 @@ Three places where the first draft of this document had strayed, now corrected: 
 **What the modem adds that AX.25 cannot do:**
 
 - **The rate.** T1 "cannot be expressed in absolute time; the time required to send frames varies greatly with the signaling rate" (6.7.1.1). With a rate that varies several hundredfold the link layer needs to be told what the link carries now, and when a frame has actually gone out, to set T1, the frame size and the window sensibly (#822, #841).
-- **One fast signal.** A frame that fails its check is discarded by AX.25 "with no further action" (4.4.6): the sender finds out only when T1 runs out, seconds later, and then does not know why. The receiving modem does know: it heard the burst and can say at once "that did not decode; use this format". That is the report on failure, and it is the only thing here that overlaps AX.25's recovery in time. It carries no sequence number and triggers no resend; AX.25 still recovers in its own way, just sooner and at a rate that works.
+- **One fast signal.** A frame that fails its check is discarded by AX.25 "with no further action taken" (4.4.6). If it was the last frame outstanding, which a lost burst carrying several frames often makes it, the sender finds out only when T1 runs out (4.4.5.1), seconds later, and then does not know why. The receiving modem does know: it heard the burst and can say at once "that did not decode; use this format". That is the report on failure, and it is the only thing here that overlaps AX.25's recovery in time. It carries no sequence number and triggers no resend; AX.25 still recovers in its own way, just sooner and at a rate that works.
 
 ## A worked exchange under AX.25
 
@@ -154,7 +174,7 @@ A connects to B, having never heard it.
 2. A's I frames go at format 40, several to a burst. B's RR, delayed a little by its T2 so as to acknowledge them together, rides in a short burst that repeats B's recommendation.
 3. The path worsens by 10 dB. A's next burst reaches B and does not decode. AX.25 at B sees nothing. B's modem sends a lone report in the priority slot: "failed; use format 31". No acknowledgement arrives, so A's T1 runs out and AX.25 polls (RR, P set); the poll and everything after it go at format 31; B answers with its N(R) and A resends what was lost, as AX.25 always would.
 4. A station C that B cannot hear transmits over one of A's bursts. B's modem sees good quality that collapses part-way and reports "failed", format unchanged. A's recovery goes at the same format.
-5. Both fall silent for five minutes. A's knowledge of B has aged out. Its next frame, perhaps the T3 idle poll, goes at A's own estimate of the path, two rungs slow, and the answer puts it right.
+5. Both fall silent for five minutes. A's knowledge of B has aged out. Its next frame, perhaps the T3 idle poll, goes at A's own estimate of the path, two rungs slow, with "report wanted" set, and the answer puts it right.
 
 ## What is left to the layer above
 
@@ -166,9 +186,9 @@ A connects to B, having never heard it.
 
 1. **The receiver recommends a format.** It does not send back raw quality. The recommendation is 8 bits and puts the decision where the knowledge is.
 2. **A report is a header with no payload.** Shorter and more robust than a small ordinary burst, at the price of giving two header fields a second meaning and of resting on the header's check alone.
-3. **The destination is in the header.** About a third of a decibel of header reach, and one station knows a failed burst was its to report.
-4. **Reports go only on failure, on request and on a drop**, never after every burst. A host with no acknowledgements of its own sets "report wanted".
-5. **Cold start from the sender's own listening, two rungs slow**, not always the first-contact format. The bench is to show whether two rungs is the right caution, unlike radios especially (#825).
+3. **The destination is in the header.** It is most of the half to three quarters of a decibel the longer header costs, and it means one station knows a failed burst was its to report.
+4. **Reports go only on failure, on request and on a drop**, never after every burst. The modem sets "report wanted" by the sender's rules above; a host with no acknowledgements of its own can also ask for it on a datagram, through the host interface (#822).
+5. **Cold start from the sender's own listening, two rungs slow**, not always the first-contact format. The bench is to show whether two rungs is the right caution, especially between unlike radios (#825).
 6. **The modem never splits a datagram.**
 7. **A target of about one burst in fifty lost** to start from. The bench tries 1%, 2%, 5% and 10% and keeps what gives the best real throughput. A fixed value, not a setting.
 8. **Version of 2 bits with an escape, burst type of 3 bits, feature flags in a 16-bit capability word outside the header.**
