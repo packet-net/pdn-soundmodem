@@ -1,6 +1,6 @@
 # Adaptation over the air: the protocol
 
-Status: a draft for Tom to read, 2026-11-24, revised the same day after his comments (a version number and feature flags, the FM capture effect, and a check against the flows of AX.25 2.3). A design record for #830 (part of #829). Nothing here is built. The choices still open are listed at the end and marked "to decide"; everything else is a proposal that stands unless he objects.
+Status: agreed, 2026-11-24. A design record for #830 (part of #829): Tom read it, commented (a version number and feature flags, the FM capture effect, a check against the flows of AX.25 2.3) and agreed the nine choices listed at the end. Nothing here is built yet; the prototype comes first (#831 to #835), then the port.
 
 This says how two stations with the adaptive OFDM-FM modem find and keep the best rate for the link between them, with nothing passing between them but the radio. It is meant to be read in a quarter of an hour and built from.
 
@@ -162,17 +162,17 @@ A connects to B, having never heard it.
 - **Getting a datagram there in the end.** Acknowledging, repeating and ordering belong to the layer above, as set out under AX.25 above. The modem tells the host when each frame has gone out, and what it knows about the path. #836 decides whether the modem should ever do more.
 - **Routing, connections, flow.** Unchanged, but better informed: the host interface (#822) says what each neighbour can carry now, and #841 considers the AX.25 engine using it directly.
 
-## To decide
+## Decided (Tom, 24 November 2026)
 
-1. **Receiver recommends a format** (proposed), or reports raw quality and lets the sender choose. The first is 8 bits and puts the decision where the knowledge is.
-2. **A report is a header with no payload** (proposed), or a small ordinary burst. The first is shorter and more robust, at the price of giving three header fields a second meaning.
-3. **Destination in the header** (proposed, changed from the first draft), or in the payload's prelude. In the header it costs about a third of a decibel of header reach and tells one station that a failed burst was its to report; in the payload, a failed burst has no known destination.
-4. **Settled by the AX.25 check, unless you disagree:** reports go only on failure, on request and on a drop, never after every burst. Reporting every burst would be a second acknowledgement under AX.25's own.
-5. **Cold start from the sender's own listening, two rungs slow** (proposed), or always the first-contact format.
-6. **Settled by the AX.25 check, unless you disagree:** the modem never splits a datagram; AX.25 has a segmenter.
-7. **A target of about one burst in fifty lost** for the margin (proposed). Lower is safer and slower.
-8. **Version of 2 bits with an escape, burst type widened to 3 bits, and feature flags in a 16-bit capability word outside the header** (proposed). The alternative for the version is 3 or 4 bits and no escape, at about a fifteenth of a decibel a bit.
-9. **The numbers**: 30 s for a report to stay fresh, ten minutes to forget a neighbour, two rungs on silence, 3 dB starting margin. All are first guesses for #833 and #834 to settle on the bench.
+1. **The receiver recommends a format.** It does not send back raw quality. The recommendation is 8 bits and puts the decision where the knowledge is.
+2. **A report is a header with no payload.** Shorter and more robust than a small ordinary burst, at the price of giving two header fields a second meaning and of resting on the header's check alone.
+3. **The destination is in the header.** About a third of a decibel of header reach, and one station knows a failed burst was its to report.
+4. **Reports go only on failure, on request and on a drop**, never after every burst. A host with no acknowledgements of its own sets "report wanted".
+5. **Cold start from the sender's own listening, two rungs slow**, not always the first-contact format. The bench is to show whether two rungs is the right caution, unlike radios especially (#825).
+6. **The modem never splits a datagram.**
+7. **A target of about one burst in fifty lost** to start from. The bench tries 1%, 2%, 5% and 10% and keeps what gives the best real throughput. A fixed value, not a setting.
+8. **Version of 2 bits with an escape, burst type of 3 bits, feature flags in a 16-bit capability word outside the header.**
+9. **The numbers** (30 s for a report to stay fresh, ten minutes to forget a neighbour, two rungs on repeated silence, 3 dB starting margin) are first guesses for #833 and #834 to settle on the bench, and end up as fixed values, not settings.
 
 ## Not in this version
 
