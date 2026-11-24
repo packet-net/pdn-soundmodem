@@ -36,12 +36,12 @@ For each neighbour, from every data burst of theirs whose header it reads, whoev
 One figure of quality for each carrier, in decibels, held as a full-band burst at full drive would show it.
 
 1. **What is measured.** A burst whose payload decoded is measured on the carriers its payload used, with every symbol now known: an accurate figure. A burst whose payload failed is measured on the carriers of its opening, from the training and the header: a coarse one. A burst that something else came on top of (see Loss, below) is not measured at all. The prototype measures data bursts only; a lone report is read and not measured.
-2. **Through the peak limit.** The robust formats are driven into the sender's peak limit: the drive is part of the format (see the format number, below). The limit's own distortion is no part of the path, and it is known exactly, because the limit did the same arithmetic to the same samples at the sender. So the receiver of a decoded burst rebuilds every symbol as it left the limit and measures the burst against that. Measured against the burst as built, the same bench path read 14 dB from a burst 6 dB over full drive and 31 dB from one at full drive, so a recommendation made from a robust burst reached only as far as the next drive class and a link took 8 to 14 bursts to climb from cold. Measured through the limit the first figure is 27 dB and the climb takes 3 to 4. This makes the limit part of the burst format: the whole burst after its opening silence is scaled so that its root mean square level is 12.8 dB under full scale at full drive, and higher by the format's drive, and is then clipped at 0.95 of full scale (#837 is where the exact arithmetic belongs). The prototype does this for decoded payloads only; the opening of a failed burst is still measured as built.
+2. **Through the peak limit.** The robust formats are driven into the sender's peak limit: the drive is part of the format (see the format number, below). The limit's own distortion is no part of the path, and it is known exactly, because the limit did the same arithmetic to the same samples at the sender. So the receiver of a decoded burst rebuilds every symbol as it left the limit and measures the burst against that. Measured against the burst as built, the same bench path read 14 dB from a burst 6 dB over full drive and 31 dB from one at full drive, so a recommendation made from a robust burst reached only as far as the next drive class and a link took 8 to 14 bursts to climb from cold. Measured through the limit the first figure is 27 dB and the climb takes 3 to 4. This makes the limit part of the burst format: the whole burst after its opening silence is scaled so that its root mean square level is 12.8 dB under full scale at full drive, and higher by the format's drive, and is then clipped at 0.95 of full scale (#837 is where the exact arithmetic belongs). The opening of a failed burst is measured the same way, against what the limit left of it. The limit's scale is set by the whole burst, which the receiver does not have when the payload failed, so it works the limit on the opening alone, which is built to the same level as the payload.
 3. **A common footing.** A format on fewer carriers puts more power on each, and one driven harder has that much more. From every figure take off 10 log10(all carriers / carriers the measured part used) plus the format's drive, in decibels. The measured part is the payload for a decoded burst and the opening for a failed one.
-4. **Folding it in.** Compare the new figures with the estimate, each averaged over the carriers that have both.
+4. **Folding it in.** A failed burst's figures first have 3 dB taken off them: one or a few symbols of opening, read at a level that failed, are coarse and tend to flatter. Then compare the new figures with the estimate, each averaged over the carriers that have both.
    - **More than 2 dB under the estimate:** the path has got worse, and that is believed at once. The new figures replace the estimate on the carriers measured, and the estimate on every other carrier comes down by the same average amount, since what was known of those is from before.
    - **Otherwise, from a decoded burst:** on each carrier measured, the estimate becomes half the old figure and half the new, in decibels. A neighbour's first three measurements count in full, since there is no history worth averaging with. A carrier with no figure yet takes the new one.
-   - **Otherwise, from a failed burst:** nothing. A failed burst's own measurement is believed only where it says the path is worse; one that measures well is the margin's business. The one exception is a failed burst on carriers with no estimate at all, whose figures are taken as they are.
+   - **Otherwise, from a failed burst:** nothing. A failed burst's own measurement is believed only where it says the path is worse; one that measures well is the margin's business. The one exception is a failed burst on carriers with no estimate at all, whose figures (less the 3 dB) are taken as they are.
 5. **Carriers never measured.** A narrow burst says nothing about the carriers above its band. For the recommendation they are filled in from the top of what was measured: the median of the highest seven carriers measured, falling 20 dB for each decade of frequency above the highest (as FM noise does), less 3 dB of caution.
 
 ### The margin
@@ -58,7 +58,7 @@ That settles where about one burst in fifty fails.
 1. For each standard format, work out the margin the estimate leaves it: how far the estimate could fall, on every carrier alike, before the format's carriers between them no longer carry what the format asks of them. The format is credited with its own power on each carrier (the footing above, the other way round). How many bits a carrier carries at a given quality belongs with the format list (#831).
 2. Take the fastest format whose margin is at least M, and which is no faster than the cap (below) if there is one. Formats are compared by their rate, across bands; of two with the same rate, the one with more margin. If no format has M, take the most robust.
 3. **Step down at once.** If that format is no faster than the current recommendation, or there is none yet, it becomes the recommendation, and anything waiting (next) is dropped.
-4. **Step up only on two bursts running.** A faster format waits. If the next burst supports one at least as fast as the one waiting, the one waiting becomes the recommendation: it is the one both bursts supported. (If the two have the same rate, the newer one is taken.) If the next burst supports something faster than the recommendation but slower than the one waiting, that waits in its turn and the count starts again.
+4. **Step up only on two bursts running.** A faster format waits. If the next burst also supports something faster than the recommendation, the slower of the two becomes the recommendation: it is the one both bursts supported. (If the two have the same rate, the newer one is taken.)
 5. **A new neighbour's first three measurements may raise the recommendation at once.** Without this, and with the estimate moving by halves, a link from cold climbs a staircase.
 
 ### After a failure: the cap
@@ -119,7 +119,7 @@ What the receiver can tell, and what it does:
 
 | What it sees | What it concludes | What it does |
 |---|---|---|
-| A header, a payload that fails, and no sudden change part-way | the path cannot carry this format | reports "failed", with its new recommendation; takes the burst's measurement if it is more than 2 dB under the estimate; raises M if the format was no faster than its recommendation; sets the cap |
+| A header, a payload that fails, and no sudden change part-way | the path cannot carry this format | reports "failed", with its new recommendation; takes the burst's measurement, less 3 dB, if that is more than 2 dB under the estimate; raises M if the format was no faster than its recommendation; sets the cap |
 | A header, a payload that fails, and quality good at the start and falling suddenly part-way | something else came on the channel | reports "failed" with the recommendation unchanged; takes no measurement; M, the cap and the count of bursts decoded running do not move |
 | Nothing | nothing | nothing: it cannot report what it did not hear |
 
@@ -196,7 +196,7 @@ The list of formats is #831's and is provisional. The protocol needs only this m
 - **A format number is a band (the top 3 bits) and a rung (the low 5 bits):** number = 32 x band + rung. The band says how much of the audio the payload uses, band 0 the most; in the first list the eight bands reach up to 8, 6.5, 5, 4, 3, 2, 1.5 and 1 kHz. The rung says how many information bits each carrier carries in each symbol, 32 steps of about 13% each, rung 0 the fewest.
 - **Everything else follows from those two:** the constellation, the code rate, which of the three openings the burst has, and its drive. So every one of the 256 numbers means something and any station can decode any of them cold.
 - **The drive is part of the format.** A format's bursts are driven a fixed number of decibels over full drive, into the peak limit: more for the low rungs, where noise and not distortion is what limits them (6 dB over at most in the first list), none for the high ones. A sender does not choose it. The receiver relies on it twice: to put a measurement on the common footing, and to rebuild a burst as it left the limit.
-- **"One rung slower"** is the same band, one rung down. From the bottom rung of any band it is the most robust format.
+- **"One rung slower"** is the same band, one rung down. When the band runs out it is the most robust format, unless the format is already slower than that (the 1 kHz band's lowest rungs are), and then it is its own band's bottom rung. So a step slower never lands on something faster.
 - **"Faster" and "slower" between formats in different bands** go by rate.
 - **The most robust format** is the bottom rung of the 1.5 kHz band (number 192 in the first list, 0.25 kbit/s): the bottom of the ladder that has been measured. The first-contact format is the same one until #835 says otherwise. The 1 kHz band has slower formats still; they are below anything measured so far.
 
@@ -253,7 +253,7 @@ A connects to B, having never heard it. The format numbers and rates are the one
 
 1. A's SABM goes in the first-contact format (192) with "report wanted" and A's capability word. B decodes it and recommends format 24 (30 kbit/s), which is as much as one narrow burst lets it say about the whole band. B's UA comes back in the priority slot. B has no report from A yet but has now heard it, so the UA goes at B's own recommendation two rungs slower (format 22, 23 kbit/s) with "report wanted" set, and its prelude carries B's report: "to me, use format 24". The connection's own handshake has trained one direction, and A's reading of the UA lets it tell B the other.
 2. A's I frames go at format 24, several to a burst, with A's recommendation for B in the prelude. This is the first full-band burst B has heard from A. It is B's second measurement of A, so it counts in full and may raise the recommendation at once: B's RR, delayed a little by its T2 so as to acknowledge the frames together, rides in a short burst whose prelude says "use format 29" (55 kbit/s). A burst or two more and both directions are at format 30 (62 kbit/s).
-3. The path worsens by 10 dB. A's next burst reaches B and does not decode. AX.25 at B sees nothing. B's modem measures the burst's opening, finds it more than 2 dB under its estimate and takes the new figures in place of the old; raises M by half a decibel; and will recommend nothing faster than format 29 until two bursts running decode. It sends a lone report in the priority slot: "failed; use format 26" (say; 38 kbit/s). No acknowledgement arrives, so A's T1 runs out and AX.25 polls (RR, P set); the poll and everything after it go at format 26; B answers with its N(R) and A resends what was lost, as AX.25 always would.
+3. The path worsens by 10 dB. A's next burst reaches B and does not decode. AX.25 at B sees nothing. B's modem measures the burst's opening, takes 3 dB off, finds the result more than 2 dB under its estimate and takes the new figures in place of the old; raises M by half a decibel; and will recommend nothing faster than format 29 until two bursts running decode. It sends a lone report in the priority slot: "failed; use format 25" (say; 33 kbit/s). No acknowledgement arrives, so A's T1 runs out and AX.25 polls (RR, P set); the poll and everything after it go at format 25; B answers with its N(R) and A resends what was lost, as AX.25 always would.
 4. A station C that B cannot hear transmits over one of A's bursts. B's modem sees good quality that collapses part-way and reports "failed", format unchanged. Its estimate, M and cap are as they were. A's recovery goes at the same format.
 5. Both fall silent for five minutes. A's report from B is ten rungs stale, which takes it down to A's own estimate of the path, two rungs slow, and no further. Its next frame, perhaps the T3 idle poll, goes at that with "report wanted" set, and the answer puts it right. After ten minutes of silence A would have forgotten B altogether and started from the first-contact format.
 
@@ -277,7 +277,7 @@ A connects to B, having never heard it. The format numbers and rates are the one
 
 ## Changed since it was agreed
 
-Nothing here reverses any of the nine choices above. Each line is a rule that the agreed version did not have, or had differently, with why and where it came from: simulation (the real modem in a loop with a made-up channel), the bench (#833), or simply building it.
+Nothing here reverses any of the nine choices above. Each line is a rule that the agreed version did not have, or had differently, with why and where it came from: simulation (the real modem in a loop with a made-up channel), the bench (#833), simply building it, or writing the rules down here against the prototype, which found four faults that were then put right in it.
 
 | What changed | Why | From |
 |---|---|---|
@@ -288,6 +288,7 @@ Nothing here reverses any of the nine choices above. Each line is a rule that th
 | Every measurement is put on a common footing (a full-band burst at full drive), and the carriers above a narrow burst's band are filled in at 20 dB a decade down, less 3 dB. | Formats differ in carriers and in drive; a narrow first-contact burst has to be enough to recommend a full-band format. | Simulation |
 | A new neighbour's first three measurements count in full and may raise the recommendation at once. | Averaging by halves and "two bursts running" at every step made the climb from cold a staircase. | Bench |
 | Quality is measured through the peak limit. | The limit's own distortion was being counted as the path's: 8 to 14 bursts to climb from cold, 3 to 4 with this. | Bench |
+| The opening of a failed burst is measured through the peak limit too, and 3 dB is taken off what it measures. | Measured as built, a failed burst that was driven hard read falsely low and would replace a good estimate; and an opening of a few symbols, read at a level that failed, is coarse and tends to flatter. | Writing the rules down |
 | "Report wanted" is also set when two bursts have gone to a neighbour with nothing at all heard back. | A path that dies outright is noticed without waiting 30 s; and it is the only way the rate rises in one-way traffic. | Simulation; the one-way effect seen on the bench |
 | "Report wanted" is set whenever the report in hand is 30 s old or more, and after any silence until a report arrives. | The agreed version set it only where the sender had no report; a sender going slower on a stale report should ask for a fresh one. | Building it |
 | A prelude that gives no recommendation does not clear the count of silences, and a burst that asked and got only such a prelude back counts as a silence. | A station that heard a neighbour it could not reach stayed at a rate the neighbour never decoded. | Simulation |
@@ -299,9 +300,11 @@ Nothing here reverses any of the nine choices above. Each line is a rule that th
 | Two kinds of failure, not three: "cannot say" is gone, and another burst's training inside a burst is not looked for. | The opening of any burst whose header read gives a measurement. | Building it |
 | The sender does not look at the failed bit, and a prelude never carries it set. | Obeying the recommendation covers both cases; a failure is always reported alone and at once. | Building it |
 | M is held between 0 and 12 dB. | Limits it did not have. | Building it |
-| Stepping up: a slower candidate on the second burst starts the count again. | The agreed version did not say. | Building it |
+| Stepping up takes the slower of the two formats that two bursts running supported. | The agreed version did not say which; the prototype started the count again when the second burst supported less than the first, though both had supported it. | Writing the rules down |
 | A neighbour's state in both roles is dropped together after ten minutes. | The agreed version forgot only the receiver's half. | Building it |
+| A neighbour is forgotten whichever way the station next comes to it, on hearing it or on sending to it. | The prototype forgot only when about to send, so a station that only listened never forgot. | Writing the rules down |
 | A format number is a band and a rung, and the drive is part of the format. | The first format list (#831). | Building it |
+| "One rung slower" never lands on something faster: a format already slower than the most robust one stays at its own band's bottom rung. | The 1 kHz band's lowest rungs are slower than the most robust format, and a step "slower" from there went up to it. | Writing the rules down |
 | Three openings, not two. | The formats on the lowest carriers need a longer opening than those up to 3 kHz. | Building it |
 
 ## What the bench has shown
@@ -317,13 +320,15 @@ Two stations of the prototype, one process each, with nothing between them but t
 | 20 min, traffic one way | 1 to 2 | 96 | 96 | 62 kbit/s | burst 14 |
 | 6 min, traffic both ways, measuring through the peak limit | 1 to 2 | 31 | 31 | 62 kbit/s | burst 4 |
 | | 2 to 1 | 31 | 31 | 62 kbit/s | burst 3 |
+| 5 min, traffic both ways, after the four faults were put right | 1 to 2 | 26 | 26 | 62 kbit/s | burst 4 |
+| | 2 to 1 | 25 | 24 | 62 kbit/s | burst 3 |
 
-- **459 of 460 bursts delivered.** The stations never keyed at once, and nothing was decoded that was not sent.
-- **The one failure** (at format 30, the top rung but one) was reported at once and the report was read. The next four bursts went at formats 28, 28, 29 and 29, and the fifth was back at 30.
-- **The slow climb was the peak limit**, as set out under the estimate above. The last run is the same path with the receiver measuring through the limit.
+- **509 of 511 bursts delivered.** The stations never keyed at once, and nothing was decoded that was not sent.
+- **The two failures** (both at format 30, the top rung but one, in different runs) were each reported at once and the report was read. Each time the next four bursts went at formats 28, 28, 29 and 29, and the fifth was back at 30.
+- **The slow climb was the peak limit**, as set out under the estimate above. The last two runs are the same path with the receiver measuring through the limit.
 - **In traffic that goes one way the rate rose only when the sender asked**, on every third burst: 32 requests in 96 bursts, 32 lone reports, all read.
 - **The margin** came down from 3 dB to 1.7 and 2.2 dB over the 130 bursts of the long run. The top rung was never recommended.
-- **One failure in 460 says nothing yet about the target of one burst in fifty**, and the trial of 1%, 2%, 5% and 10% has not been run. The numbers (30 s, ten minutes, two rungs, 3 dB) are still the first guesses.
+- **Two failures in 511 say nothing yet about the target of one burst in fifty**, and the trial of 1%, 2%, 5% and 10% has not been run. The numbers (30 s, ten minutes, two rungs, 3 dB) are still the first guesses.
 
 What in those runs was the prototype and not the protocol:
 
@@ -335,7 +340,7 @@ What in those runs was the prototype and not the protocol:
 **Not yet tried on air:**
 
 - a weak path, where the narrow formats, the long openings and the bottom of the ladder come into play;
-- a path that changes, or breaks (#834, which needs a hand on the attenuator). Drops and dead paths have only been run in simulation: there a 14 dB drop cost three bursts, and a path too poor for a full-band header to be read was found again at the first-contact format on the sixth burst;
+- a path that changes, or breaks (#834, which needs a hand on the attenuator). Drops and dead paths have only been run in simulation: there a sudden 14 dB drop costs one burst, because the report of the failed burst names a format that works (it cost three before the four faults were put right), and a path too poor for a full-band header to be read was found again at the first-contact format on the sixth burst;
 - more than two stations, broadcasts, and stations listening in (#835);
 - unlike radios (#825);
 - a real link layer above it.
