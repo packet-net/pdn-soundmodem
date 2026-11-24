@@ -1,6 +1,6 @@
 # Adaptation over the air: the protocol
 
-Status: a draft for Tom to read, 2026-11-24, revised the same day after his first three comments (a version number, the FM capture effect, and a check against the flows of AX.25 2.3). A design record for #830 (part of #829). Nothing here is built. The choices still open are listed at the end and marked "to decide"; everything else is a proposal that stands unless he objects.
+Status: a draft for Tom to read, 2026-11-24, revised the same day after his comments (a version number and feature flags, the FM capture effect, and a check against the flows of AX.25 2.3). A design record for #830 (part of #829). Nothing here is built. The choices still open are listed at the end and marked "to decide"; everything else is a proposal that stands unless he objects.
 
 This says how two stations with the adaptive OFDM-FM modem find and keep the best rate for the link between them, with nothing passing between them but the radio. It is meant to be read in a quarter of an hour and built from.
 
@@ -98,21 +98,36 @@ A report is a header, the most robust thing the modem sends, so it gets through 
 
 ## What a burst carries, in full
 
-Every header begins with a **2-bit version**, in the same place for good. This document is version 0. A station that reads a version it does not know decodes nothing more of that burst and treats the channel as busy for as long as it hears signal. One version number covers the burst's layout and this protocol together. With the destination (below) that makes the header 50 bits, from 42 in the prototype today, at a cost of about half a decibel of header reach.
+### Version, burst types and feature flags
+
+Three separate ways for the protocol to grow, so that the expensive one is rarely needed.
+
+- **Version: 2 bits at the front of every header, in the same place for good.** It changes only when something every station must parse changes: the header's layout, the training, the meaning of the base formats. This document is version 0. Value 3 is kept as an escape meaning "a longer version field follows", so the field cannot run out. A station that reads a version it does not know decodes nothing more of that burst and treats the channel as busy for as long as it hears signal. (802.11 has carried a 2-bit version since 1997 and has moved it once, because nearly everything since has been added the two ways below.)
+- **Burst type: 3 bits, widened from 2.** New kinds of burst are the likeliest additions (parity for a repeat, a private table, a sounding burst). A station that meets a type it does not know can still read who sent it and whom it is for, and stays off the channel while it lasts. Types so far: data, report, identification.
+- **Feature flags: a 16-bit capability word that each station advertises, outside the header.** Four bits give the revision of the standard format list the station knows; twelve are one flag per optional feature (none defined yet; tables private to a link and repeats inside the modem would be the first). It travels in the payload prelude of a data burst when a prelude bit says so (at first contact, with "report wanted", and after a neighbour has been forgotten) and in every identification burst. The rules:
+  - an optional feature is used towards a neighbour only after that neighbour has shown the flag for it;
+  - a flag a station does not know is ignored;
+  - a neighbour whose capability word has not been heard is assumed to have none, which is always safe;
+  - traffic for everyone uses nothing optional;
+  - a sender told to use a format it does not know uses the fastest one it does know that is no faster. Format numbers are given out so that this is always well defined.
+
+With the destination (below) the header is 51 bits, from 42 in the prototype today, at a cost of about half a decibel of header reach.
 
 | Burst type | Header | Payload |
 |---|---|---|
-| Data to one station | version, type, sender, destination, format, length, burst number, check | prelude (report wanted, report for the destination), then one or more whole datagrams |
+| Data to one station | version, type, sender, destination, format, length, burst number, check | prelude (report wanted, report for the destination, and the capability word when flagged), then one or more whole datagrams |
 | Data to everyone | the same, with destination 0 | datagrams. No prelude, no report. |
 | Report | version, type, sender, destination; the recommended format and the failed bit in place of format and burst number | none |
-| Identification (optional) | sender, destination 0 | the station's callsign, in the first-contact format |
+| Identification (optional) | sender, destination 0 | the station's callsign and capability word, in the first-contact format |
 
 - **The destination is in the header** (6 bits, with 0 meaning everyone). The first draft kept it in the payload to save header bits. That does not survive more than two stations: when a payload fails, nobody could tell whom it was for, so either every station that heard it reports at once in the same slot, or nobody does. In the header, exactly one station knows the failure is its to report.
 - A burst carries whole datagrams, several if they fit. The modem never splits a datagram across bursts. AX.25 has its own segmenter (section 2.4), and the host is told how much one burst can carry to each neighbour now (#822) so that it can size its frames to suit.
 
-## Under AX.25: what the modem must not do
+## Under a link layer such as AX.25: what the modem must not do
 
-AX.25 2.3 was read against this design, so that the modem does not grow a second copy of what the link layer already does. AX.25 connected mode already has:
+**The modem is not built around AX.25, and nothing in it depends on AX.25.** AX.25 should work well over it, as one client among others. So the rule is general: the modem moves datagrams and chooses the rate; acknowledging, repeating, ordering, pacing and splitting belong to whatever sits above, and a host with none of those of its own gets none from the modem either.
+
+AX.25 2.3 was read against this design as the client that matters most today, so that the modem does not grow a second copy of what a link layer already does. AX.25 connected mode already has:
 
 | AX.25 has | So the modem does not |
 |---|---|
@@ -156,7 +171,7 @@ A connects to B, having never heard it.
 5. **Cold start from the sender's own listening, two rungs slow** (proposed), or always the first-contact format.
 6. **Settled by the AX.25 check, unless you disagree:** the modem never splits a datagram; AX.25 has a segmenter.
 7. **A target of about one burst in fifty lost** for the margin (proposed). Lower is safer and slower.
-8. **The version: two bits at the front of the header** (proposed), costing about a sixth of a decibel of header reach, or carried in the starting value of the header's check, which costs nothing but makes an unknown version look the same as a damaged header. With the destination the header grows from 42 bits to 50, about half a decibel in all.
+8. **Version of 2 bits with an escape, burst type widened to 3 bits, and feature flags in a 16-bit capability word outside the header** (proposed). The alternative for the version is 3 or 4 bits and no escape, at about a fifteenth of a decibel a bit.
 9. **The numbers**: 30 s for a report to stay fresh, ten minutes to forget a neighbour, two rungs on silence, 3 dB starting margin. All are first guesses for #833 and #834 to settle on the bench.
 
 ## Not in this version
