@@ -14,6 +14,7 @@ Almost everything here was measured on one bench, two Tait TM8110s on CM108 inte
 | [preset-design.md](preset-design.md) | How the 8 kHz preset was arrived at, on air, and what still limits it. The single densest page here. |
 | [receiver-findings.md](receiver-findings.md) | Everything tried on the receive path, including the four things that looked obviously right, were built, measured no better, and were reverted. The rate ladder, the margin measure, the LDPC comparison and the decode-cost bound live here. |
 | [clock-tracking.md](clock-tracking.md) | Why bursts were being lost on a real pair of sound cards (the sample clock, and carriers weighted alike), measured burst by burst against the played samples, and the receive path that fixed it, follow-on frames included. Also what two cards 1930 ppm apart need. November 2026. |
+| [adaptation-protocol.md](adaptation-protocol.md) | A draft, not built: how two stations with the adaptive modem find and keep the best rate over the air, with the receiver recommending a format and a report that is a header with no payload. The design for #830, part of #829. |
 
 ## The campaign, in order
 
