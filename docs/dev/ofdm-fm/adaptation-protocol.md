@@ -2,21 +2,21 @@
 
 Status: a design record, agreed 2026-11-24 and brought into line with the prototype on 2026-11-24, later the same day. For #830 (part of #829): Tom read it, commented (a version number and feature flags, the FM capture effect, a check against the flows of AX.25 2.3) and agreed the nine choices listed under "Decided". A prototype was then built to it, run in simulation and run on two real radios (#833), and the rules changed in a number of places: "Changed since it was agreed" lists every one. Built and run on the bench at one signal level; not yet tried on a weak or a changing path (#834). None of it is in this repository's code yet: the prototype is kept outside this repository, and the port follows (#837 to #840).
 
-This says how two stations with the adaptive OFDM-FM modem find and keep the best rate for the link between them, with nothing passing between them but the radio. It is meant to be read in a quarter of an hour and built from.
+This says how two stations with the adaptive OFDM-FM modem find and keep the best rate for the link between them, with nothing passing between them but the radio. The sections down to "Who measures, who decides" give the design in a few minutes; the rest is what to build from.
 
 ## What is already true
 
-Measured on the bench with the prototype (two Tait TM8110s with internal sound card boards, through attenuators):
+Measured on the bench (two Tait TM8110s with internal sound card boards, through attenuators):
 
-- **Every burst says what it is.** It opens with silence, a training symbol and a short header that names its sender, its format and its length, behind a 16-bit check (the header's fields are set out below). A receiver that has been told nothing finds the burst, reads the header and decodes the payload.
-- **There is a ladder of standard formats** from about 65 kbit/s at a strong signal to 0.25 kbit/s at about -125 dBm (#831 fixes the list). The header reads further down than any payload.
+- **Every burst says what it is.** It opens with silence, training and a short header that names its sender, its format and its length, behind a 16-bit check (the header's fields are set out below). A receiver that has been told nothing finds the burst, reads the header and decodes the payload.
+- **There is a ladder of standard formats.** Measured, it runs from about 65 kbit/s at a strong signal to 0.25 kbit/s at about -125 dBm; the list itself (#831, provisional) goes a little past both ends. The header reads further down than any payload.
 - **A receiver measures the channel from every data burst it hears**, carrier by carrier, and from that can say which standard format the link would carry with a given margin.
 - **Two stations have found their rate by these rules** with nothing between them but the radios, from cold, in three or four bursts ("What the bench has shown", near the end).
 
 Two things follow that shape the whole protocol.
 
 1. **There is nothing to keep in step.** A sender may change format on any burst and the receiver decodes it, because the header names it. No handshake, no session, no agreed state that can go wrong.
-2. **Every transmission sounds the channel for everyone who hears it.** A station learns the quality of the path from each neighbour by listening to whatever that neighbour sends, to anyone, whether or not the payload decoded.
+2. **Every transmission sounds the channel for everyone who hears it.** A station learns the quality of the path from each neighbour from every data burst that neighbour sends, to anyone.
 
 ## The idea in one paragraph
 
@@ -36,7 +36,7 @@ For each neighbour, from every data burst of theirs whose header it reads, whoev
 One figure of quality for each carrier, in decibels, held as a full-band burst at full drive would show it.
 
 1. **What is measured.** A burst whose payload decoded is measured on the carriers its payload used, with every symbol now known: an accurate figure. A burst whose payload failed is measured on the carriers of its opening, from the training and the header: a coarse one. A burst that something else came on top of (see Loss, below) is not measured at all. The prototype measures data bursts only; a lone report is read and not measured.
-2. **Through the peak limit.** The robust formats are driven into the sender's peak limit: the drive is part of the format (see the format number, below). The limit's own distortion is no part of the path, and it is known exactly, because the limit did the same arithmetic to the same samples at the sender. So the receiver of a decoded burst rebuilds every symbol as it left the limit and measures the burst against that. Measured against the burst as built, the same bench path read 14 dB from a burst 6 dB over full drive and 31 dB from one at full drive, so a recommendation made from a robust burst reached only as far as the next drive class and a link took 8 to 14 bursts to climb from cold. Measured through the limit the first figure is 27 dB and the climb takes 3 to 4. This makes the limit part of the burst format: the whole burst after its opening silence is scaled so that its root mean square level is 12.8 dB under full scale at full drive, and higher by the format's drive, and is then clipped at 0.95 of full scale (#837 is where the exact arithmetic belongs). The opening of a failed burst is measured the same way, against what the limit left of it. The limit's scale is set by the whole burst, which the receiver does not have when the payload failed, so it works the limit on the opening alone, which is built to the same level as the payload.
+2. **Through the peak limit.** The robust formats are driven into the sender's peak limit: the drive is part of the format (see the format number, below). The limit's own distortion is no part of the path, and it is known exactly, because the limit did the same arithmetic to the same samples at the sender. So the receiver of a decoded burst rebuilds every symbol as it left the limit and measures the burst against that. Measured against the burst as built, the limit's distortion reads as noise on the path, and a robust burst undersells the path by many decibels (the figures are under "What the bench has shown"). This makes the limit part of the burst format: the whole burst after its opening silence is scaled so that its root mean square level is 12.8 dB under full scale at full drive, and higher by the format's drive, and is then clipped at 0.95 of full scale (#837 is where the exact arithmetic belongs). The opening of a failed burst is measured the same way, against what the limit left of it. The limit's scale is set by the whole burst, which the receiver does not have when the payload failed, so it works the limit on the opening alone, which is built to the same level as the payload.
 3. **A common footing.** A format on fewer carriers puts more power on each, and one driven harder has that much more. From every figure take off 10 log10(all carriers / carriers the measured part used) plus the format's drive, in decibels. The measured part is the payload for a decoded burst and the opening for a failed one.
 4. **Folding it in.** A failed burst's figures first have 3 dB taken off them: one or a few symbols of opening, read at a level that failed, are coarse and tend to flatter. Then compare the new figures with the estimate, each averaged over the carriers that have both.
    - **More than 2 dB under the estimate:** the path has got worse, and that is believed at once. The new figures replace the estimate on the carriers measured, and the estimate on every other carrier comes down by the same average amount, since what was known of those is from before.
@@ -69,22 +69,20 @@ When a payload fails, and the failure is not put down to something else on the c
 
 Two ways, the same content: the recommended format (8 bits), and one bit saying "your last burst reached me and I could not decode it".
 
-- **Riding on traffic.** Every burst addressed to one station begins its payload with a two-byte prelude: flags ("report wanted", "a capability word follows", "a recommendation is given", "failed") and the sender's recommendation for the destination. A station with nothing to recommend yet, as at first contact, leaves "a recommendation is given" clear. So wherever traffic flows both ways, as it does under AX.25 with its acknowledgements, reports cost nothing extra. The prototype never sets "failed" in a prelude, because a failure is always reported alone and at once.
+- **Riding on traffic.** Every burst addressed to one station begins its payload with a two-byte prelude that carries the sender's recommendation for the destination (laid out under "The payload, the scrambler and the check", below). A station with nothing to recommend yet, as at first contact, marks the prelude as giving none. So wherever traffic flows both ways, as it does under AX.25 with its acknowledgements, reports cost nothing extra. The prototype never sets "failed" in a prelude: a failure is always reported alone and at once.
 - **By itself, as a header with no payload.** The burst type says "report", and the header's format and burst-number fields carry the recommended format and the failed bit. It is the shortest burst the modem can make (silence, training, header: under 0.2 s on the full band) and the most robust, since a header reads below any payload. A burst opens in one of three ways: on the full band, or, for the formats that keep to the low carriers, on the carriers up to 3 kHz or up to 1.5 kHz only, with a longer opening. A receiver looks for all three. A lone report opens the way the reporting station's own data to that neighbour would, and at the same drive (by the sender's rules below), so it reaches as far as that data does: about 0.3 s on the carriers up to 3 kHz and half a second on those up to 1.5 kHz.
 
 **When a station sends a report by itself:**
 
-- at once, when a payload addressed to it failed to decode, whatever the cause;
-- when the sender asked ("report wanted") and the burst decoded: the report rides on whatever the host sends back in the first slot, and if the host sends nothing in that slot the modem sends it alone;
+- at once, when a payload addressed to it failed to decode, whatever the cause, provided it has a recommendation to give (it has none only when a new neighbour's very first burst is lost to something else on the channel);
+- when the sender asked ("report wanted") and the burst decoded: anything the host sends in the first slot carries the report in its prelude, and the modem sends it alone once that slot has passed with nothing going back;
 - at once, when a burst addressed to it decodes and its recommendation for the sender drops, on that burst, to below what the sender was last told (in a prelude or a lone report);
 - otherwise not: a recommendation that has only risen waits for traffic to ride on, or for the sender to ask;
 - never for a burst addressed to everyone, or to another station. Those are measured all the same.
 
-A lone report on a drop is redundant when the station has data of its own about to go back, because that burst's prelude carries the same recommendation. The prototype sends it anyway; this was seen only in simulation, on a poor made-up path, and the rule has not been changed.
+"The first slot" is the one AX.25 already reserves for acknowledgements after a frame (its priority acknowledge, section 6.4.3). When a burst fails there is no acknowledgement to come, so the slot is free for the report. When it decodes, the slot carries the report on a drop if one is due, and otherwise belongs to the layer above. Lone reports are the only thing the modem itself puts in that slot.
 
-"The first slot" is the one AX.25 already reserves for acknowledgements after a frame (its priority acknowledge, section 6.4.3). The modem's lone reports use it and nothing else of the modem's does. When a burst fails there is no acknowledgement to come, so the slot is free for the report. When it decodes, the slot belongs to the layer above, and whatever that sends, then or later, carries the report in its prelude.
-
-**After a lone report**, the station that sent it goes straight on with its own data, if it has any and is not still waiting for an answer to a burst of its own (it heard the other station last, so the turn is its own), and the station that heard it leaves the channel clear for about a second first. In the prototype the second half is a general rule: no data burst goes out until the channel has been clear for between 0.8 and 1.2 s, a figure drawn afresh each time the channel has been in use, so that the two stations do not wait the same time. Without it both stations transmitted together after every lone report. This is a rule for two stations; what a shared channel needs after the first slot is not designed yet.
+**After a lone report**, the station that sent it goes straight on with its own data, if it has any and is not still waiting for an answer to a burst of its own (it heard the other station last, so the turn is its own), and the station that heard it leaves the channel clear for about a second first. In the prototype no data burst goes out until the channel has been clear for 0.8 to 1.2 s, drawn afresh each time so that the two stations do not wait alike. Without this both stations transmitted together after every lone report. It is a rule for two stations with a made-up host, and it sits outside AX.25's priority rule, which keeps ordinary frames out of the first slot. What a shared channel needs after the first slot is not designed yet.
 
 ## How the sender chooses a format
 
@@ -93,18 +91,17 @@ For each neighbour the sender holds the last report received and when, how many 
 | What it has | What it sends at | "Report wanted" |
 |---|---|---|
 | A report less than 30 s old | the recommended format | clear |
-| An older report | the recommended format, one rung slower for each whole 30 s of the report's age (one at 30 s, two at 60 s), but no slower than the estimate in the next row, or than the first-contact format if it has none, and never faster than the report said | set |
+| An older report | the recommended format, one rung slower for each whole 30 s of the report's age (one at 30 s, two at 60 s). Ageing stops at the estimate in the next row (or at the first-contact format if there is none), and does not start at all if that estimate is faster than the report: the sender is never faster than it was told | set |
 | No report, but it has heard the neighbour | its own recommendation for the opposite direction, two rungs slower | set |
 | Nothing at all | the first-contact format (#835) | set |
-
-If the sender's own estimate, two rungs slow, is faster than what the report said, the report does not age at all: the sender stays at what it was told.
 
 **"Report wanted" is also set:**
 
 - after any silence, until a report arrives (see Loss, below);
-- when two data bursts have gone to the neighbour since anything at all was heard from them: a data burst of theirs to anyone, decoded or not, or a report to this station. A path that dies outright is then noticed in two bursts, without waiting 30 s for the report to go stale. And in traffic that goes one way it makes the sender ask on every third burst, which is the only way the rate rises there, since a recommendation that has only risen waits to be asked for.
+- when two data bursts have gone to the neighbour since anything at all was heard from them: a data burst of theirs to anyone, decoded or not, or a report to this station. A path that dies outright is then noticed in two bursts, without waiting 30 s for the report to go stale. In traffic that goes one way it makes the sender ask on every third burst, which is the only way the rate rises there;
+- on a datagram the host asked it for through the host interface (#822), for a host with no acknowledgements of its own. Not in the prototype.
 
-Asking costs the far end a burst of a fifth of a second on the full band.
+Asking costs the far end a burst of a fifth of a second on the full band, and up to half a second on the narrow openings.
 
 The modem never sends anything again by its own decision. These rules choose the format for the next thing the host hands it, which after a loss is whatever the layer above sends to recover.
 
@@ -119,13 +116,13 @@ What the receiver can tell, and what it does:
 
 | What it sees | What it concludes | What it does |
 |---|---|---|
-| A header, a payload that fails, and no sudden change part-way | the path cannot carry this format | reports "failed", with its new recommendation; takes the burst's measurement, less 3 dB, if that is more than 2 dB under the estimate; raises M if the format was no faster than its recommendation; sets the cap |
+| A header, a payload that fails, and no sudden change part-way | the path cannot carry this format | reports "failed", with its new recommendation; takes the burst's measurement, raises M and sets the cap, each by its rule above |
 | A header, a payload that fails, and quality good at the start and falling suddenly part-way | something else came on the channel | reports "failed" with the recommendation unchanged; takes no measurement; M, the cap and the count of bursts decoded running do not move |
 | Nothing | nothing | nothing: it cannot report what it did not hear |
 
 "Suddenly" has a test. Each symbol has a mean squared miss from its constellation points, in units of the noise expected. The failure is sudden when some point splits the payload's symbols into an earlier part whose median miss is under 1.5 times the opening's plus 0.5, and a later part whose median is over three times the earlier part's (or over 1.5, if that is more). A payload of fewer than six symbols is never judged sudden, and neither end part may be shorter than two symbols.
 
-The agreed version had a third kind of failure, "a header and nothing decodable after it, with no measurement worth having", where the receiver could not say and M did not move. The prototype has no such case: the opening of a burst whose header read always gives a measurement, so a failure is either sudden or it is not. It also does not look for another burst's training inside the one it is receiving; the sudden fall is the only sign it uses.
+A burst whose header read always gives a measurement from its opening, so a failure is either sudden or it is not: there is no third case. The prototype does not look for another burst's training inside the one it is receiving; the sudden fall is the only sign it uses.
 
 And the sender:
 
@@ -140,7 +137,7 @@ A report is a header, the most robust thing the modem sends, so it gets through 
 ## What each end remembers, and for how long
 
 - **As a receiver, per neighbour:** the estimate and how many measurements have gone into it, M, the current recommendation and any faster one waiting, the cap and the count of bursts decoded running, and what the neighbour was last told.
-- **As a sender, per neighbour:** the last report and its age, which counts for less every 30 s until the sender is back on its own estimate (see the table); the count of silences; the count of bursts sent since anything was heard; the neighbour's capability word.
+- **As a sender, per neighbour:** the last report and its age; the count of silences; the count of bursts sent since anything was heard; the neighbour's capability word.
 - **All of it is dropped, both roles together, ten minutes after the neighbour was last heard**: a data burst of theirs to anyone, or a report to this station.
 - **Nothing is negotiated**, so nothing has to survive a restart. A station that restarts knows nothing, uses the cold rules, and is told what it needs within one exchange. The other end notices nothing.
 - The two directions of a link are entirely separate. Each has its own estimate, margin and format.
@@ -151,9 +148,9 @@ A report is a header, the most robust thing the modem sends, so it gets through 
 
 Three separate ways for the protocol to grow, so that the expensive one is rarely needed.
 
-- **Version: 2 bits at the front of every header, in the same place for good.** It changes only when something every station must parse changes: the header's layout, the training, the meaning of the base formats. This document is version 0. Value 3 is kept as an escape meaning "a longer version field follows", so the field cannot run out. A station that reads a version it does not know decodes nothing more of that burst and treats the channel as busy for as long as it hears signal. (802.11 has carried a 2-bit version since 1997 and has moved it once, because nearly everything since has been added the two ways below.)
+- **Version: 2 bits at the front of every header, in the same place for good.** It changes only when something every station must parse changes: the header's layout, the training, the meaning of the base formats. This document is version 0. Value 3 is kept as an escape meaning "a longer version field follows", so the field cannot run out. A station that reads a version it does not know decodes nothing more of that burst and treats the channel as busy for as long as it hears signal.
 - **Burst type: 3 bits, widened from 2.** New kinds of burst are the likeliest additions (parity for a repeat, a private table, a sounding burst). A station that meets a type it does not know can still read who sent it and whom it is for, and stays off the channel while it lasts. Types so far: data, report, identification.
-- **Feature flags: a 16-bit capability word that each station advertises, outside the header.** Four bits give the revision of the standard format list the station knows; twelve are one flag per optional feature (none defined yet; tables private to a link and repeats inside the modem would be the first). It travels in the payload prelude of a data burst when a prelude flag says so, which is whenever "report wanted" is set (so at first contact, on the first burst to a neighbour that had been forgotten, and wherever else the sender's rules above set it), and in every identification burst. The rules:
+- **Feature flags: a 16-bit capability word that each station advertises, outside the header.** The top four bits give the revision of the standard format list the station knows; the low twelve are one flag per optional feature (none defined yet; tables private to a link and repeats inside the modem would be the first). It travels in the payload prelude of a data burst when a prelude flag says so, which is whenever "report wanted" is set (so at first contact, on the first burst to a neighbour that had been forgotten, and wherever else the sender's rules above set it), and in every identification burst. The rules:
   - an optional feature is used towards a neighbour only after that neighbour has shown the flag for it;
   - a flag a station does not know is ignored;
   - a neighbour whose capability word has not been heard is assumed to have none, which is always safe;
@@ -186,7 +183,7 @@ Station numbers are set at both ends for the bench. How a station comes by its n
 | Report | every field, with the recommended format and the failed bit in the format and burst-number fields, and length 0 | none |
 | Identification (optional) | as data, with destination 0 | the station's callsign and capability word, in the first-contact format |
 
-- **The destination is in the header** (6 bits, with 0 meaning everyone). The first draft kept it in the payload to save header bits. That does not survive more than two stations: when a payload fails, nobody could tell whom it was for, so either every station that heard it reports at once in the same slot, or nobody does. In the header, exactly one station knows the failure is its to report.
+- **The destination is in the header** (6 bits, with 0 meaning everyone). In the payload it would not survive more than two stations: when a payload fails, nobody could tell whom it was for, so either every station that heard it reports at once in the same slot, or nobody does. In the header, exactly one station knows the failure is its to report.
 - A burst carries whole datagrams, several if they fit. The modem never splits a datagram across bursts. AX.25 sizes its own frames (N1) and has its own segmenter (section 2.4), and the host is told how much one burst can carry to each neighbour now (#822) so that it can size its frames to suit.
 
 ### The format number
@@ -206,7 +203,7 @@ A format and a length give a payload of a fixed number of bits. From the front:
 
 1. **The prelude**, in a burst to one station: two bytes. First byte, from the top bit: "report wanted", "a capability word follows", "a recommendation is given", "failed", and four spare bits sent as 0. Second byte: the recommended format (0 when none is given).
 2. **The capability word**, when flagged: two bytes, the more significant first.
-3. **Datagrams**, each behind its length in two bytes, the more significant first. A length of 0, or too little room left for another length, ends them.
+3. **Datagrams**, each behind its length in two bytes, the more significant first. A length of 0, a length that runs past the room left, or too little room for another length, ends them.
 4. **Padding** of zero bits, up to the check.
 5. **The check**: the payload's last 32 bits.
 
@@ -222,7 +219,7 @@ Why it is this scrambler:
 
 - **Additive, not self-synchronising.** The self-synchronising kind exists for links with no frame timing, and it multiplies errors. A burst has frame timing.
 - **Seeded afresh for every burst.** A payload that happens to render badly, with high peaks into the limit, would with a fixed sequence render badly every time it was sent: before this, one fixed waveform lost 39 of 240 on the bench where its neighbours lost 1%. With the seed taken from the header, a repeat of the same data in a later burst is a different waveform. The fields used are ones the receiver has read before it needs the sequence, so the seed costs no bits. This is why the burst number now matters to the receiver.
-- **One sequence for each burst, not the best of several.** Sending each burst with whichever of several sequences gives the lowest peaks was measured (40 bursts a format, the best of 16 sequences against one) and not adopted. It takes 0.4 to 0.7 dB off what the peak limit removes at 6 dB over full drive, where that is about 20 dB under the signal; 2.4 dB at 3 dB over, where it is already 33 dB under; and 0.4 dB at full drive, where it is 47 dB under. That is not worth the header bits it would take to say which sequence was used. The worst of 16 is 0.5 to 3 dB worse than the typical one, and that is the case a changing seed protects a repeat from.
+- **One sequence for each burst, not the best of several.** Choosing the best of 16 sequences for each burst was measured and not adopted: it takes 0.4 to 2.4 dB off distortion that is already 20 to 47 dB under the signal, which is not worth the header bits it would take to say which sequence was used.
 
 ## Under a link layer such as AX.25: what the modem must not do
 
@@ -240,11 +237,9 @@ AX.25 2.3 was read against this design as the client that matters most today, so
 | Its own frame size (N1) and a segmenter (2.4) | split datagrams |
 | A slot reserved for acknowledgements (6.4.3, T101) | invent a second priority scheme. Its lone reports use that slot. |
 
-Three places where the first draft of this document had strayed, now corrected: a status field that named the burst being reported on (an acknowledgement by another name); an option to report after every burst so the host could be told "delivered"; and "send again two rungs slower", which read as the modem retransmitting.
-
 **What the modem adds that AX.25 cannot do:**
 
-- **The rate.** T1 "cannot be expressed in absolute time; the time required to send frames varies greatly with the signaling rate" (6.7.1.1). With a rate that varies several hundredfold the link layer needs to be told what the link carries now, and when a frame has actually gone out, to set T1, the frame size and the window sensibly (#822, #841).
+- **The rate.** T1 "cannot be expressed in absolute time; the time required to send frames varies greatly with the signaling rate used at Layer 1" (6.7.1.1). With a rate that varies several hundredfold the link layer needs to be told what the link carries now, and when a frame has actually gone out, to set T1, the frame size and the window sensibly (#822, #841).
 - **One fast signal.** A frame that fails its check is discarded by AX.25 "with no further action taken" (4.4.6). If it was the last frame outstanding, which a lost burst carrying several frames often makes it, the sender finds out only when T1 runs out (4.4.5.1), seconds later, and then does not know why. The receiving modem does know: it heard the burst and can say at once "that did not decode; use this format". That is the report on failure, and it is the only thing here that overlaps AX.25's recovery in time. It carries no sequence number and triggers no resend; AX.25 still recovers in its own way, just sooner and at a rate that works.
 
 ## A worked exchange under AX.25
@@ -279,33 +274,31 @@ A connects to B, having never heard it. The format numbers and rates are the one
 
 Nothing here reverses any of the nine choices above. Each line is a rule that the agreed version did not have, or had differently, with why and where it came from: simulation (the real modem in a loop with a made-up channel), the bench (#833), simply building it, or writing the rules down here against the prototype, which found four faults that were then put right in it.
 
-| What changed | Why | From |
+| What changed | Why, in brief | From |
 |---|---|---|
-| The payload is scrambled, with a sequence seeded from the burst's own header. The burst number now matters to the receiver; the agreed version said nothing depended on it. | Padding made symbols that were nearly all peak; a fixed sequence makes a bad waveform bad every time it is repeated. | Simulation; the per-burst seed from a bench soak |
-| After a failure the receiver recommends nothing faster than one rung below what failed, until two bursts running decode (the cap). | A measurement that still looked good sent the sender straight back to the format that had just failed. | Simulation |
-| A failed burst's own measurement is believed only where it says the path is worse. | The opening of a failed burst is a coarse measurement; when it reads well, the failure is the margin's business. | Simulation |
-| A measurement more than 2 dB under the estimate replaces it outright, and the carriers it did not measure come down by as much. | A path that has got worse must be believed at once, not by halves, and what was known of the other carriers is from before. | Simulation |
-| Every measurement is put on a common footing (a full-band burst at full drive), and the carriers above a narrow burst's band are filled in at 20 dB a decade down, less 3 dB. | Formats differ in carriers and in drive; a narrow first-contact burst has to be enough to recommend a full-band format. | Simulation |
-| A new neighbour's first three measurements count in full and may raise the recommendation at once. | Averaging by halves and "two bursts running" at every step made the climb from cold a staircase. | Bench |
-| Quality is measured through the peak limit. | The limit's own distortion was being counted as the path's: 8 to 14 bursts to climb from cold, 3 to 4 with this. | Bench |
-| The opening of a failed burst is measured through the peak limit too, and 3 dB is taken off what it measures. | Measured as built, a failed burst that was driven hard read falsely low and would replace a good estimate; and an opening of a few symbols, read at a level that failed, is coarse and tends to flatter. | Writing the rules down |
-| "Report wanted" is also set when two bursts have gone to a neighbour with nothing at all heard back. | A path that dies outright is noticed without waiting 30 s; and it is the only way the rate rises in one-way traffic. | Simulation; the one-way effect seen on the bench |
-| "Report wanted" is set whenever the report in hand is 30 s old or more, and after any silence until a report arrives. | The agreed version set it only where the sender had no report; a sender going slower on a stale report should ask for a fresh one. | Building it |
-| A prelude that gives no recommendation does not clear the count of silences, and a burst that asked and got only such a prelude back counts as a silence. | A station that heard a neighbour it could not reach stayed at a rate the neighbour never decoded. | Simulation |
-| The steps after silence (same format, two rungs slower, first contact) apply to what the table gives; they do not replace it. | So a report that is also going stale keeps ageing. | Building it |
-| A stale report ages no further than the sender's own estimate two rungs slow, and not at all if that is faster than the report. | "Never faster than it was told" has to hold while a report ages. | Building it |
+| The payload is scrambled, with a sequence seeded from the burst's own header. The burst number now matters to the receiver; the agreed version said nothing depended on it. | Padding made symbols that were nearly all peak, and a fixed sequence repeats a bad waveform. | Simulation; the per-burst seed from a bench soak |
+| After a failure the receiver recommends nothing faster than one rung below what failed, until two bursts running decode (the cap). | A measurement that still looked good sent the sender straight back. | Simulation |
+| A failed burst's own measurement is believed only where it says the path is worse. | It is coarse. | Simulation |
+| A measurement more than 2 dB under the estimate replaces it outright, and the carriers it did not measure come down by as much. | A worse path is believed at once. | Simulation |
+| Every measurement is put on a common footing, and the carriers above a narrow burst's band are filled in. | A narrow first-contact burst has to be enough to recommend a full-band format. | Simulation |
+| A new neighbour's first three measurements count in full and may raise the recommendation at once. | The climb from cold was a staircase. | Bench |
+| Quality is measured through the peak limit; the opening of a failed burst too, with 3 dB taken off. | The limit's distortion was being read as the path's. | Bench; the failed burst's half from writing the rules down |
+| "Report wanted" is also set when two bursts have gone to a neighbour with nothing at all heard back. | A dead path is noticed in two bursts, and the rate can rise in one-way traffic. | Simulation; bench |
+| "Report wanted" is set whenever the report in hand is 30 s old or more, and after any silence until a report arrives. | The agreed version set it only where the sender had no report. | Building it |
+| A prelude that gives no recommendation does not clear the count of silences, and counts as one when a report was asked for. | A station that heard a neighbour it could not reach never slowed down. | Simulation |
+| The steps after silence apply to what the table gives; they do not replace it. | A stale report keeps ageing. | Building it |
+| A stale report ages no further than the sender's own estimate two rungs slow, and not at all if that is faster than the report. | "Never faster than it was told" holds while a report ages. | Building it |
 | A lone report on a drop goes only when the recommendation falls below what the sender was last told, on a burst addressed to this station. | A drop the sender already knows of needs no report. | Building it |
-| After a lone report the station that sent it goes on with its own data, and the other leaves the channel clear for about a second. | Both stations transmitted together after every lone report. | Simulation; used on the bench |
-| Noted, not changed: a lone report on a drop is redundant when that station has data about to go back. | The data burst's prelude carries the same recommendation. | Simulation |
-| Two kinds of failure, not three: "cannot say" is gone, and another burst's training inside a burst is not looked for. | The opening of any burst whose header read gives a measurement. | Building it |
-| The sender does not look at the failed bit, and a prelude never carries it set. | Obeying the recommendation covers both cases; a failure is always reported alone and at once. | Building it |
+| After a lone report the station that sent it goes on with its own data, and the other leaves the channel clear for about a second. | Both transmitted together. | Simulation; used on the bench |
+| Noted, not changed: a lone report on a drop is redundant when that station has data about to go back, whose prelude says the same. | Seen only in simulation, on a poor made-up path. | Simulation |
+| Two kinds of failure, not three: "cannot say" is gone, and another burst's training inside a burst is not looked for. | Any burst whose header read gives a measurement. | Building it |
+| The sender does not look at the failed bit, and a prelude never carries it set. | Obeying the recommendation covers both cases. | Building it |
 | M is held between 0 and 12 dB. | Limits it did not have. | Building it |
-| Stepping up takes the slower of the two formats that two bursts running supported. | The agreed version did not say which; the prototype started the count again when the second burst supported less than the first, though both had supported it. | Writing the rules down |
-| A neighbour's state in both roles is dropped together after ten minutes. | The agreed version forgot only the receiver's half. | Building it |
-| A neighbour is forgotten whichever way the station next comes to it, on hearing it or on sending to it. | The prototype forgot only when about to send, so a station that only listened never forgot. | Writing the rules down |
-| A format number is a band and a rung, and the drive is part of the format. | The first format list (#831). | Building it |
-| "One rung slower" never lands on something faster: a format already slower than the most robust one stays at its own band's bottom rung. | The 1 kHz band's lowest rungs are slower than the most robust format, and a step "slower" from there went up to it. | Writing the rules down |
-| Three openings, not two. | The formats on the lowest carriers need a longer opening than those up to 3 kHz. | Building it |
+| Stepping up takes the slower of the two formats that two bursts running supported. | The agreed version did not say which. | Writing the rules down |
+| A neighbour's state in both roles is dropped together after ten minutes, whichever way the station next comes to it. | The agreed version forgot only the receiver's half. | Building it; writing the rules down |
+| A format number is a band and a rung, the drive is part of the format, and a lone report goes at the drive of the station's own data. | The first format list (#831). | Building it |
+| "One rung slower" never lands on something faster. | The 1 kHz band's lowest rungs are slower than the most robust format. | Writing the rules down |
+| Three openings, not two. | The lowest carriers need a longer opening. | Building it |
 
 ## What the bench has shown
 
@@ -325,7 +318,7 @@ Two stations of the prototype, one process each, with nothing between them but t
 
 - **509 of 511 bursts delivered.** The stations never keyed at once, and nothing was decoded that was not sent.
 - **The two failures** (both at format 30, the top rung but one, in different runs) were each reported at once and the report was read. Each time the next four bursts went at formats 28, 28, 29 and 29, and the fifth was back at 30.
-- **The slow climb was the peak limit**, as set out under the estimate above. The last two runs are the same path with the receiver measuring through the limit.
+- **The slow climb was the peak limit.** Measured against the burst as built, the same path read 14 dB from a burst 6 dB over full drive and 31 dB from one at full drive, so a recommendation made from a robust burst reached only as far as the next drive class. Measured through the limit the first figure is 26 to 27 dB. The last two runs are the same path with the receiver measuring that way.
 - **In traffic that goes one way the rate rose only when the sender asked**, on every third burst: 32 requests in 96 bursts, 32 lone reports, all read.
 - **The margin** came down from 3 dB to 1.7 and 2.2 dB over the 130 bursts of the long run. The top rung was never recommended.
 - **Two failures in 511 say nothing yet about the target of one burst in fifty**, and the trial of 1%, 2%, 5% and 10% has not been run. The numbers (30 s, ten minutes, two rungs, 3 dB) are still the first guesses.
@@ -340,7 +333,7 @@ What in those runs was the prototype and not the protocol:
 **Not yet tried on air:**
 
 - a weak path, where the narrow formats, the long openings and the bottom of the ladder come into play;
-- a path that changes, or breaks (#834, which needs a hand on the attenuator). Drops and dead paths have only been run in simulation: there a sudden 14 dB drop costs one burst, because the report of the failed burst names a format that works (it cost three before the four faults were put right), and a path too poor for a full-band header to be read was found again at the first-contact format on the sixth burst;
+- a path that changes, or breaks (#834, which needs a hand on the attenuator). Drops and dead paths have only been run in simulation. There a sudden 14 dB drop costs one burst, because the report of the failed burst names a format that works, and a path too poor for a full-band header to be read is found again at the first-contact format on the sixth burst;
 - more than two stations, broadcasts, and stations listening in (#835);
 - unlike radios (#825);
 - a real link layer above it.
