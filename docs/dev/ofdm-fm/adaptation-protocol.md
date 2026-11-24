@@ -38,10 +38,10 @@ For each neighbour, from the bursts heard from them:
 
 ## How the recommendation gets back: the report
 
-Two ways, the same content: who it is for (6 bits), the recommended format (8 bits), and one bit saying "your last burst reached me and I could not decode it". Three more bits are spare.
+Two ways, the same content: the recommended format (8 bits), and one bit saying "your last burst reached me and I could not decode it". Three more bits are spare.
 
 - **Riding on traffic.** Every burst addressed to one station begins its payload with a two-byte prelude: a "report wanted" flag and the sender's report for the destination. So wherever traffic flows both ways, as it does under AX.25 with its acknowledgements, reports cost nothing extra.
-- **By itself, as a header with no payload.** The burst type says "report", and the header's format, length and burst-number fields carry the recommended format, the destination and the failed bit. It is the shortest burst the modem can make (silence, training, header: under 0.2 s on the full band) and the most robust, since a header reads below any payload. It is sent in the header layout the reverse path supports, narrow if need be.
+- **By itself, as a header with no payload.** The burst type says "report", and the header's format and burst-number fields carry the recommended format and the failed bit. It is the shortest burst the modem can make (silence, training, header: under 0.2 s on the full band) and the most robust, since a header reads below any payload. It is sent in the header layout the reverse path supports, narrow if need be.
 
 **When a station sends a report by itself:**
 
