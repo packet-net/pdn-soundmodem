@@ -1,6 +1,6 @@
 # Adaptation over the air: the protocol
 
-Status: agreed, 2026-11-24. A design record for #830 (part of #829): Tom read it, commented (a version number and feature flags, the FM capture effect, a check against the flows of AX.25 2.3) and agreed the nine choices listed at the end. Nothing here is built yet; the prototype comes first (#831 to #835), then the port.
+Status: agreed, 2026-11-24. A design record for #830 (part of #829): Tom read it, commented (a version number and feature flags, the FM capture effect, a check against the flows of AX.25 2.3) and agreed the nine choices listed at the end. The prototype is being built to it first (#831 to #835; the header, the report burst and a first list of standard formats exist there already); the port to this repository follows.
 
 This says how two stations with the adaptive OFDM-FM modem find and keep the best rate for the link between them, with nothing passing between them but the radio. It is meant to be read in a quarter of an hour and built from.
 
@@ -8,7 +8,7 @@ This says how two stations with the adaptive OFDM-FM modem find and keep the bes
 
 Measured on the bench with the prototype (two Tait TM8110s with internal sound card boards, through attenuators):
 
-- **Every burst says what it is.** It opens with silence, a training symbol and a short header (42 bits in the prototype today): burst type (2 bits), sender (6), format (8), length (6), burst number (4) and a 16-bit check. A receiver that has been told nothing finds the burst, reads the header and decodes the payload.
+- **Every burst says what it is.** It opens with silence, a training symbol and a short header that names its sender, its format and its length, behind a 16-bit check (the header's fields are set out below). A receiver that has been told nothing finds the burst, reads the header and decodes the payload.
 - **There is a ladder of standard formats** from about 65 kbit/s at a strong signal to 0.25 kbit/s at about -125 dBm (#831 fixes the list). The header reads further down than any payload.
 - **A receiver measures the channel from every burst it hears**, carrier by carrier, and from that can say which standard format the link would carry with a given margin.
 
