@@ -102,13 +102,14 @@ public static class HeaderCode
 
     private static Plan PlanFor(FormatOpening opening)
     {
-        int i = (int)opening;
-        if ((uint)i >= 3)
+        // The plans are built in the order full band, up to 3 kHz, up to 1.5 kHz (666, 480 and 336 coded bits).
+        return opening switch
         {
-            throw new ArgumentOutOfRangeException(nameof(opening));
-        }
-
-        return Plans.Value[i];
+            FormatOpening.Full => Plans.Value[0],
+            FormatOpening.UpTo3000Hz => Plans.Value[1],
+            FormatOpening.UpTo1500Hz => Plans.Value[2],
+            _ => throw new ArgumentOutOfRangeException(nameof(opening)),
+        };
     }
 
     private static Plan[] BuildPlans()

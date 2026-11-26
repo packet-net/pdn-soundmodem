@@ -6,7 +6,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Licence text: LICENSES/Apache-2.0.txt. This file reorders that table (one set only, one entry per line); the values are unchanged.
-# Written by proto/vectors/header_code_vectors.py in M0LTE/ofdm-fm-lab.
+# Written by the prototype's generator script (proto/vectors/header_code_vectors.py).
 rows 42
 columns 52
 information_columns 10
