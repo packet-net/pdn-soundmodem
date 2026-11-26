@@ -31,6 +31,15 @@ public class ReleasablePttTests
 
         public void Unkey() => Add("unkey");
 
+        /// <summary>What has reached the PTT so far, copied under the lock.</summary>
+        public string[] Snapshot()
+        {
+            lock (_gate)
+            {
+                return [.. Events];
+            }
+        }
+
         private void Add(string what)
         {
             lock (_gate)
@@ -40,24 +49,36 @@ public class ReleasablePttTests
         }
     }
 
+    /// <summary>Only ever turns a hang into a failure: nothing passes or fails on how long it took.</summary>
+    private static readonly TimeSpan HangAfter = TimeSpan.FromSeconds(60);
+
     [Fact]
-    public async Task The_Last_Unkey_Waits_For_A_Keyup_In_Progress_And_Comes_After_It()
+    public void The_Last_Unkey_Waits_For_A_Keyup_In_Progress_And_Comes_After_It()
     {
         var inner = new OrderedPtt();
         inner.LetKeyFinish.Reset();
         var ptt = new ReleasablePtt(inner);
 
-        Task keying = Task.Run(ptt.Key);
-        inner.KeyStarted.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
-        Task releasing = Task.Run(ptt.Release);
-        await Task.Delay(200);
+        // Threads of their own, not the pool: on a busy build machine a pool task can sit unstarted
+        // for seconds, which is how this test used to fail (#860).
+        var keying = new Thread(ptt.Key) { IsBackground = true };
+        keying.Start();
+        inner.KeyStarted.Wait(HangAfter).Should().BeTrue("the keyup should have started");
 
-        inner.Events.Should().Equal(["key started"], "the last unkey must not land inside the keyup");
+        var releasing = new Thread(ptt.Release) { IsBackground = true };
+        releasing.Start();
+
+        // Wait for the release to be blocked, by its thread's state and not by a sleep: it has reached
+        // the PTT and is held out by the keyup in progress.
+        SpinWait.SpinUntil(() => (releasing.ThreadState & ThreadState.WaitSleepJoin) != 0, HangAfter)
+            .Should().BeTrue("the last unkey should be waiting for the keyup to finish");
+        inner.Snapshot().Should().Equal(["key started"], "the last unkey must not land inside the keyup");
 
         inner.LetKeyFinish.Set();
-        await Task.WhenAll(keying, releasing).WaitAsync(TimeSpan.FromSeconds(5));
+        keying.Join(HangAfter).Should().BeTrue();
+        releasing.Join(HangAfter).Should().BeTrue();
 
-        inner.Events.Should().Equal(["key started", "key finished", "unkey"]);
+        inner.Snapshot().Should().Equal(["key started", "key finished", "unkey"]);
     }
 
     [Fact]
