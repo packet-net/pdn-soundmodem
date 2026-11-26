@@ -99,6 +99,9 @@
          daemon's monitor host rather than by a waterfall server, and self-contained the same
          way. Embedded here because it is one design with the page it links to. -->
     <EmbeddedResource Include="Waterfall/wwwroot/monitor.html" />
+    <!-- The adaptive OFDM-FM payload code's tables (protograph and circulant shifts), as the prototype wrote them. -->
+    <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/link-ldpc-protograph.txt" LogicalName="link-ldpc-protograph.txt" />
+    <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/link-ldpc-shifts.txt" LogicalName="link-ldpc-shifts.txt" />
   </ItemGroup>
 
   <ItemGroup>
