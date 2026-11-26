@@ -71,6 +71,76 @@ public static class HeaderCode
         Fill(plan, headerBits, codeword, work);
     }
 
+    /// <summary>Floats of scratch the longer <see cref="TryDecode(FormatOpening, ReadOnlySpan{float}, Span{byte}, Span{float}, out int)"/> needs.</summary>
+    public static int DecodeScratchLength(FormatOpening opening) => PlanFor(opening).Structure.DecodeScratchLength;
+
+    /// <summary>
+    /// Decodes <see cref="CodedBits"/> soft values (positive meaning 0) into the 51 header bits, as the prototype's
+    /// <c>layout_code(layout, 3).decode</c>: the filler bits are known zeros, repeated bits add, and up to 30 layered
+    /// normalised min-sum iterations run in 32-bit floats. Returns whether every check was satisfied; whether the
+    /// header's own check then passes is <see cref="BurstHeaderCodec"/>'s business. The bits are written either way.
+    /// Allocates nothing once the plans exist.
+    /// </summary>
+    public static bool TryDecode(FormatOpening opening, ReadOnlySpan<float> soft, Span<byte> headerBits) =>
+        TryDecode(opening, soft, headerBits, out _);
+
+    /// <summary>As <see cref="TryDecode(FormatOpening, ReadOnlySpan{float}, Span{byte})"/>, also giving the iterations run: 0 when the input already satisfied the checks, 30 when it never did.</summary>
+    public static bool TryDecode(FormatOpening opening, ReadOnlySpan<float> soft, Span<byte> headerBits, out int iterations)
+    {
+        Plan plan = PlanFor(opening);
+        int need = plan.Structure.DecodeScratchLength;
+        if (need <= 8192)
+        {
+            Span<float> scratch = stackalloc float[need];
+            return TryDecode(plan, soft, headerBits, scratch, out iterations);
+        }
+
+        return TryDecode(plan, soft, headerBits, new float[need], out iterations);
+    }
+
+    /// <summary>As <see cref="TryDecode(FormatOpening, ReadOnlySpan{float}, Span{byte}, out int)"/> with caller-supplied scratch of at least <see cref="DecodeScratchLength"/> floats.</summary>
+    public static bool TryDecode(FormatOpening opening, ReadOnlySpan<float> soft, Span<byte> headerBits, Span<float> scratch, out int iterations) =>
+        TryDecode(PlanFor(opening), soft, headerBits, scratch, out iterations);
+
+    private static bool TryDecode(Plan plan, ReadOnlySpan<float> soft, Span<byte> headerBits, Span<float> scratch, out int iterations)
+    {
+        if (soft.Length != plan.CodedBits)
+        {
+            throw new ArgumentException($"expected {plan.CodedBits} soft values", nameof(soft));
+        }
+
+        if (headerBits.Length != BurstHeaderCodec.HeaderBits)
+        {
+            throw new ArgumentException($"expected room for {BurstHeaderCodec.HeaderBits} header bits", nameof(headerBits));
+        }
+
+        if (scratch.Length < plan.Structure.DecodeScratchLength)
+        {
+            throw new ArgumentException($"expected {plan.Structure.DecodeScratchLength} floats of scratch", nameof(scratch));
+        }
+
+        Span<float> l = scratch[..plan.Structure.CodewordLength];
+        l.Clear();
+        for (int i = BurstHeaderCodec.HeaderBits; i < InformationColumns * Z; i++)
+        {
+            l[i] = LinkLdpcStructure.KnownZero;
+        }
+
+        int[] order = plan.TransmitOrder;
+        for (int j = 0; j < order.Length; j++)
+        {
+            l[order[j]] += soft[j];
+        }
+
+        bool ok = plan.Structure.Decode(scratch, out iterations);
+        for (int i = 0; i < headerBits.Length; i++)
+        {
+            headerBits[i] = l[i] < 0 ? (byte)1 : (byte)0;
+        }
+
+        return ok;
+    }
+
     /// <summary>True when every check row of the opening's kept code is satisfied by the full codeword.</summary>
     public static bool SyndromeIsZero(FormatOpening opening, ReadOnlySpan<byte> codeword) =>
         PlanFor(opening).Structure.SyndromeIsZero(codeword);

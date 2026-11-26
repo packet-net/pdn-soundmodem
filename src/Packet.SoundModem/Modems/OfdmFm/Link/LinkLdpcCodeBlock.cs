@@ -254,4 +254,85 @@ public sealed class LinkLdpcCodeBlock
 
     /// <summary>True when every check row of the kept code is satisfied by the full codeword (<see cref="CodewordLength"/> bits).</summary>
     public bool SyndromeIsZero(ReadOnlySpan<byte> codeword) => _structure.SyndromeIsZero(codeword);
+
+    /// <summary>Floats of scratch the decoders need.</summary>
+    public int DecodeScratchLength => _structure.DecodeScratchLength;
+
+    /// <summary>
+    /// Decodes <paramref name="soft"/> (one value per coded bit as sent, positive meaning 0) into
+    /// <paramref name="info"/> (<see cref="InfoBits"/> bits, one per byte), as the prototype's <c>FittedCode.decode</c>:
+    /// the values are added into their codeword positions in transmit order (so a repeated bit accumulates), the
+    /// shortened positions are known zeros, and up to 30 layered normalised min-sum iterations run in 32-bit floats.
+    /// Returns whether every check was satisfied; <paramref name="iterations"/> is 0 when the input already
+    /// satisfied them and 30 when it never did. <paramref name="scratch"/> needs <see cref="DecodeScratchLength"/> floats.
+    /// </summary>
+    public bool Decode(ReadOnlySpan<float> soft, Span<byte> info, Span<float> scratch, out int iterations)
+    {
+        if (info.Length != InfoBits)
+        {
+            throw new ArgumentException($"expected room for {InfoBits} information bits", nameof(info));
+        }
+
+        bool ok = Run(soft, scratch, out iterations);
+        int next = 0;
+        int n = 0;
+        for (int i = 0; i < K; i++)
+        {
+            if (next < _shortened.Length && _shortened[next] == i)
+            {
+                next++;
+            }
+            else
+            {
+                info[n++] = scratch[i] < 0 ? (byte)1 : (byte)0;
+            }
+        }
+
+        return ok;
+    }
+
+    /// <summary>As <see cref="Decode(ReadOnlySpan{float}, Span{byte}, Span{float}, out int)"/> but writes the hard decision of every bit of the full codeword (<see cref="CodewordLength"/> bits) instead.</summary>
+    public bool DecodeCodeword(ReadOnlySpan<float> soft, Span<byte> codeword, Span<float> scratch, out int iterations)
+    {
+        if (codeword.Length != CodewordLength)
+        {
+            throw new ArgumentException($"expected room for {CodewordLength} bits", nameof(codeword));
+        }
+
+        bool ok = Run(soft, scratch, out iterations);
+        for (int i = 0; i < codeword.Length; i++)
+        {
+            codeword[i] = scratch[i] < 0 ? (byte)1 : (byte)0;
+        }
+
+        return ok;
+    }
+
+    private bool Run(ReadOnlySpan<float> soft, Span<float> scratch, out int iterations)
+    {
+        if (soft.Length != CodedBits)
+        {
+            throw new ArgumentException($"expected {CodedBits} soft values", nameof(soft));
+        }
+
+        if (scratch.Length < _structure.DecodeScratchLength)
+        {
+            throw new ArgumentException($"expected {_structure.DecodeScratchLength} floats of scratch", nameof(scratch));
+        }
+
+        Span<float> l = scratch[..CodewordLength];
+        l.Clear();
+        foreach (int p in _shortened)
+        {
+            l[p] = LinkLdpcStructure.KnownZero;
+        }
+
+        int[] order = _transmitOrder;
+        for (int j = 0; j < order.Length; j++)
+        {
+            l[order[j]] += soft[j];
+        }
+
+        return _structure.Decode(scratch, out iterations);
+    }
 }
