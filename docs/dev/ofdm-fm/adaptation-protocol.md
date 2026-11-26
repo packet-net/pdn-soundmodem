@@ -1,6 +1,6 @@
 # Adaptation over the air: the protocol
 
-Status: a design record, agreed 2026-11-24 and brought into line with the prototype on 2026-11-24, later the same day. For #830 (part of #829): Tom read it, commented (a version number and feature flags, the FM capture effect, a check against the flows of AX.25 2.3) and agreed the nine choices listed under "Decided". A prototype was then built to it, run in simulation and run on two real radios (#833), and the rules changed in a number of places: "Changed since it was agreed" lists every one. Built and run on the bench at one signal level; not yet tried on a weak or a changing path (#834). None of it is in this repository's code yet: the prototype is kept outside this repository, and the port follows (#837 to #840).
+Status: a design record, agreed 2026-11-24 and brought into line with the prototype on 2026-11-24, later the same day, and again on 2026-11-26 after the first runs over weak and changing paths. For #830 (part of #829): Tom read it, commented (a version number and feature flags, the FM capture effect, a check against the flows of AX.25 2.3) and agreed the nine choices listed under "Decided". A prototype was then built to it, run in simulation and run on two real radios (#833), and the rules changed in a number of places: "Changed since it was agreed" lists every one. Built and run on the bench from about -78 to -124 dBm, and over a path that drops, is cut and comes back (#834); not yet with more than two stations (#835). None of it is in this repository's code yet: the prototype is kept outside this repository, and the port follows (#837 to #840).
 
 This says how two stations with the adaptive OFDM-FM modem find and keep the best rate for the link between them, with nothing passing between them but the radio. The sections down to "Who measures, who decides" give the design in a few minutes; the rest is what to build from.
 
@@ -40,7 +40,7 @@ One figure of quality for each carrier, in decibels, held as a full-band burst a
 3. **A common footing.** A format on fewer carriers puts more power on each, and one driven harder has that much more. From every figure take off 10 log10(all carriers / carriers the measured part used) plus the format's drive, in decibels. The measured part is the payload for a decoded burst and the opening for a failed one.
 4. **Folding it in.** A failed burst's figures first have 3 dB taken off them: one or a few symbols of opening, read at a level that failed, are coarse and tend to flatter. Then compare the new figures with the estimate, each averaged over the carriers that have both.
    - **More than 2 dB under the estimate:** the path has got worse, and that is believed at once. The new figures replace the estimate on the carriers measured, and the estimate on every other carrier comes down by the same average amount, since what was known of those is from before.
-   - **Otherwise, from a decoded burst:** on each carrier measured, the estimate becomes half the old figure and half the new, in decibels. A neighbour's first three measurements count in full, since there is no history worth averaging with. A carrier with no figure yet takes the new one.
+   - **Otherwise, from a decoded burst:** on each carrier measured, the estimate becomes half the old figure and half the new, in decibels. A neighbour's first three measurements count in full, since there is no history worth averaging with, and so do the first three after 30 s without a measurement of that neighbour. A carrier with no figure yet takes the new one. The carriers the burst did not measure then move by the same average amount as the ones it did, up as well as down: a station brought down to a narrow format is sent nothing that measures the rest of the band, and would otherwise never learn that it had come back.
    - **Otherwise, from a failed burst:** nothing. A failed burst's own measurement is believed only where it says the path is worse; one that measures well is the margin's business. The one exception is a failed burst on carriers with no estimate at all, whose figures (less the 3 dB) are taken as they are.
 5. **Carriers never measured.** A narrow burst says nothing about the carriers above its band. For the recommendation they are filled in from the top of what was measured: the median of the highest seven carriers measured, falling 20 dB for each decade of frequency above the highest (as FM noise does), less 3 dB of caution.
 
@@ -59,7 +59,7 @@ That settles where about one burst in fifty fails.
 2. Take the fastest format whose margin is at least M, and which is no faster than the cap (below) if there is one. Formats are compared by their rate, across bands; of two with the same rate, the one with more margin. If no format has M, take the most robust.
 3. **Step down at once.** If that format is no faster than the current recommendation, or there is none yet, it becomes the recommendation, and anything waiting (next) is dropped.
 4. **Step up only on two bursts running.** A faster format waits. If the next burst also supports something faster than the recommendation, the slower of the two becomes the recommendation: it is the one both bursts supported. (If the two have the same rate, the newer one is taken.)
-5. **A new neighbour's first three measurements may raise the recommendation at once.** Without this, and with the estimate moving by halves, a link from cold climbs a staircase.
+5. **A new neighbour's first three measurements may raise the recommendation at once**, and so may the first three after 30 s without one. Without this, and with the estimate moving by halves, a link from cold climbs a staircase.
 
 ### After a failure: the cap
 
@@ -136,7 +136,7 @@ A report is a header, the most robust thing the modem sends, so it gets through 
 
 ## What each end remembers, and for how long
 
-- **As a receiver, per neighbour:** the estimate and how many measurements have gone into it, M, the current recommendation and any faster one waiting, the cap and the count of bursts decoded running, and what the neighbour was last told.
+- **As a receiver, per neighbour:** the estimate, how many measurements have gone into it and when the last one did, M, the current recommendation and any faster one waiting, the cap and the count of bursts decoded running, and what the neighbour was last told.
 - **As a sender, per neighbour:** the last report and its age; the count of silences; the count of bursts sent since anything was heard; the neighbour's capability word.
 - **All of it is dropped, both roles together, ten minutes after the neighbour was last heard**: a data burst of theirs to anyone, or a report to this station.
 - **Nothing is negotiated**, so nothing has to survive a restart. A station that restarts knows nothing, uses the cold rules, and is told what it needs within one exchange. The other end notices nothing.
@@ -282,6 +282,7 @@ Nothing here reverses any of the nine choices above. Each line is a rule that th
 | A measurement more than 2 dB under the estimate replaces it outright, and the carriers it did not measure come down by as much. | A worse path is believed at once. | Simulation |
 | Every measurement is put on a common footing, and the carriers above a narrow burst's band are filled in. | A narrow first-contact burst has to be enough to recommend a full-band format. | Simulation |
 | A new neighbour's first three measurements count in full and may raise the recommendation at once. | The climb from cold was a staircase. | Bench |
+| The carriers a burst does not measure follow the ones it does up as well as down, and a neighbour not measured for 30 s is measured as a new one. | A link found again after a cut stayed on narrow formats, because nothing it was then sent measured the rest of the band. | Bench (#834) |
 | Quality is measured through the peak limit; the opening of a failed burst too, with 3 dB taken off. | The limit's distortion was being read as the path's. | Bench; the failed burst's half from writing the rules down |
 | "Report wanted" is also set when two bursts have gone to a neighbour with nothing at all heard back. | A dead path is noticed in two bursts, and the rate can rise in one-way traffic. | Simulation; bench |
 | "Report wanted" is set whenever the report in hand is 30 s old or more, and after any silence until a report arrives. | The agreed version set it only where the sender had no report. | Building it |
@@ -330,10 +331,30 @@ What in those runs was the prototype and not the protocol:
 - After a wait that ended in silence, a station held off up to 4 s more, at random, so that the two would not move together.
 - Carrier sense came from the open receiver's noise above the modem's band, which a carrier quiets. That is simple and has 28 to 45 dB of contrast at this signal strength. It will not work at weak signal, where a carrier does not quiet the receiver.
 
+### Weak paths and a changing one
+
+The same two stations with the attenuator turned by hand (#834). First, each level from cold:
+
+| Level | Traffic | Bursts delivered | Settled at |
+|---|---|---|---|
+| -108 dBm | both ways | 44 of 44 | 21 kbit/s each way |
+| -118 dBm | both ways | 53 of 55 | 11 and 10 kbit/s |
+| -120 dBm | both ways | 46 of 71 | 4 and 5 kbit/s |
+| -124 dBm | one way | 31 of 35 | 1.1 kbit/s |
+
+- **From cold, each station was within a rung of its settled rate by its second to fourth burst** at every level.
+- **At -120 dBm the stations transmitted over each other** 10 times in six minutes, and that was nearly every loss. The prototype's carrier sense had run out, as expected. The modem's busy test at weak signal has to come from its own detection of a burst (#838).
+- **At -124 dBm** the formats on the carriers up to 1.5 kHz, with their long opening, carried the traffic, and all 13 lone reports were read.
+
+Then the path changed during a run:
+
+- **A 10 dB drop cost one burst in each direction**, twice running (62 kbit/s, then about 50, then about 35). The report of the failed burst named a format that worked.
+- **A path cut altogether** had both stations at the first-contact format in 65 to 80 s, and they found each other on the first burst after it came back.
+- **The climb back was stuck, and is fixed.** In the first such run, the first burst heard after the cut arrived with the attenuator still part-way and measured very low, which took the whole estimate down. Every burst after it was on a narrow format, so nothing measured the rest of the band, and three and a half minutes later the two directions were at 16 and 33 kbit/s on a path that carries 62. That is where the rule that unmeasured carriers follow the measured ones up, and the rule for a neighbour not measured for 30 s, came from. With them, and the path brought back in two steps so that the stations met on a weak path first (about -120 dBm, 5 to 8 kbit/s), both climbed to 55 and 62 kbit/s in about 90 s and nine bursts after the path was restored, with nothing lost on the way.
+- **That climb is still a staircase**, two bursts at each step, because the estimate rises by halves and each step up waits for two bursts running. Believing a large rise sooner would shorten it and has not been tried.
+
 **Not yet tried on air:**
 
-- a weak path, where the narrow formats, the long openings and the bottom of the ladder come into play;
-- a path that changes, or breaks (#834, which needs a hand on the attenuator). Drops and dead paths have only been run in simulation. There a sudden 14 dB drop costs one burst, because the report of the failed burst names a format that works, and a path too poor for a full-band header to be read is found again at the first-contact format on the sixth burst;
 - more than two stations, broadcasts, and stations listening in (#835);
 - unlike radios (#825);
 - a real link layer above it.
