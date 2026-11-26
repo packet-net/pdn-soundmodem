@@ -102,6 +102,7 @@
     <!-- The adaptive OFDM-FM payload code's tables (protograph and circulant shifts), as the prototype wrote them. -->
     <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/link-ldpc-protograph.txt" LogicalName="link-ldpc-protograph.txt" />
     <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/link-ldpc-shifts.txt" LogicalName="link-ldpc-shifts.txt" />
+    <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/link-training.txt" LogicalName="link-training.txt" />
   </ItemGroup>
 
   <ItemGroup>
