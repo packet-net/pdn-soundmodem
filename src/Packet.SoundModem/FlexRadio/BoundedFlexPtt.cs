@@ -30,12 +30,16 @@ internal sealed class BoundedFlexPtt : IPttControl, IDisposable
     private readonly Func<bool> _sessionAlive;
     private readonly TimeSpan _keyLimit;
     private readonly TimeSpan _unkeyLimit;
+    private readonly TimeProvider _time;
 
     /// <param name="inner">The PTT that talks to the radio.</param>
     /// <param name="sessionAlive">Whether the radio's session is still up.</param>
     /// <param name="keyLimit">How long a keyup may take, arbitration waits included.</param>
     /// <param name="unkeyLimit">How long an unkey may take; <see cref="UnkeyLimit"/> when null.</param>
-    internal BoundedFlexPtt(IPttControl inner, Func<bool> sessionAlive, TimeSpan keyLimit, TimeSpan? unkeyLimit = null)
+    /// <param name="time">The clock the limits and the poll run on; the system clock when null.</param>
+    internal BoundedFlexPtt(
+        IPttControl inner, Func<bool> sessionAlive, TimeSpan keyLimit, TimeSpan? unkeyLimit = null,
+        TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(inner);
         ArgumentNullException.ThrowIfNull(sessionAlive);
@@ -43,6 +47,7 @@ internal sealed class BoundedFlexPtt : IPttControl, IDisposable
         _sessionAlive = sessionAlive;
         _keyLimit = keyLimit;
         _unkeyLimit = unkeyLimit ?? UnkeyLimit;
+        _time = time ?? TimeProvider.System;
     }
 
     /// <summary>The PTT this one bounds.</summary>
@@ -65,11 +70,11 @@ internal sealed class BoundedFlexPtt : IPttControl, IDisposable
     {
         Task running = Task.Factory.StartNew(
             call, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-        long started = Environment.TickCount64;
-        while (!running.Wait(Poll))
+        long started = _time.GetTimestamp();
+        while (!WaitPoll(running))
         {
             bool alive = _sessionAlive();
-            if (alive && Environment.TickCount64 - started < (long)limit.TotalMilliseconds)
+            if (alive && _time.GetElapsedTime(started) < limit)
             {
                 continue;
             }
@@ -98,6 +103,16 @@ internal sealed class BoundedFlexPtt : IPttControl, IDisposable
 
         // Rethrows the call's own exception, unwrapped, exactly as calling it directly would.
         running.GetAwaiter().GetResult();
+    }
+
+    /// <summary>Waits up to one poll interval, on the injected clock, for the call to finish.</summary>
+    private bool WaitPoll(Task running)
+    {
+        using var cancelPoll = new CancellationTokenSource();
+        Task poll = Task.Delay(Poll, _time, cancelPoll.Token);
+        Task.WhenAny(running, poll).GetAwaiter().GetResult();
+        cancelPoll.Cancel();
+        return running.IsCompleted;
     }
 
     /// <summary>One unkey on a thread of its own, waited for by nobody.</summary>

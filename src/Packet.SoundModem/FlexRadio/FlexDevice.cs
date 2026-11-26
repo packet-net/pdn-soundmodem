@@ -283,12 +283,16 @@ public static class FlexDevice
     /// <param name="tuning">Headless slice params (frequency/antenna/mode); null = defaults.
     /// Ignored in attach mode.</param>
     /// <param name="cancellation">Cancels the connect + bring-up.</param>
+    /// <param name="time">The clock the keyup limits and the transmit stall watch run on; the
+    /// system clock when null.</param>
     /// <exception cref="InvalidOperationException">Headless bring-up could not point the
     /// transmitter at DAX (<see cref="FlexStation.TransmitSourceWarning"/>) - the modem would
     /// key and transmit silence.</exception>
     public static async Task<FlexRuntime> OpenAsync(
-        string device, int dspRate, int packetBuffer, FlexTuning? tuning, CancellationToken cancellation)
+        string device, int dspRate, int packetBuffer, FlexTuning? tuning, CancellationToken cancellation,
+        TimeProvider? time = null)
     {
+        time ??= TimeProvider.System;
         FlexSpec spec = Parse(device);
         DaxStreamFormat format = DaxStreamFormat.ForDspRate(dspRate);
         tuning ??= new FlexTuning();
@@ -376,7 +380,7 @@ public static class FlexDevice
         // longer than that leaves the radio with nothing to send (issue #748). Watched at the DAX
         // rate, one packet per call, which is how the sink sends anyway.
         var transmitStalls = new Channel.TransmitStallWatch(
-            flexOutput, format.SamplesPerPacket, lead: flexOutput.TransmitLead);
+            flexOutput, format.SamplesPerPacket, time, lead: flexOutput.TransmitLead);
         IAudioOutput output = format.SampleRate == dspRate
             ? transmitStalls
             : new Channel.UpsamplingAudioOutput(transmitStalls, dspRate);
@@ -397,8 +401,10 @@ public static class FlexDevice
                 () => station.Client.IsConnected,
                 keyLimit: arbitration.QuietWaitTimeout
                     + (arbitration.ConfirmTimeout + arbitration.RetryBackoff) * arbitration.KeyAttempts
-                    + BoundedFlexPtt.UnkeyLimit)
-            : new BoundedFlexPtt(station.CreatePtt(), () => station.Client.IsConnected, BoundedFlexPtt.UnkeyLimit);
+                    + BoundedFlexPtt.UnkeyLimit,
+                time: time)
+            : new BoundedFlexPtt(
+                station.CreatePtt(), () => station.Client.IsConnected, BoundedFlexPtt.UnkeyLimit, time: time);
 
         return new FlexRuntime(mock, station, input, output, ptt, transmitStalls, flexOutput.TransmitLead);
     }
