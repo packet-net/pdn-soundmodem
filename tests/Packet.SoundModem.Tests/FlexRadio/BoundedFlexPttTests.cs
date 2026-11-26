@@ -9,9 +9,10 @@ namespace Packet.SoundModem.Tests.FlexRadio;
 /// mid-keyup used to hold the transmitter, and the station's shutdown, for ever.
 /// </summary>
 /// <remarks>
-/// Every test runs on a fake clock (issue #854). The class under test polls on that clock, and the
-/// clock tells the test each time a poll has begun, so the test advances time only once the
-/// keyup is waiting for it. Nothing here sleeps, or measures real time.
+/// Every test runs on a fake clock (issue #854). The class under test measures its limit on that
+/// clock, and its timed wait is a waiter of the test's own that tells the test each time a poll has
+/// begun, so the test advances time only once the keyup is waiting for it. Nothing here sleeps, or
+/// measures real time.
 /// </remarks>
 public sealed class BoundedFlexPttTests
 {
@@ -19,29 +20,40 @@ public sealed class BoundedFlexPttTests
 
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
-    /// <summary>A fake clock that signals each timer the code under test starts, so a test never
-    /// advances before the keyup is parked on its poll.</summary>
-    private sealed class PollingClock : FakeTimeProvider
+    /// <summary>Stands in for the keyup's timed wait: signals that a poll has begun, then parks
+    /// until the test releases it, so the test advances the fake clock only while the keyup is
+    /// waiting and never waits in real time itself.</summary>
+    private sealed class PollingWaiter
     {
         private readonly SemaphoreSlim _started = new(0);
+        private readonly SemaphoreSlim _release = new(0);
 
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        public FakeTimeProvider Clock { get; } = new();
+
+        public bool Wait(Task running, TimeSpan poll)
         {
-            ITimer timer = base.CreateTimer(callback, state, dueTime, period);
             _started.Release();
-            return timer;
+            _release.Wait(Token);
+            return running.IsCompleted;
         }
+
+        public BoundedFlexPtt.PollWait AsWait => Wait;
 
         /// <summary>Completes when the keyup has started its next poll, so it has looked at the
         /// session and the limit for every poll before it.</summary>
         public Task NextPoll() => _started.WaitAsync(Token);
 
-        /// <summary>Waits for the next poll to begin, then lets one poll interval pass.</summary>
+        /// <summary>Waits for the next poll to begin, lets one poll interval pass on the clock,
+        /// then ends the poll.</summary>
         public async Task PassOnePoll()
         {
             await NextPoll();
-            Advance(Poll);
+            Clock.Advance(Poll);
+            _release.Release();
         }
+
+        /// <summary>Ends the poll that has begun, after the test advanced the clock itself.</summary>
+        public void EndPoll() => _release.Release();
     }
 
     /// <summary>A PTT whose radio never answers.</summary>
@@ -88,11 +100,11 @@ public sealed class BoundedFlexPttTests
     [Fact]
     public async Task An_Unkey_The_Radio_Never_Answers_Gives_Up_When_The_Clock_Reaches_Its_Limit_And_Says_The_Radio_Is_Gone()
     {
-        var clock = new PollingClock();
+        var clock = new PollingWaiter();
         var said = new List<string>();
         var ptt = new BoundedFlexPtt(
             new UnansweredPtt(), sessionAlive: () => true, keyLimit: TimeSpan.FromSeconds(30),
-            unkeyLimit: TimeSpan.FromMilliseconds(300), time: clock);
+            unkeyLimit: TimeSpan.FromMilliseconds(300), time: clock.Clock, wait: clock.AsWait);
         ptt.RadioUnanswered += said.Add;
 
         Task unkeying = Task.Run(ptt.Unkey, Token);
@@ -103,7 +115,8 @@ public sealed class BoundedFlexPttTests
         await clock.NextPoll();
         unkeying.IsCompleted.Should().BeFalse("300 ms have not passed on the clock");
 
-        clock.Advance(Poll);
+        clock.Clock.Advance(Poll);
+        clock.EndPoll();
         Func<Task> wait = () => unkeying.WaitAsync(Token);
         await wait.Should().ThrowAsync<TimeoutException>();
         said.Should().ContainSingle().Which.Should().Be(
@@ -113,12 +126,12 @@ public sealed class BoundedFlexPttTests
     [Fact]
     public async Task A_Keyup_Under_Way_When_The_Session_Ends_Gives_Up_Without_The_Clock_Reaching_Its_Limit()
     {
-        var clock = new PollingClock();
-        DateTimeOffset start = clock.GetUtcNow();
+        var clock = new PollingWaiter();
+        DateTimeOffset start = clock.Clock.GetUtcNow();
         bool alive = true;
         var said = new List<string>();
         var ptt = new BoundedFlexPtt(
-            new UnansweredPtt(), () => Volatile.Read(ref alive), keyLimit: TimeSpan.FromMinutes(5), time: clock);
+            new UnansweredPtt(), () => Volatile.Read(ref alive), keyLimit: TimeSpan.FromMinutes(5), time: clock.Clock, wait: clock.AsWait);
         ptt.RadioUnanswered += said.Add;
 
         Task keying = Task.Run(ptt.Key, Token);
@@ -127,11 +140,12 @@ public sealed class BoundedFlexPttTests
         keying.IsCompleted.Should().BeFalse("the session is up and the limit is minutes away");
 
         Volatile.Write(ref alive, false);
-        clock.Advance(Poll);
+        clock.Clock.Advance(Poll);
+        clock.EndPoll();
 
         Func<Task> wait = () => keying.WaitAsync(Token);
         await wait.Should().ThrowAsync<TimeoutException>("the keyup gave up rather than waiting on");
-        (clock.GetUtcNow() - start).Should().Be(
+        (clock.Clock.GetUtcNow() - start).Should().Be(
             2 * Poll, "the keyup's own limit is minutes; the session ending is what ended it");
         said.Should().ContainSingle().Which.Should().Be("flex: the radio's session ended during the keyup");
     }
@@ -139,10 +153,10 @@ public sealed class BoundedFlexPttTests
     [Fact]
     public async Task A_Keyup_With_The_Session_Still_Up_Gives_Up_When_The_Clock_Reaches_Its_Limit_And_Not_Before()
     {
-        var clock = new PollingClock();
+        var clock = new PollingWaiter();
         var said = new List<string>();
         var ptt = new BoundedFlexPtt(
-            new UnansweredPtt(), () => true, keyLimit: TimeSpan.FromSeconds(1), time: clock);
+            new UnansweredPtt(), () => true, keyLimit: TimeSpan.FromSeconds(1), time: clock.Clock, wait: clock.AsWait);
         ptt.RadioUnanswered += said.Add;
 
         Task keying = Task.Run(ptt.Key, Token);
@@ -154,7 +168,8 @@ public sealed class BoundedFlexPttTests
         await clock.NextPoll();
         keying.IsCompleted.Should().BeFalse("900 ms have passed and the limit is 1 s");
 
-        clock.Advance(Poll);
+        clock.Clock.Advance(Poll);
+        clock.EndPoll();
         Func<Task> wait = () => keying.WaitAsync(Token);
         await wait.Should().ThrowAsync<TimeoutException>();
         said.Should().ContainSingle().Which.Should().Be(
@@ -166,9 +181,9 @@ public sealed class BoundedFlexPttTests
     {
         // The abandoned keyup can still send its xmit 1 after it is given up on; nothing else
         // would ever unkey it.
-        var clock = new PollingClock();
+        var clock = new PollingWaiter();
         var inner = new SlowKeyPtt();
-        var ptt = new BoundedFlexPtt(inner, () => true, keyLimit: TimeSpan.FromMilliseconds(300), time: clock);
+        var ptt = new BoundedFlexPtt(inner, () => true, keyLimit: TimeSpan.FromMilliseconds(300), time: clock.Clock, wait: clock.AsWait);
 
         Task keying = Task.Run(ptt.Key, Token);
         await clock.PassOnePoll();
@@ -187,9 +202,9 @@ public sealed class BoundedFlexPttTests
     [Fact]
     public async Task A_Keyup_Given_Up_Because_The_Session_Ended_Sends_No_Unkey()
     {
-        var clock = new PollingClock();
+        var clock = new PollingWaiter();
         var inner = new SlowKeyPtt();
-        var ptt = new BoundedFlexPtt(inner, () => false, keyLimit: TimeSpan.FromMinutes(1), time: clock);
+        var ptt = new BoundedFlexPtt(inner, () => false, keyLimit: TimeSpan.FromMinutes(1), time: clock.Clock, wait: clock.AsWait);
 
         Task keying = Task.Run(ptt.Key, Token);
         await clock.PassOnePoll();
@@ -206,7 +221,13 @@ public sealed class BoundedFlexPttTests
     public void A_Radio_That_Answers_Is_Keyed_And_Unkeyed_As_Before()
     {
         var inner = new CountingPtt();
-        var ptt = new BoundedFlexPtt(inner, () => true, keyLimit: TimeSpan.FromSeconds(5), time: new FakeTimeProvider());
+        var ptt = new BoundedFlexPtt(
+            inner, () => true, keyLimit: TimeSpan.FromSeconds(5), time: new FakeTimeProvider(),
+            wait: (running, _) =>
+            {
+                running.Wait(Token);
+                return true;
+            });
 
         ptt.Key();
         ptt.Unkey();
