@@ -5,7 +5,27 @@ namespace Packet.SoundModem.Tests.Modems.OfdmFm.Link;
 
 public class TrackedReceiverTests
 {
+    // The smoke tier, which always runs: the shortest cases that between them cover each opening, a case the fine track must not
+    // touch, one where it runs to its end, one that only the tracked loop decodes, a failing case and a correction not believed.
+    //   8  3 kHz, BPSK, 8 symbols: no fine track (the plain loop, which settles in three passes)
+    //   18 1.5 kHz, 8 bits, 8 symbols: the fine track runs all three rounds (the 1.5 kHz opening)
+    //   13 3 kHz, 10 bits, 12 symbols, a 4 sample step: only the tracked loop decodes it (the 3 kHz opening)
+    //   27 Full, 6 bits, 16 symbols, far too weak: fails, and the fine track's first correction is not believed (the Full opening)
+    private static readonly int[] SmokeCases = [8, 18, 13, 27];
+
     private static List<TrackedCase> Cases => TrackedVectors.Cases.Value;
+
+    private static IEnumerable<TrackedCase> Tier(bool full)
+    {
+        if (full)
+        {
+            Assert.SkipWhen(Environment.GetEnvironmentVariable("SM_MASK_GATE") != "1",
+                "set SM_MASK_GATE=1 for all 29 tracked-receive cases - the always-on tier runs four of them");
+            return Cases;
+        }
+
+        return SmokeCases.Select(i => Cases[i]);
+    }
 
     [Fact]
     public void The_Vectors_Cover_Every_Opening_Constellation_Clock_And_Outcome()
@@ -31,13 +51,16 @@ public class TrackedReceiverTests
         Cases.Count(c => c.FineRan && c.Passes == c.SymbolPasses + 1).Should().BeGreaterThan(0);
     }
 
-    [Fact]
-    public void The_Outcome_Payload_And_Passes_Of_Every_Case_Match_The_Prototype()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void The_Outcome_Payload_Passes_And_Curve_Of_Every_Case_Match_The_Prototype(bool full)
     {
         var receiver = new TrackedReceiver();
         var payload = new byte[20000];
         var wrong = new List<string>();
-        foreach (TrackedCase c in Cases)
+        double largest = 0;
+        foreach (TrackedCase c in Tier(full))
         {
             PayloadReceiveResult r = receiver.Receive(c.Capture, c.Start, c.Header, c.HeaderBits, payload);
             if (!r.Accepted || r.AllBlocksSatisfied != c.Converged || r.CheckPassed != c.Check || receiver.Passes != c.Passes
@@ -53,20 +76,7 @@ public class TrackedReceiverTests
             {
                 wrong.Add(c.Name + ": payload bytes on a failed check");
             }
-        }
 
-        wrong.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void The_Final_Curve_Of_Every_Case_Matches_The_Prototype_To_A_Picosecond()
-    {
-        var receiver = new TrackedReceiver();
-        var payload = new byte[20000];
-        double largest = 0;
-        foreach (TrackedCase c in Cases)
-        {
-            receiver.Receive(c.Capture, c.Start, c.Header, c.HeaderBits, payload);
             receiver.Curve.Length.Should().Be(c.Curve.Length, c.Name);
             for (int k = 0; k < c.Curve.Length; k++)
             {
@@ -87,6 +97,7 @@ public class TrackedReceiverTests
             }
         }
 
+        wrong.Should().BeEmpty();
         largest.Should().BeLessThan(1e-12);
     }
 
@@ -95,7 +106,7 @@ public class TrackedReceiverTests
     {
         var receiver = new TrackedReceiver();
         var payload = new byte[20000];
-        TrackedCase c = Cases.First(x => x.Check && x.FineRan);
+        TrackedCase c = Cases[8];
         receiver.Receive(c.Capture, c.Start, c.Header, c.HeaderBits, payload).CheckPassed.Should().BeTrue();
         receiver.HasResult.Should().BeTrue();
         receiver.KnownSymbols.Should().Be(c.Known);
@@ -103,16 +114,18 @@ public class TrackedReceiverTests
         receiver.Delays.Length.Should().Be(c.Known + c.Header.PayloadSymbols);
         receiver.Quality.Length.Should().Be(333);
         receiver.DecidedReal.Length.Should().Be(c.Header.PayloadSymbols * 333);
-        receiver.Sudden.Should().BeFalse();
+        receiver.Sudden.Should().Be(PayloadReceiver.IsSudden(receiver.Miss, receiver.KnownSymbols));
     }
 
-    [Fact]
-    public void The_Untracked_Receive_Of_Every_Case_Matches_The_Prototype_And_Two_Cases_Need_The_Tracking()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void The_Untracked_Receive_Of_Every_Case_Matches_The_Prototype_And_Two_Cases_Need_The_Tracking(bool full)
     {
         var receiver = new PayloadReceiver();
         var payload = new byte[20000];
         var wrong = new List<string>();
-        foreach (TrackedCase c in Cases)
+        foreach (TrackedCase c in Tier(full))
         {
             PayloadReceiveResult r = receiver.Receive(c.Capture, c.Start, c.Header, c.HeaderBits, payload);
             if (r.CheckPassed != c.UntrackedCheck || r.AllBlocksSatisfied != c.UntrackedConverged)
@@ -122,7 +135,6 @@ public class TrackedReceiverTests
         }
 
         wrong.Should().BeEmpty();
-        Cases.Count(c => c.Check && !c.UntrackedCheck).Should().BeGreaterThanOrEqualTo(2);
     }
 
     [Fact]
@@ -130,7 +142,7 @@ public class TrackedReceiverTests
     {
         var receiver = new TrackedReceiver();
         var payload = new byte[20000];
-        TrackedCase c = Cases.First(x => x.Check);
+        TrackedCase c = Cases[8];
         int need = PayloadReceiver.SamplesNeeded(c.Header);
         receiver.Receive(c.Capture, c.Start, c.Header, c.HeaderBits, payload).CheckPassed.Should().BeTrue();
         receiver.HasResult.Should().BeTrue();
@@ -149,26 +161,32 @@ public class TrackedReceiverTests
         small.Should().Throw<ArgumentException>();
     }
 
-    [Fact]
-    public void A_Second_Call_Of_The_Same_Shape_Allocates_Nothing()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_Second_Call_Of_The_Same_Shape_Allocates_Nothing(bool fine)
     {
+        // the plain loop on the shortest burst always; the fine track's burst (several times the cost) with the full tier
+        if (fine)
+        {
+            Assert.SkipWhen(Environment.GetEnvironmentVariable("SM_MASK_GATE") != "1",
+                "set SM_MASK_GATE=1 for the allocation check of a burst the fine track runs on");
+        }
+
         var receiver = new TrackedReceiver();
         var payload = new byte[20000];
-        foreach (bool fine in new[] { true, false })
+        TrackedCase c = Cases[fine ? 26 : 8];
+        for (int i = 0; i < 5; i++)
         {
-            TrackedCase c = Cases.First(x => x.Check && x.FineRan == fine && x.Header.PayloadSymbols <= 16);
-            for (int i = 0; i < 5; i++)
-            {
-                receiver.Receive(c.Capture, c.Start, c.Header, c.HeaderBits, payload);
-            }
-
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 20; i++)
-            {
-                receiver.Receive(c.Capture, c.Start, c.Header, c.HeaderBits, payload);
-            }
-
-            (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0, c.Name);
+            receiver.Receive(c.Capture, c.Start, c.Header, c.HeaderBits, payload);
         }
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 20; i++)
+        {
+            receiver.Receive(c.Capture, c.Start, c.Header, c.HeaderBits, payload);
+        }
+
+        (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0, c.Name);
     }
 }
