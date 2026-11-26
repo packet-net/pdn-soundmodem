@@ -1,6 +1,6 @@
 # The adaptive modem's host interface: a design draft
 
-Status: a design, decided 2026-11-26 (the five choices under Decided); nothing built. For #822 (the generic host interface) and #841 (the AX.25 engine using it directly). Every name marked "proposed" is a suggestion, not an existing API. The protocol it serves is [adaptation-protocol.md](adaptation-protocol.md).
+Status: a design, decided 2026-11-26 (the five choices under Decided); nothing built. For #822 (the generic host interface) and #841 (the AX.25 engine using it directly). Every name marked "proposed" is a suggestion, not an existing API. The protocol it serves is [adaptation-protocol.md](https://github.com/M0LTE/M0LTE.OfdmFm/blob/main/docs/adaptation-protocol.md), in the M0LTE.OfdmFm repository.
 
 ## What exists today
 

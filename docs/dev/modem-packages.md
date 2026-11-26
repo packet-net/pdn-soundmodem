@@ -1,6 +1,6 @@
 # Modem packages
 
-Status: current as of 2026-10-23. Describes how a modem moves out of this repository into its own NuGet package, what goes and what stays, and which modems have moved. MS110D was the first done to this recipe.
+Status: current as of 2026-11-26. Describes how a modem moves out of this repository into its own NuGet package, what goes and what stays, and which modems have moved. MS110D was the first done to this recipe.
 
 Each waveform can live in its own `M0LTE.<Name>` package and repository, so other programs can use it without taking all of pdn-soundmodem. pdn-soundmodem then keeps a small wrapper that makes the waveform one of its modems.
 
@@ -36,4 +36,5 @@ Downstream programs that used the old `Packet.SoundModem.<Name>` namespace (pdn-
 | FSK 4800 and 9600 | not yet | |
 | C4FSK | not yet | |
 | BPSK and QPSK | not yet | |
-| OFDM-FM | not yet | |
+| OFDM-FM, adaptive | M0LTE.OfdmFm, not yet published | none yet |
+| OFDM-FM, the earlier built-in `ofdm-fm` modes | not yet | `Modems/OfdmFm/` |
