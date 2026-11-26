@@ -96,7 +96,7 @@ public sealed class BurstRenderer
     /// <summary>The samples a data burst of this format and length takes, lead-in included.</summary>
     public int SamplesFor(int format, int payloadSymbols)
     {
-        OpeningShape shape = Shapes[(int)StandardFormats.Describe(format).Opening];
+        OpeningShape shape = ShapeOf(StandardFormats.Describe(format).Opening);
         return _lead + ((shape.Training + shape.HeaderSymbols + payloadSymbols) * SymbolSamples);
     }
 
@@ -144,7 +144,7 @@ public sealed class BurstRenderer
         }
 
         BurstHeaderCodec.Write(header, _headerBits);
-        OpeningShape shape = Shapes[(int)spec.Opening];
+        OpeningShape shape = ShapeOf(spec.Opening);
         int known = shape.Training + shape.HeaderSymbols;
         double gain = Math.Sqrt((double)spec.Carriers / shape.BandCarriers);
         BuildOpening(spec.Opening, shape, gain);
@@ -204,7 +204,8 @@ public sealed class BurstRenderer
 
         BurstHeaderCodec.Write(report, _headerBits);
         BuildOpening(opening, ShapeOf(opening), 1.0);
-        _gridSymbols = Shapes[(int)opening].Training + Shapes[(int)opening].HeaderSymbols;
+        OpeningShape reportShape = ShapeOf(opening);
+        _gridSymbols = reportShape.Training + reportShape.HeaderSymbols;
         Span<double> body = Transform();
         double level = RmsFull / Math.Sqrt(SumOfSquares(body) / body.Length);
         double drive = Math.Pow(10, driveDb / 20);
@@ -218,12 +219,14 @@ public sealed class BurstRenderer
 
     private static OpeningShape ShapeOf(FormatOpening opening)
     {
-        if ((uint)opening >= (uint)Shapes.Length)
+        // Shapes is built in this order: full band, up to 3 kHz, up to 1.5 kHz.
+        return opening switch
         {
-            throw new ArgumentOutOfRangeException(nameof(opening));
-        }
-
-        return Shapes[(int)opening];
+            FormatOpening.Full => Shapes[0],
+            FormatOpening.UpTo3000Hz => Shapes[1],
+            FormatOpening.UpTo1500Hz => Shapes[2],
+            _ => throw new ArgumentOutOfRangeException(nameof(opening)),
+        };
     }
 
     private static double SumOfSquares(ReadOnlySpan<double> x)
