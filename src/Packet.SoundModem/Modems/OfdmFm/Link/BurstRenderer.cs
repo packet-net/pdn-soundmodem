@@ -147,7 +147,7 @@ public sealed class BurstRenderer
         OpeningShape shape = ShapeOf(spec.Opening);
         int known = shape.Training + shape.HeaderSymbols;
         double gain = Math.Sqrt((double)spec.Carriers / shape.BandCarriers);
-        BuildOpening(spec.Opening, shape, gain);
+        BuildOpening(spec.Opening, gain);
 
         int perSymbol = spec.Carriers * spec.ConstellationBits;
         int codedBits = symbols * perSymbol;
@@ -174,8 +174,7 @@ public sealed class BurstRenderer
 
         _gridSymbols = known + symbols;
         Span<double> body = Transform();
-        double rms = Math.Sqrt(SumOfSquares(body) / body.Length);
-        double scale = RmsFull * Math.Pow(10, spec.DriveDb / 20) / rms;
+        double scale = BurstGrid.Level(body, spec.DriveDb);
         for (int i = 0; i < body.Length; i++)
         {
             body[i] *= scale;
@@ -203,11 +202,11 @@ public sealed class BurstRenderer
         }
 
         BurstHeaderCodec.Write(report, _headerBits);
-        BuildOpening(opening, ShapeOf(opening), 1.0);
+        BuildOpening(opening, 1.0);
         OpeningShape reportShape = ShapeOf(opening);
         _gridSymbols = reportShape.Training + reportShape.HeaderSymbols;
         Span<double> body = Transform();
-        double level = RmsFull / Math.Sqrt(SumOfSquares(body) / body.Length);
+        double level = RmsFull / Math.Sqrt(BurstGrid.SumOfSquares(body) / body.Length);
         double drive = Math.Pow(10, driveDb / 20);
         for (int i = 0; i < body.Length; i++)
         {
@@ -229,83 +228,12 @@ public sealed class BurstRenderer
         };
     }
 
-    private static double SumOfSquares(ReadOnlySpan<double> x)
-    {
-        double sum = 0;
-        for (int i = 0; i < x.Length; i++)
-        {
-            sum += x[i] * x[i];
-        }
+    // The opening's grid, from the header's bits, times gain (see BurstGrid).
+    private void BuildOpening(FormatOpening opening, double gain) =>
+        BurstGrid.BuildOpening(opening, _headerBits, gain, _gridRe, _gridIm, _loading, _headerCoded);
 
-        return sum;
-    }
-
-    // The opening's grid: the training rows on the band's carriers, then the header's symbols, all times gain.
-    private void BuildOpening(FormatOpening opening, OpeningShape shape, double gain)
-    {
-        for (int r = 0; r < shape.Training; r++)
-        {
-            Span<double> re = _gridRe.AsSpan(r * Carriers, Carriers);
-            Span<double> im = _gridIm.AsSpan(r * Carriers, Carriers);
-            TrainingSymbols.Points(r, re, im);
-            for (int c = 0; c < Carriers; c++)
-            {
-                if (c >= shape.BandCarriers)
-                {
-                    re[c] = 0;
-                    im[c] = 0;
-                }
-                else
-                {
-                    re[c] *= gain;
-                    im[c] *= gain;
-                }
-            }
-        }
-
-        HeaderCode.Encode(opening, _headerBits, _headerCoded.AsSpan(0, shape.HeaderSymbols * 2 * shape.BandCarriers));
-        _loading.AsSpan().Clear();
-        _loading.AsSpan(0, shape.BandCarriers).Fill(2);
-        int perSymbol = 2 * shape.BandCarriers;
-        for (int h = 0; h < shape.HeaderSymbols; h++)
-        {
-            int at = (shape.Training + h) * Carriers;
-            Span<double> re = _gridRe.AsSpan(at, Carriers);
-            Span<double> im = _gridIm.AsSpan(at, Carriers);
-            Constellation.MapSymbol(_headerCoded.AsSpan(h * perSymbol, perSymbol), _loading, re, im);
-            for (int c = 0; c < shape.BandCarriers; c++)
-            {
-                re[c] *= gain;
-                im[c] *= gain;
-            }
-        }
-    }
-
-    // The grid's symbols as the body: each an inverse transform, behind its last 64 samples.
-    private Span<double> Transform()
-    {
-        for (int s = 0; s < _gridSymbols; s++)
-        {
-            Array.Clear(_fftRe);
-            Array.Clear(_fftIm);
-            int at = s * Carriers;
-            for (int c = 0; c < Carriers; c++)
-            {
-                int k = FirstBin + c;
-                _fftRe[k] = _gridRe[at + c];
-                _fftIm[k] = _gridIm[at + c];
-                _fftRe[FftSize - k] = _gridRe[at + c];
-                _fftIm[FftSize - k] = -_gridIm[at + c];
-            }
-
-            RealFft.Inverse(_fftRe, _fftIm);
-            int o = s * SymbolSamples;
-            _fftRe.AsSpan(FftSize - CyclicPrefix, CyclicPrefix).CopyTo(_body.AsSpan(o, CyclicPrefix));
-            _fftRe.CopyTo(_body.AsSpan(o + CyclicPrefix, FftSize));
-        }
-
-        return _body.AsSpan(0, _gridSymbols * SymbolSamples);
-    }
+    // The grid's symbols as the body (see BurstGrid).
+    private Span<double> Transform() => BurstGrid.Transform(_gridRe, _gridIm, _gridSymbols, _fftRe, _fftIm, _body);
 
     // Counts what the limit touches, clips, and writes the lead-in and the body as floats.
     private int Finish(Span<double> body, Span<float> samples)
