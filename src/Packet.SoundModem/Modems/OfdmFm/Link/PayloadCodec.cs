@@ -231,9 +231,7 @@ public static class PayloadCodec
             int b = 0;
             for (int j = 0; j < 8; j++)
             {
-                uint next = ((w >> 27) ^ (w >> 30)) & 1;
-                w = ((w << 1) | next) & 0x7FFFFFFFu;
-                b = (b << 1) | ((bits[(i * 8) + j] & 1) ^ (int)next);
+                b = (b << 1) | ((bits[(i * 8) + j] & 1) ^ (int)PayloadScrambler.Next(ref w));
             }
 
             payload[i] = (byte)b;

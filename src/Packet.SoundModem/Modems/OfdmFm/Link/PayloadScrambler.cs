@@ -24,10 +24,7 @@ public static class PayloadScrambler
         uint w = Seed(sender, destination, burstNumber);
         for (int i = 0; i < bits.Length; i++)
         {
-            // w holds the last 31 bits, the newest at bit 0: b[i-28] is bit 27 and b[i-31] is bit 30.
-            uint next = ((w >> 27) ^ (w >> 30)) & 1;
-            w = ((w << 1) | next) & 0x7FFFFFFFu;
-            bits[i] = (byte)next;
+            bits[i] = (byte)Next(ref w);
         }
     }
 
@@ -37,9 +34,19 @@ public static class PayloadScrambler
         uint w = Seed(sender, destination, burstNumber);
         for (int i = 0; i < bits.Length; i++)
         {
-            uint next = ((w >> 27) ^ (w >> 30)) & 1;
-            w = ((w << 1) | next) & 0x7FFFFFFFu;
-            bits[i] ^= (byte)next;
+            bits[i] ^= (byte)Next(ref w);
         }
+    }
+
+    /// <summary>
+    /// Advances the generator by one bit and returns it. The state holds the last 31 bits, the newest at bit 0, so
+    /// b[i-28] is bit 27 and b[i-31] is bit 30.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    internal static uint Next(ref uint state)
+    {
+        uint next = ((state >> 27) ^ (state >> 30)) & 1;
+        state = ((state << 1) | next) & 0x7FFFFFFFu;
+        return next;
     }
 }

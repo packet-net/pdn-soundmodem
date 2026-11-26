@@ -25,7 +25,7 @@ public class StandardFormatsTests
             s.ConstellationBits.Should().Be(f.GetProperty("bits").GetInt32());
             s.CodeRate.Should().Be(f.GetProperty("code_rate").GetDouble());
             s.DriveDb.Should().Be(f.GetProperty("drive_db").GetDouble());
-            s.Opening.Should().Be(f.GetProperty("layout").GetString() switch { "full" => FormatOpening.Full, "n3x" => FormatOpening.Low3, _ => FormatOpening.Low1 });
+            s.Opening.Should().Be(f.GetProperty("layout").GetString() switch { "full" => FormatOpening.Full, "n3x" => FormatOpening.UpTo3000Hz, _ => FormatOpening.UpTo1500Hz });
             s.KbitPerSecond.Should().Be(f.GetProperty("kbit_s").GetDouble());
             StandardFormats.Rate(n).Should().Be(f.GetProperty("rate").GetDouble());
             n++;

@@ -1,16 +1,16 @@
 namespace Packet.SoundModem.Modems.OfdmFm.Link;
 
-/// <summary>How a burst of a standard format opens: on the full band, or on the low carriers only with a long opening.</summary>
+/// <summary>How a burst of a standard format opens (the prototype's layouts full, n3x and n1x).</summary>
 public enum FormatOpening
 {
-    /// <summary>The full-band opening (formats whose band tops out above 3 kHz).</summary>
+    /// <summary>On the full band (all 333 carriers), with one training symbol. Formats whose band tops out above 3 kHz.</summary>
     Full = 0,
 
-    /// <summary>The opening on the low carriers (up to 3 kHz), for the 3 kHz and 2 kHz bands.</summary>
-    Low3 = 1,
+    /// <summary>On the carriers up to 3000 Hz only, with a longer opening: three training symbols against one. The 3 kHz and 2 kHz bands.</summary>
+    UpTo3000Hz = 1,
 
-    /// <summary>The longest opening, on the lowest carriers (up to 1.5 kHz), for the 1.5 kHz and 1 kHz bands.</summary>
-    Low1 = 2,
+    /// <summary>On the carriers up to 1500 Hz only, with a longer opening: six training symbols against one. The 1.5 kHz and 1 kHz bands.</summary>
+    UpTo1500Hz = 2,
 }
 
 /// <summary>What a standard format number means (the prototype's <c>formats.spec</c>).</summary>
@@ -170,7 +170,7 @@ public static class StandardFormats
 
             int bits = ConstellationFor(eta);
             double drive = eta <= 2.5 ? 6.0 : eta <= 5.0 ? 3.0 : 0.0;
-            FormatOpening opening = top <= 1500.0 ? FormatOpening.Low1 : top <= 3000.0 ? FormatOpening.Low3 : FormatOpening.Full;
+            FormatOpening opening = top <= 1500.0 ? FormatOpening.UpTo1500Hz : top <= 3000.0 ? FormatOpening.UpTo3000Hz : FormatOpening.Full;
             table[n] = new FormatSpec(n, band, rung, top, carriers, eta, bits, eta / bits, drive, opening, eta * carriers / SymbolSeconds / 1000);
         }
 
