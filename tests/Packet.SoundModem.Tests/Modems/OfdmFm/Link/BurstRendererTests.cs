@@ -132,10 +132,18 @@ public class BurstRendererTests
         float[] buffer = new float[600_000];
         foreach (RenderCase c in new[] { Short.First(), Short.First(x => x.Opening == 2), Short.First(x => x.IsReport) })
         {
-            c.Render(r, buffer);
+            for (int i = 0; i < 5; i++)
+            {
+                c.Render(r, buffer);
+            }
+
             long before = GC.GetAllocatedBytesForCurrentThread();
-            c.Render(r, buffer);
-            GC.GetAllocatedBytesForCurrentThread().Should().Be(before, c.Name);
+            for (int i = 0; i < 50; i++)
+            {
+                c.Render(r, buffer);
+            }
+
+            (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0, c.Name);
         }
     }
 
