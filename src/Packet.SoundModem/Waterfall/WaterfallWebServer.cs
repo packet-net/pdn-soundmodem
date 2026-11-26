@@ -997,6 +997,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// </summary>
     public event Action<int>? ViewersChanged;
 
+    /// <summary>
+    /// Raised after a page's message has been read and its place on the keep-alive clock renewed.
+    /// For tests, which wait on it rather than guess how long a read takes.
+    /// </summary>
+    internal event Action? PageHeard;
+
     /// <summary>Browsers with the page open right now.</summary>
     public int Viewers
     {
@@ -3570,6 +3576,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 // Anything at all is proof this page is still there - the keep-alive answer, a
                 // request to turn audio or the waterfall on or off, or its goodbye.
                 client.HeardAt = _options.TimeProvider.GetTimestamp();
+                PageHeard?.Invoke();
                 if (received.MessageType == WebSocketMessageType.Close)
                 {
                     break;
@@ -3584,7 +3591,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
             queue.Writer.TryComplete();
             await send.ConfigureAwait(false);
-            if (socket.State == WebSocketState.Open || socket.State == WebSocketState.CloseReceived)
+            // Not for a page the keep-alive has given up on: a polite close waits for the far end's
+            // answer, and this one has not answered anything for a minute. The sweep's cancel can
+            // land after the receive loop's last check but before its first receive, and then the
+            // loop is skipped rather than thrown out of, and without this the close below waits
+            // for ever and the page stays counted.
+            if (!client.DroppedForSilence
+                && (socket.State == WebSocketState.Open || socket.State == WebSocketState.CloseReceived))
             {
                 await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None)
                     .ConfigureAwait(false);
