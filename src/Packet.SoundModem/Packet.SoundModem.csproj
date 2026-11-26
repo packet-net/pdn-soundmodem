@@ -104,6 +104,8 @@
     <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/link-ldpc-shifts.txt" LogicalName="link-ldpc-shifts.txt" />
     <!-- 5G NR base graph 2 (the set of 9), Apache-2.0: the header code's table. See the notice in the file and LICENSING.md. -->
     <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/header-ldpc-bg2-set4.txt" LogicalName="header-ldpc-bg2-set4.txt" />
+    <!-- The adaptive OFDM-FM training symbols, as the prototype's table holds them. -->
+    <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/link-training.txt" LogicalName="link-training.txt" />
   </ItemGroup>
 
   <ItemGroup>
