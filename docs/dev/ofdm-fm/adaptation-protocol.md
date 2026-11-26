@@ -181,7 +181,7 @@ Station numbers are set at both ends for the bench. How a station comes by its n
 | Data to one station | every field | the prelude, then one or more whole datagrams |
 | Data to everyone | the same, with destination 0 | datagrams. No prelude, no report. |
 | Report | every field, with the recommended format and the failed bit in the format and burst-number fields, and length 0 | none |
-| Identification (optional) | as data, with destination 0 | the station's callsign and capability word, in the first-contact format |
+| Identification | as data, with destination 0 | the station's callsign and capability word, in the first-contact format |
 
 - **The destination is in the header** (6 bits, with 0 meaning everyone). In the payload it would not survive more than two stations: when a payload fails, nobody could tell whom it was for, so either every station that heard it reports at once in the same slot, or nobody does. In the header, exactly one station knows the failure is its to report.
 - A burst carries whole datagrams, several if they fit. The modem never splits a datagram across bursts. AX.25 sizes its own frames (N1) and has its own segmenter (section 2.4), and the host is told how much one burst can carry to each neighbour now (#822) so that it can size its frames to suit.
@@ -276,7 +276,7 @@ A connects to B, having never heard it. The format numbers and rates are the one
 
 ## What is left to the layer above
 
-- **Who stations are.** The modem deals in 6-bit numbers. Binding a number to a callsign after first contact, and identifying the station as the licence requires, belong above, with the optional identification burst for hosts that do not.
+- **Who stations are.** The modem deals in 6-bit numbers. Binding a number to a station's name after first contact is not designed yet (#835). Identifying the station as the licence requires is the modem's own job and does not depend on the layer above: the callsign is a required setting, and while it is transmitting the modem sends an identification burst on its own clock, and a Morse ident beside it that anyone can read ([the host interface](host-interface.md) has the decision).
 - **Getting a datagram there in the end.** Acknowledging, repeating and ordering belong to the layer above, as set out under AX.25 above. The modem tells the host when each frame has gone out, and what it knows about the path. #836 decides whether the modem should ever do more.
 - **Routing, connections, flow.** Unchanged, but better informed: the host interface (#822) says what each neighbour can carry now, and #841 considers the AX.25 engine using it directly.
 
@@ -322,6 +322,7 @@ Nothing here reverses any of the nine choices above. Each line is a rule that th
 | A format number is a band and a rung, the drive is part of the format, and a lone report goes at the drive of the station's own data. | The first format list (#831). | Building it |
 | "One rung slower" never lands on something faster. | The 1 kHz band's lowest rungs are slower than the most robust format. | Writing the rules down |
 | Three openings, not two. | The lowest carriers need a longer opening. | Building it |
+| The identification burst is not optional: the modem sends it by itself on a clock while it is transmitting, with a Morse ident beside it, and the callsign is a required setting. The agreed version left identification to the layer above. | A compliance fallback that does not depend on the host. | Tom, 26 November 2026 |
 | The interleaver and the training symbols are defined in this document's own terms (a shuffle driven by the scrambler's generator; a fixed table), where the prototype drew both from a software library's random generator. The training values did not change; the interleaver's permutation did. | A wire format has to be reproducible from its description. | The port |
 
 ## What the bench has shown
