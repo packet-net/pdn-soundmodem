@@ -30,12 +30,21 @@ internal sealed class BoundedFlexPtt : IPttControl, IDisposable
     private readonly Func<bool> _sessionAlive;
     private readonly TimeSpan _keyLimit;
     private readonly TimeSpan _unkeyLimit;
+    private readonly TimeProvider _time;
+    private readonly PollWait _wait;
 
     /// <param name="inner">The PTT that talks to the radio.</param>
     /// <param name="sessionAlive">Whether the radio's session is still up.</param>
     /// <param name="keyLimit">How long a keyup may take, arbitration waits included.</param>
     /// <param name="unkeyLimit">How long an unkey may take; <see cref="UnkeyLimit"/> when null.</param>
-    internal BoundedFlexPtt(IPttControl inner, Func<bool> sessionAlive, TimeSpan keyLimit, TimeSpan? unkeyLimit = null)
+    /// <param name="time">The clock the limits are measured on; the system clock when null.</param>
+    /// <param name="wait">How a poll waits for the call to finish; a kernel timed wait when null.
+    /// The wait is a real one because it is what wakes the caller when the radio never answers, so
+    /// it must not depend on the thread pool. The injected clock decides only whether the limit
+    /// has passed.</param>
+    internal BoundedFlexPtt(
+        IPttControl inner, Func<bool> sessionAlive, TimeSpan keyLimit, TimeSpan? unkeyLimit = null,
+        TimeProvider? time = null, PollWait? wait = null)
     {
         ArgumentNullException.ThrowIfNull(inner);
         ArgumentNullException.ThrowIfNull(sessionAlive);
@@ -43,7 +52,15 @@ internal sealed class BoundedFlexPtt : IPttControl, IDisposable
         _sessionAlive = sessionAlive;
         _keyLimit = keyLimit;
         _unkeyLimit = unkeyLimit ?? UnkeyLimit;
+        _time = time ?? TimeProvider.System;
+        _wait = wait ?? DefaultWait;
     }
+
+    /// <summary>Waits up to <paramref name="poll"/> for <paramref name="running"/> to finish and
+    /// says whether it did.</summary>
+    internal delegate bool PollWait(Task running, TimeSpan poll);
+
+    private static bool DefaultWait(Task running, TimeSpan poll) => running.Wait(poll);
 
     /// <summary>The PTT this one bounds.</summary>
     internal IPttControl Inner => _inner;
@@ -65,11 +82,11 @@ internal sealed class BoundedFlexPtt : IPttControl, IDisposable
     {
         Task running = Task.Factory.StartNew(
             call, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-        long started = Environment.TickCount64;
-        while (!running.Wait(Poll))
+        long started = _time.GetTimestamp();
+        while (!_wait(running, Poll))
         {
             bool alive = _sessionAlive();
-            if (alive && Environment.TickCount64 - started < (long)limit.TotalMilliseconds)
+            if (alive && _time.GetElapsedTime(started) < limit)
             {
                 continue;
             }

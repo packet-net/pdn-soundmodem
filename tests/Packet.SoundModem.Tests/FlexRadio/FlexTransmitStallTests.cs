@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.FlexRadio;
 
@@ -13,8 +14,12 @@ namespace Packet.SoundModem.Tests.FlexRadio;
 /// keeps a lead (80 ms unless <c>M0LTE_FLEX_TX_LEAD_MS</c> says otherwise), so a hold the lead
 /// covers is no gap and the watch says nothing, and a longer one is a gap the size of what the
 /// lead did not cover.</para>
-/// <para>Real time, about a second each, because the sink paces off the wall clock. The
-/// assertions leave room for a loaded machine's own late wake-ups.</para>
+/// <para>The stall watch reads only the clock it is given, a fake one here (issue #804). The
+/// radio's playout is modelled on that clock in the send hook: after each packet it has played
+/// everything but the lead, and a hold is the test advancing the clock by that much inside the
+/// send. The real <c>FlexAudioOutput</c> still sleeps in real time to pace itself, which this
+/// project cannot inject; nothing asserted here depends on how long that takes, so a loaded
+/// machine only makes the test slower.</para>
 /// <para>Each test sets the lead variable itself, so a value in the environment the tests run in
 /// changes nothing, and runs on its own, because the environment is the whole process's.</para>
 /// </remarks>
@@ -24,10 +29,11 @@ public sealed class FlexTransmitStallTests
     [Fact]
     public async Task A_Hold_The_Lead_Covers_Is_Not_Reported()
     {
-        await using FlexRuntime runtime = await OpenAsync(lead: "80");
+        var clock = new FakeTimeProvider();
+        await using FlexRuntime runtime = await OpenAsync(lead: "80", clock);
         var reports = new List<TransmitStallReport>();
         runtime.TransmitStalls.KeyupStalled += reports.Add;
-        HoldAt(runtime, packet: 60, TimeSpan.FromMilliseconds(30));
+        HoldAt(runtime, clock, packet: 60, TimeSpan.FromMilliseconds(30));
 
         runtime.Output.Write(new float[12000]);
         runtime.Output.Drain();
@@ -39,18 +45,19 @@ public sealed class FlexTransmitStallTests
     [Fact]
     public async Task A_Sender_Held_Up_For_Longer_Than_The_Lead_Is_Reported_With_The_Keyup()
     {
-        await using FlexRuntime runtime = await OpenAsync(lead: "80");
+        var clock = new FakeTimeProvider();
+        await using FlexRuntime runtime = await OpenAsync(lead: "80", clock);
         var reports = new List<TransmitStallReport>();
         runtime.TransmitStalls.KeyupStalled += reports.Add;
-        HoldAt(runtime, packet: 60, TimeSpan.FromMilliseconds(150));
+        HoldAt(runtime, clock, packet: 60, TimeSpan.FromMilliseconds(150));
 
         runtime.Output.Write(new float[12000]);
         runtime.Output.Drain();
 
-        // 150 ms held, 80 of it covered: the radio went about 70 ms without audio.
+        // 150 ms held, 80 of it covered: the radio went 70 ms without audio, to within a packet.
         TransmitStallReport report = reports.Should().ContainSingle().Subject;
-        report.Stalls.Should().BeGreaterThanOrEqualTo(1);
-        report.Worst.Should().BeGreaterThan(TimeSpan.FromMilliseconds(55));
+        report.Stalls.Should().Be(1);
+        report.Worst.Should().BeCloseTo(TimeSpan.FromMilliseconds(70), TimeSpan.FromMilliseconds(6));
         runtime.TransmitStalls.Snapshot.Stalls.Should().Be(report.Stalls);
     }
 
@@ -59,19 +66,20 @@ public sealed class FlexTransmitStallTests
     {
         // The rollback: one packet at a time, as up to M0LTE.Flex 0.15.1, where a 50 ms hold was
         // a 50 ms hole on the air.
-        await using FlexRuntime runtime = await OpenAsync(lead: "off");
+        var clock = new FakeTimeProvider();
+        await using FlexRuntime runtime = await OpenAsync(lead: "off", clock);
         var reports = new List<TransmitStallReport>();
         runtime.TransmitStalls.KeyupStalled += reports.Add;
-        HoldAt(runtime, packet: 60, TimeSpan.FromMilliseconds(50));
+        HoldAt(runtime, clock, packet: 60, TimeSpan.FromMilliseconds(50));
 
         runtime.Output.Write(new float[12000]);
         runtime.Output.Drain();
 
         runtime.TransmitLead.Should().Be(TimeSpan.Zero);
-        reports.Should().ContainSingle().Which.Worst.Should().BeGreaterThan(TimeSpan.FromMilliseconds(40));
+        reports.Should().ContainSingle().Which.Worst.Should().BeCloseTo(TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(6));
     }
 
-    private static async Task<FlexRuntime> OpenAsync(string lead)
+    private static async Task<FlexRuntime> OpenAsync(string lead, TimeProvider clock)
     {
         // Read once, when the sink is made, so it only has to be set for the open.
         string? before = Environment.GetEnvironmentVariable(M0LTE.Flex.FlexAudioOutput.TransmitLeadVariable);
@@ -82,7 +90,7 @@ public sealed class FlexTransmitStallTests
             // modes run.
             return await FlexDevice.OpenAsync(
                 "flex:mock", dspRate: 12000, packetBuffer: 3,
-                tuning: new FlexTuning(), cancellation: CancellationToken.None);
+                tuning: new FlexTuning(), cancellation: CancellationToken.None, time: clock);
         }
         finally
         {
@@ -90,17 +98,35 @@ public sealed class FlexTransmitStallTests
         }
     }
 
-    private static void HoldAt(FlexRuntime runtime, int packet, TimeSpan hold)
+    /// <summary>Models the radio's playout on <paramref name="clock"/>: when a packet reaches the
+    /// radio, the clock stands where the radio has played everything but the lead, and the packet
+    /// numbered <paramref name="packet"/> is first held up for <paramref name="hold"/>.</summary>
+    private static void HoldAt(FlexRuntime runtime, FakeTimeProvider clock, int packet, TimeSpan hold)
     {
+        const int packetSamples = 128;
+        TimeSpan packetLength = TimeSpan.FromTicks(
+            packetSamples * TimeSpan.TicksPerSecond / runtime.TransmitStalls.SampleRate);
+        DateTimeOffset start = clock.GetUtcNow();
+        TimeSpan held = TimeSpan.Zero;
         int sent = 0;
         Action<byte[]> deliver = runtime.Station.Client.VitaSendHook!;
         runtime.Station.Client.VitaSendHook = bytes =>
         {
-            if (sent++ == packet)
+            if (sent == packet)
             {
-                Thread.Sleep(hold);
+                held += hold;
+                clock.Advance(hold);
             }
 
+            // The radio has played all this has sent but the lead, plus what the hold cost it.
+            TimeSpan played = (packetLength * (sent + 1)) - runtime.TransmitLead + held;
+            TimeSpan behind = played - (clock.GetUtcNow() - start);
+            if (behind > TimeSpan.Zero)
+            {
+                clock.Advance(behind);
+            }
+
+            sent++;
             deliver(bytes);
         };
     }

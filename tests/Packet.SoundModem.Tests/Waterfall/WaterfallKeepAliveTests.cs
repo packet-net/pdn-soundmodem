@@ -144,7 +144,10 @@ public class WaterfallKeepAliveTests
     {
         private readonly List<string> _journal = [];
         private readonly List<int> _counts = [];
-        private readonly CancellationTokenSource _cancellation = new(TimeSpan.FromSeconds(30));
+        // Only here to turn a hang into a failure; nothing waits on it for its own sake.
+        private readonly CancellationTokenSource _cancellation = new(TimeSpan.FromSeconds(60));
+        private readonly SemaphoreSlim _signal = new(0);
+        private int _heard;
         private readonly int _port;
 
         private Harness(SoundModemChannel channel, int port)
@@ -162,7 +165,16 @@ public class WaterfallKeepAliveTests
             var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
             channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
             var h = new Harness(channel, FreePorts.Next());
-            h.Server.ViewersChanged += n => { lock (h._counts) { h._counts.Add(n); } };
+            h.Server.ViewersChanged += n =>
+            {
+                lock (h._counts) { h._counts.Add(n); }
+                h._signal.Release();
+            };
+            h.Server.PageHeard += () =>
+            {
+                Interlocked.Increment(ref h._heard);
+                h._signal.Release();
+            };
             h.Server.Start();
             return h;
         }
@@ -197,19 +209,11 @@ public class WaterfallKeepAliveTests
         /// Moves the clock on with the page answering as it goes, and hands back nothing: what a
         /// test wants to know afterwards is who is still counted.
         /// </summary>
-        /// <remarks>
-        /// <para>An answer every <see cref="WaterfallWebServer.KeepAlivePeriod"/>, which is twelve
-        /// per deadline, rather than one per keep-alive: a fake clock and a real socket keep
-        /// different time, and the jump happens in no time at all while the answer is still
-        /// crossing loopback, so the server reads it some steps after the clock says it was
-        /// sent.</para>
-        /// <para>The millisecond is what makes twelve a margin rather than a hope. A send to
-        /// loopback completes without ever yielding the thread, so without it this loop can run
-        /// its whole span - two minutes of clock in a millisecond of wall time - before the server
-        /// gets a turn at any of the answers, which is how it read as a page that had gone silent.
-        /// Sleeping hands the CPU over between steps, so the answers are read as they are
-        /// sent.</para>
-        /// </remarks>
+        /// <remarks>An answer every <see cref="WaterfallWebServer.KeepAlivePeriod"/>, which is
+        /// twelve per deadline, and the clock does not move until the server has read the last
+        /// one: a fake clock and a real socket keep different time, and without that wait the
+        /// jump can happen while the answer is still on its way, which reads as a page that went
+        /// silent.</remarks>
         /// <param name="socket">The page.</param>
         /// <param name="span">How long it stays open.</param>
         /// <param name="says">What it says; the page's own <c>pong</c> unless a test is asking
@@ -221,10 +225,13 @@ public class WaterfallKeepAliveTests
                  gone < span;
                  gone += WaterfallWebServer.KeepAlivePeriod)
             {
+                int heard = Volatile.Read(ref _heard);
                 await socket.SendAsync(
                     Encoding.UTF8.GetBytes(says),
                     WebSocketMessageType.Text, true, _cancellation.Token);
-                await Task.Delay(1, _cancellation.Token);
+                await Until(
+                    () => Volatile.Read(ref _heard) > heard,
+                    "the server reads what the page said");
                 TimeSpan step = span - gone;
                 Clock.Advance(step < WaterfallWebServer.KeepAlivePeriod
                     ? step
@@ -247,10 +254,11 @@ public class WaterfallKeepAliveTests
 
         internal async Task Until(Func<bool> condition, string because)
         {
+            // Woken by the server's own events, so it rechecks exactly when something has
+            // happened; the token is only a guard against a hang.
             while (!condition())
             {
-                _cancellation.Token.ThrowIfCancellationRequested();
-                await Task.Delay(10, _cancellation.Token);
+                await _signal.WaitAsync(_cancellation.Token);
             }
 
             condition().Should().BeTrue(because);
@@ -259,6 +267,7 @@ public class WaterfallKeepAliveTests
         public async ValueTask DisposeAsync()
         {
             await Server.DisposeAsync();
+            _signal.Dispose();
             _cancellation.Dispose();
         }
 
