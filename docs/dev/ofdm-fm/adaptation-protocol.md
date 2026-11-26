@@ -322,7 +322,7 @@ Two stations of the prototype, one process each, with nothing between them but t
 - **The slow climb was the peak limit.** Measured against the burst as built, the same path read 14 dB from a burst 6 dB over full drive and 31 dB from one at full drive, so a recommendation made from a robust burst reached only as far as the next drive class. Measured through the limit the first figure is 26 to 27 dB. The last two runs are the same path with the receiver measuring that way.
 - **In traffic that goes one way the rate rose only when the sender asked**, on every third burst: 32 requests in 96 bursts, 32 lone reports, all read.
 - **The margin** came down from 3 dB to 1.7 and 2.2 dB over the 130 bursts of the long run. The top rung was never recommended.
-- **Two failures in 511 say nothing yet about the target of one burst in fifty**, and the trial of 1%, 2%, 5% and 10% has not been run. The numbers (30 s, ten minutes, two rungs, 3 dB) are still the first guesses.
+- **Two failures in 511 say nothing yet about the target of one burst in fifty**, and the trial of 1%, 2%, 5% and 10% has not been run. The numbers (30 s, ten minutes, two rungs, 3 dB) are still the first guesses, and the 30 s after which a neighbour is measured as new is the same figure.
 
 What in those runs was the prototype and not the protocol:
 
@@ -343,14 +343,14 @@ The same two stations with the attenuator turned by hand (#834). First, each lev
 | -124 dBm | one way | 31 of 35 | 1.1 kbit/s |
 
 - **From cold, each station was within a rung of its settled rate by its second to fourth burst** at every level.
-- **At -120 dBm the stations transmitted over each other** 10 times in six minutes, and that was nearly every loss. The prototype's carrier sense had run out, as expected. The modem's busy test at weak signal has to come from its own detection of a burst (#838).
+- **At -120 dBm the stations transmitted over each other** 10 times in six minutes, and that was 20 of the 25 losses. The prototype's carrier sense had run out, as expected. The modem's busy test at weak signal has to come from its own detection of a burst (#838).
 - **At -124 dBm** the formats on the carriers up to 1.5 kHz, with their long opening, carried the traffic, and all 13 lone reports were read.
 
 Then the path changed during a run:
 
-- **A 10 dB drop cost one burst in each direction**, twice running (62 kbit/s, then about 50, then about 35). The report of the failed burst named a format that worked.
+- **A 10 dB drop cost one burst in each direction**, twice running (62 kbit/s, then about 50, then about 35). The report of the failed burst named a format that worked. One more burst was lost in each direction a minute or two after each drop, probing back up.
 - **A path cut altogether** had both stations at the first-contact format in 65 to 80 s, and they found each other on the first burst after it came back.
-- **The climb back was stuck, and is fixed.** In the first such run, the first burst heard after the cut arrived with the attenuator still part-way and measured very low, which took the whole estimate down. Every burst after it was on a narrow format, so nothing measured the rest of the band, and three and a half minutes later the two directions were at 16 and 33 kbit/s on a path that carries 62. That is where the rule that unmeasured carriers follow the measured ones up, and the rule for a neighbour not measured for 30 s, came from. With them, and the path brought back in two steps so that the stations met on a weak path first (about -120 dBm, 5 to 8 kbit/s), both climbed to 55 and 62 kbit/s in about 90 s and nine bursts after the path was restored, with nothing lost on the way.
+- **The climb back was stuck, and is fixed.** In the first such run, the first burst heard after the cut arrived with the attenuator still part-way and measured very low, which took the whole estimate down. Every burst after it was on a narrow format, so nothing measured the rest of the band, and three and a half minutes later the two directions were at 16 and 33 kbit/s on a path that carries 62. That is where the rule that unmeasured carriers follow the measured ones up, and the rule for a neighbour not measured for 30 s, came from. With them, and the path brought back in two steps so that the stations met on a weak path first (about -120 dBm, 5 to 8 kbit/s), both climbed to 55 and 62 kbit/s in about 90 s and nine bursts after the path was restored, with nothing lost on the way. It was the first rule that brought the rest of the band back. The second applied when the stations found each other on the weak path and not at the return to full strength, since by then each had measured the other within 30 s.
 - **That climb is still a staircase**, two bursts at each step, because the estimate rises by halves and each step up waits for two bursts running. Believing a large rise sooner would shorten it and has not been tried.
 
 **Not yet tried on air:**
