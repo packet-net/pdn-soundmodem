@@ -106,6 +106,8 @@
     <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/header-ldpc-bg2-set4.txt" LogicalName="header-ldpc-bg2-set4.txt" />
     <!-- The adaptive OFDM-FM training symbols, as the prototype's table holds them. -->
     <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/link-training.txt" LogicalName="link-training.txt" />
+    <!-- The bits a carrier gets from each constellation size at each signal to noise ratio, as the prototype's table holds them (the sizes the standard formats use). -->
+    <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/link-gmi.txt" LogicalName="link-gmi.txt" />
   </ItemGroup>
 
   <ItemGroup>

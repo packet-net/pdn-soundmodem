@@ -70,7 +70,7 @@ public readonly struct FormatSpec
 /// everything else follows. Pinned to the prototype's <c>formats.py</c>, <c>station.slower</c> and <c>station.rate</c>;
 /// see <c>docs/dev/ofdm-fm/adaptation-protocol.md</c>.
 /// </summary>
-public static class StandardFormats
+public static partial class StandardFormats
 {
     /// <summary>Formats in the list: every 8-bit number.</summary>
     public const int Count = 256;
