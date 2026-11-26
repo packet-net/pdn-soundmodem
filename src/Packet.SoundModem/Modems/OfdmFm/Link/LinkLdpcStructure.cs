@@ -4,129 +4,40 @@ using System.Numerics;
 namespace Packet.SoundModem.Modems.OfdmFm.Link;
 
 /// <summary>
-/// The encoder plan for one block of the adaptive payload code: <c>k</c> information bits sent as
-/// <c>e</c> coded bits, with the lifting size, the shortened positions, the transmit order (wrapping
-/// round past the end of the mother code into repetition) and the truncated parity-check structure
-/// that the prototype's block gives. Bits are one per byte, 0 or 1.
+/// The parity-check structure of the link's LDPC family for one lifting size and number of kept check rows,
+/// with the encoder plan for it (the peeled core solution, or a dense GF(2) inverse). It depends on nothing
+/// else, so block plans share it; the set is small and finite (22 lifting sizes, at most 98 row counts) and
+/// is cached for good.
 /// </summary>
-/// <remarks>
-/// Building a plan allocates and may take a while; <see cref="Get"/> caches plans. Encoding allocates
-/// nothing when the caller supplies the scratch buffer (<see cref="ScratchLength"/>); the overload
-/// without one uses a per-thread buffer that grows once.
-/// </remarks>
-public sealed class OwnLdpcCodeBlock
+internal sealed class LinkLdpcStructure
 {
     private const int KindSum = 0;
     private const int KindRow = 1;
     private const int KindDense = 2;
 
-    private static readonly ConcurrentDictionary<(int K, int E), Lazy<OwnLdpcCodeBlock>> Cache = new();
-
-    [ThreadStatic]
-    private static byte[]? _threadScratch;
+    private static readonly ConcurrentDictionary<(int Z, int Rows, bool Structured), Lazy<LinkLdpcStructure>> Cache = new();
 
     private readonly int _kb;
-    private readonly int _rows;
     private readonly int[] _rowStart;
     private readonly int[] _edgeColumn;
     private readonly int[] _edgeShift;
-    private readonly int[] _infoPositions;
-    private readonly int[] _shortened;
-    private readonly int[] _transmitOrder;
     private readonly Step[] _steps;
 
-    /// <summary>Builds the plan for a block of <paramref name="infoBits"/> sent as <paramref name="codedBits"/>.</summary>
-    public OwnLdpcCodeBlock(int infoBits, int codedBits)
-        : this(infoBits, codedBits, structured: true)
+    private LinkLdpcStructure(int z, int rows, bool structured)
     {
-    }
-
-    internal OwnLdpcCodeBlock(int infoBits, int codedBits, bool structured)
-    {
-        if (infoBits <= 0 || codedBits <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(infoBits), "a block needs information bits and coded bits");
-        }
-
-        int kb = OwnLdpcTables.Kb;
-        int punctured = OwnLdpcTables.Punctured;
-        int nb = OwnLdpcTables.Nb;
-        int z = OwnLdpcTables.SelectLifting(infoBits);
-        InfoBits = infoBits;
-        CodedBits = codedBits;
         LiftingSize = z;
-        _kb = kb;
-        K = kb * z;
-
-        _shortened = ShortenedPositions(infoBits, z);
-        var isShort = new bool[K];
-        foreach (int p in _shortened)
-        {
-            isShort[p] = true;
-        }
-
-        _infoPositions = new int[K - _shortened.Length];
-        int n = 0;
-        for (int i = 0; i < K; i++)
-        {
-            if (!isShort[i])
-            {
-                _infoPositions[n++] = i;
-            }
-        }
-
-        // Candidates: the sent information bits (not the punctured columns, not shortened), then all parity.
-        int sentInfo = 0;
-        for (int i = punctured * z; i < K; i++)
-        {
-            if (!isShort[i])
-            {
-                sentInfo++;
-            }
-        }
-
-        var candidates = new int[sentInfo + (nb - kb) * z];
-        int ci = 0;
-        for (int i = punctured * z; i < K; i++)
-        {
-            if (!isShort[i])
-            {
-                candidates[ci++] = i;
-            }
-        }
-
-        for (int i = K; i < nb * z; i++)
-        {
-            candidates[ci++] = i;
-        }
-
-        _transmitOrder = new int[codedBits];
-        int max = 0;
-        for (int j = 0, c = 0; j < codedBits; j++)
-        {
-            int pos = candidates[c];
-            _transmitOrder[j] = pos;
-            max = Math.Max(max, pos);
-            if (++c == candidates.Length)
-            {
-                c = 0;
-            }
-        }
-
-        int columnsNeeded = (max + 1 + z - 1) / z;
-        _rows = Math.Min(OwnLdpcTables.Mb, Math.Max(OwnLdpcTables.CoreRows, columnsNeeded - kb));
-        Columns = kb + _rows;
+        Rows = rows;
+        _kb = LinkLdpcTables.Kb;
+        Columns = _kb + rows;
         CodewordLength = Columns * z;
-
-        // The check rows kept, as edge lists.
         var start = new List<int> { 0 };
         var cols = new List<int>();
         var shifts = new List<int>();
-        for (int r = 0; r < _rows; r++)
+        for (int r = 0; r < rows; r++)
         {
             for (int c = 0; c < Columns; c++)
             {
-                int s = OwnLdpcTables.Shift(z, r, c);
+                int s = LinkLdpcTables.Shift(z, r, c);
                 if (s >= 0)
                 {
                     cols.Add(c);
@@ -143,155 +54,46 @@ public sealed class OwnLdpcCodeBlock
         _steps = MakeSteps(structured);
     }
 
-    /// <summary>Information bits the block takes.</summary>
-    public int InfoBits { get; }
-
-    /// <summary>Coded bits the block gives.</summary>
-    public int CodedBits { get; }
-
-    /// <summary>The lifting size Z.</summary>
     public int LiftingSize { get; }
 
-    /// <summary>Information positions of the mother code at this lifting size (24 columns of Z).</summary>
-    public int K { get; }
+    public int Rows { get; }
 
-    /// <summary>Check rows the encoder keeps: the core, or as many as the last coded parity bit needs.</summary>
-    public int CheckRows => _rows;
-
-    /// <summary>Columns of the kept code: the information columns plus one per check row.</summary>
     public int Columns { get; }
 
-    /// <summary>Length of the full (kept) codeword, in bits.</summary>
     public int CodewordLength { get; }
 
-    /// <summary>Rows of the high-rate core as the encoder splits it (the rest are single-parity extension rows).</summary>
     public int CoreSize { get; private set; }
 
-    /// <summary>How the core is solved: "sum" (the dual-diagonal peel), "dense" (a stored GF(2) inverse) or "none".</summary>
     public string EncoderKind => CoreSize == 0 ? "none" : _steps[0].Kind == KindSum ? "sum" : "dense";
 
-    /// <summary>The known-zero information positions, ascending.</summary>
-    public ReadOnlySpan<int> Shortened => _shortened;
-
-    /// <summary>The codeword position of each coded bit, in the order sent.</summary>
-    public ReadOnlySpan<int> TransmitOrder => _transmitOrder;
-
-    /// <summary>Bytes of scratch <see cref="Encode(ReadOnlySpan{byte}, Span{byte}, Span{byte})"/> needs.</summary>
-    public int ScratchLength => CodewordLength + _rows * LiftingSize;
-
-    /// <summary>The cached plan for a block shape; built on first use.</summary>
-    public static OwnLdpcCodeBlock Get(int infoBits, int codedBits) =>
-        Cache.GetOrAdd((infoBits, codedBits), key => new Lazy<OwnLdpcCodeBlock>(() => new OwnLdpcCodeBlock(key.K, key.E))).Value;
-
-    /// <summary>
-    /// The known-zero positions for <paramref name="infoBits"/> at lifting size <paramref name="z"/>: spread over the
-    /// sent information columns (the last bits of each), then if need be over the punctured ones. Ascending.
-    /// </summary>
-    public static int[] ShortenedPositions(int infoBits, int z)
+    /// <summary>Approximate bytes this structure holds.</summary>
+    public long Bytes
     {
-        int kb = OwnLdpcTables.Kb;
-        int punctured = OwnLdpcTables.Punctured;
-        int nShort = kb * z - infoBits;
-        int sent = kb - punctured;
-        int cap = sent * z;
-        int main = Math.Min(nShort, cap);
-        var per = new int[kb];
-        int q = main / sent;
-        int rem = main % sent;
-        for (int c = punctured; c < kb; c++)
+        get
         {
-            per[c] = q;
-        }
-
-        for (int c = punctured; c < punctured + rem; c++)
-        {
-            per[c]++;
-        }
-
-        int extra = nShort - main;
-        if (extra > 0)
-        {
-            int q2 = extra / punctured;
-            int rem2 = extra % punctured;
-            for (int c = 0; c < punctured; c++)
+            long total = 4L * (_rowStart.Length + _edgeColumn.Length + _edgeShift.Length) + 40L * _steps.Length;
+            foreach (Step step in _steps)
             {
-                per[c] = q2;
+                total += 8L * (step.Inverse?.Length ?? 0);
             }
 
-            for (int c = 0; c < rem2; c++)
-            {
-                per[c]++;
-            }
-        }
-
-        var result = new List<int>(nShort);
-        for (int c = 0; c < kb; c++)
-        {
-            for (int i = z - per[c]; i < z; i++)
-            {
-                result.Add(c * z + i);
-            }
-        }
-
-        return [.. result];
-    }
-
-    /// <summary>
-    /// Encodes <paramref name="info"/> (<see cref="InfoBits"/> bits, one per byte) into <paramref name="coded"/>
-    /// (<see cref="CodedBits"/> bits), using a per-thread scratch buffer.
-    /// </summary>
-    public void Encode(ReadOnlySpan<byte> info, Span<byte> coded)
-    {
-        int need = ScratchLength;
-        byte[] scratch = _threadScratch ??= new byte[need];
-        if (scratch.Length < need)
-        {
-            scratch = _threadScratch = new byte[need];
-        }
-
-        Encode(info, coded, scratch);
-    }
-
-    /// <summary>As <see cref="Encode(ReadOnlySpan{byte}, Span{byte})"/> with caller-supplied scratch of at least <see cref="ScratchLength"/> bytes.</summary>
-    public void Encode(ReadOnlySpan<byte> info, Span<byte> coded, Span<byte> scratch)
-    {
-        if (coded.Length != CodedBits)
-        {
-            throw new ArgumentException($"expected room for {CodedBits} coded bits", nameof(coded));
-        }
-
-        Span<byte> x = scratch[..CodewordLength];
-        EncodeCodeword(info, x, scratch[CodewordLength..]);
-        for (int j = 0; j < _transmitOrder.Length; j++)
-        {
-            coded[j] = x[_transmitOrder[j]];
+            return total;
         }
     }
 
-    /// <summary>
-    /// Writes the full codeword (<see cref="CodewordLength"/> bits: information with zeros at the shortened
-    /// positions, then parity) into <paramref name="codeword"/>. <paramref name="work"/> needs
-    /// <c>CheckRows * LiftingSize</c> bytes.
-    /// </summary>
-    public void EncodeCodeword(ReadOnlySpan<byte> info, Span<byte> codeword, Span<byte> work)
-    {
-        if (info.Length != InfoBits)
-        {
-            throw new ArgumentException($"expected {InfoBits} information bits", nameof(info));
-        }
+    public static LinkLdpcStructure Get(int z, int rows, bool structured = true) =>
+        Cache.GetOrAdd((z, rows, structured), key => new Lazy<LinkLdpcStructure>(() => new LinkLdpcStructure(key.Z, key.Rows, key.Structured))).Value;
 
+    /// <summary>
+    /// Given <paramref name="x"/> holding the information bits (and zeros elsewhere), fills in the parity.
+    /// <paramref name="lam"/> is <c>Rows * LiftingSize</c> bytes of work space.
+    /// </summary>
+    public void Complete(Span<byte> x, Span<byte> lam)
+    {
         int z = LiftingSize;
-        Span<byte> x = codeword[..CodewordLength];
-        Span<byte> lam = work[..(_rows * z)];
-        x.Clear();
         lam.Clear();
-        for (int i = 0; i < _infoPositions.Length; i++)
-        {
-            x[_infoPositions[i]] = (byte)(info[i] & 1);
-        }
-
         // lam[r] = contribution of the information bits to check row r.
-        for (int r = 0; r < _rows; r++)
+        for (int r = 0; r < Rows; r++)
         {
             Span<byte> row = lam.Slice(r * z, z);
             for (int e = _rowStart[r]; e < _rowStart[r + 1]; e++)
@@ -353,7 +155,7 @@ public sealed class OwnLdpcCodeBlock
         }
 
         int z = LiftingSize;
-        for (int r = 0; r < _rows; r++)
+        for (int r = 0; r < Rows; r++)
         {
             for (int i = 0; i < z; i++)
             {
@@ -445,11 +247,11 @@ public sealed class OwnLdpcCodeBlock
     private Step[] MakeSteps(bool structured)
     {
         int kb = _kb;
-        int mb = _rows;
+        int mb = Rows;
         int z = LiftingSize;
 
         // Entry lookup (row, column) -> shift or -1, of the kept code.
-        int Base(int r, int c) => OwnLdpcTables.Shift(z, r, c);
+        int Base(int r, int c) => LinkLdpcTables.Shift(z, r, c);
 
         int g = mb;
         for (int cand = 0; cand <= mb; cand++)
@@ -518,7 +320,7 @@ public sealed class OwnLdpcCodeBlock
     {
         int kb = _kb;
         int z = LiftingSize;
-        int Base(int r, int c) => OwnLdpcTables.Shift(z, r, c);
+        int Base(int r, int c) => LinkLdpcTables.Shift(z, r, c);
 
         // Sum over the core rows of each core column, as a GF(2) polynomial in the cyclic shift.
         int nonzeroColumns = 0;
@@ -611,7 +413,7 @@ public sealed class OwnLdpcCodeBlock
         {
             for (int b = 0; b < g; b++)
             {
-                int s = OwnLdpcTables.Shift(z, a, kb + b);
+                int s = LinkLdpcTables.Shift(z, a, kb + b);
                 if (s < 0)
                 {
                     continue;

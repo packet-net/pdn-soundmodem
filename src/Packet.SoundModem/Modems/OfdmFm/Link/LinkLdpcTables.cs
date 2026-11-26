@@ -8,11 +8,11 @@ namespace Packet.SoundModem.Modems.OfdmFm.Link;
 /// (which base-matrix entries exist) and, for every lifting size, the circulant shift of each entry.
 /// </summary>
 /// <remarks>
-/// The two text files are embedded resources (<c>Tables/own-protograph.txt</c> and
-/// <c>Tables/own-shifts.txt</c>, the prototype's files unchanged) and parsed once on first use,
+/// The two text files are embedded resources (<c>Tables/link-ldpc-protograph.txt</c> and
+/// <c>Tables/link-ldpc-shifts.txt</c>, the prototype's files unchanged) and parsed once on first use,
 /// the same way the repo embeds its other data files.
 /// </remarks>
-public static class OwnLdpcTables
+public static class LinkLdpcTables
 {
     private static readonly Lazy<Parsed> Table = new(Load, LazyThreadSafetyMode.ExecutionAndPublication);
 
@@ -74,10 +74,10 @@ public static class OwnLdpcTables
 
     private static Parsed Load()
     {
-        Assembly asm = typeof(OwnLdpcTables).Assembly;
+        Assembly asm = typeof(LinkLdpcTables).Assembly;
         var meta = new Dictionary<string, int>();
         var rows = new List<string>();
-        foreach (string raw in ReadLines(asm, "own-protograph.txt"))
+        foreach (string raw in ReadLines(asm, "link-ldpc-protograph.txt"))
         {
             string line = StripComment(raw);
             if (line.Length == 0)
@@ -118,7 +118,7 @@ public static class OwnLdpcTables
         }
 
         var shifts = new SortedDictionary<int, int[]>();
-        foreach (string raw in ReadLines(asm, "own-shifts.txt"))
+        foreach (string raw in ReadLines(asm, "link-ldpc-shifts.txt"))
         {
             string line = StripComment(raw);
             if (line.Length == 0)

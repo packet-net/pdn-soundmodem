@@ -100,8 +100,8 @@
          way. Embedded here because it is one design with the page it links to. -->
     <EmbeddedResource Include="Waterfall/wwwroot/monitor.html" />
     <!-- The adaptive OFDM-FM payload code's tables (protograph and circulant shifts), as the prototype wrote them. -->
-    <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/own-protograph.txt" LogicalName="own-protograph.txt" />
-    <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/own-shifts.txt" LogicalName="own-shifts.txt" />
+    <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/link-ldpc-protograph.txt" LogicalName="link-ldpc-protograph.txt" />
+    <EmbeddedResource Include="Modems/OfdmFm/Link/Tables/link-ldpc-shifts.txt" LogicalName="link-ldpc-shifts.txt" />
   </ItemGroup>
 
   <ItemGroup>

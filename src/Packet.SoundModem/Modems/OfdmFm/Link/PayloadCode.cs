@@ -1,19 +1,26 @@
-using System.Collections.Concurrent;
-
 namespace Packet.SoundModem.Modems.OfdmFm.Link;
 
 /// <summary>
-/// The adaptive payload code for a payload of <c>infoBits</c> sent as <c>codedBits</c>: the fewest
-/// code blocks of at most <see cref="OwnLdpcTables.MaxInfoBitsPerBlock"/> information bits, the
-/// information and the coded bits each split evenly (larger information blocks first, smaller coded
-/// blocks first), and the blocks' coded bits joined in order. It gives what the prototype's
-/// <c>fit(infoBits, codedBits, "own").encode(bits)</c> gives. Bits are one per byte, 0 or 1.
+/// The payload code for a payload of <c>infoBits</c> sent as <c>codedBits</c>: the fewest code blocks of
+/// at most <see cref="LinkLdpcTables.MaxInfoBitsPerBlock"/> information bits, the information and the coded
+/// bits each split evenly (larger information blocks first, smaller coded blocks first), and the blocks'
+/// coded bits joined in order. It gives what the prototype's <c>fit(infoBits, codedBits, "own").encode(bits)</c>
+/// gives. Bits are one per byte, 0 or 1.
 /// </summary>
+/// <remarks>
+/// A payload plan owns its block plans: the blocks differ in at most three distinct shapes, each built once
+/// and shared within the payload. <see cref="Get"/> keeps the most recently used <see cref="CacheCapacity"/>
+/// payload plans; a plan is cheap to rebuild, so an older one is simply dropped.
+/// </remarks>
 public sealed class PayloadCode
 {
-    private static readonly ConcurrentDictionary<(int Info, int Coded), Lazy<PayloadCode>> Cache = new();
+    /// <summary>Most payload plans <see cref="Get"/> keeps.</summary>
+    public const int CacheCapacity = 32;
 
-    private readonly OwnLdpcCodeBlock[] _blocks;
+    private static readonly object Gate = new();
+    private static readonly List<PayloadCode> Recent = new(CacheCapacity + 1);
+
+    private readonly LinkLdpcCodeBlock[] _blocks;
     private readonly int[] _infoOffset;
     private readonly int[] _codedOffset;
 
@@ -27,12 +34,12 @@ public sealed class PayloadCode
 
         InfoBits = infoBits;
         CodedBits = codedBits;
-        int max = OwnLdpcTables.MaxInfoBitsPerBlock;
+        int max = LinkLdpcTables.MaxInfoBitsPerBlock;
         int blocks = (infoBits + max - 1) / max;
-        int[] ks = OwnLdpcTables.SplitEvenly(infoBits, blocks);
+        int[] ks = LinkLdpcTables.SplitEvenly(infoBits, blocks);
         Array.Reverse(ks);
-        int[] es = OwnLdpcTables.SplitEvenly(codedBits, blocks);
-        _blocks = new OwnLdpcCodeBlock[blocks];
+        int[] es = LinkLdpcTables.SplitEvenly(codedBits, blocks);
+        _blocks = new LinkLdpcCodeBlock[blocks];
         _infoOffset = new int[blocks];
         _codedOffset = new int[blocks];
         int info = 0;
@@ -40,7 +47,16 @@ public sealed class PayloadCode
         int scratch = 0;
         for (int i = 0; i < blocks; i++)
         {
-            _blocks[i] = OwnLdpcCodeBlock.Get(ks[i], es[i]);
+            LinkLdpcCodeBlock? shared = null;
+            for (int j = i - 1; j >= 0 && shared is null; j--)
+            {
+                if (_blocks[j].InfoBits == ks[i] && _blocks[j].CodedBits == es[i])
+                {
+                    shared = _blocks[j];
+                }
+            }
+
+            _blocks[i] = shared ?? new LinkLdpcCodeBlock(ks[i], es[i]);
             _infoOffset[i] = info;
             _codedOffset[i] = coded;
             info += ks[i];
@@ -58,14 +74,73 @@ public sealed class PayloadCode
     public int CodedBits { get; }
 
     /// <summary>The code blocks, in order.</summary>
-    public IReadOnlyList<OwnLdpcCodeBlock> Blocks => _blocks;
+    public IReadOnlyList<LinkLdpcCodeBlock> Blocks => _blocks;
 
     /// <summary>Bytes of scratch <see cref="Encode(ReadOnlySpan{byte}, Span{byte}, Span{byte})"/> needs.</summary>
     public int ScratchLength { get; }
 
-    /// <summary>The cached plan for a payload shape; built on first use.</summary>
-    public static PayloadCode Get(int infoBits, int codedBits) =>
-        Cache.GetOrAdd((infoBits, codedBits), key => new Lazy<PayloadCode>(() => new PayloadCode(key.Info, key.Coded))).Value;
+    /// <summary>Payload plans currently cached.</summary>
+    internal static int CachedCount
+    {
+        get
+        {
+            lock (Gate)
+            {
+                return Recent.Count;
+            }
+        }
+    }
+
+    /// <summary>Approximate bytes this plan holds: its distinct block plans and its tables (not the shared structures).</summary>
+    internal long PlanBytes
+    {
+        get
+        {
+            long total = 64 + 16L * _blocks.Length;
+            for (int i = 0; i < _blocks.Length; i++)
+            {
+                bool first = true;
+                for (int j = 0; j < i && first; j++)
+                {
+                    first = !ReferenceEquals(_blocks[j], _blocks[i]);
+                }
+
+                if (first)
+                {
+                    total += _blocks[i].PlanBytes;
+                }
+            }
+
+            return total;
+        }
+    }
+
+    /// <summary>The plan for a payload shape: from the most recently used set if it is there, otherwise built (and the least recently used dropped).</summary>
+    public static PayloadCode Get(int infoBits, int codedBits)
+    {
+        lock (Gate)
+        {
+            for (int i = 0; i < Recent.Count; i++)
+            {
+                PayloadCode p = Recent[i];
+                if (p.InfoBits == infoBits && p.CodedBits == codedBits)
+                {
+                    Recent.RemoveAt(i);
+                    Recent.Insert(0, p);
+                    return p;
+                }
+            }
+
+            var built = new PayloadCode(infoBits, codedBits);
+            Recent.Insert(0, built);
+            if (Recent.Count > CacheCapacity)
+            {
+                Recent.RemoveAt(Recent.Count - 1);
+            }
+
+            return built;
+        }
+    }
 
     /// <summary>Encodes <paramref name="info"/> (<see cref="InfoBits"/> bits) into <paramref name="coded"/> (<see cref="CodedBits"/> bits).</summary>
     public void Encode(ReadOnlySpan<byte> info, Span<byte> coded)
@@ -73,7 +148,7 @@ public sealed class PayloadCode
         Check(info, coded);
         for (int i = 0; i < _blocks.Length; i++)
         {
-            OwnLdpcCodeBlock b = _blocks[i];
+            LinkLdpcCodeBlock b = _blocks[i];
             b.Encode(info.Slice(_infoOffset[i], b.InfoBits), coded.Slice(_codedOffset[i], b.CodedBits));
         }
     }
@@ -84,7 +159,7 @@ public sealed class PayloadCode
         Check(info, coded);
         for (int i = 0; i < _blocks.Length; i++)
         {
-            OwnLdpcCodeBlock b = _blocks[i];
+            LinkLdpcCodeBlock b = _blocks[i];
             b.Encode(info.Slice(_infoOffset[i], b.InfoBits), coded.Slice(_codedOffset[i], b.CodedBits), scratch);
         }
     }

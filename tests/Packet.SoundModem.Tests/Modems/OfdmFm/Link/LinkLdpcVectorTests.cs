@@ -11,7 +11,7 @@ namespace Packet.SoundModem.Tests.Modems.OfdmFm.Link;
 /// matched bit for bit, every block plan must match the prototype's, and every encoded block must satisfy
 /// its own parity checks.
 /// </summary>
-public class OwnLdpcVectorTests
+public class LinkLdpcVectorTests
 {
     public static IEnumerable<object[]> Cases() => CodeVectorFile.CaseData();
 
@@ -23,7 +23,7 @@ public class OwnLdpcVectorTests
         List<string> names = [.. CodeVectorFile.CaseNames()];
         names.Count.Should().BeGreaterThan(100);
         names.Count(n => n.StartsWith("format", StringComparison.Ordinal)).Should().BeGreaterThanOrEqualTo(40);
-        foreach (int z in OwnLdpcTables.Liftings)
+        foreach (int z in LinkLdpcTables.Liftings)
         {
             names.Should().Contain($"lift{z}_little_shortening").And.Contain($"lift{z}_much_shortening");
         }
@@ -40,7 +40,7 @@ public class OwnLdpcVectorTests
         var coded = new byte[codedBits];
         if (c.GetProperty("direct").GetBoolean())
         {
-            OwnLdpcCodeBlock.Get(infoBits, codedBits).Encode(info, coded);
+            new LinkLdpcCodeBlock(infoBits, codedBits).Encode(info, coded);
         }
         else
         {
@@ -69,11 +69,11 @@ public class OwnLdpcVectorTests
         int infoBits = c.GetProperty("infoBits").GetInt32();
         int codedBits = c.GetProperty("codedBits").GetInt32();
         byte[] info = CodeVectorFile.Bits(c.GetProperty("info").GetString()!, infoBits);
-        IReadOnlyList<OwnLdpcCodeBlock> blocks = c.GetProperty("direct").GetBoolean()
-            ? [OwnLdpcCodeBlock.Get(infoBits, codedBits)]
+        IReadOnlyList<LinkLdpcCodeBlock> blocks = c.GetProperty("direct").GetBoolean()
+            ? [new LinkLdpcCodeBlock(infoBits, codedBits)]
             : PayloadCode.Get(infoBits, codedBits).Blocks;
         int offset = 0;
-        foreach (OwnLdpcCodeBlock b in blocks)
+        foreach (LinkLdpcCodeBlock b in blocks)
         {
             var word = new byte[b.CodewordLength];
             var work = new byte[b.CheckRows * b.LiftingSize];
@@ -96,7 +96,7 @@ public class OwnLdpcVectorTests
         JsonElement p = CodeVectorFile.Plan(index);
         int k = p.GetProperty("infoBits").GetInt32();
         int e = p.GetProperty("codedBits").GetInt32();
-        var b = new OwnLdpcCodeBlock(k, e);
+        var b = new LinkLdpcCodeBlock(k, e);
         string at = $"block k={k} e={e}";
         b.LiftingSize.Should().Be(p.GetProperty("z").GetInt32(), $"{at}: lifting size");
         b.CheckRows.Should().Be(p.GetProperty("rows").GetInt32(), $"{at}: check rows kept");
