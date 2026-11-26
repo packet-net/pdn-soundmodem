@@ -149,7 +149,12 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
 
     // ------------------------------------------------------------------------ two stations
 
+    // Quarantined (#871): this bench runs in real time from end to end (a capture loop paced by a
+    // real stopwatch, a sink that sleeps, protocol timers of seconds), so on a busy build machine
+    // it runs out of time, as it did twice on 2026-11-26. It still runs in the build's
+    // non-blocking quarantine step. It comes back here when it is on virtual time.
     [Fact]
+    [Trait("Category", "Quarantine")]
     public async Task Two_Stations_Exchange_A_Confirmed_Message_Over_Simulated_Audio()
     {
         await using var bench = new Bench();
