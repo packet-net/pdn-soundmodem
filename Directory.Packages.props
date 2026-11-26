@@ -48,7 +48,7 @@
          frames). MIT, so GPL-compatible per CLAUDE.md's licence rules. It was dev-tooling-only
          while the only consumer was the capture tool; the shipped package now carries the
          `ubersdr:` receive device, so the wire decoder - and this - moved into the core. -->
-    <PackageVersion Include="ZstdSharp.Port" Version="0.8.8" />
+    <PackageVersion Include="ZstdSharp.Port" Version="0.9.1" />
 
     <!-- Dev tooling only (tools/Packet.SoundModem.NinoCompare) - the NinoTNC comparison harness.
          All MIT-licensed; not referenced by the shipped pdn-soundmodem package. -->
