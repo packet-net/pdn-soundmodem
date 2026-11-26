@@ -15,6 +15,19 @@ internal static class ListenerPrefixes
     public static IReadOnlyList<string> For(string bind, int port) =>
         For(bind, port, OperatingSystem.IsWindows(), FirstLocalhostAddress);
 
+    /// <summary>A listener with the prefixes for <paramref name="bind"/> and <paramref name="port"/>
+    /// added, not started.</summary>
+    public static HttpListener Listener(string bind, int port)
+    {
+        var listener = new HttpListener();
+        foreach (string prefix in For(bind, port))
+        {
+            listener.Prefixes.Add(prefix);
+        }
+
+        return listener;
+    }
+
     /// <summary>The prefixes, with the platform and the name lookup handed in.</summary>
     /// <param name="bind">Bind address; "*" listens on all interfaces.</param>
     /// <param name="port">HTTP listen port.</param>
