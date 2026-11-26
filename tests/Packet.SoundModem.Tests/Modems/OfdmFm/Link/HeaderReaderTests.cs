@@ -33,13 +33,8 @@ public class HeaderReaderTests
             bool read = reader.TryRead(c.Samples, c.Start, c.OpeningValue, out BurstHeader header);
             reader.HasResult.Should().BeTrue(c.Name);
             reader.Converged.Should().Be(c.Converged, c.Name);
-            if (!c.Converged)
-            {
-                // The prototype ignores whether the code converged; the reader refuses a header it did not.
-                read.Should().BeFalse(c.Name);
-                continue;
-            }
-
+            // As in the prototype, the header's check is the gate whether or not the code converged, so the bits and
+            // the outcome are compared in every case.
             if (Hex(reader.Bits) != c.Bits)
             {
                 wrong.Add(c.Name + ": bits");

@@ -90,10 +90,12 @@ public sealed class HeaderReader
 
     /// <summary>
     /// Reads the header of the burst whose first training sample is <paramref name="start"/> in the capture. False when the
-    /// capture does not hold the opening from there (nothing is computed then), when the header code does not converge, or
-    /// when the header's check fails; true with the fields otherwise, including a header of a version this code does not
-    /// know (as <see cref="BurstHeaderCodec.TryRead"/> reports it). The intermediates stay readable either way once the
-    /// opening was long enough.
+    /// capture does not hold the opening from there (nothing is computed then) or when the header's check fails; true with
+    /// the fields otherwise, including a header of a version this code does not know (as
+    /// <see cref="BurstHeaderCodec.TryRead"/> reports it). The header's own check is the gate, as in the prototype: a
+    /// header whose check passes is accepted whether or not the code converged (<see cref="Converged"/> says which), since
+    /// the 51 bits can be right while some parity is not. The intermediates stay readable either way once the opening was
+    /// long enough.
     /// </summary>
     public bool TryRead(ReadOnlySpan<float> capture, int start, FormatOpening opening, out BurstHeader header)
     {
@@ -122,7 +124,7 @@ public sealed class HeaderReader
 
         _valid = true;
         _converged = HeaderCode.TryDecode(opening, _soft.AsSpan(0, coded), _bits);
-        return _converged && BurstHeaderCodec.TryRead(_bits, out header);
+        return BurstHeaderCodec.TryRead(_bits, out header);
     }
 
     /// <summary>The opening of the last read; meaningful when <see cref="HasResult"/>.</summary>
