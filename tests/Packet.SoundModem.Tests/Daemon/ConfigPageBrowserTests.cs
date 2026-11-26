@@ -1282,6 +1282,7 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
     {
         private readonly string _dir;
         private readonly int _port;
+        private int _kissPort;
         private readonly StringBuilder _log = new();
         private readonly CancellationTokenSource _stop = new();
         private Process? _process;
@@ -1353,7 +1354,7 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                 }
                 """);
 
-            var station = new Station(dir, port, configPath);
+            var station = new Station(dir, port, configPath) { _kissPort = kiss };
             if (machine is not null)
             {
                 station._machine = Path.Combine(dir, "machine.txt");
@@ -1385,60 +1386,145 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
 
         /// <summary>
         /// Waits until the daemon has been started <paramref name="count"/> times and the latest
-        /// one answers. Fails, with the log, if it stops for good instead.
+        /// one answers. Fails, with everything it said, if it stops for good instead. Waits on
+        /// what happens (the connection succeeding, the supervisor ending), polling nothing on a
+        /// clock: the only time limit is a guard that turns a hang into a failure.
         /// </summary>
         public async Task WaitForStartsAsync(int count)
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-            var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(3);
-            while (DateTime.UtcNow < deadline)
+            using var guard = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+            while (true)
             {
                 if (_supervising.IsCompleted)
                 {
                     throw new InvalidOperationException(
-                        $"the daemon stopped for good (exit {_lastExit}) instead of coming back. "
-                        + $"Its last lines:\n{Tail()}\nThe whole log:\n{Log}");
+                        $"the daemon stopped for good (exit {_lastExit}) instead of coming back.\n{Report()}");
                 }
 
-                if (Starts >= count)
+                // Not before the daemon has said its page is open: a connection that arrives in the
+                // instant the listener opens can make the runtime's HttpListener fail to start
+                // (HttpListenerLifetime.Start), and polling the port from a test is exactly that.
+                if (Announced() >= count)
                 {
                     try
                     {
-                        using HttpResponseMessage answer = await client.GetAsync(new Uri(Url("config")));
+                        using HttpResponseMessage answer = await client.GetAsync(new Uri(Url("config")), guard.Token);
                         if (answer.StatusCode == HttpStatusCode.OK)
                         {
                             return;
                         }
                     }
-                    catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+                    catch (Exception e) when (e is HttpRequestException or TaskCanceledException
+                                                  && !guard.IsCancellationRequested)
                     {
                         // Not listening yet: start-up, or the old process going away.
                     }
+                    catch (OperationCanceledException) when (guard.IsCancellationRequested)
+                    {
+                        throw new TimeoutException(
+                            $"the daemon was not answering after {count} start(s).\n{Report()}");
+                    }
                 }
 
-                await Task.Delay(200);
+                // Woken by the supervisor ending or the daemon saying something (a start, a
+                // line of output); the short wake-up is only so a connection is retried while
+                // the daemon is silent.
+                await Changed(guard.Token, TimeSpan.FromMilliseconds(200));
+                if (guard.IsCancellationRequested)
+                {
+                    throw new TimeoutException(
+                        $"the daemon was not answering after {count} start(s).\n{Report()}");
+                }
             }
-
-            throw new TimeoutException(
-                $"the daemon was not answering after {count} start(s). Its last lines:\n{Tail()}\nThe whole log:\n{Log}");
         }
 
-        /// <summary>The last lines of the log, first in a failure message: CI's summary of a
-        /// failure shows its first few lines and no more.</summary>
-        private string Tail() => string.Join('\n', Log.Split('\n', StringSplitOptions.RemoveEmptyEntries).TakeLast(8));
+        /// <summary>Everything a failure needs to be read without a re-run: the exit code, the
+        /// command line, the ports, and the daemon's whole output (the first and last 100 lines
+        /// if it is longer than 200).</summary>
+        public string Report()
+        {
+            string[] lines = Log.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            string output = lines.Length <= 200
+                ? string.Join('\n', lines)
+                : string.Join('\n', lines.Take(100))
+                    + $"\n... {lines.Length - 200} lines left out ...\n"
+                    + string.Join('\n', lines.TakeLast(100));
+            return $"exit code: {(_lastExit == int.MinValue ? "none yet" : _lastExit)}; starts: {Starts}\n"
+                + $"command line: {_commandLine}\n"
+                + $"ports: waterfall/config {_port}, kiss {_kissPort}\n"
+                + $"config file: {ConfigPath}\n"
+                + $"The daemon's output, from the first start:\n{output}";
+        }
 
-        /// <summary>Waits for a line in the daemon's output; fails, with the log, if it never comes.</summary>
+        private string _commandLine = "(not started)";
+
+        /// <summary>How many times the daemon has printed that its page is up, which it does
+        /// once the listener is open.</summary>
+        private int Announced()
+        {
+            string log = Log;
+            int found = 0;
+            for (int at = log.IndexOf("waterfall: http://", StringComparison.Ordinal);
+                 at >= 0;
+                 at = log.IndexOf("waterfall: http://", at + 1, StringComparison.Ordinal))
+            {
+                found++;
+            }
+
+            return found;
+        }
+
+        private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Completes when the daemon's output grows or it starts or exits again, or
+        /// after <paramref name="atMost"/>, or when the token is cancelled.</summary>
+        private async Task Changed(CancellationToken token, TimeSpan atMost)
+        {
+            Task changed;
+            lock (_log)
+            {
+                changed = _changed.Task;
+            }
+
+            try
+            {
+                await changed.WaitAsync(atMost, token);
+            }
+            catch (Exception e) when (e is TimeoutException or OperationCanceledException)
+            {
+                // Either is the caller's cue to look again.
+            }
+        }
+
+        private void Signal()
+        {
+            lock (_log)
+            {
+                _changed.TrySetResult();
+                _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+        }
+
+        /// <summary>Waits for a line in the daemon's output; fails, with the report, if it never
+        /// comes or the daemon stops for good first.</summary>
         public async Task WaitForLogAsync(string text)
         {
-            var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(1);
+            using var guard = new CancellationTokenSource(TimeSpan.FromMinutes(3));
             while (!Log.Contains(text, StringComparison.Ordinal))
             {
-                if (DateTime.UtcNow > deadline)
+                if (_supervising.IsCompleted)
                 {
-                    throw new TimeoutException($"the daemon never said \"{text}\":\n{Log}");
+                    throw new InvalidOperationException(
+                        $"the daemon stopped for good (exit {_lastExit}) before saying \"{text}\".\n{Report()}");
                 }
 
-                await Task.Delay(100);
+                if (guard.IsCancellationRequested)
+                {
+                    throw new TimeoutException($"the daemon never said \"{text}\".\n{Report()}");
+                }
+
+                await Changed(guard.Token, TimeSpan.FromSeconds(1));
             }
         }
 
@@ -1457,6 +1543,7 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                 info.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "pdn-soundmodem.dll"));
                 info.ArgumentList.Add("--config");
                 info.ArgumentList.Add(ConfigPath);
+                _commandLine = $"{info.FileName} {string.Join(' ', info.ArgumentList)}";
                 info.Environment["STATE_DIRECTORY"] = StateDirectory;
                 // As under systemd, so the daemon does not warn that nothing will restart it.
                 info.Environment["INVOCATION_ID"] = "config-page-browser-tests";
@@ -1499,8 +1586,8 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
                     return;
                 }
 
-                // systemd's RestartSec, short: long enough for the old listener to be gone.
-                await Task.Delay(500);
+                // The old process has exited, so its listeners are closed: nothing to wait for
+                // before the next start, which is where systemd's RestartSec has no counterpart.
             }
         }
 
@@ -1515,6 +1602,8 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
             {
                 _log.AppendLine(line);
             }
+
+            Signal();
         }
 
         public async ValueTask DisposeAsync()

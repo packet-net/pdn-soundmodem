@@ -60,7 +60,7 @@ internal static class FreePorts
                 while (_next < _end)
                 {
                     int port = _next++;
-                    if (CanBind(port))
+                    if (!RefusedByBrowsers(port) && CanBind(port))
                     {
                         return port;
                     }
@@ -155,6 +155,14 @@ internal static class FreePorts
             return (49152, 65535);
         }
     }
+
+    /// <summary>
+    /// Whether a browser refuses to open a page on the port. Chromium keeps a list of "unsafe"
+    /// ports (well-known services) it will not connect to at all, answering net::ERR_UNSAFE_PORT;
+    /// the one in this range is 10080 (Amanda). A server on it works for everything except the
+    /// browser tests, and only the run whose block happens to contain it fails.
+    /// </summary>
+    internal static bool RefusedByBrowsers(int port) => port == 10080;
 
     /// <summary>Whether nothing else is listening on the port, on any address.</summary>
     private static bool CanBind(int port)

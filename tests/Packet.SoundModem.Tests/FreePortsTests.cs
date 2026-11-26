@@ -42,4 +42,13 @@ public class FreePortsTests
             listener.Stop();
         }
     }
+
+    [Fact]
+    public void A_Port_That_Chromium_Refuses_To_Open_Is_Never_Handed_Out()
+    {
+        // 10080 is in the range the allocator draws from, and a browser test given it fails with
+        // net::ERR_UNSAFE_PORT whatever the server does.
+        FreePorts.RefusedByBrowsers(10080).Should().BeTrue();
+        FreePorts.RefusedByBrowsers(10081).Should().BeFalse();
+    }
 }
