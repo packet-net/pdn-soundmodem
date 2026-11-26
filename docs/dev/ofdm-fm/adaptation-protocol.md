@@ -1,6 +1,6 @@
 # Adaptation over the air: the protocol
 
-Status: a design record, agreed 2026-11-24 and brought into line with the prototype on 2026-11-24, later the same day, and again on 2026-11-26 after the first runs over weak and changing paths. For #830 (part of #829): Tom read it, commented (a version number and feature flags, the FM capture effect, a check against the flows of AX.25 2.3) and agreed the nine choices listed under "Decided". A prototype was then built to it, run in simulation and run on two real radios (#833), and the rules changed in a number of places: "Changed since it was agreed" lists every one. Built and run on the bench from about -78 to -124 dBm, and over a path that drops, is cut and comes back (#834); not yet with more than two stations (#835). None of it is in this repository's code yet: the prototype is kept outside this repository, and the port follows (#837 to #840).
+Status: a design record, agreed 2026-11-24 and brought into line with the prototype on 2026-11-24, later the same day, and again on 2026-11-26 after the first runs over weak and changing paths. For #830 (part of #829): Tom read it, commented (a version number and feature flags, the FM capture effect, a check against the flows of AX.25 2.3) and agreed the nine choices listed under "Decided". A prototype was then built to it, run in simulation and run on two real radios (#833), and the rules changed in a number of places: "Changed since it was agreed" lists every one. Built and run on the bench from about -78 to -124 dBm, and over a path that drops, is cut and comes back (#834); not yet with more than two stations (#835). The burst's remaining details (the opening, the two codes, the interleaver) were written down on 2026-11-26 as the port to this repository began. The transmit side's pieces are in this repository under `src/Packet.SoundModem/Modems/OfdmFm/Link/`, and no mode uses them yet; the prototype is kept outside this repository, and the rest of the port follows (#837 to #840).
 
 This says how two stations with the adaptive OFDM-FM modem find and keep the best rate for the link between them, with nothing passing between them but the radio. The sections down to "Who measures, who decides" give the design in a few minutes; the rest is what to build from.
 
@@ -197,6 +197,28 @@ The list of formats is #831's and is provisional. The protocol needs only this m
 - **"Faster" and "slower" between formats in different bands** go by rate.
 - **The most robust format** is the bottom rung of the 1.5 kHz band (number 192 in the first list, 0.25 kbit/s): the bottom of the ladder that has been measured. The first-contact format is the same one until #835 says otherwise. The 1 kHz band has slower formats still; they are below anything measured so far.
 
+### The opening, the two codes and the interleaver
+
+A burst opens with silence, then training symbols, then the header, then the payload. There are three openings, and the format number says which.
+
+| Opening | Carriers | Training symbols | Header symbols | Header coded bits |
+|---|---|---|---|---|
+| Full band | all 333 | 1 | 1 | 666 |
+| Up to 3 kHz | the 120 carriers up to 3000 Hz | 3 | 2 | 480 |
+| Up to 1.5 kHz | the 56 carriers up to 1500 Hz | 6 | 3 | 336 |
+
+- **The training symbols are a fixed table:** six rows of 333 values, each a QPSK quadrant from 0 to 3, in `src/Packet.SoundModem/Modems/OfdmFm/Link/Tables/link-training.txt`. Quadrant q is the point exp(j(pi/4 + q pi/2)). An opening uses the first rows, one, three or six, on its own carriers.
+- **The opening is levelled to the payload.** A payload on fewer carriers than its opening puts more power on each, so the opening's symbols are scaled by the square root of (carriers the payload uses / carriers the opening uses), and every symbol of a data burst has the same power. A lone report has no payload and is not scaled.
+- **The header goes through one block of the 5G NR base graph 2 LDPC code at lifting size 9.** The 51 header bits go in, and 666, 480 or 336 coded bits come out, sent as QPSK on the opening's carriers. It is not the payload's code because it did worse: measured in simulation, the payload's family needed 1.7 dB more signal on the full band for the header to read nine times in ten (1.1 and 0.5 dB on the two narrow openings), and showed an error floor near 1%.
+- **The payload has the link's own LDPC family,** its tables in the same folder. A payload is split into the fewest blocks that fit, with the information bits and the coded bits shared as evenly as they will go between them.
+- **The interleaver** puts a payload's coded bits in a fixed shuffled order. For E coded bits it is built like this.
+  - It uses the scrambler's generator, seeded with 2^30 + E. The seed's own bits are not used: the first bit taken is `b[31]`.
+  - Start with the list 0 to E-1. For i from E-1 down to 1: let n be the number of bits in i, take the next n generator bits, first bit most significant, as j; while j is more than i, take the next n bits instead; then swap entries i and j of the list.
+  - The list that results is p. Coded bit k goes to position p[k].
+  - To check an implementation: for E = 16, p is 9, 3, 10, 4, 5, 6, 7, 15, 11, 2, 1, 12, 13, 14, 0, 8.
+
+Test vectors for all of these, made with the prototype, are in `tests/Packet.SoundModem.Tests/Modems/OfdmFm/Link/Vectors/`.
+
 ### The payload, the scrambler and the check
 
 A format and a length give a payload of a fixed number of bits. From the front:
@@ -300,6 +322,7 @@ Nothing here reverses any of the nine choices above. Each line is a rule that th
 | A format number is a band and a rung, the drive is part of the format, and a lone report goes at the drive of the station's own data. | The first format list (#831). | Building it |
 | "One rung slower" never lands on something faster. | The 1 kHz band's lowest rungs are slower than the most robust format. | Writing the rules down |
 | Three openings, not two. | The lowest carriers need a longer opening. | Building it |
+| The interleaver and the training symbols are defined in this document's own terms (a shuffle driven by the scrambler's generator; a fixed table), where the prototype drew both from a software library's random generator. The training values did not change; the interleaver's permutation did. | A wire format has to be reproducible from its description. | The port |
 
 ## What the bench has shown
 
@@ -323,6 +346,7 @@ Two stations of the prototype, one process each, with nothing between them but t
 - **In traffic that goes one way the rate rose only when the sender asked**, on every third burst: 32 requests in 96 bursts, 32 lone reports, all read.
 - **The margin** came down from 3 dB to 1.7 and 2.2 dB over the 130 bursts of the long run. The top rung was never recommended.
 - **Two failures in 511 say nothing yet about the target of one burst in fifty**, and the trial of 1%, 2%, 5% and 10% has not been run. The numbers (30 s, ten minutes, two rungs, 3 dB) are still the first guesses, and the 30 s after which a neighbour is measured as new is the same figure.
+- **With the interleaver redefined,** a further run at the same level delivered 48 of 48 bursts and settled at 62 kbit/s both ways by the third and fourth burst, as before.
 
 What in those runs was the prototype and not the protocol:
 
