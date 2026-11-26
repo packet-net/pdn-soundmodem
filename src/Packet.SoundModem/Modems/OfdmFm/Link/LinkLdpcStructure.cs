@@ -18,16 +18,18 @@ internal sealed class LinkLdpcStructure
     private static readonly ConcurrentDictionary<(int Z, int Rows, bool Structured), Lazy<LinkLdpcStructure>> Cache = new();
 
     private readonly int _kb;
+    private readonly Func<int, int, int> _shift;
     private readonly int[] _rowStart;
     private readonly int[] _edgeColumn;
     private readonly int[] _edgeShift;
     private readonly Step[] _steps;
 
-    private LinkLdpcStructure(int z, int rows, bool structured)
+    private LinkLdpcStructure(int z, int rows, bool structured, int kb, Func<int, int, int> shift)
     {
+        _shift = shift;
         LiftingSize = z;
         Rows = rows;
-        _kb = LinkLdpcTables.Kb;
+        _kb = kb;
         Columns = _kb + rows;
         CodewordLength = Columns * z;
         var start = new List<int> { 0 };
@@ -37,7 +39,7 @@ internal sealed class LinkLdpcStructure
         {
             for (int c = 0; c < Columns; c++)
             {
-                int s = LinkLdpcTables.Shift(z, r, c);
+                int s = _shift(r, c);
                 if (s >= 0)
                 {
                     cols.Add(c);
@@ -82,7 +84,11 @@ internal sealed class LinkLdpcStructure
     }
 
     public static LinkLdpcStructure Get(int z, int rows, bool structured = true) =>
-        Cache.GetOrAdd((z, rows, structured), key => new Lazy<LinkLdpcStructure>(() => new LinkLdpcStructure(key.Z, key.Rows, key.Structured))).Value;
+        Cache.GetOrAdd((z, rows, structured), key => new Lazy<LinkLdpcStructure>(() => new LinkLdpcStructure(key.Z, key.Rows, key.Structured, LinkLdpcTables.Kb, (r, c) => LinkLdpcTables.Shift(key.Z, r, c)))).Value;
+
+    /// <summary>A structure for another quasi-cyclic code (the header's): <paramref name="shift"/> gives the shift of (row, column), or -1 for none. Not cached.</summary>
+    internal static LinkLdpcStructure Create(int z, int rows, int kb, Func<int, int, int> shift, bool structured = true) =>
+        new(z, rows, structured, kb, shift);
 
     /// <summary>
     /// Given <paramref name="x"/> holding the information bits (and zeros elsewhere), fills in the parity.
@@ -251,7 +257,7 @@ internal sealed class LinkLdpcStructure
         int z = LiftingSize;
 
         // Entry lookup (row, column) -> shift or -1, of the kept code.
-        int Base(int r, int c) => LinkLdpcTables.Shift(z, r, c);
+        int Base(int r, int c) => _shift(r, c);
 
         int g = mb;
         for (int cand = 0; cand <= mb; cand++)
@@ -320,7 +326,7 @@ internal sealed class LinkLdpcStructure
     {
         int kb = _kb;
         int z = LiftingSize;
-        int Base(int r, int c) => LinkLdpcTables.Shift(z, r, c);
+        int Base(int r, int c) => _shift(r, c);
 
         // Sum over the core rows of each core column, as a GF(2) polynomial in the cyclic shift.
         int nonzeroColumns = 0;
@@ -413,7 +419,7 @@ internal sealed class LinkLdpcStructure
         {
             for (int b = 0; b < g; b++)
             {
-                int s = LinkLdpcTables.Shift(z, a, kb + b);
+                int s = _shift(a, kb + b);
                 if (s < 0)
                 {
                     continue;
