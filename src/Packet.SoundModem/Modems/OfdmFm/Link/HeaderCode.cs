@@ -11,7 +11,7 @@ namespace Packet.SoundModem.Modems.OfdmFm.Link;
 /// </summary>
 /// <remarks>
 /// The table is base graph 2 of 3GPP TS 38.212 section 5.3.2, the entries for the lifting size set that contains
-/// 9, embedded as <c>header-ldpc-bg2-set4.txt</c> (see the notice in that file and in LICENSING.md). Only these
+/// 9, embedded as <c>header-ldpc-bg2-set4.txt</c>. Only these
 /// three shapes are built; this is not a general 5G NR encoder. The core of this code is solved by the same peeled
 /// path as the payload code's (a sum of the four core rows gives one parity block, the rest follow row by row), so
 /// <see cref="LinkLdpcStructure"/> is reused; the prototype takes that path too.

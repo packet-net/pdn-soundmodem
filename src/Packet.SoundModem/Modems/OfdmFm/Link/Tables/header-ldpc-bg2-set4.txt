@@ -1,12 +1,10 @@
-# 5G NR LDPC base graph 2 (3GPP TS 38.212 section 5.3.2): the entries for the lifting size set that contains 9
-# (set index 4, lifting sizes 9, 18, 36, ...). One line per entry: row, column, V. The shift at lifting size Z is V mod Z.
+# 5G NR LDPC base graph 2 for the lifting size set that contains 9 (set index 4: lifting sizes 9, 18, 36, ...).
+# The values are taken from ETSI TS 138 212 V15.11.0 (2021-08), 3GPP TS 38.212 version 15.11.0 Release 15, clause 5.3.2,
+# Table 5.3.2-3 (LDPC base graph 2 and its parity check matrices V(i,j)), column set index 4.
+# One line per entry: row, column, V. The shift at lifting size Z is V mod Z.
 # Base graph 2 has 42 rows and 52 columns: 10 information columns, then one parity column per row.
-# The values are those of the published standard, as copied by NVlabs/sionna (src/sionna/phy/fec/ldpc/codes/5G_bg2.csv, commit
-# 2f0a3820269b53fd022780a6f2f5f720f7ceb9b4, release v2.2.0), which is licensed under the Apache License, Version 2.0.
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-# Licence text: LICENSES/Apache-2.0.txt. This file reorders that table (one set only, one entry per line); the values are unchanged.
-# Written by the prototype's generator script (proto/vectors/header_code_vectors.py).
+# Made by extracting that table from the text of the document with the prototype's script (proto/vectors/extract_nr_bg2.py),
+# then writing it out with proto/vectors/header_code_vectors.py.
 rows 42
 columns 52
 information_columns 10
