@@ -22,6 +22,7 @@ internal sealed class LinkLdpcStructure
     private readonly int[] _rowStart;
     private readonly int[] _edgeColumn;
     private readonly int[] _edgeShift;
+    private readonly int[] _edgeBase;
     private readonly Step[] _steps;
 
     private LinkLdpcStructure(int z, int rows, bool structured, int kb, Func<int, int, int> shift)
@@ -53,8 +54,23 @@ internal sealed class LinkLdpcStructure
         _rowStart = [.. start];
         _edgeColumn = [.. cols];
         _edgeShift = [.. shifts];
+        _edgeBase = new int[_edgeColumn.Length];
+        for (int e = 0; e < _edgeBase.Length; e++)
+        {
+            _edgeBase[e] = _edgeColumn[e] * z;
+        }
+
         _steps = MakeSteps(structured);
     }
+
+    /// <summary>Most iterations the decoder runs.</summary>
+    public const int MaxIterations = 30;
+
+    /// <summary>The decoder's normalisation, as a 32-bit float (the prototype's alpha).</summary>
+    public const float Alpha = 0.8f;
+
+    /// <summary>The value a known-zero (shortened or filler) bit is given before decoding.</summary>
+    public const float KnownZero = 1.0e4f;
 
     public int LiftingSize { get; }
 
@@ -175,6 +191,146 @@ internal sealed class LinkLdpcStructure
                     }
 
                     sum ^= codeword[_edgeColumn[e] * z + j] & 1;
+                }
+
+                if (sum != 0)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Floats of work space <see cref="Decode"/> needs: the codeword values, then one message per edge and lifted row.</summary>
+    public int DecodeScratchLength => CodewordLength + _edgeColumn.Length * LiftingSize;
+
+    /// <summary>
+    /// Layered normalised min-sum, as the prototype's <c>QCLDPC.decode</c> in 32-bit floats. On entry
+    /// <c>work[..CodewordLength]</c> holds the value of every codeword bit (positive means 0); on exit it holds the
+    /// final values, whose signs are the hard decisions. <paramref name="work"/> must hold
+    /// <see cref="DecodeScratchLength"/> floats. Returns whether every check was satisfied, and the iterations run:
+    /// 0 when the input already satisfied them, <see cref="MaxIterations"/> when it never did.
+    /// </summary>
+    public bool Decode(Span<float> work, out int iterations)
+    {
+        int z = LiftingSize;
+        int n = CodewordLength;
+        Span<float> l = work[..n];
+        Span<float> r = work.Slice(n, _edgeColumn.Length * z);
+        r.Clear();
+        iterations = 0;
+        if (HardSyndromeIsZero(l))
+        {
+            return true;
+        }
+
+        int[] rowStart = _rowStart;
+        int[] edgeShift = _edgeShift;
+        int[] edgeBase = _edgeBase;
+        for (int it = 1; it <= MaxIterations; it++)
+        {
+            for (int row = 0; row < Rows; row++)
+            {
+                int e0 = rowStart[row];
+                int e1 = rowStart[row + 1];
+                int degree = e1 - e0;
+                if (degree == 0)
+                {
+                    continue;
+                }
+
+                for (int i = 0; i < z; i++)
+                {
+                    float min1 = float.PositiveInfinity;
+                    float min2 = float.PositiveInfinity;
+                    int negatives = 0;
+                    for (int e = e0; e < e1; e++)
+                    {
+                        int j = i + edgeShift[e];
+                        if (j >= z)
+                        {
+                            j -= z;
+                        }
+
+                        float q = l[edgeBase[e] + j] - r[e * z + i];
+                        if (q < 0)
+                        {
+                            negatives ^= 1;
+                        }
+
+                        float mag = MathF.Abs(q);
+                        if (mag < min1)
+                        {
+                            min2 = min1;
+                            min1 = mag;
+                        }
+                        else if (mag < min2)
+                        {
+                            min2 = mag;
+                        }
+                    }
+
+                    if (degree < 2)
+                    {
+                        // the prototype gives a row with one entry a message of zero
+                        min1 = 0f;
+                        min2 = 0f;
+                    }
+
+                    for (int e = e0; e < e1; e++)
+                    {
+                        int j = i + edgeShift[e];
+                        if (j >= z)
+                        {
+                            j -= z;
+                        }
+
+                        int at = edgeBase[e] + j;
+                        float q = l[at] - r[e * z + i];
+                        float m = MathF.Abs(q) == min1 ? min2 : min1;
+                        bool flip = (q < 0) ^ (negatives != 0);
+                        float message = Alpha * (flip ? -m : m);
+                        r[e * z + i] = message;
+                        l[at] = q + message;
+                    }
+                }
+            }
+
+            iterations = it;
+            if (HardSyndromeIsZero(l))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // The syndrome of the hard decisions (a value below zero is a 1).
+    private bool HardSyndromeIsZero(ReadOnlySpan<float> l)
+    {
+        int z = LiftingSize;
+        for (int r = 0; r < Rows; r++)
+        {
+            int e0 = _rowStart[r];
+            int e1 = _rowStart[r + 1];
+            for (int i = 0; i < z; i++)
+            {
+                int sum = 0;
+                for (int e = e0; e < e1; e++)
+                {
+                    int j = i + _edgeShift[e];
+                    if (j >= z)
+                    {
+                        j -= z;
+                    }
+
+                    if (l[_edgeBase[e] + j] < 0)
+                    {
+                        sum ^= 1;
+                    }
                 }
 
                 if (sum != 0)
