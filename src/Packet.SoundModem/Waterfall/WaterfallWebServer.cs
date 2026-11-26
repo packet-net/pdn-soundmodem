@@ -439,7 +439,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     // the thing that actually has to be single, and fifty receivers under one hostname must not
     // mean fifty listeners. A station that is its own site keeps its own listener, as it always
     // had, and nothing about that path changes.
-    private readonly HttpListener? _listener;
+    private HttpListener? _listener;
+    private readonly string _bind = "127.0.0.1";
     private readonly CancellationTokenSource _stopping = new();
     private readonly Dictionary<int, BandActivityTracker> _trackers = [];
     private readonly List<ModemBand> _bands = [];
@@ -671,11 +672,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         : this(channel, options)
     {
         Port = port;
-        var listener = new HttpListener();
-        foreach (string prefix in ListenerPrefixes.For(bind, port))
-        {
-            listener.Prefixes.Add(prefix);
-        }
+        _bind = bind;
+        HttpListener listener = ListenerPrefixes.Listener(bind, port);
 
         bool everyInterface = bind is "*" or "0.0.0.0" or "::" or "[::]";
         _listener = listener;
@@ -1311,7 +1309,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
         if (_listener is { } listener)
         {
-            listener.Start();
+            listener = HttpListenerLifetime.Start(listener, () => ListenerPrefixes.Listener(_bind, Port));
+            _listener = listener;
             _acceptLoop = AcceptLoopAsync(listener);
         }
     }

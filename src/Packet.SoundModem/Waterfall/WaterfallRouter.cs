@@ -23,7 +23,8 @@ namespace Packet.SoundModem.Waterfall;
 /// </remarks>
 public sealed class WaterfallRouter : IAsyncDisposable
 {
-    private readonly HttpListener _listener;
+    private HttpListener _listener;
+    private readonly string _bind;
     private readonly CancellationTokenSource _stopping = new();
 
     // Read on every request and written when a receiver is first picked, which in the many-receiver
@@ -39,11 +40,8 @@ public sealed class WaterfallRouter : IAsyncDisposable
     public WaterfallRouter(int port, string bind = "127.0.0.1")
     {
         Port = port;
-        _listener = new HttpListener();
-        foreach (string prefix in ListenerPrefixes.For(bind, port))
-        {
-            _listener.Prefixes.Add(prefix);
-        }
+        _bind = bind;
+        _listener = ListenerPrefixes.Listener(bind, port);
 
         bool everyInterface = bind is "*" or "0.0.0.0" or "::" or "[::]";
         Url = $"http://{(everyInterface ? "127.0.0.1" : bind)}:{port}/";
@@ -137,7 +135,7 @@ public sealed class WaterfallRouter : IAsyncDisposable
     /// <summary>Starts listening. Servers can be added before or after.</summary>
     public void Start()
     {
-        _listener.Start();
+        _listener = HttpListenerLifetime.Start(_listener, () => ListenerPrefixes.Listener(_bind, Port));
         _acceptLoop = AcceptLoopAsync();
     }
 

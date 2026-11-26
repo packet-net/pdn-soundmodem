@@ -55,6 +55,55 @@ internal static class HttpListenerLifetime
     }
 
     /// <summary>
+    /// Starts <paramref name="listener"/>, and starts a fresh one from <paramref name="fresh"/>
+    /// if the managed listener trips over a client that connected the moment it opened.
+    /// </summary>
+    /// <remarks>
+    /// On Linux the listener's end point starts accepting inside its own constructor, before it
+    /// has set up the dictionary its accept handler locks. A client already knocking on the port
+    /// (a browser tab retrying while the station restarts, which is exactly when the port opens)
+    /// can be accepted in that gap, and <c>Start()</c> throws <see cref="ArgumentNullException"/>
+    /// ("Value cannot be null.") from <c>Monitor.Enter</c>. The station read that as a bad
+    /// waterfall setting and exited 2, which systemd does not restart: about one start in
+    /// eighteen with something knocking as fast as it can (#864, #853). Nothing about the
+    /// prefixes is wrong when it happens, so it is started again, on a new listener, as a failed
+    /// <c>Start()</c> leaves the old one closed. A few tries, then the real error.
+    /// When the connection is accepted on a thread-pool thread instead, the same throw is
+    /// unhandled there and ends the process (exit 134, which systemd does restart); nothing here
+    /// can catch that one, and it is far the rarer.
+    /// </remarks>
+    /// <param name="listener">A listener with its prefixes added.</param>
+    /// <param name="fresh">Makes another listener with the same prefixes.</param>
+    /// <returns>The listener that is running: <paramref name="listener"/>, or one from
+    /// <paramref name="fresh"/>.</returns>
+    internal static HttpListener Start(HttpListener listener, Func<HttpListener> fresh) =>
+        Start(listener, fresh, static l => l.Start());
+
+    /// <summary>The same, with the start itself handed in so that a test can make it fail.</summary>
+    internal static HttpListener Start(
+        HttpListener listener, Func<HttpListener> fresh, Action<HttpListener> start)
+    {
+        const int Attempts = 5;
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                start(listener);
+                return listener;
+            }
+            catch (ArgumentNullException) when (attempt < Attempts)
+            {
+                Shut(listener);
+                // The half-built end point's socket is released by its finalizer: until it is,
+                // the port is still bound and the new listener would find it taken.
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                listener = fresh();
+            }
+        }
+    }
+
+    /// <summary>
     /// Takes the listener down, releasing its port once and never binding it again, and never
     /// throws for a peer that has already gone.
     /// </summary>
