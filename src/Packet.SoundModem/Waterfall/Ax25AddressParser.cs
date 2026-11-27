@@ -1,4 +1,5 @@
-using System.Text;
+using Packet.Ax25;
+using Packet.Core;
 
 namespace Packet.SoundModem.Waterfall;
 
@@ -6,9 +7,10 @@ namespace Packet.SoundModem.Waterfall;
 /// Display-grade AX.25 address extraction for the waterfall's per-burst attribution: source
 /// and destination callsigns (with SSID) plus the digipeater path, straight off the shifted
 /// address field. This is a label maker, not a protocol codec - nothing on the wire path
-/// depends on it, and frames it cannot read are simply shown unattributed. (The full AX.25
-/// codec lives in packet.net; the daemon deliberately keeps its shipped dependency set to
-/// the M0LTE.* packages, and fourteen shifted bytes do not justify another one.)
+/// depends on it, and frames it cannot read are simply shown unattributed. Each address slot is
+/// read by packet.net's <see cref="Ax25Address"/>; what is decided here is which of the two
+/// fields may be blank. The frame as a whole is deliberately not parsed: a frame whose path or
+/// PID is damaged still attributes by its two addresses.
 /// </summary>
 public static class Ax25AddressParser
 {
@@ -70,58 +72,39 @@ public static class Ax25AddressParser
     /// as opposed to unreadable.
     /// </summary>
     /// <remarks>
-    /// Judged with the same shift <see cref="TryReadAddress"/> reads characters with, so that
-    /// there is one view of what is in a byte rather than two that can disagree. The seventh byte
-    /// is not looked at: it carries the SSID, the command/response bit, two reserved bits and the
-    /// end-of-field bit, none of which say anything about whether a callsign is present.
+    /// Judged by the same reader <see cref="TryReadAddress"/> uses, so that there is one view of
+    /// what is in a byte rather than two that can disagree. The seventh byte is not looked at: it
+    /// carries the SSID, the command/response bit, two reserved bits and the end-of-field bit,
+    /// none of which say anything about whether a callsign is present.
     /// </remarks>
-    internal static bool IsBlank(ReadOnlySpan<byte> field)
-    {
-        for (int n = 0; n < 6; n++)
-        {
-            if ((char)(field[n] >> 1) != ' ')
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    internal static bool IsBlank(ReadOnlySpan<byte> field) =>
+        TryRead(field, Ax25ParseOptions.Lenient, out Ax25Address address) && address.Callsign.Base.Length == 0;
 
     private static bool TryReadAddress(ReadOnlySpan<byte> field, out string address)
     {
         address = "";
-        var callsign = new StringBuilder(9);
-        for (int n = 0; n < 6; n++)
-        {
-            char c = (char)(field[n] >> 1);
-            if (c == ' ')
-            {
-                break;
-            }
-
-            // Callsigns are upper-case alphanumerics; anything else means these bytes are
-            // not a shifted AX.25 address (an IL2P payload, a corrupt decode, not AX.25).
-            if (c is not ((>= 'A' and <= 'Z') or (>= '0' and <= '9')))
-            {
-                return false;
-            }
-
-            callsign.Append(c);
-        }
-
-        if (callsign.Length == 0)
+        if (!TryRead(field, new Ax25ParseOptions { AllowEmptyCallsignBase = false }, out Ax25Address read))
         {
             return false;
         }
 
-        int ssid = (field[6] >> 1) & 0x0F;
-        if (ssid != 0)
-        {
-            callsign.Append('-').Append(ssid);
-        }
-
-        address = callsign.ToString();
+        address = read.Callsign.ToString();
         return true;
+    }
+
+    /// <summary>The library reports a slot that is not a shifted callsign by throwing; a corrupt
+    /// frame is an ordinary input here.</summary>
+    private static bool TryRead(ReadOnlySpan<byte> field, Ax25ParseOptions options, out Ax25Address address)
+    {
+        try
+        {
+            address = Ax25Address.Read(field, options);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            address = default;
+            return false;
+        }
     }
 }

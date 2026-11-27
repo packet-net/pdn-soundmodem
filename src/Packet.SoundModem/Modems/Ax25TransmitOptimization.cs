@@ -89,7 +89,7 @@ internal static class Ax25TransmitOptimization
             }
         }
 
-        if ((frame.Control & 0x0F) == 0x01 && bytes.Length == addressLength + 1)
+        if (frame.FrameType == Ax25FrameType.Rr && bytes.Length == addressLength + 1)
         {
             return new(bytes, addressLength, Kind.ReceiverReady);
         }
@@ -99,7 +99,7 @@ internal static class Ax25TransmitOptimization
             return new(bytes, addressLength, Kind.UnnumberedInformation);
         }
 
-        if ((frame.Control & 1) == 0)
+        if (frame.FrameType == Ax25FrameType.I)
         {
             // Without negotiated modulo, an I-frame must be non-polling under either reading.
             if (Ax25Frame.TryParse(bytes, Ax25ParseOptions.Strict, extended: true, out Ax25Frame? extended)

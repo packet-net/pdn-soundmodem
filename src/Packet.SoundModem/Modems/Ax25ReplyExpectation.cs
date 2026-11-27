@@ -50,19 +50,10 @@ public static class Ax25ReplyExpectation
             return false;
         }
 
-        // I-frame: acknowledged data. Identified by the low control bit being clear, which is
-        // the one classification Ax25Frame does not surface as a property of its own.
-        if ((parsed.Control & 0x01) == 0)
-        {
-            return true;
-        }
-
-        // Link setup and teardown draw a UA or DM whether or not they poll. This reads the
-        // control byte the codec already parsed rather than parsing anything: which subtypes are
-        // worth waiting for is policy, and the package models U-frame subtypes only on the
-        // outbound side (UFrameType) and behind the connected-mode classifier, which is a great
-        // deal of session machinery to pull in for three constants.
-        if ((parsed.Control & ~PollFinalBit) is Sabm or Sabme or Disc)
+        // I-frame: acknowledged data. Link setup and teardown draw a UA or DM whether or not they
+        // poll. Which types are worth waiting for is policy; what type a frame is comes from the
+        // library.
+        if (parsed.FrameType is Ax25FrameType.I or Ax25FrameType.Sabm or Ax25FrameType.Sabme or Ax25FrameType.Disc)
         {
             return true;
         }
@@ -72,11 +63,4 @@ public static class Ax25ReplyExpectation
         // whole question.
         return parsed.PollFinal;
     }
-
-    /// <summary>The poll/final bit in a modulo-8 or unnumbered control octet (AX.25 §4.3).</summary>
-    private const int PollFinalBit = 0x10;
-
-    private const int Sabm = 0x2F;
-    private const int Sabme = 0x6F;
-    private const int Disc = 0x43;
 }
