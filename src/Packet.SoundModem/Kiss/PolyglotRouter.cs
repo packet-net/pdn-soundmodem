@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace Packet.SoundModem.Kiss;
 
 /// <summary>
@@ -38,9 +36,6 @@ public sealed class PolyglotRouter
     /// one burst decoded twice. Different decoders finish the same burst tens of milliseconds
     /// apart; a host retrying an identical frame does so after its FRACK, seconds later.</summary>
     public static readonly TimeSpan DuplicateWindow = TimeSpan.FromSeconds(1);
-
-    /// <summary>Most addresses an AX.25 header carries: destination, source, eight digipeaters.</summary>
-    private const int MaxAddresses = 10;
 
     /// <summary>Stations remembered before expired ones are swept out. A sweep is cheap, and
     /// running one only past this size keeps it off the per-frame path on an ordinary station.</summary>
@@ -146,7 +141,7 @@ public sealed class PolyglotRouter
                 return false;
             }
 
-            if (HeardStation(frame) is string station)
+            if (Ax25Header.HeardStation(frame) is string station)
             {
                 int before = Lookup(station, now) ?? DefaultSubChannel;
                 _heard[station] = (subChannel, now);
@@ -199,7 +194,7 @@ public sealed class PolyglotRouter
     /// on, if that was within <see cref="ForgetAfter"/>, and the default otherwise.</summary>
     public int Route(ReadOnlySpan<byte> frame)
     {
-        if (NextHop(frame) is not string station)
+        if (Ax25Header.NextHop(frame) is not string station)
         {
             return DefaultSubChannel;
         }
@@ -235,103 +230,6 @@ public sealed class PolyglotRouter
         {
             _heard.Remove(station);
         }
-    }
-
-    /// <summary>The station whose transmitter a received frame came from, or null when the
-    /// header does not read.</summary>
-    internal static string? HeardStation(ReadOnlySpan<byte> frame)
-    {
-        if (!TryReadPath(frame, out int count))
-        {
-            return null;
-        }
-
-        // Latest repeater first: the last digipeater with H set is the one on the air.
-        for (int n = count - 1; n >= 2; n--)
-        {
-            if ((frame[(n * 7) + 6] & 0x80) != 0)
-            {
-                return ReadStation(frame.Slice(n * 7, 7));
-            }
-        }
-
-        return ReadStation(frame.Slice(7, 7));
-    }
-
-    /// <summary>The station a frame to be sent must reach first, or null when the header does
-    /// not read.</summary>
-    internal static string? NextHop(ReadOnlySpan<byte> frame)
-    {
-        if (!TryReadPath(frame, out int count))
-        {
-            return null;
-        }
-
-        for (int n = 2; n < count; n++)
-        {
-            if ((frame[(n * 7) + 6] & 0x80) == 0)
-            {
-                return ReadStation(frame.Slice(n * 7, 7));
-            }
-        }
-
-        return ReadStation(frame[..7]);
-    }
-
-    /// <summary>Counts the address fields: they run until one has the extension bit set. False
-    /// for anything that cannot be an AX.25 header, and when any address in it does not read as a
-    /// callsign, since a header with one damaged address says nothing trustworthy about any.</summary>
-    private static bool TryReadPath(ReadOnlySpan<byte> frame, out int count)
-    {
-        count = 0;
-        while (count < MaxAddresses && (count + 1) * 7 <= frame.Length)
-        {
-            ReadOnlySpan<byte> field = frame.Slice(count * 7, 7);
-            if (ReadStation(field) is null)
-            {
-                return false;
-            }
-
-            count++;
-            if ((field[6] & 0x01) != 0)
-            {
-                // A control byte must follow the last address.
-                return count >= 2 && count * 7 < frame.Length;
-            }
-        }
-
-        return false;
-    }
-
-    private static string? ReadStation(ReadOnlySpan<byte> field)
-    {
-        var callsign = new StringBuilder(9);
-        bool ended = false;
-        for (int n = 0; n < 6; n++)
-        {
-            char c = (char)(field[n] >> 1);
-            if (c == ' ')
-            {
-                ended = true;
-                continue;
-            }
-
-            // Letters and digits only, and no letter after the padding starts.
-            if (ended || c is not ((>= 'A' and <= 'Z') or (>= '0' and <= '9')))
-            {
-                return null;
-            }
-
-            callsign.Append(c);
-        }
-
-        if (callsign.Length == 0)
-        {
-            return null;
-        }
-
-        int ssid = (field[6] >> 1) & 0x0F;
-        return ssid == 0 ? callsign.ToString() : callsign.Append('-').Append(ssid).ToString();
     }
 }
 
