@@ -49,6 +49,9 @@ internal sealed class StationAir(SoundModemChannel channel, VirtualAir.Clock clo
     /// <summary>Called on the transmitter's thread when the PTT goes down, before anything else.</summary>
     public Action? OnKey { get; set; }
 
+    /// <summary>Called on the transmitter's thread when the PTT goes up, before the keyup is recorded.</summary>
+    public Action? OnUnkey { get; set; }
+
     public int SampleRate => channel.SampleRate;
 
     /// <summary>True from key to unkey.</summary>
@@ -113,6 +116,7 @@ internal sealed class StationAir(SoundModemChannel channel, VirtualAir.Clock clo
 
     public void Unkey()
     {
+        OnUnkey?.Invoke();
         lock (_gate)
         {
             _keyups.Add(new Keyup(_startCount, count(), [.. _audio]));
@@ -139,6 +143,7 @@ internal sealed class StationRig : IAsyncDisposable
     {
         Clock = new VirtualAir.Clock();
         Channel = new SoundModemChannel(48000, Clock, randomSeed: 3, channelBusySource: radio, audioFallback: audioFallback);
+        Channel.Csma.Persistence = 255;
         Channel.Csma.TxDelayMilliseconds = txDelayMilliseconds;
         Channel.Csma.TxTailMilliseconds = txTailMilliseconds;
         Host = new OfdmFmStationHost(Channel, new Random(seed), new OfdmFmStationHostOptions { RunJobsInline = true, SubChannel = subChannel, AfterExternalBusy = afterExternalBusy });

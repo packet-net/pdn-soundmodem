@@ -45,6 +45,7 @@ public class OfdmFmStationHostCarrierTests
         var radio = new FakeRadio();
         var calls = new Calls();
         await using var rig = new StationRig(radio: radio, afterExternalBusy: calls.Add);
+        rig.WaitForTransmitter = false; // nothing transmits here, and the channel reads busy for as long as the source says so
 
         await rig.FeedAsync(3);
         calls.Values.Should().BeEmpty("a source that does not know gives the station nothing, and nothing is null to withdraw");
@@ -114,8 +115,9 @@ public class OfdmFmStationHostCarrierTests
         var calls = new Calls();
         await using var rig = new StationRig(radio: radio, afterExternalBusy: calls.Add);
         calls.Rig = rig;
-        // The radio's own carrier shows on its squelch line while it transmits.
+        // The radio's own carrier shows on its squelch line while it transmits, and is gone when it unkeys.
         rig.Air.OnKey = () => radio.Set(true);
+        rig.Air.OnUnkey = () => radio.Set(false);
         Identify(rig);
         rig.StartTransmitter();
         rig.Host.Send(new byte[30], LinkAddress.Everyone, Me, LinkProtocol.NoLayer3, new HostTag(1)).Should().Be(SendResult.Accepted);
@@ -125,7 +127,7 @@ public class OfdmFmStationHostCarrierTests
         await rig.FeedAsync(2);
 
         calls.WhileKeyed.Should().Be(0, "the station is never told anything while its own radio is keyed");
-        calls.Values.Should().Equal([false, true], "the squelch line is read again at the first heard block after the keyup");
+        calls.Values.Should().Equal([false], "the line showed busy only during the keyup, and the station was never told");
     }
 
     [Fact]

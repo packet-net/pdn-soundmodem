@@ -339,24 +339,30 @@ public sealed class OfdmFmStationHost : IDisposable
                 continue;
             }
 
-            request.Cancellation = new CancellationTokenSource();
-            Task sent = _channel.EnqueueTransmit(
-                txDelay => request.Render(txDelay, _channel.SampleRate),
-                rejected: _ => _inbox.Enqueue(new Signal(SignalKind.Refused, id)),
-                ownsChannelTiming: true,
-                source: this,
-                withdraw: request.Cancellation.Token,
-                started: _ => _inbox.Enqueue(new Signal(SignalKind.OnAir, id)));
-            _ = sent.ContinueWith(
-                finished =>
-                {
-                    _ = finished.Exception;
-                    _inbox.Enqueue(new Signal(SignalKind.Finished, id));
-                },
-                CancellationToken.None,
-                TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
+            Enqueue(id, request);
         }
+    }
+
+    // Apart from HandOver so that the closures are made only when a request really goes: a closure over a variable of the loop's scope is allocated each time the scope is entered, and this runs on every block.
+    private void Enqueue(long id, Outstanding request)
+    {
+        request.Cancellation = new CancellationTokenSource();
+        Task sent = _channel.EnqueueTransmit(
+            txDelay => request.Render(txDelay, _channel.SampleRate),
+            rejected: _ => _inbox.Enqueue(new Signal(SignalKind.Refused, id)),
+            ownsChannelTiming: true,
+            source: this,
+            withdraw: request.Cancellation.Token,
+            started: _ => _inbox.Enqueue(new Signal(SignalKind.OnAir, id)));
+        _ = sent.ContinueWith(
+            finished =>
+            {
+                _ = finished.Exception;
+                _inbox.Enqueue(new Signal(SignalKind.Finished, id));
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     /// <summary>What the transmitter's thread left since the last block, in the order it happened.</summary>
