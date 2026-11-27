@@ -100,7 +100,7 @@ public class OfdmLadderPassTests
                     p.Mode, p.Seed, p.SnrDb, p.Channel, starts[k], rendered[k].BurstSeconds)),
             ],
             ModemRevision: "test",
-            WrittenUtc: DateTimeOffset.UtcNow,
+            WrittenUtc: DateTimeOffset.UnixEpoch,
             Radio: "none (test)",
             FrequencyMHz: "18.106500",
             RfPower: null,
