@@ -288,23 +288,24 @@ public class TurnaroundHoldTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         Task firstPoll = channel.EnqueueTransmit(2, Poll());
         Task transmitter = channel.RunTransmitterAsync(output, new RecordingPtt(), cancellation.Token);
-        await firstPoll.WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(firstPoll, "the first poll to go out");
 
         // The other port's frame, much longer than a poll so its burst is easy to tell apart.
         clock.Rearm();
         byte[] waiting = [.. Broadcast(), .. new byte[60]];
         Task other = channel.EnqueueTransmit(0, waiting);
-        TimeSpan hold = await clock.NextWait.WaitAsync(TimeSpan.FromMinutes(1));
+        TimeSpan hold = await Eventually.SignalAsync(clock.NextWait, "the transmitter to wait out the hold");
         hold.Should().BeGreaterThan(TimeSpan.Zero, "the transmitter is now sleeping out the hold");
 
         // The owner's next poll, during the hold. It must stay queued: the clock is frozen, so
-        // nothing correct can send it. The second here is a window for a wrong scheduler to show
-        // itself in, not a pace - a correct one cannot fail this however loaded the box is.
+        // nothing correct can send it, and the transmitter does not look at the queue again until
+        // the hold ends. There is nothing to wait for here: the proof that it was held is the order
+        // at the end, since a scheduler that sent it at once would put it ahead of the frame that
+        // was waiting first.
         Task secondPoll = channel.EnqueueTransmit(2, Poll());
-        await Task.WhenAny(secondPoll, Task.Delay(TimeSpan.FromSeconds(1), CancellationToken.None));
         secondPoll.IsCompleted.Should().BeFalse("a new frame from the hold's owner waits for the hold too");
         fake.Advance(channel.TurnaroundHold + TimeSpan.FromMilliseconds(100));
-        await Task.WhenAll(other, secondPoll).WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(Task.WhenAll(other, secondPoll), "both frames to go out once the hold ends");
         await cancellation.CancelAsync();
         await Ignore(transmitter);
 

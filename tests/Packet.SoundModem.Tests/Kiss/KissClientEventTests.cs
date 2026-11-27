@@ -75,7 +75,7 @@ public class KissClientEventTests
 
         var client = new TcpClient();
         await client.ConnectAsync(IPAddress.Loopback, server.LocalPort);
-        await Task.Delay(100);
+        await Eventually.UntilAsync(() => server.ClientCount == 1, "the server to take the connection");
         // Abort rather than close: the host process dying, not saying goodbye. Set on the socket
         // itself - LingerState on the TcpClient wrapper does not reach it before Close, and the
         // server then sees an orderly EOF instead of the reset this is about.
@@ -98,7 +98,7 @@ public class KissClientEventTests
 
         using var client = new TcpClient();
         await client.ConnectAsync(IPAddress.Loopback, server.LocalPort);
-        await Task.Delay(100);
+        await Eventually.UntilAsync(() => server.ClientCount == 1, "the server to take the connection");
 
         await server.DisposeAsync();
 
@@ -131,9 +131,9 @@ public class KissClientEventTests
 
         await Eventually.UntilAsync(() => goodbyes.Count == 1, "the goodbye event");
         goodbyes[0].Reason.Should().Be("this station is stopping");
-        int read = await attached.GetStream().ReadAsync(new byte[16]).AsTask()
-            .WaitAsync(TimeSpan.FromSeconds(10))
-            .ContinueWith(t => t.IsCompletedSuccessfully ? t.Result : 0);
+        Task<int> reading = attached.GetStream().ReadAsync(new byte[16]).AsTask();
+        await Eventually.CompletesAsync(reading, "the attached host's read to end");
+        int read = reading.IsCompletedSuccessfully ? await reading : 0;
         read.Should().Be(0, "the host's session is over");
 
         using var late = new TcpClient();

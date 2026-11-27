@@ -30,6 +30,15 @@ public sealed class SwrInterlockGuardTests
         return (mock, client, meters);
     }
 
+    /// <summary>Waits until the interlock has taken in <paramref name="count"/> forward-power readings.
+    /// It records a reading and judges it under one lock, so once a reading is counted its verdict is
+    /// already in <see cref="SwrInterlock.AbortReason"/>: a test that looks after this has seen what the
+    /// interlock made of what it was pushed, rather than guessed at how long that takes.</summary>
+    private static Task ForwardReadingsAsync(SwrInterlock interlock, int count) =>
+        Eventually.UntilAsync(
+            () => interlock.Collected.Count(r => r.Descriptor.Name.Equals("FWDPWR", StringComparison.OrdinalIgnoreCase)) >= count,
+            $"the interlock to take in {count} forward-power reading(s)");
+
     [Fact]
     public async Task Forward_power_over_the_ceiling_aborts()
     {
@@ -67,7 +76,7 @@ public sealed class SwrInterlockGuardTests
             // 36 dBm ≈ 4.0 W and 30 dBm = 1 W - both under 5 W, neither may abort.
             mock.PushMeters((FwdPwrId, Dbm(30)));
             mock.PushMeters((FwdPwrId, Dbm(36)));
-            await Task.Delay(200);
+            await ForwardReadingsAsync(interlock, 2);
 
             interlock.AbortReason.Should().BeNull("4 W stays under the 5 W ceiling");
             interlock.PeakForwardDbm.Should().NotBeNull();
@@ -85,7 +94,7 @@ public sealed class SwrInterlockGuardTests
             using var interlock = new SwrInterlock(meters, maxSwr: 99.0, constantEnvelope: false);
 
             mock.PushMeters((FwdPwrId, Dbm(45))); // ~32 W
-            await Task.Delay(200);
+            await ForwardReadingsAsync(interlock, 1);
 
             interlock.AbortReason.Should().BeNull("no power ceiling was set");
         }

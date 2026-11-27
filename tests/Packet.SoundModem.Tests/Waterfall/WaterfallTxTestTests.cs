@@ -67,6 +67,35 @@ public class WaterfallTxTestTests : IAsyncLifetime
         }
     }
 
+    /// <summary>Sends a transmit test request and reads on until <paramref name="statuses"/> status
+    /// messages about transmit tests have come back. The server takes one socket's messages in order,
+    /// so when the last of them has been answered every earlier request has been dealt with in full.</summary>
+    private async Task RequestAndAwaitAnswersAsync(ClientWebSocket socket, int statuses, int seconds)
+    {
+        for (int i = 0; i < statuses; i++)
+        {
+            await socket.SendAsync(
+                Encoding.UTF8.GetBytes("{\"type\":\"txtest\",\"twoTone\":true,\"seconds\":" + seconds + "}"),
+                WebSocketMessageType.Text, true, _cancellation.Token);
+        }
+
+        int answered = 0;
+        while (answered < statuses)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind != WebSocketMessageType.Text)
+            {
+                continue;
+            }
+
+            using JsonDocument message = JsonDocument.Parse(payload);
+            if (message.RootElement.GetProperty("type").GetString() == "txtest")
+            {
+                answered++;
+            }
+        }
+    }
+
     private async Task<ClientWebSocket> OpenAsync(int port)
     {
         var socket = new ClientWebSocket();
@@ -183,10 +212,26 @@ public class WaterfallTxTestTests : IAsyncLifetime
             Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":5}"""),
             WebSocketMessageType.Text, true, _cancellation.Token);
 
-        await Task.Delay(200, _cancellation.Token);
-        _asked.Should().BeEmpty();
+        // The server takes one socket's messages in order, so the close sent behind the request is
+        // the witness that the request has been dealt with: the close handshake only completes once
+        // the server has read to the end of what the page sent, and it completes cleanly only if
+        // the page was not dropped for asking.
+        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
+        socket.State.Should().Be(WebSocketState.Closed, "a request with nowhere to go does not cost the page its socket");
+
+        // Now give the station a control, and ask on a new page for 7 seconds. Had the first request
+        // been held on to, it would be in the list ahead of this one.
+        server.SetTxTest(Control());
+        using ClientWebSocket second = await OpenAsync(port);
+        await Receive(second);
+        await second.SendAsync(
+            Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":7}"""),
+            WebSocketMessageType.Text, true, _cancellation.Token);
+        await Eventually.UntilAsync(() => _asked.Count > 0, "the second request to be asked for");
+
+        _asked.Should().ContainSingle().Which.Should().Be(new TxTestRequest(true, 700, 7),
+            "the request with nowhere to go was dropped, and only the one after it was asked for");
         _stops.Should().Be(0);
-        socket.State.Should().Be(WebSocketState.Open);
     }
 
     [Fact]
@@ -229,7 +274,12 @@ public class WaterfallTxTestTests : IAsyncLifetime
         int port = FreePorts.Next();
         var journal = new List<string>();
         await using var server = new WaterfallWebServer(
-            Channel(), port, new WaterfallOptions { TxTest = Control(), Log = journal.Add });
+            Channel(), port, new WaterfallOptions
+            {
+                TxTest = Control(),
+                Log = line => { lock (journal) { journal.Add(line); } },
+                TimeProvider = new FakeTimeProvider(),
+            });
         server.Start();
 
         using var attacker = new ClientWebSocket();
@@ -237,10 +287,11 @@ public class WaterfallTxTestTests : IAsyncLifetime
         await attacker.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws"), _cancellation.Token);
         await Receive(attacker);
 
-        await attacker.SendAsync(
-            Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":30}"""),
-            WebSocketMessageType.Text, true, _cancellation.Token);
-        await Task.Delay(300, _cancellation.Token);
+        // Each request is answered with a refusal, and the server deals with one socket's messages
+        // in order, so with three asked and three refusals back, the first has been through in full
+        // (the page told, then the journal) and the others have been refused after it. The clock is
+        // fixed, so the journal's once-a-minute limit is not something time can change under it.
+        await RequestAndAwaitAnswersAsync(attacker, statuses: 3, seconds: 30);
 
         _asked.Should().BeEmpty("a page served from somewhere else may not key this radio");
         journal.Should().ContainSingle()
@@ -414,7 +465,11 @@ public class WaterfallTxTestTests : IAsyncLifetime
         int port = FreePorts.Next();
         var journal = new List<string>();
         await using var server = new WaterfallWebServer(
-            Channel(), port, new WaterfallOptions { Log = journal.Add });
+            Channel(), port, new WaterfallOptions
+            {
+                Log = line => { lock (journal) { journal.Add(line); } },
+                TimeProvider = new FakeTimeProvider(),
+            });
         server.Start();
 
         using var early = new ClientWebSocket();
@@ -425,10 +480,9 @@ public class WaterfallTxTestTests : IAsyncLifetime
         // ... and only now does the station gain a transmitter.
         server.SetTxTest(Control());
 
-        await early.SendAsync(
-            Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":2}"""),
-            WebSocketMessageType.Text, true, _cancellation.Token);
-        await Task.Delay(300, _cancellation.Token);
+        // Three refusals back (see the test above for why three): the first has been dealt with in
+        // full, the control being installed after the page connected makes no difference to that.
+        await RequestAndAwaitAnswersAsync(early, statuses: 3, seconds: 2);
 
         _asked.Should().BeEmpty("the origin is judged when the button is pressed, not at the door");
         journal.Should().ContainSingle().Which.Should().Contain("malice.example");

@@ -106,10 +106,16 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
         await Eventually.UntilAsync(() => BandsAsked() == (1000, 2000), "the band was read");
         await reader.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
         await Eventually.UntilAsync(() => _server.ReceiveBandRequested is not null && BandsAsked() is null, "and withdrawn");
-        await Task.Delay(300);
 
-        Filts(mock).Count.Should().Be(before, "nothing to widen, and so nothing to put back");
-        mock.SliceFilter.Should().Be((150, 5700));
+        // Nothing was written for that band. A second reader whose band does need widening is the
+        // witness: the filter works its requests in order, so when the widening for the second has
+        // been written, anything the first caused has been written before it and is in the log.
+        using var wider = await ConnectAsync();
+        await AskForBand(wider, 1000, 6000);
+        await Eventually.UntilAsync(() => mock.SliceFilter == (150, 6200), "the wider band opens the slice");
+
+        Filts(mock).Count.Should().Be(before + 1, "the band inside the filter wrote nothing; only the wider one did");
+        Filts(mock)[^1].Should().Be($"filt {Slice()} 150 6200");
     }
 
     [Fact]
@@ -135,7 +141,8 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
         using var reader = await ConnectAsync();
         await AskForBand(reader, 1000, 5000);
         await Eventually.UntilAsync(() => BandsAsked() == (1000, 5000), "the band was read");
-        await Task.Delay(300);
+        await reader.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
+        await Eventually.UntilAsync(() => BandsAsked() is null, "and withdrawn: the server has been through the request and its end");
 
         Filts(mock).Count.Should().Be(before, "attach mode leaves the operator's filter alone");
     }
@@ -202,7 +209,6 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
         // While it is in flight: put back, then widen again. Only the newest is still wanted.
         filter.Request(null);
         filter.Request((1000, 4000));
-        await Task.Delay(100);
         Sent().Should().Be(1, "nothing is sent over the top of a command still in flight");
 
         Release();
@@ -213,9 +219,15 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
         sent.Should().Equal("filt 0 300 5200", "filt 0 300 4200");
         filter.Applied.Should().Be((300, 4200));
 
+        // Asking for what is already applied sends nothing. A request that does need a command,
+        // made after it, is the witness: requests are worked in order, so when its command is out
+        // the repeat has had its turn, and the log holds the two commands from before and this one.
         filter.Request((1000, 4000));
-        await Task.Delay(100);
-        Sent().Should().Be(2, "asking for what is already applied sends nothing");
+        filter.Request((1000, 3000));
+        await Eventually.UntilAsync(() => Sent() == 3, "the request after the repeat goes out");
+        Release();
+        await Eventually.UntilAsync(() => !filter.Busy, "done again");
+        sent.Should().Equal("filt 0 300 5200", "filt 0 300 4200", "filt 0 300 3200");
     }
 
     [Fact]

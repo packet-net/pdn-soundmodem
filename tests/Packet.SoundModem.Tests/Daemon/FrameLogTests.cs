@@ -1134,17 +1134,52 @@ public class FrameLogTests : IDisposable
     [Fact]
     public async Task Recording_Does_Not_Wait_On_The_Disk()
     {
-        // The receive path calls this between bursts; it has to return at memory speed.
+        // The receive path calls this between bursts; it has to return at memory speed. Shown by
+        // making the disk unavailable: another connection holds the write lock, so no row can be
+        // written, and a thousand frames are recorded regardless. Had Record waited on the disk it
+        // would wait on that lock and the recording below would never finish.
         await using FrameLog log = FrameLog.Open(DbPath, _time);
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-
-        for (int i = 0; i < 1000; i++)
+        using var holder = new SqliteConnection($"Data Source={DbPath}");
+        holder.Open();
+        using (SqliteCommand hold = holder.CreateCommand())
         {
-            log.Record(0, Frame(), Quality(), null, null);
+            hold.CommandText = "BEGIN IMMEDIATE";
+            hold.ExecuteNonQuery();
         }
 
-        clock.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(1),
-            "queueing a thousand frames must not cost a thousand disk writes");
+        Task recording = Task.Run(() =>
+        {
+            for (int i = 0; i < 1000; i++)
+            {
+                log.Record(0, Frame(), Quality(), null, null);
+            }
+        });
+        await Eventually.SignalAsync(recording, "a thousand frames to be queued while the disk is held");
+
+        // None of them could have been written yet, and once the disk is free all of them are.
+        using (SqliteCommand held = holder.CreateCommand())
+        {
+            held.CommandText = "SELECT COUNT(*) FROM frames";
+            Convert.ToInt64(held.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture)
+                .Should().Be(0, "the disk was held, so the queue is all there is");
+        }
+
+        using (SqliteCommand release = holder.CreateCommand())
+        {
+            release.CommandText = "ROLLBACK";
+            release.ExecuteNonQuery();
+        }
+
+        await Eventually.UntilAsync(
+            () =>
+            {
+                using var reader = new SqliteConnection($"Data Source={DbPath};Mode=ReadOnly");
+                reader.Open();
+                using SqliteCommand count = reader.CreateCommand();
+                count.CommandText = "SELECT COUNT(*) FROM frames";
+                return Convert.ToInt64(count.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) == 1000;
+            },
+            "the writer to catch up on all thousand once the disk is free");
+        log.Dropped.Should().Be(0);
     }
 }
-

@@ -362,17 +362,17 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
     [Fact]
     public async Task Something_That_Is_Not_OpenWebRx_Is_A_Start_Up_Error()
     {
-        var time = new FakeTimeProvider();
+        var time = new TimerSignalTimeProvider();
         Task<OpenWebRxAudioInput> opening = OpenAsync(Tuning(), time);
         FakeReceiver receiver = await NextReceiverAsync();
         await receiver.ExpectOpeningAsync();
 
-        // The far end says nothing at all.
-        await Eventually.UntilAsync(() =>
-        {
-            time.Advance(TimeSpan.FromSeconds(1));
-            return opening.IsCompleted;
-        }, "the open to give up (the clock is moved on each look)");
+        // The far end says nothing at all. The session's clock for the receiver to say where it is
+        // starts when the session does; once it is on the input's clock, the test moves the clock
+        // to it, once.
+        await Eventually.SignalAsync(
+            time.WhenCreatedAsync(OpenWebRxAudioInput.StartupTimeout), "the session's start-up timer to be set");
+        time.Advance(OpenWebRxAudioInput.StartupTimeout);
 
         Func<Task> open = () => opening;
         (await open.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Contain(
@@ -382,7 +382,7 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
     [Fact]
     public async Task A_Session_That_Ends_Is_Picked_Up_Again()
     {
-        var time = new FakeTimeProvider();
+        var time = new TimerSignalTimeProvider();
         Task<OpenWebRxAudioInput> opening = OpenAsync(Tuning(), time);
         FakeReceiver first = await NextReceiverAsync();
         await first.GreetAsync(compression: "none");
@@ -405,14 +405,11 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
         input.DroppedSamples.Should().Be(0);
         await first.CloseAsync();
 
-        // The breath before the reconnect is on the input's clock. Advanced in steps until the
-        // input dials again, since the pause may not have started when the first step is taken;
-        // the journal below says which pause it was.
-        await Eventually.UntilAsync(() =>
-        {
-            time.Advance(TimeSpan.FromMilliseconds(250));
-            return _accepted.Reader.Count > 0;
-        }, "a receiver connection (the clock is moved on each look)");
+        // The breath before the reconnect is on the input's clock, and a healthy session earns one
+        // second of it. Once the input is parked on that second, the clock is moved to it, once.
+        await Eventually.SignalAsync(
+            time.WhenCreatedAsync(TimeSpan.FromSeconds(1)), "the input to be parked on its one-second breath");
+        time.Advance(TimeSpan.FromSeconds(1));
         FakeReceiver second = await NextReceiverAsync();
         await second.GreetAsync(compression: "none");
         await second.SendAudioAsync(pcm.AsMemory(0, 2400));
@@ -431,11 +428,12 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
         await receiver.GreetAsync(compression: "none");
         using OpenWebRxAudioInput input = await opening;
 
-        await Eventually.UntilAsync(() =>
-        {
-            time.Advance(TimeSpan.FromSeconds(5));
-            return _journal.Any(l => l.Contains("no audio within 30 s of starting the demodulator", StringComparison.Ordinal));
-        }, "the silent-input warning (the clock is moved on each look)");
+        // The open is decided after the session's silence clock has been set for the started
+        // demodulator, so the clock is on its way to 30 s from now and the test moves it there, once.
+        time.Advance(OpenWebRxAudioInput.FirstAudioTimeout);
+        await Eventually.UntilAsync(
+            () => _journal.Any(l => l.Contains("no audio within 30 s of starting the demodulator", StringComparison.Ordinal)),
+            "the silent-input warning");
 
         input.SessionLive.Should().BeFalse();
     }

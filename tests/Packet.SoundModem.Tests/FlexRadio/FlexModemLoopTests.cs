@@ -95,8 +95,11 @@ public sealed class FlexModemLoopTests
         using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
         {
             Task transmitter = txChannel.RunTransmitterAsync(output, ptt, cts.Token);
-            await txChannel.EnqueueTransmit(0, frame).WaitAsync(TimeSpan.FromSeconds(15));
-            await Task.Delay(300); // let the TX-tail packets reach the mock
+            await Eventually.SignalAsync(txChannel.EnqueueTransmit(0, frame), "the frame to be transmitted");
+            // The unkey goes out after the TX tail, so once the radio has been told, the tail's
+            // packets have all reached the mock.
+            await Eventually.UntilAsync(
+                () => mock.CommandLog.Contains("xmit 0"), "the radio to be unkeyed after the TX tail");
             await cts.CancelAsync();
             try
             {

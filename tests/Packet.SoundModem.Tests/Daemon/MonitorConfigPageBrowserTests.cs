@@ -318,7 +318,11 @@ public sealed class MonitorConfigPageBrowserTests : IClassFixture<ConfigPageBrow
                                 $"the daemon stopped for good (exit {_lastExit}). The log:\n{Log}");
                         }
 
-                        if (Starts < count)
+                        // Not before the daemon has said its page is open: a connection that arrives in
+                        // the instant the listener opens can make the runtime's HttpListener fail to
+                        // start (HttpListenerLifetime.Start, #895), and knocking on the port from a
+                        // test is exactly that. The log is read, the port is not touched.
+                        if (Starts < count || Announced() < count)
                         {
                             return false;
                         }
@@ -340,6 +344,22 @@ public sealed class MonitorConfigPageBrowserTests : IClassFixture<ConfigPageBrow
             {
                 throw new TimeoutException($"{e.Message}:\n{Log}");
             }
+        }
+
+        /// <summary>How many times the daemon has printed the address its page is at, which it does
+        /// once the listener is open.</summary>
+        private int Announced()
+        {
+            string log = Log;
+            int found = 0;
+            for (int at = log.IndexOf("monitor: http://", StringComparison.Ordinal);
+                 at >= 0;
+                 at = log.IndexOf("monitor: http://", at + 1, StringComparison.Ordinal))
+            {
+                found++;
+            }
+
+            return found;
         }
 
         public async Task WaitForLogAsync(string text)
@@ -397,8 +417,6 @@ public sealed class MonitorConfigPageBrowserTests : IClassFixture<ConfigPageBrow
                 {
                     return;
                 }
-
-                await Task.Delay(500);
             }
         }
 
@@ -425,7 +443,7 @@ public sealed class MonitorConfigPageBrowserTests : IClassFixture<ConfigPageBrow
 
             try
             {
-                await _supervising.WaitAsync(TimeSpan.FromSeconds(30));
+                await Eventually.SignalAsync(_supervising, "the supervisor to end");
             }
             catch (Exception e)
             {

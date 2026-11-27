@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using AwesomeAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.SdrConnect;
 
 namespace Packet.SoundModem.Tests.SdrConnect;
@@ -133,8 +134,8 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         long generationAtOpen = source.TuningGeneration;
         await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         await fake.ChangeAsync("device_center_frequency", "7080000");
-        await Task.Delay(200, TestContext.Current.CancellationToken);
 
+        // Same socket, same receive loop: the report is taken in before the IQ sent behind it.
         await fake.SendIqAsync(Ramp(500));
         ReadPairs(source, 500).Should().HaveCount(1000);
 
@@ -308,7 +309,10 @@ public sealed class SdrConnectIqSourceTests : IDisposable
 
         source.Tune(14_075_000);
         await fake.WaitForAsync(f => f.Value("device_center_frequency") == "14075000", "the retune");
-        await Task.Delay(200, TestContext.Current.CancellationToken);
+        // The fake reports the set back to the client that made it. Once the client shows that LO as
+        // the one SDRconnect reports, it has been through the report; the IQ sent after it is read
+        // by the same loop, so by the time it is read the report has been judged.
+        await Eventually.UntilAsync(() => source.Client.ReportedCentreHz == 14_075_000, "the set to be reported back");
         await fake.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
 
@@ -321,14 +325,45 @@ public sealed class SdrConnectIqSourceTests : IDisposable
     public async Task A_Retune_Is_Followed_When_SDRconnect_Does_Not_Report_A_Set_Back_To_The_Client_That_Made_It()
     {
         using var host = new FakeSdrConnectHost(f => f.EchoSets = false);
-        (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(host, Options() with { AnswerTimeout = TimeSpan.FromMilliseconds(500) });
+        var clock = new TimerSignalTimeProvider();
+        TimeSpan answer = TimeSpan.FromMilliseconds(500);
+        var source = new SdrConnectIqSource(
+            FakeSdrConnectHost.Endpoint, Options() with { AnswerTimeout = answer, TimeProvider = clock }, host.ConnectAsync);
+        _owned.Add(source);
+        Task opening = source.OpenAsync(TestContext.Current.CancellationToken);
+        FakeSdrConnect fake = await host.NextAsync();
+
+        // This SDRconnect does not report a set back, so the open's wait for the LO to land runs out
+        // on the source's clock. Each time the open parks on one of its answer timers, the clock is
+        // moved on to it, once, until the open is done.
+        for (int parked = 1; !opening.IsCompleted; parked++)
+        {
+            await Task.WhenAny(opening, clock.WhenCreatedAsync(answer, parked));
+            if (!opening.IsCompleted)
+            {
+                clock.Advance(answer);
+            }
+        }
+
+        await opening;
         await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         await fake.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
 
         source.Tune(14_075_000);
         await fake.WaitForAsync(f => f.Value("device_center_frequency") == "14075000", "the retune");
-        await Task.Delay(2500, TestContext.Current.CancellationToken); // past the answer timeout and a watchdog tick
+
+        // No report of the set comes back, but the client asks for the LO straight after setting it,
+        // and that answer is the first it hears of the set. The client has to have taken it in before
+        // the clock moves: the deadline the set was given is only judged by the watchdog, which runs
+        // when the clock passes one of its ticks, and a clock moved first would judge a set whose
+        // answer had not been read yet.
+        await Eventually.UntilAsync(() => source.Client.ReportedCentreHz == 14_075_000, "the answer about the LO");
+
+        // Past the answer timeout (500 ms) and a watchdog tick (a periodic timer made at the open,
+        // every second): one second on the clock runs the watchdog once, on this thread before
+        // Advance returns, and finds nothing outstanding.
+        clock.Advance(TimeSpan.FromSeconds(1));
         await fake.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
 
@@ -348,7 +383,6 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         ReadPairs(source, 100);
 
         await fake.ChangeAsync("device_sample_rate", "96000");
-        await Task.Delay(100, TestContext.Current.CancellationToken);
         await fake.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
 
@@ -383,30 +417,34 @@ public sealed class SdrConnectIqSourceTests : IDisposable
     public async Task Time_Away_Is_Counted_Once_When_A_Connection_Between_Brought_Only_Another_Stream()
     {
         using var host = new FakeSdrConnectHost();
+        var clock = new TimerSignalTimeProvider();
+        TimeSpan first = TimeSpan.FromMilliseconds(1500);
         (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(
-            host, Options() with { ReconnectDelay = TimeSpan.FromSeconds(1) });
+            host, Options() with { ReconnectDelay = first, TimeProvider = clock });
         await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         await fake.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
 
-        var away = System.Diagnostics.Stopwatch.StartNew();
+        // The time away is virtual: the clock moves by each wait once the source is parked on it. The
+        // second wait is double the first, as the source backs off after a connection that was not healthy.
         fake.Drop();
+        await Eventually.SignalAsync(clock.WhenCreatedAsync(first), "the source to wait before it reconnects");
+        clock.Advance(first);
         FakeSdrConnect second = await host.NextAsync();
         await second.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         await second.SendAudioAsync(Ramp(100)); // binary, but not the stream taken
-        await Task.Delay(100, TestContext.Current.CancellationToken);
-        second.Drop();
+        await second.CloseAsync();              // arrives after the audio, so the audio has been taken in
+        await Eventually.SignalAsync(clock.WhenCreatedAsync(first * 2), "the source to wait again");
+        clock.Advance(first * 2);
         FakeSdrConnect third = await host.NextAsync();
         await third.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         await third.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
-        double seconds = away.Elapsed.TotalSeconds;
 
         source.Client.Reconnects.Should().Be(2);
-        source.SamplesLost.Should().BeGreaterThan(0)
-            .And.BeLessThanOrEqualTo(
-                (long)((seconds + 0.25) * 48_000),
-                "the time away is counted once, not again for each connection (which would add the second's 1 s wait again)");
+        source.SamplesLost.Should().Be(
+            (long)((first + (first * 2)).TotalSeconds * 48_000),
+            "the time away is counted once, from the last IQ to the next, and not again for the connection between");
     }
 
     [Fact]
@@ -424,7 +462,6 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         await second.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         await second.SendIqAsync(Ramp(100)); // after the gap, and not read yet
         await second.ChangeAsync("device_sample_rate", "96000");
-        await Task.Delay(100, TestContext.Current.CancellationToken);
         await second.SendIqAsync(Ramp(100));
         await Eventually.UntilAsync(() => source.Client.FramesDelivered >= 300, "all three runs of frames to be delivered");
 
@@ -467,9 +504,12 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         fake.Drop();
         await Eventually.UntilAsync(() => !lost.IsEmpty, "the source to say it has given up");
 
-        await Task.Delay(500, TestContext.Current.CancellationToken);
-        lost.Should().ContainSingle().Which.Should().Contain("has delivered nothing for");
         source.Read(new float[2]).Should().Be(0, "a source that has given up stays closed");
+
+        // Closing the source ends its reconnect loop; anything it was going to say a second time
+        // would have been said by then.
+        source.Dispose();
+        lost.Should().ContainSingle().Which.Should().Contain("has delivered nothing for");
     }
 
     [Fact]

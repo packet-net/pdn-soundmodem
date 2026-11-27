@@ -521,12 +521,15 @@ public class TxTestTests
         outcome.Ran.Should().BeFalse("nothing reached the air");
         outcome.Refusal.Should().Contain("nothing was transmitted");
 
-        // And it stays that way. The channel has been free since the line above; give the
-        // transmitter every chance to key on a withdrawn transmission before believing it will not.
-        await Task.Delay(500);
-        rig.Keying.Should().BeEmpty("a withdrawn test never keys the radio, then or later");
-        rig.Output.Snapshot().Should().BeEmpty();
-        rig.Records.Should().BeEmpty();
+        // And it stays that way. The channel has been free since the line above, so the transmitter
+        // is free to key on a withdrawn transmission. A second test sent behind it is the witness:
+        // the transmitter works its queue in order, so when the second has gone out the withdrawn
+        // one has had its turn, and exactly one keyup in the log (and one record) is the second's.
+        TxTestOutcome behind = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
+        behind.Ran.Should().BeTrue("the test sent behind it goes out");
+        await rig.SettledAsync();
+        rig.Keying.Should().Equal(["key", "unkey"], "a withdrawn test never keys the radio, then or later");
+        rig.Records.Should().ContainSingle("only the test sent behind it was transmitted");
     }
 
     /// <summary>A fake sound card that presses Stop on the very runner it belongs to, once it has
@@ -733,20 +736,23 @@ public class TxTestTests
 
         clock.Advance(TimeSpan.FromSeconds(30));
 
-        TxTestOutcome outcome = await running.WaitAsync(TimeSpan.FromSeconds(20));
+        TxTestOutcome outcome = await Eventually.SignalAsync(running, "the test to give up on the channel");
         outcome.Ran.Should().BeFalse();
         outcome.Refusal.Should().Contain("did not clear");
         outcome.Refusal.Should().Contain("nothing was transmitted");
 
         // The half that matters. The operator has been told the test was given up on and has
         // walked away; when the channel finally clears, the radio must not key on their behalf
-        // with an unlogged 5 ms blip.
+        // with an unlogged 5 ms blip. A second test sent behind it is the witness: the transmitter
+        // works its queue in order, so once the second has gone out the one given up on has had its
+        // turn, and a single keyup and a single record in the log are the second's.
         rig.Band.ChannelBusy = false;
-        await Task.Delay(500);
-        rig.Keying.Should().BeEmpty("a test given up on never keys the radio afterwards");
-        rig.Output.Snapshot().Should().BeEmpty();
-        rig.Records.Should().BeEmpty();
-        rig.Lines.Should().NotContain(line => line.Contains("on air"));
+        TxTestOutcome behind = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
+        behind.Ran.Should().BeTrue("the test sent behind it goes out");
+        await rig.SettledAsync();
+        rig.Keying.Should().Equal(["key", "unkey"], "a test given up on never keys the radio afterwards");
+        rig.Records.Should().ContainSingle("only the test sent behind it was transmitted");
+        rig.Lines.Should().ContainSingle(line => line.Contains("on air"), "and only that one was on air");
     }
 
     [Fact]
