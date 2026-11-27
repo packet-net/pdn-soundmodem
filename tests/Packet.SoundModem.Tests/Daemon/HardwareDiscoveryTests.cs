@@ -334,7 +334,7 @@ public sealed class HardwareDiscoveryTests
 
     private static HardwareDiscovery Discovery(
         FakeDeviceTree tree, FakeFlex? flex = null, FakeUber? uber = null, TimeProvider? time = null,
-        IFlexProbe? flexProbe = null, TimeSpan? flexListen = null)
+        IFlexProbe? flexProbe = null, TimeSpan? flexListen = null, TimeSpan? fastLimit = null)
     {
         SysfsProbes sysfs = Probes(tree);
         return new HardwareDiscovery(
@@ -342,7 +342,10 @@ public sealed class HardwareDiscoveryTests
             flexProbe ?? flex ?? new FakeFlex(() => [Flex]),
             uber ?? new FakeUber(() => Task.FromResult<IReadOnlyList<FoundUberSdr>>([Uber])),
             time,
-            fastLimit: TimeSpan.FromMilliseconds(300), slowLimit: TimeSpan.FromMilliseconds(300),
+            // On the real clock the quick lookups get a limit no busy machine reaches; a test that wants one to
+            // run out drives a fake clock.
+            fastLimit: fastLimit ?? (time is null ? TimeSpan.FromSeconds(30) : TimeSpan.FromMilliseconds(300)),
+            slowLimit: TimeSpan.FromMilliseconds(300),
             flexListen: flexListen ?? TimeSpan.FromMilliseconds(10));
     }
 
@@ -381,22 +384,71 @@ public sealed class HardwareDiscoveryTests
         found["rigctld"]!["problem"].Should().BeNull();
     }
 
+    /// <summary>A sound-card lookup that does not return until the test lets it.</summary>
+    private sealed class GatedCards(ManualResetEventSlim gate) : ISoundCardProbe
+    {
+        public IReadOnlyList<FoundCard> Find()
+        {
+            // The limit only stops a broken test from running for ever.
+            gate.Wait(TimeSpan.FromSeconds(60)).Should().BeTrue("the test opens the gate");
+            return [];
+        }
+    }
+
+    [Fact]
+    public async Task A_Quick_Lookup_Still_Running_When_A_Hanging_Probe_Is_Given_Up_On_Is_Not_Given_Up_On_With_It()
+    {
+        // The race that failed on a busy runner, made to happen every time: the sound-card lookup is
+        // held on the thread pool while the clock is moved past the hanging probe's limit. Each probe
+        // is judged against its own limit, so the lookup is still waited for and answers.
+        var never = new TaskCompletionSource<IReadOnlyList<FoundUberSdr>>();
+        using var gate = new ManualResetEventSlim();
+        SysfsProbes sysfs = Probes(Shack());
+        var time = new TimerSignalTimeProvider();
+        var discovery = new HardwareDiscovery(
+            new GatedCards(gate), sysfs, sysfs, new FakeRig(false), new FakeFlex(() => [Flex]),
+            new FakeUber(() => never.Task), time,
+            fastLimit: TimeSpan.FromHours(1), slowLimit: TimeSpan.FromMilliseconds(300),
+            flexListen: TimeSpan.FromMilliseconds(10));
+
+        Task<JsonObject> described = discovery.DescribeAsync(false, CancellationToken.None);
+        await time.WhenCreatedAsync(TimeSpan.FromMilliseconds(300), atLeast: 1).WaitAsync(TimeSpan.FromSeconds(60));
+        JsonObject found;
+        try
+        {
+            time.Advance(TimeSpan.FromMilliseconds(300));
+            described.IsCompleted.Should().BeFalse("the sound-card lookup has not returned");
+        }
+        finally
+        {
+            // Always let the held lookup go, so a failing run does not leave a pool thread waiting.
+            gate.Set();
+        }
+
+        found = await described.WaitAsync(TimeSpan.FromSeconds(60));
+        found["uberSdr"]!["problem"]!.GetValue<string>().Should().Contain("did not answer");
+        found["soundCards"]!["problem"].Should().BeNull();
+    }
+
     [Fact]
     public async Task One_Probe_Failing_Or_Hanging_Is_Said_In_Its_Own_Section_And_The_Others_Still_Answer()
     {
         var never = new TaskCompletionSource<IReadOnlyList<FoundUberSdr>>();
         var flex = new FakeFlex(() => throw new InvalidOperationException("cannot listen for FlexRadios on UDP 4992"));
 
-        // The limit on a probe is a timer on the clock the discovery was given. The four quick
-        // lookups and the hanging slow one each put theirs on it (flex answers, by failing, at once);
-        // the clock is moved on when all five are there, and the hanging one is then given up on.
+        // The limit on a probe is a timer on the clock the discovery was given. Only the hanging
+        // probe's limit is allowed to run out here: the quick lookups are given an hour of that clock,
+        // so moving it on 300 ms cannot give up on one that a busy machine has not finished yet. (With
+        // one limit for all five, the clock was moved on as soon as the five timers existed, and a
+        // quick lookup still running on the thread pool was then reported as not answering.)
         var time = new TimerSignalTimeProvider();
-        Task<JsonObject> described = Discovery(Shack(), flex, new FakeUber(() => never.Task), time)
+        Task<JsonObject> described = Discovery(
+                Shack(), flex, new FakeUber(() => never.Task), time, fastLimit: TimeSpan.FromHours(1))
             .DescribeAsync(false, CancellationToken.None);
-        await time.WhenCreatedAsync(TimeSpan.FromMilliseconds(300), atLeast: 5)
+        await time.WhenCreatedAsync(TimeSpan.FromMilliseconds(300), atLeast: 1)
             .WaitAsync(TimeSpan.FromSeconds(60));
         time.Advance(TimeSpan.FromMilliseconds(300));
-        JsonObject found = await described;
+        JsonObject found = await described.WaitAsync(TimeSpan.FromSeconds(60));
 
         found["flexRadios"]!["problem"]!.GetValue<string>().Should().Contain("cannot listen for FlexRadios");
         found["uberSdr"]!["problem"]!.GetValue<string>().Should().Contain("did not answer");
