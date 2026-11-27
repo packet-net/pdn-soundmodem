@@ -81,6 +81,33 @@ internal sealed class PortRig : IAsyncDisposable
         return (a, b);
     }
 
+    /// <summary>
+    /// Feeds quiet blocks to every rig, one block at a time, until <paramref name="until"/> holds. After each block it waits for every rig's keyup to finish before feeding the next, because the block may have made
+    /// a station queue a keyup, whose thread then radiates into the other channel: feeding that channel meanwhile would be two threads in one channel. (<see cref="StationRig.PumpAsync(Func{bool}, string, StationRig[])"/>
+    /// waits only before a round, so a keyup queued by the first rig's block can overlap the second rig's feed.) The block count only turns "never" into a failure; no outcome depends on it.
+    /// </summary>
+    public static async Task PumpAsync(Func<bool> until, string because, params StationRig[] rigs)
+    {
+        const int GiveUpBlocks = 10 * 60 * 50;
+        float[] quiet = new float[StationAir.Block];
+        for (int i = 0; i < GiveUpBlocks && !until(); i++)
+        {
+            foreach (StationRig rig in rigs)
+            {
+                rig.Channel.ProcessReceive(quiet);
+                foreach (StationRig other in rigs)
+                {
+                    await other.IdleAsync();
+                }
+            }
+        }
+
+        if (!until())
+        {
+            throw new TimeoutException($"ten minutes of audio were fed and this never happened: {because}");
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         // Every tag ends in Transmitted or Dropped: nothing may be left in the book.
@@ -92,7 +119,7 @@ internal sealed class PortRig : IAsyncDisposable
 }
 
 /// <summary>
-/// The frame port over real stations: two on a test air, each with a port on its channel. No test waits on time. The test feeds quiet blocks (<see cref="StationRig.PumpAsync(Func{bool}, string, StationRig[])"/>),
+/// The frame port over real stations: two on a test air, each with a port on its channel. No test waits on time. The test feeds quiet blocks (<see cref="PortRig.PumpAsync(Func{bool}, string, StationRig[])"/>),
 /// which waits out every keyup before it feeds the next block, so the virtual clock only advances inside a keyup the transmitter thread is running and the test is not racing it. The one other
 /// thread is the port's delivery thread; it never touches the clock, and the tests wait for what it hands up with the hang guard.
 /// </summary>
@@ -112,7 +139,7 @@ public class OfdmFmFramePortStationTests
 
         Task sent = a.Port.Transmit(beacon);
         sent.IsCompleted.Should().BeFalse("nothing has gone on air");
-        await StationRig.PumpAsync(() => b.Rig.Received.Length >= 1, "the frame to reach the other station", a.Rig, b.Rig);
+        await PortRig.PumpAsync(() => b.Rig.Received.Length >= 1, "the frame to reach the other station", a.Rig, b.Rig);
         await Eventually.UntilAsync(() => b.Frames.Length >= 1 && b.Qualities.Length >= 1, "the channel to report the frame");
         await Settled(sent, "the frame's task to complete");
 
@@ -139,16 +166,16 @@ public class OfdmFmFramePortStationTests
         byte[] i1 = FramePortFrames.I("M0XYZ-1", "G4ABC-1", 1, 0, 40);
 
         Task sabmSent = a.Port.Transmit(sabm);
-        await StationRig.PumpAsync(() => b.Rig.Received.Length >= 1, "the SABM to arrive", a.Rig, b.Rig);
+        await PortRig.PumpAsync(() => b.Rig.Received.Length >= 1, "the SABM to arrive", a.Rig, b.Rig);
         await Settled(sabmSent, "the SABM's task");
 
         Task uaSent = b.Port.Transmit(ua);
-        await StationRig.PumpAsync(() => a.Rig.Received.Length >= 1, "the UA to arrive", a.Rig, b.Rig);
+        await PortRig.PumpAsync(() => a.Rig.Received.Length >= 1, "the UA to arrive", a.Rig, b.Rig);
         await Settled(uaSent, "the UA's task");
 
         Task first = a.Port.Transmit(i0);
         Task second = a.Port.Transmit(i1);
-        await StationRig.PumpAsync(() => b.Rig.Received.Length >= 3, "both I frames to arrive", a.Rig, b.Rig);
+        await PortRig.PumpAsync(() => b.Rig.Received.Length >= 3, "both I frames to arrive", a.Rig, b.Rig);
         await Settled(first, "the first I frame's task");
         await Settled(second, "the second I frame's task");
         await Eventually.UntilAsync(() => b.Frames.Length >= 3 && a.Frames.Length >= 1, "the channels to report every frame");
@@ -261,11 +288,12 @@ public class OfdmFmFramePortStationTests
         await using PortRig rb = b;
 
         a.Rig.Host.Send(new byte[30], LinkAddress.Everyone, LinkAddress.FromAscii("G4ABC-1"), LinkProtocol.Ip, new HostTag(1_000_000)).Should().Be(SendResult.Accepted);
-        await StationRig.PumpAsync(() => b.Rig.Received.Length >= 1, "the datagram to arrive", a.Rig, b.Rig);
+        await PortRig.PumpAsync(() => b.Rig.Received.Length >= 1, "the datagram to arrive", a.Rig, b.Rig);
 
+        // The rig's handler runs before the port's, on the transmitting thread: wait for the port's own count.
+        await Eventually.UntilAsync(() => b.Port.NonAx25Datagrams >= 1, "the port to count the datagram");
         b.Port.NonAx25Datagrams.Should().Be(1);
-        await b.Rig.FeedAsync(10);
-        b.Frames.Should().BeEmpty();
+        b.Frames.Should().BeEmpty("a datagram is only queued for delivery on the other branch, so nothing is in flight");
     }
 
     [Fact]
@@ -294,7 +322,7 @@ public class OfdmFmFramePortStationTests
 
         Task sent = a.Rig.Channel.EnqueueTransmit(PortRig.Sub, frame);
         a.Transmitted.Should().BeEmpty("it has not gone");
-        await StationRig.PumpAsync(() => b.Rig.Received.Length >= 1, "the frame to arrive", a.Rig, b.Rig);
+        await PortRig.PumpAsync(() => b.Rig.Received.Length >= 1, "the frame to arrive", a.Rig, b.Rig);
         await Settled(sent, "the channel's task");
 
         a.Transmitted.Should().ContainSingle().Which.Should().Equal(frame);
