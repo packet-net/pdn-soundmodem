@@ -73,6 +73,11 @@ public class TransmitRecordTests
             "the adaptive OFDM-FM station host: raises Transmitted for each datagram and ModemSent for each burst of the station's own once the burst has left the device; "
             + "recording them is the hosting program's, and the daemon does not host the station yet (#920)"),
 
+        new("src/Packet.SoundModem/Modems/OfdmFmStation/OfdmFmStationHost.cs",
+            "source: _morseSource",
+            "the adaptive OFDM-FM station host's Morse identification: raises MorseIdentSent once it has gone to the device; "
+            + "recording it is the hosting program's, and the daemon does not host the station yet (#920)"),
+
         new("src/Packet.SoundModem.Daemon/IdentTransmission.cs",
             "source: owed",
             "the CW ident: recorded in Program.cs beside owed.NoteIdentified(), with the ident text as the "
