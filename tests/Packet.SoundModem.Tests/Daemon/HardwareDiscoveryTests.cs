@@ -342,7 +342,10 @@ public sealed class HardwareDiscoveryTests
             flexProbe ?? flex ?? new FakeFlex(() => [Flex]),
             uber ?? new FakeUber(() => Task.FromResult<IReadOnlyList<FoundUberSdr>>([Uber])),
             time,
-            fastLimit: fastLimit ?? TimeSpan.FromMilliseconds(300), slowLimit: TimeSpan.FromMilliseconds(300),
+            // On the real clock the quick lookups get a limit no busy machine reaches; a test that wants one to
+            // run out drives a fake clock.
+            fastLimit: fastLimit ?? (time is null ? TimeSpan.FromSeconds(30) : TimeSpan.FromMilliseconds(300)),
+            slowLimit: TimeSpan.FromMilliseconds(300),
             flexListen: flexListen ?? TimeSpan.FromMilliseconds(10));
     }
 
@@ -410,11 +413,19 @@ public sealed class HardwareDiscoveryTests
 
         Task<JsonObject> described = discovery.DescribeAsync(false, CancellationToken.None);
         await time.WhenCreatedAsync(TimeSpan.FromMilliseconds(300), atLeast: 1).WaitAsync(TimeSpan.FromSeconds(60));
-        time.Advance(TimeSpan.FromMilliseconds(300));
-        described.IsCompleted.Should().BeFalse("the sound-card lookup has not returned");
-        gate.Set();
-        JsonObject found = await described;
+        JsonObject found;
+        try
+        {
+            time.Advance(TimeSpan.FromMilliseconds(300));
+            described.IsCompleted.Should().BeFalse("the sound-card lookup has not returned");
+        }
+        finally
+        {
+            // Always let the held lookup go, so a failing run does not leave a pool thread waiting.
+            gate.Set();
+        }
 
+        found = await described.WaitAsync(TimeSpan.FromSeconds(60));
         found["uberSdr"]!["problem"]!.GetValue<string>().Should().Contain("did not answer");
         found["soundCards"]!["problem"].Should().BeNull();
     }
@@ -437,7 +448,7 @@ public sealed class HardwareDiscoveryTests
         await time.WhenCreatedAsync(TimeSpan.FromMilliseconds(300), atLeast: 1)
             .WaitAsync(TimeSpan.FromSeconds(60));
         time.Advance(TimeSpan.FromMilliseconds(300));
-        JsonObject found = await described;
+        JsonObject found = await described.WaitAsync(TimeSpan.FromSeconds(60));
 
         found["flexRadios"]!["problem"]!.GetValue<string>().Should().Contain("cannot listen for FlexRadios");
         found["uberSdr"]!["problem"]!.GetValue<string>().Should().Contain("did not answer");
