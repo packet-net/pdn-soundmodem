@@ -117,7 +117,7 @@ row in the matrix. A fix isn't finished until the ledger records it.
 - PRs merge on locally-run green tests (`dotnet test`); fix forward.
 - **Cross-repo iteration**: the co-developed packages swap to local checkouts with
   `-p:FecSourcePath=... -p:Il2pSourcePath=... -p:FlexSourcePath=...
-  -p:RadioAudioSourcePath=... -p:DspSourcePath=... -p:Ms110dSourcePath=...` (see `Packet.SoundModem.csproj`) - no pack/publish round trip per change. Unset, CI and
+  -p:RadioAudioSourcePath=... -p:DspSourcePath=... -p:Ms110dSourcePath=... -p:OfdmFmSourcePath=...` (see `Packet.SoundModem.csproj`) - no pack/publish round trip per change. Unset, CI and
   everyone else consume the published packages; version pins in
   `Directory.Packages.props` only move when a package actually ships.
 - **Modem packages**: a waveform can move into its own `M0LTE.<Name>` package with its

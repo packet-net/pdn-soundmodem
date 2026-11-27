@@ -36,5 +36,5 @@ Downstream programs that used the old `Packet.SoundModem.<Name>` namespace (pdn-
 | FSK 4800 and 9600 | not yet | |
 | C4FSK | not yet | |
 | BPSK and QPSK | not yet | |
-| OFDM-FM, adaptive | M0LTE.OfdmFm, not yet published | none yet |
+| OFDM-FM, adaptive | M0LTE.OfdmFm | the station host, `Modems/OfdmFmStation/OfdmFmStationHost.cs` (listening only so far) |
 | OFDM-FM, the earlier built-in `ofdm-fm` modes | not yet | `Modems/OfdmFm/` |
