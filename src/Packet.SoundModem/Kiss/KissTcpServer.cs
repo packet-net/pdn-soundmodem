@@ -379,8 +379,9 @@ public sealed class KissTcpServer : IAsyncDisposable
                 // channel, and a NinoTNC-style host expects fire-and-forget to stay silent.
                 // A polyglot port has no frame to route by, so SETHW goes to its default modem.
                 int port = _polyglot?.DefaultSubChannel ?? TransmitSubChannel(frame.Port, []);
-                if (_channel.Modems.TryGetValue(port, out IModem? modem)
-                    && modem is IHardwareControllable hw)
+                if ((_channel.Modems.TryGetValue(port, out IModem? modem)
+                        ? modem as IHardwareControllable
+                        : _channel.Ports.GetValueOrDefault(port) as IHardwareControllable) is { } hw)
                 {
                     bool applied = hw.TrySetHardware(frame.Payload, out string outcome);
                     if (applied)

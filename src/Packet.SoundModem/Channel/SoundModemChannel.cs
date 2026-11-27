@@ -51,6 +51,7 @@ public delegate void ReceiveTap(ReadOnlySpan<float> samples);
 public sealed class SoundModemChannel
 {
     private readonly Dictionary<int, IModem> _modems = [];
+    private readonly Dictionary<int, ISubChannelPort> _ports = [];
     private readonly List<ReceiveTap> _receiveTaps = [];
 
     // Where each modem sits in the audio band, measured once as it is added, so that carrier
@@ -662,11 +663,54 @@ public sealed class SoundModemChannel
     /// <summary>The modems keyed by sub-channel.</summary>
     public IReadOnlyDictionary<int, IModem> Modems => _modems;
 
+    /// <summary>The ports keyed by sub-channel: modes that take whole frames and are not modems.</summary>
+    public IReadOnlyDictionary<int, ISubChannelPort> Ports => _ports;
+
+    /// <summary>Adds a port on a KISS sub-channel (0-15). A sub-channel has a modem or a port,
+    /// never both. May be called before the channel starts.</summary>
+    public void AddPort(int subChannel, ISubChannelPort port)
+    {
+        ArgumentNullException.ThrowIfNull(port);
+        ArgumentOutOfRangeException.ThrowIfNegative(subChannel);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(subChannel, 15);
+        if (_modems.ContainsKey(subChannel) || _ports.ContainsKey(subChannel))
+        {
+            throw new InvalidOperationException(
+                $"sub-channel {subChannel} already has a {(_modems.ContainsKey(subChannel) ? "modem" : "port")}");
+        }
+
+        _ports.Add(subChannel, port);
+    }
+
+    /// <summary>Hands a received frame up from a port, as a modem's decode would be: raises
+    /// <see cref="FrameReceived"/> (unless the quality says the frame is monitor-only) and
+    /// <see cref="FrameReceivedWithQuality"/>.</summary>
+    public void DeliverReceived(int subChannel, byte[] frame, Modems.FrameQuality quality)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        if (!_ports.ContainsKey(subChannel))
+        {
+            throw new InvalidOperationException($"sub-channel {subChannel} has no port");
+        }
+
+        if (!quality.MonitorOnly)
+        {
+            FrameReceived?.Invoke(subChannel, frame);
+        }
+
+        FrameReceivedWithQuality?.Invoke(subChannel, frame, quality);
+    }
+
     /// <summary>Adds a modem on a KISS sub-channel (0-15).</summary>
     public void AddModem(int subChannel, Func<Action<byte[]>, IModem> factory)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(subChannel);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(subChannel, 15);
+        if (_ports.ContainsKey(subChannel))
+        {
+            throw new InvalidOperationException($"sub-channel {subChannel} already has a port");
+        }
+
         IModem modem = factory(frame => FrameReceived?.Invoke(subChannel, frame));
 
         // Enriched here, at the one point every modem's quality passes through, so the frame
@@ -819,6 +863,11 @@ public sealed class SoundModemChannel
     /// for why that is not "played out".</summary>
     public Task EnqueueTransmit(int subChannel, byte[] frame)
     {
+        if (_ports.TryGetValue(subChannel, out ISubChannelPort? port))
+        {
+            return SendViaPortAsync(subChannel, frame, port);
+        }
+
         if (!_modems.TryGetValue(subChannel, out IModem? modem))
         {
             // A sub-channel nothing transmits on - a typo'd nibble, or the ARDOP entry, which
@@ -912,6 +961,29 @@ public sealed class SoundModemChannel
         shifter.Process(burst, shifted.AsSpan(0, burst.Length));
         shifter.Process(new float[groupDelay], shifted.AsSpan(burst.Length));
         return shifted;
+    }
+
+    /// <summary>
+    /// The port's counterpart of <see cref="SendAndAnnounceAsync"/>: the port decides when the
+    /// frame goes, so there is no CSMA, lease or trim here. Announced after the send, by one of
+    /// the transmitted events or <see cref="TransmitRejected"/>, never both.
+    /// </summary>
+    private async Task SendViaPortAsync(int subChannel, byte[] frame, ISubChannelPort port)
+    {
+        frame = (byte[])frame.Clone();
+        try
+        {
+            await port.Transmit(frame).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            TransmitRejected?.Invoke(subChannel, frame, ex);
+            throw;
+        }
+
+        FrameTransmitted?.Invoke(subChannel, frame);
+        FrameTransmittedWithTrim?.Invoke(subChannel, frame, 0);
+        FrameTransmittedWithReport?.Invoke(subChannel, frame, new TransmitReport(0, TimeSpan.Zero));
     }
 
     private async Task SendAndAnnounceAsync(int subChannel, byte[] frame, IModem modem)

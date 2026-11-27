@@ -1943,7 +1943,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // not a property of the transmission (issue #343).
             _channel.Modems.TryGetValue(subChannel, out IModem? modem)
                 ? ModeNames.Identity(modem.Mode)
-                : "?",
+                : _channel.Ports.TryGetValue(subChannel, out ISubChannelPort? port)
+                    ? ModeNames.Identity(port.Mode)
+                    : "?",
             from, to, frame.Length, snrDb: null, burstLines: null, offsetHz: null,
             corrected: null, crc: null, transmitted: true,
             txTrimHz: report.TrimHz == 0 ? null : report.TrimHz,
