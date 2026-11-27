@@ -118,6 +118,7 @@ public class OfdmFmFramePortStationTests
 
         b.Frames.Should().ContainSingle().Which.Should().Equal(beacon);
         b.Rig.Received.Single().Addressing.Should().Be(Addressing.ToEveryone);
+        b.Rig.Received.Single().FromKey.Should().Be(LinkAddress.FromAscii("G4ABC-1").Key);
         FrameQuality quality = b.Qualities.Single();
         quality.Mode.Should().Be("ofdm-fm-auto");
         quality.FrameBytes.Should().Be(beacon.Length);
@@ -162,6 +163,10 @@ public class OfdmFmFramePortStationTests
         how[0].Should().Be(Addressing.ForAddressNotYetLocated, "at first contact the frame goes to everyone, for the address it is for");
         how[1..].Should().AllBeEquivalentTo(Addressing.ToThisStation, "once the other end is located, frames are addressed");
         a.Rig.Received.Single().Addressing.Should().Be(Addressing.ToThisStation);
+
+        // Each frame says whom it is from: the station it was transmitted as. This is what tells a swapped pair of addresses from the right one, since the exchange is symmetrical.
+        b.Rig.Received.Select(r => r.FromKey).Should().AllBeEquivalentTo(LinkAddress.FromAscii("G4ABC-1").Key);
+        a.Rig.Received.Single().FromKey.Should().Be(LinkAddress.FromAscii("M0XYZ-1").Key);
     }
 
     [Fact]
