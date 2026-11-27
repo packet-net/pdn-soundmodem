@@ -596,23 +596,64 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         ChannelAudioStream stream = Stream();
         float[] audio = Tone(240, 1000);
 
-        // Warm up: the first pass through anything may allocate once.
+        // Warm up: the first pass through anything may allocate once, so every call measured below
+        // is made here first, input loss included.
         for (int i = 0; i < 20; i++)
-        {
-            stream.OnReceive(audio);
-            stream.OnKeyedBlock(240);
-        }
-
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int i = 0; i < 50; i++)
         {
             stream.OnReceive(audio);
             stream.OnKeyedBlock(240);
             stream.OnInputLost();
         }
 
-        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        allocated.Should().Be(0, "the receive thread copies into buffers it already has");
+        Action work = () =>
+        {
+            for (int i = 0; i < 50; i++)
+            {
+                stream.OnReceive(audio);
+                stream.OnKeyedBlock(240);
+                stream.OnInputLost();
+            }
+        };
+
+        AllocationMeasure.Smallest(work).Should().Be(0, "the receive thread copies into buffers it already has");
+    }
+
+    [Fact]
+    public void Handing_A_Block_To_A_Reader_Waiting_On_An_Empty_Queue_Allocates_Nothing()
+    {
+        // The reader's send loop is parked on the queue whenever it has caught up, which is the common
+        // case once a connection is steady, so the receive thread's hand-over wakes a waiter every
+        // block. Parking is certain here (a wait that has not finished was registered before the call
+        // returned), where a real socket's loop is only usually parked at the moment of a reading.
+        var queue = new ChannelAudioStream.AudioQueue(4, 240);
+        using var cancellation = new CancellationTokenSource(); // the send loop's own token is cancellable
+        float[] audio = Tone(240, 1000);
+        byte[] message = new byte[16 + (240 * 4)];
+        ValueTask<int> waiting = default;
+        bool parked = false;
+
+        void Finish()
+        {
+            if (parked)
+            {
+                Eventually.Until(() => waiting.IsCompleted, "the reader took the block");
+                waiting.GetAwaiter().GetResult().Should().Be(message.Length);
+                parked = false;
+            }
+        }
+
+        Action park = () =>
+        {
+            Finish();
+            waiting = queue.DequeueAsync(message, cancellation.Token);
+            waiting.IsCompleted.Should().BeFalse("the queue is empty, so the reader is parked");
+            parked = true;
+        };
+        Action handOver = () => queue.Enqueue(0, audio, 0);
+
+        _ = AllocationMeasure.Once(handOver, park); // warm-up: first use of the wake path
+        AllocationMeasure.Smallest(handOver, park).Should().Be(0, "waking a parked reader must not cost the receive thread an allocation");
+        Finish();
     }
 
     private async Task KeyAndFeedAsync(int keyedBlocks, int keyedLength)

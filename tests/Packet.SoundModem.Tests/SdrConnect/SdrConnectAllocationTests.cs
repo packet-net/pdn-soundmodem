@@ -51,7 +51,6 @@ public sealed class SdrConnectAllocationTests
 
         using var reading = new CancellationTokenSource();
         long read = 0;
-        long sending = 0;
         var reader = new Thread(() =>
         {
             var buffer = new float[16384];
@@ -71,34 +70,57 @@ public sealed class SdrConnectAllocationTests
         // Paced: each message is sent once the reader has had the last, so the fake's sends
         // complete at once and its own async machinery allocates nothing either. A sender that
         // ran ahead would find its sends waiting, and each waiting send allocates on its side.
-        void Send(int count)
+        // What the sender thread itself allocates (the fake's: a few dozen bytes a message, and a
+        // one-off of about 32 KB on the first send after the collection, the counter charging a fresh
+        // allocation buffer) is read for every message and taken off the
+        // total below. That is deliberately the plain sum, not the smallest of several readings: a
+        // message cannot be sent twice. A rise the runtime charges the sender thread without it
+        // allocating is then taken off as well, which can only hide a few KB of the 2000 messages'
+        // total, far below what a per-message allocation on the receive path adds (48 bytes or more
+        // a message is 96 KB), and never fails the test wrongly.
+        int sent = 0;
+        long readBase = 0;
+        Action pace = () =>
         {
-            for (int k = 0; k < count; k++)
+            long target = readBase + ((long)sent * 2 * 4096);
+            while (Interlocked.Read(ref read) < target)
             {
-                long target = Interlocked.Read(ref read) + (2 * 4096);
-                long mine = GC.GetAllocatedBytesForCurrentThread();
-                if (push is not null)
-                {
-                    fake.SendRawTextAsync(push).GetAwaiter().GetResult();
-                }
-
-                fake.SendRawAsync(message).GetAwaiter().GetResult();
-                sending += GC.GetAllocatedBytesForCurrentThread() - mine;
-                while (Interlocked.Read(ref read) < target)
-                {
-                    Thread.Yield();
-                }
+                Thread.Yield();
             }
+        };
+        Action sendOne = () =>
+        {
+            if (push is not null)
+            {
+                fake.SendRawTextAsync(push).GetAwaiter().GetResult();
+            }
+
+            fake.SendRawAsync(message).GetAwaiter().GetResult();
+        };
+
+        // Sends this many messages, each once the reader has had the one before; returns what the
+        // sender thread allocated doing it.
+        long Send(int count)
+        {
+            readBase = Interlocked.Read(ref read);
+            long allocated = 0;
+            for (sent = 0; sent < count;)
+            {
+                allocated += AllocationMeasure.Once(sendOne, pace);
+                sent++;
+            }
+
+            pace();
+            return allocated;
         }
 
         Send(500); // warm-up: buffers sized, code jitted, pools filled
         GC.Collect();
         GC.WaitForPendingFinalizers();
         long before = GC.GetTotalAllocatedBytes(precise: true);
-        long sentBefore = sending;
         const int messages = 2000;
-        Send(messages);
-        long after = GC.GetTotalAllocatedBytes(precise: true) - (sending - sentBefore);
+        long sending = Send(messages);
+        long after = GC.GetTotalAllocatedBytes(precise: true) - sending;
         reading.Cancel();
         source.Dispose();
         reader.Join(TimeSpan.FromSeconds(5));

@@ -402,18 +402,16 @@ public sealed class IqPipeTests : IDisposable
         }
 
         // Tiering can still be promoting methods on a loaded box, and a promotion can allocate on
-        // the thread that triggers it; steady state is the best of three stretches, not the first.
-        long least = long.MaxValue;
-        for (int attempt = 0; attempt < 3 && least > 0; attempt++)
+        // the thread that triggers it; steady state is the smallest of several stretches, not the first.
+        Action stretch = () =>
         {
-            long before = GC.GetAllocatedBytesForCurrentThread();
             for (int k = 0; k < 200; k++)
             {
                 source.Read(buffer);
             }
+        };
 
-            least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
-        }
+        long least = AllocationMeasure.Smallest(stretch);
 
         least.Should().Be(0);
     }

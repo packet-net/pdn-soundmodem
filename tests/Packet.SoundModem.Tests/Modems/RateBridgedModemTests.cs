@@ -158,35 +158,20 @@ public class RateBridgedModemTests
             bridged!.Process(block);
         }
 
-        // A collection that pauses this thread mid-stretch, started by another test's
-        // allocations, can move this thread's count without this thread allocating anything,
-        // most likely by charging it the unused end of its allocation buffer: 2.9 to 5.7 kB in
-        // 16 stretches out of about 13,000 run beside the rest of the Modems tests on a loaded
-        // box, every one of them with a GC pause inside it, and not one byte in any stretch
-        // without a pause (#668). Such a stretch says nothing about the bridge, so it is run
-        // again; a bridge that allocated per block would allocate in every stretch, and the
-        // clean one fails it.
+        // A stretch of 100 blocks, read through the shared helper: a bridge that allocated per block
+        // would allocate in every run, and the runtime's phantom rises (#668) are not (see
+        // AllocationMeasure).
         int stretches = 0;
-        long allocated = -1;
-        for (int attempt = 0; attempt < 10 && allocated < 0; attempt++)
+        Action stretch = () =>
         {
-            TimeSpan paused = GC.GetTotalPauseDuration();
-            long before = GC.GetAllocatedBytesForCurrentThread();
+            stretches++;
             for (int i = 0; i < 100; i++)
             {
                 bridged!.Process(block);
             }
+        };
 
-            long after = GC.GetAllocatedBytesForCurrentThread();
-            stretches++;
-            if (GC.GetTotalPauseDuration() == paused)
-            {
-                allocated = after - before;
-            }
-        }
-
-        allocated.Should().BeGreaterThanOrEqualTo(0, "a stretch with no collection in it is needed to measure anything");
-        allocated.Should().Be(0, "the receive path is the DSP hot path");
+        AllocationMeasure.Smallest(stretch).Should().Be(0, "the receive path is the DSP hot path");
         inner.Processed.Should().Be((10 + (100 * stretches)) * block.Length / 4);
     }
 
