@@ -1,159 +1,84 @@
-using System.Text;
+using Packet.Ax25;
+using Packet.Core;
 
 namespace Packet.SoundModem.Kiss;
 
 /// <summary>
-/// Reads the address field and control byte of an AX.25 frame: which station a frame was heard
-/// from, which it is for next, and whether it is a UI frame or an expedited one. Shared by
-/// <see cref="PolyglotRouter"/> and anything else that must read a header the same way.
+/// Questions about an AX.25 frame's header that the polyglot router and the host-interface
+/// adapters ask: which station a frame was heard from, which it is for next, whether it is a UI
+/// frame for everyone, and whether it is expedited. Shared by <see cref="PolyglotRouter"/> and
+/// anything else that must read a header the same way.
 /// </summary>
 /// <remarks>
-/// A header that does not read (too short, an address that is not a callsign, no control byte
-/// after the last address) yields null or false from every member, never a guess.
+/// <para><b>It parses nothing itself.</b> <see cref="Ax25Frame"/> from packet.net reads the frame;
+/// what is left here is the policy that picks an answer out of it. A frame that does not parse
+/// yields null or false from every member, never a guess.</para>
+/// <para><b>Parse options.</b> The library's lenient defaults, except that a blank callsign is
+/// refused (<see cref="Ax25ParseOptions.AllowEmptyCallsignBase"/> off), as the router's own reader
+/// always refused it. The other two leniencies stay on: trailing bytes after a supervisory frame
+/// (a modulo-128 control field's second octet arrives that way, since the width is not known
+/// here) and a SABM, SABME or DISC whose command/response bits say response (a legacy peer's;
+/// routing does not care). Modulo 8 is assumed for the same reason: which class a control field
+/// is in shows in its first octet at either modulo.</para>
 /// </remarks>
 internal static class Ax25Header
 {
-    /// <summary>Most addresses an AX.25 header carries: destination, source, eight digipeaters.</summary>
-    private const int MaxAddresses = 10;
+    private static readonly Ax25ParseOptions Options = new() { AllowEmptyCallsignBase = false };
 
-    /// <summary>The station whose transmitter a received frame came from, or null when the
-    /// header does not read.</summary>
+    /// <summary>The station whose transmitter a received frame came from: the last digipeater
+    /// that has repeated it, else the source. Null when the frame does not parse.</summary>
     internal static string? HeardStation(ReadOnlySpan<byte> frame)
     {
-        if (!TryReadPath(frame, out int count))
+        if (Parse(frame) is not { } parsed)
         {
             return null;
         }
 
-        // Latest repeater first: the last digipeater with H set is the one on the air.
-        for (int n = count - 1; n >= 2; n--)
+        // Latest repeater first: the last digipeater with its repeated bit set is the one on the air.
+        for (int n = parsed.Digipeaters.Count - 1; n >= 0; n--)
         {
-            if ((frame[(n * 7) + 6] & 0x80) != 0)
+            if (parsed.Digipeaters[n].CrhBit)
             {
-                return ReadStation(frame.Slice(n * 7, 7));
+                return Station(parsed.Digipeaters[n]);
             }
         }
 
-        return ReadStation(frame.Slice(7, 7));
+        return Station(parsed.Source);
     }
 
-    /// <summary>The station a frame to be sent must reach first, or null when the header does
-    /// not read.</summary>
+    /// <summary>The station a frame to be sent must reach first: the first digipeater that has not
+    /// repeated it, else the destination. Null when the frame does not parse.</summary>
     internal static string? NextHop(ReadOnlySpan<byte> frame)
     {
-        if (!TryReadPath(frame, out int count))
+        if (Parse(frame) is not { } parsed)
         {
             return null;
         }
 
-        for (int n = 2; n < count; n++)
+        foreach (Ax25Address digipeater in parsed.Digipeaters)
         {
-            if ((frame[(n * 7) + 6] & 0x80) == 0)
+            if (!digipeater.CrhBit)
             {
-                return ReadStation(frame.Slice(n * 7, 7));
+                return Station(digipeater);
             }
         }
 
-        return ReadStation(frame[..7]);
+        return Station(parsed.Destination);
     }
 
-    /// <summary>True for a UI frame (control 0x03, P/F masked) with no digipeater still to repeat
-    /// it, so it is for everyone. False for any other frame, a UI frame with a digipeater still
-    /// to go, and a header that does not read.</summary>
-    internal static bool IsUiWithNoDigipeaterPending(ReadOnlySpan<byte> frame)
-    {
-        if (!TryReadPath(frame, out int count) || (frame[count * 7] & 0xEF) != 0x03)
-        {
-            return false;
-        }
+    /// <summary>True for a UI frame with no digipeater still to repeat it, so it is for everyone.</summary>
+    internal static bool IsUiWithNoDigipeaterPending(ReadOnlySpan<byte> frame) =>
+        Parse(frame) is { IsUi: true } parsed && parsed.Digipeaters.All(d => d.CrhBit);
 
-        for (int n = 2; n < count; n++)
-        {
-            if ((frame[(n * 7) + 6] & 0x80) == 0)
-            {
-                return false;
-            }
-        }
+    /// <summary>True for a frame that should not queue behind data: RR, RNR, REJ, SREJ, UA and DM.
+    /// False for everything else, and for a frame that does not parse.</summary>
+    internal static bool IsExpedited(ReadOnlySpan<byte> frame) =>
+        Parse(frame)?.FrameType is Ax25FrameType.Rr or Ax25FrameType.Rnr or Ax25FrameType.Rej
+            or Ax25FrameType.Srej or Ax25FrameType.Ua or Ax25FrameType.Dm;
 
-        return true;
-    }
+    /// <summary>An address as text: upper case <c>CALL-SSID</c>, SSID 0 written bare.</summary>
+    internal static string Station(Ax25Address address) => address.Callsign.ToString();
 
-    /// <summary>True for a frame that should not queue behind data: every supervisory frame (RR,
-    /// RNR, REJ, SREJ, at modulo 8 or 128) and the unnumbered UA and DM (P/F masked). False for
-    /// everything else (I, UI, SABM, SABME, DISC, FRMR, XID, TEST) and for a header that does
-    /// not read.</summary>
-    internal static bool IsExpedited(ReadOnlySpan<byte> frame)
-    {
-        if (!TryReadPath(frame, out int count))
-        {
-            return false;
-        }
-
-        byte control = frame[count * 7];
-        if ((control & 0x03) == 0x01)
-        {
-            return true;
-        }
-
-        return (control & 0xEF) is 0x63 or 0x0F;
-    }
-
-    /// <summary>Counts the address fields: they run until one has the extension bit set. False
-    /// for anything that cannot be an AX.25 header, and when any address in it does not read as a
-    /// callsign, since a header with one damaged address says nothing trustworthy about any. On
-    /// success the control byte is at <c>count * 7</c>.</summary>
-    internal static bool TryReadPath(ReadOnlySpan<byte> frame, out int count)
-    {
-        count = 0;
-        while (count < MaxAddresses && (count + 1) * 7 <= frame.Length)
-        {
-            ReadOnlySpan<byte> field = frame.Slice(count * 7, 7);
-            if (ReadStation(field) is null)
-            {
-                return false;
-            }
-
-            count++;
-            if ((field[6] & 0x01) != 0)
-            {
-                // A control byte must follow the last address.
-                return count >= 2 && count * 7 < frame.Length;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>One address field as text: upper case <c>CALL-SSID</c>, SSID 0 written bare. Null
-    /// when the field is not a callsign.</summary>
-    internal static string? ReadStation(ReadOnlySpan<byte> field)
-    {
-        var callsign = new StringBuilder(9);
-        bool ended = false;
-        for (int n = 0; n < 6; n++)
-        {
-            char c = (char)(field[n] >> 1);
-            if (c == ' ')
-            {
-                ended = true;
-                continue;
-            }
-
-            // Letters and digits only, and no letter after the padding starts.
-            if (ended || c is not ((>= 'A' and <= 'Z') or (>= '0' and <= '9')))
-            {
-                return null;
-            }
-
-            callsign.Append(c);
-        }
-
-        if (callsign.Length == 0)
-        {
-            return null;
-        }
-
-        int ssid = (field[6] >> 1) & 0x0F;
-        return ssid == 0 ? callsign.ToString() : callsign.Append('-').Append(ssid).ToString();
-    }
+    private static Ax25Frame? Parse(ReadOnlySpan<byte> frame) =>
+        Ax25Frame.TryParse(frame, Options, out Ax25Frame? parsed) ? parsed : null;
 }

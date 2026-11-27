@@ -43,7 +43,12 @@ public class Ax25HeaderTests
         return [.. bytes];
     }
 
-    private static byte[] WithControl(byte control, params string[] addresses) => Build([control], addresses);
+    /// <summary>A frame with this control octet. An I or UI frame carries a PID, as it must on air;
+    /// the other frame types end at the control octet.</summary>
+    private static byte[] WithControl(byte control, params string[] addresses) =>
+        (control & 0x01) == 0 || (control & 0xEF) == 0x03
+            ? Build([control, 0xF0, 0x68, 0x69], addresses)
+            : Build([control], addresses);
 
     public static TheoryData<string[], string, string> Paths => new()
     {
@@ -75,16 +80,24 @@ public class Ax25HeaderTests
     }
 
     [Fact]
-    public void A_Lower_Case_Callsign_Is_Written_Upper_Case_And_SSID_Zero_Bare()
+    public void A_Lower_Case_Callsign_Does_Not_Read_And_SSID_Zero_Is_Written_Bare()
     {
-        // The address field is shifted ASCII; a lower-case letter is not a callsign.
-        byte[] upper = WithControl(0x03, "G4ABC-0", "M0LTE-1");
-        Ax25Header.ReadStation(upper.AsSpan(0, 7)).Should().Be("G4ABC");
-        Ax25Header.ReadStation(upper.AsSpan(7, 7)).Should().Be("M0LTE-1");
+        Ax25Header.NextHop(WithControl(0x03, "G4ABC-0", "M0LTE-1")).Should().Be("G4ABC");
+        Ax25Header.HeardStation(WithControl(0x03, "G4ABC-0", "M0LTE-1")).Should().Be("M0LTE-1");
 
         byte[] lower = WithControl(0x03, "g4abc", "M0LTE");
-        Ax25Header.ReadStation(lower.AsSpan(0, 7)).Should().BeNull();
+        Ax25Header.NextHop(lower).Should().BeNull();
         Ax25Header.HeardStation(lower).Should().BeNull();
+    }
+
+    [Fact]
+    public void A_UI_Or_I_Frame_That_Ends_At_The_Control_Octet_Has_No_PID_And_Does_Not_Read()
+    {
+        // The old reader needed only the control octet; the library wants the PID an I or UI
+        // frame always carries on air. A frame without one is not a real frame.
+        Ax25Header.NextHop(Build([0x03], "DEST", "SRC")).Should().BeNull();
+        Ax25Header.NextHop(Build([0x00], "DEST", "SRC")).Should().BeNull();
+        Ax25Header.NextHop(Build([0x01], "DEST", "SRC")).Should().Be("DEST");
     }
 
     [Fact]
@@ -92,8 +105,8 @@ public class Ax25HeaderTests
     {
         byte[] good = WithControl(0x03, "DEST", "SRC");
 
-        // Truncated at every length short of address plus control.
-        for (int length = 0; length < 15; length++)
+        // Truncated at every length short of address plus control (plus the PID of a UI frame).
+        for (int length = 0; length < 16; length++)
         {
             Ax25Header.HeardStation(good.AsSpan(0, length)).Should().BeNull($"length {length}");
             Ax25Header.NextHop(good.AsSpan(0, length)).Should().BeNull($"length {length}");
@@ -193,6 +206,15 @@ public class Ax25HeaderTests
         byte[] frame = Build([(byte)(firstAndSecond & 0xFF), (byte)(firstAndSecond >> 8)], "G4ABC", "M0LTE");
 
         Ax25Header.IsExpedited(frame).Should().Be(expected);
+    }
+
+    [Fact]
+    public void A_Modulo_128_I_Frame_With_Its_PID_And_Data_Is_Not_Expedited()
+    {
+        // Two control octets, then the PID and the information field.
+        Ax25Header.IsExpedited(Build([0x00, 0x00, 0xF0, 0x01, 0x63], "G4ABC", "M0LTE")).Should().BeFalse();
+        Ax25Header.IsExpedited(Build([0xFE, 0xFF, 0xF0], "G4ABC", "M0LTE")).Should().BeFalse();
+        Ax25Header.IsExpedited(Build([0x01, 0x00], "G4ABC", "M0LTE")).Should().BeTrue();
     }
 
     [Fact]
