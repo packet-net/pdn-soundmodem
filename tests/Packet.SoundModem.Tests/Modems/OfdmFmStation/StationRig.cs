@@ -35,6 +35,7 @@ internal sealed class StationAir(SoundModemChannel channel, VirtualAir.Clock clo
     private long _startCount;
     private int _keys;
     private int _failKeys;
+    private int _failAttempt;
     private volatile bool _keyed;
 
     /// <summary>Where a block of what this radio radiates goes (the far station's receiver). Null: nowhere. Set before the first keyup.</summary>
@@ -63,6 +64,9 @@ internal sealed class StationAir(SoundModemChannel channel, VirtualAir.Clock clo
     /// <summary>Makes the next <paramref name="times"/> key-ups throw.</summary>
     public void FailNextKeys(int times) => Volatile.Write(ref _failKeys, times);
 
+    /// <summary>Makes the key-up with this number (1 is the first the radio is asked for, counting the ones that threw) throw. Deterministic where the order of keyups is.</summary>
+    public void FailKeyAttempt(int attempt) => Volatile.Write(ref _failAttempt, attempt);
+
     /// <summary>Every completed keyup, in order.</summary>
     public IReadOnlyList<Keyup> Keyups
     {
@@ -77,7 +81,12 @@ internal sealed class StationAir(SoundModemChannel channel, VirtualAir.Clock clo
 
     public void Key()
     {
-        Interlocked.Increment(ref _keys);
+        int attempt = Interlocked.Increment(ref _keys);
+        if (attempt == Volatile.Read(ref _failAttempt))
+        {
+            throw new InvalidOperationException("the PTT did not key");
+        }
+
         if (Volatile.Read(ref _failKeys) > 0)
         {
             Interlocked.Decrement(ref _failKeys);
@@ -139,14 +148,14 @@ internal sealed class StationRig : IAsyncDisposable
 
     public StationRig(
         bool blockAtKey = false, FakeRadio? radio = null, bool audioFallback = false, int subChannel = 0, int seed = 1, int txDelayMilliseconds = 100, int txTailMilliseconds = 20,
-        Action<bool?>? afterExternalBusy = null)
+        Action<bool?>? afterExternalBusy = null, Func<IStationClockInput, IStationClockInput>? clockInput = null, OfdmFmStationHostOptions? morse = null)
     {
         Clock = new VirtualAir.Clock();
         Channel = new SoundModemChannel(48000, Clock, randomSeed: 3, channelBusySource: radio, audioFallback: audioFallback);
         Channel.Csma.Persistence = 255;
         Channel.Csma.TxDelayMilliseconds = txDelayMilliseconds;
         Channel.Csma.TxTailMilliseconds = txTailMilliseconds;
-        Host = new OfdmFmStationHost(Channel, new Random(seed), new OfdmFmStationHostOptions { RunJobsInline = true, SubChannel = subChannel, AfterExternalBusy = afterExternalBusy });
+        Host = new OfdmFmStationHost(Channel, new Random(seed), new OfdmFmStationHostOptions { RunJobsInline = true, SubChannel = subChannel, AfterExternalBusy = afterExternalBusy, ClockInputWrapper = clockInput, MorseToneHz = morse?.MorseToneHz ?? 1500, MorseWordsPerMinute = morse?.MorseWordsPerMinute ?? 20, MorseAmplitude = morse?.MorseAmplitude ?? 0.8 });
         Air = new StationAir(Channel, Clock, () => Host.SampleCount) { BlockAtKey = blockAtKey };
         Host.StationForTests.TransmitRequest += e =>
         {
@@ -176,6 +185,27 @@ internal sealed class StationRig : IAsyncDisposable
                 _received.Add((e.Datagram.ToArray(), e.FromKey, e.Addressing));
             }
         };
+        Host.ModemSent += e =>
+        {
+            lock (_gate)
+            {
+                _modemSent.Add(e);
+            }
+        };
+        Host.Identified += e =>
+        {
+            lock (_gate)
+            {
+                _identified.Add(e);
+            }
+        };
+        Host.MorseIdentSent += text =>
+        {
+            lock (_gate)
+            {
+                _morseSent.Add(text);
+            }
+        };
         Host.Notice += line =>
         {
             lock (_gate)
@@ -190,6 +220,22 @@ internal sealed class StationRig : IAsyncDisposable
     private readonly List<TransmittedEvent> _transmitted = [];
     private readonly List<(byte[] Datagram, uint FromKey, Addressing Addressing)> _received = [];
     private readonly List<string> _notices = [];
+    private readonly List<ModemSentEvent> _modemSent = [];
+    private readonly List<IdentifiedEvent> _identified = [];
+    private readonly List<string> _morseSent = [];
+
+    /// <summary>What the Morse ident keys with the default options and the rig's key-up delay and tail: silence, the callsign at 1500 Hz, 20 words a minute, 0.8, then the tail.</summary>
+    public static float[] ExpectedMorse(string callsign = "G4ABC", int delayMilliseconds = 100, int tailMilliseconds = 20)
+    {
+        float[] tone = Packet.SoundModem.Ident.MorseGenerator.Real(callsign, 1500, 0.8, 20, 48000);
+        int lead = delayMilliseconds * 48000 / 1000;
+        var audio = new float[lead + tone.Length + (tailMilliseconds * 48000 / 1000)];
+        tone.CopyTo(audio, lead);
+        return audio;
+    }
+
+    /// <summary>True if the keyup is the default Morse ident of <paramref name="callsign"/>.</summary>
+    public static bool IsMorse(Keyup keyup, string callsign = "G4ABC") => keyup.Audio.AsSpan().SequenceEqual(ExpectedMorse(callsign));
 
     public VirtualAir.Clock Clock { get; }
 
@@ -210,6 +256,12 @@ internal sealed class StationRig : IAsyncDisposable
 
     public (byte[] Datagram, uint FromKey, Addressing Addressing)[] Received { get { lock (_gate) { return [.. _received]; } } }
 
+    public ModemSentEvent[] ModemSent { get { lock (_gate) { return [.. _modemSent]; } } }
+
+    public IdentifiedEvent[] Identified { get { lock (_gate) { return [.. _identified]; } } }
+
+    public string[] MorseSent { get { lock (_gate) { return [.. _morseSent]; } } }
+
     public string[] Notices { get { lock (_gate) { return [.. _notices]; } } }
 
     /// <summary>Starts the channel's transmitter on a thread of its own.</summary>
@@ -228,6 +280,16 @@ internal sealed class StationRig : IAsyncDisposable
     public async Task FeedAsync(int blocks)
     {
         for (int i = 0; i < blocks; i++)
+        {
+            await IdleAsync();
+            Channel.ProcessReceive(Quiet);
+        }
+    }
+
+    /// <summary>Feeds quiet blocks, waiting out any keyup in between, until the station's own count reaches <paramref name="count"/>. It ends because every block moves the count; no outcome depends on how long it took.</summary>
+    public async Task FeedToCountAsync(long count)
+    {
+        while (Host.SampleCount < count)
         {
             await IdleAsync();
             Channel.ProcessReceive(Quiet);

@@ -51,4 +51,35 @@ public class OfdmFmStationHostTwoStationTests
         a.Transmitted.Should().ContainSingle();
         b.Transmitted.Should().ContainSingle();
     }
+
+    [Fact]
+    public async Task Each_station_identifies_after_its_first_transmission_and_the_other_hears_its_callsign()
+    {
+        await using var a = new StationRig(seed: 11);
+        await using var b = new StationRig(seed: 12);
+        var timeline = new Lock();
+        a.Air.Timeline = timeline;
+        b.Air.Timeline = timeline;
+        a.Air.Radiated = chunk => b.Channel.ProcessReceive(chunk);
+        b.Air.Radiated = chunk => a.Channel.ProcessReceive(chunk);
+        a.Host.SetIdentity("G4ABC").Should().Be(IdentityResult.Accepted);
+        b.Host.SetIdentity("M0XYZ").Should().Be(IdentityResult.Accepted);
+        a.StartTransmitter();
+        b.StartTransmitter();
+
+        a.Host.Send(new byte[40], LinkAddress.Everyone, LinkAddress.FromAscii("G4ABC-1"), LinkProtocol.NoLayer3, new HostTag(1)).Should().Be(SendResult.Accepted);
+        b.Host.Send(new byte[40], LinkAddress.Everyone, LinkAddress.FromAscii("M0XYZ-1"), LinkProtocol.NoLayer3, new HostTag(2)).Should().Be(SendResult.Accepted);
+        await StationRig.PumpAsync(
+            () => a.Identified.Length >= 1 && b.Identified.Length >= 1 && a.MorseSent.Length >= 1 && b.MorseSent.Length >= 1,
+            "each station to identify and be heard doing it",
+            a,
+            b);
+
+        a.Identified.Select(i => i.Callsign).Should().Equal(["M0XYZ"], "the first station heard the second's identification burst");
+        b.Identified.Select(i => i.Callsign).Should().Equal(["G4ABC"]);
+        a.MorseSent.Should().Equal(["G4ABC"]);
+        b.MorseSent.Should().Equal(["M0XYZ"]);
+        a.ModemSent.Count(m => m.Kind == ModemSentKind.Identification).Should().Be(1);
+        b.ModemSent.Count(m => m.Kind == ModemSentKind.Identification).Should().Be(1);
+    }
 }

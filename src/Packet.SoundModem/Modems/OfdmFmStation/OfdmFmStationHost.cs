@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using M0LTE.OfdmFm;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.CarrierSense;
+using Packet.SoundModem.Ident;
 using OfdmStation = M0LTE.OfdmFm.Station;
 
 namespace Packet.SoundModem.Modems.OfdmFmStation;
@@ -23,23 +24,37 @@ public sealed class OfdmFmStationHostOptions
     /// </summary>
     public int SubChannel { get; init; }
 
+    /// <summary>The audio frequency of the Morse identification, in Hz: where it sits in the passband, which the hosting program may need to place. Default 1500.</summary>
+    public double MorseToneHz { get; init; } = 1500;
+
+    /// <summary>The Morse identification's speed in words a minute. Default 20.</summary>
+    public double MorseWordsPerMinute { get; init; } = 20;
+
+    /// <summary>The Morse identification's key-down peak amplitude. Default 0.8, what the existing identification and the modulators use.</summary>
+    public double MorseAmplitude { get; init; } = 0.8;
+
     /// <summary>A test's hook, called on a worker thread when a job is waiting and before it runs it, so that a test can hold a job in flight.</summary>
     internal Action? BeforeJob { get; init; }
+
+    /// <summary>A test's hook: wraps what the host gives the station's clock, so that a test can see every push, skip and transmit start and end the station was told.</summary>
+    internal Func<IStationClockInput, IStationClockInput>? ClockInputWrapper { get; init; }
 
     /// <summary>A test's hook, called on the receive thread after each time the host gave the station a carrier indication, with what it gave.</summary>
     internal Action<bool?>? AfterExternalBusy { get; init; }
 }
 
 /// <summary>
-/// The adaptive OFDM-FM station's audio layer, receive side: it gives a <see cref="SoundModemChannel"/>'s audio to a <c>M0LTE.OfdmFm</c> station and re-raises what the station hears.
+/// The adaptive OFDM-FM station's host: it gives a <see cref="SoundModemChannel"/>'s audio to a <c>M0LTE.OfdmFm</c> station, keys what the station asks to send, identifies in Morse, and re-raises what the station reports.
 /// A program builds the channel itself and constructs the host around it; the daemon does not use it yet.
 /// <para>
 /// <b>The count.</b> The station's only clock is the number of samples it has been given. The host registers a receive tap and the channel's keyed-block event, and hands every block
 /// to the station exactly once, in order, on the channel's receive thread: an unkeyed block as <c>Push</c>, a keyed block of n samples as <c>Skip(n)</c> (<see cref="TransmitBook"/> does the arithmetic).
 /// </para>
 /// <para>
-/// <b>Threads.</b> One lock covers every call into the station from the host. The station raises its events inside that lock, on the receive thread, and the host re-raises them from there:
-/// a handler must return promptly and must not call back into the host or block on another thread that does. Decode runs on worker threads the host owns (not the thread pool),
+/// <b>Threads, the rule for callers.</b> One lock covers every call into the station from the host. The operations (<see cref="SetIdentity"/>, <see cref="Send"/>, <see cref="Cancel(HostTag)"/>, <see cref="Cancel(LinkAddress)"/>, <see cref="Snapshot"/>)
+/// may be called from any thread except from inside one of the host's event handlers: the lock is held there, on the channel's receive thread, and the station refuses calls from inside its own events
+/// (<see cref="InvalidOperationException"/>). A program that wants to act on an event queues the work and returns. Every event is raised on the receive thread inside the lock, so a handler must return promptly
+/// and must not block on another thread that calls the host. A tool's command loop or a network handler calls an operation from its own thread and gets the station's result directly. Decode runs on worker threads the host owns (not the thread pool),
 /// each woken by the station's <c>WorkAvailable</c> and calling <c>RunOne</c> until it has no more; workers never raise an event.
 /// </para>
 /// <para>
@@ -53,6 +68,15 @@ public sealed class OfdmFmStationHostOptions
 /// <b>Refusals.</b> A request the channel will not key (receive-only, a transmit lease held by another sub-channel, a PTT or device failure) is reported to the station as refused, and the station offers it again by its own access rules.
 /// The host has no retry timer. A request is also refused to the station, without troubling the channel, while the lease excludes this host; a lease that is taken after hand-over is the channel's refusal.
 /// A channel that is receive-only says so once, through <see cref="Notice"/>.
+/// </para>
+/// <para>
+/// <b>Morse identification.</b> The one rule for when is the station's: when it raises <c>IdentificationDue</c> (at the end of a transmission of its own, when it has never identified or ten minutes of its own clock have passed since its last identification burst started;
+/// an idle station never identifies), the host queues one Morse identification of the station's callsign, keyed as its own transmission: its own source, attributed to the host's sub-channel for the transmit lease,
+/// the key-up delay as silence in front, tone, speed and level from the options. The station queues its own identification burst at the same moment. The host runs no clock of its own and does not use <see cref="StationIdentifier"/>'s rule; the Morse audio is only rendered with
+/// <see cref="MorseGenerator"/>. A Morse keyup is never reported to the station as a transmission of its own. So that the two never abut as one run of keyed blocks, which the station could not tell apart,
+/// the host keeps one of them in the channel at a time and lets one unkeyed block go by between them: the Morse ident goes first, and the station's burst is handed over after it has been written. The channel's own rules (carrier, persistence, the lease) apply to the Morse ident as to any transmission.
+/// <b>If the channel refuses the Morse ident</b> (a lease held by another sub-channel, receive-only, a PTT or device failure) it is not retried on a timer: the next try is the next time the station raises <c>IdentificationDue</c>, so an identification can be late,
+/// by at least the station's interval, and a refused one is never made up. <see cref="MorseIdentSent"/> is raised for each one that has gone.
 /// </para>
 /// <para>
 /// <b>Carrier.</b> If the channel has a radio-derived carrier source (not the audio guess), the host reads it once per heard block and tells the station when the answer changes, including when the source stops knowing.
@@ -82,6 +106,17 @@ public sealed class OfdmFmStationHost : IDisposable
     private volatile bool _disposed;
     private long _audioLost;
 
+    // The Morse identification. All of it is touched under the lock, on the receive thread, except the channel's own callbacks, which only queue a signal.
+    private readonly object _morseSource = new();
+    private readonly CancellationTokenSource _morseCancel = new();
+    private readonly double _morseTone;
+    private readonly double _morseSpeed;
+    private readonly double _morseAmplitude;
+    private bool _morseWanted;
+    private bool _morseInChannel;
+    private bool _afterMorse;
+    private string _morseText = "";
+
     /// <summary>Makes the host and starts listening.</summary>
     /// <param name="channel">The channel to listen on. It must run at 48000 Hz.</param>
     /// <param name="random">The station's source of random choices. The caller seeds it.</param>
@@ -97,15 +132,28 @@ public sealed class OfdmFmStationHost : IDisposable
         }
 
         options ??= new OfdmFmStationHostOptions();
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MorseWordsPerMinute);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MorseAmplitude);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MorseToneHz);
+        if (options.MorseToneHz >= channel.SampleRate / 2.0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), options.MorseToneHz, "The Morse tone must be below half the channel's sample rate.");
+        }
+
+        _morseTone = options.MorseToneHz;
+        _morseSpeed = options.MorseWordsPerMinute;
+        _morseAmplitude = options.MorseAmplitude;
         _channel = channel;
         _beforeJob = options.BeforeJob;
         _afterExternalBusy = options.AfterExternalBusy;
         _station = new OfdmStation(random, options.RunJobsInline);
-        _book = new TransmitBook(new StationInput(_station));
+        IStationClockInput clock = new StationInput(_station);
+        _book = new TransmitBook(options.ClockInputWrapper?.Invoke(clock) ?? clock);
 
         // Only a source that reads the radio: the audio guess would put the station on short slots on a shaky basis, and it is not given other modems' detectors either.
         _radio = channel.BusySource is FmShapeBusyDetector ? null : channel.BusySource;
         channel.TransmitLease.Attribute(this, options.SubChannel);
+        channel.TransmitLease.Attribute(_morseSource, options.SubChannel);
 
         _station.TransmitRequest += OnTransmitRequest;
         _station.WithdrawRequest += OnWithdrawRequest;
@@ -119,6 +167,11 @@ public sealed class OfdmFmStationHost : IDisposable
         _station.PathReport += e => { if (!_disposed) { PathReport?.Invoke(e); } };
         _station.Identified += e => { if (!_disposed) { Identified?.Invoke(e); } };
         _station.ChannelBusy += e => { if (!_disposed) { ChannelBusy?.Invoke(e); } };
+        _station.BurstNotDecoded += e => { if (!_disposed) { BurstNotDecoded?.Invoke(e); } };
+        _station.Congestion += e => { if (!_disposed) { Congestion?.Invoke(e); } };
+
+        // The station's one rule for when. The host only notes that a Morse ident is wanted; it is queued at the next unkeyed block.
+        _station.IdentificationDue += _ => _morseWanted = true;
 
         int workers = options.RunJobsInline ? 0 : options.WorkerCount > 0 ? options.WorkerCount : Math.Clamp(Environment.ProcessorCount - 1, 2, 3);
         _workers = new Thread[workers];
@@ -165,6 +218,15 @@ public sealed class OfdmFmStationHost : IDisposable
     /// <summary>The station sent a burst of its own (not a host's datagram). Same rules as <see cref="Received"/>.</summary>
     public event Action<ModemSentEvent>? ModemSent;
 
+    /// <summary>A burst addressed to this station was heard and not decoded. Same rules as <see cref="Received"/>.</summary>
+    public event Action<BurstNotDecodedEvent>? BurstNotDecoded;
+
+    /// <summary>The queue to a station became full or has drained enough to take datagrams again. Same rules as <see cref="Received"/>.</summary>
+    public event Action<CongestionEvent>? Congestion;
+
+    /// <summary>A Morse identification has been handed to the audio device (the text is the callsign). Raised on the receive thread at the next block, inside the host's lock; same rules as <see cref="Received"/>.</summary>
+    public event Action<string>? MorseIdentSent;
+
     /// <summary>A line for the operator, raised once: the channel cannot transmit and every request will be refused. Same rules as <see cref="Received"/>.</summary>
     public event Action<string>? Notice;
 
@@ -187,6 +249,37 @@ public sealed class OfdmFmStationHost : IDisposable
         lock (_gate)
         {
             return _station.Send(datagram, to, from, protocol, tag, reportWanted, priority);
+        }
+    }
+
+    /// <summary>
+    /// Drops every queued datagram with this tag (each raises <see cref="Dropped"/>) and returns how many. Takes the host's lock; call it from outside the host's events.
+    /// </summary>
+    public int Cancel(HostTag tag)
+    {
+        lock (_gate)
+        {
+            return _station.Cancel(tag);
+        }
+    }
+
+    /// <summary>
+    /// Drops every datagram queued for a link address and returns how many. Takes the host's lock; call it from outside the host's events.
+    /// </summary>
+    public int Cancel(LinkAddress address)
+    {
+        lock (_gate)
+        {
+            return _station.Cancel(address);
+        }
+    }
+
+    /// <summary>What the station knows of every link address it has sent to. Takes the host's lock; call it from outside the host's events.</summary>
+    public IReadOnlyList<LinkStateEvent> Snapshot()
+    {
+        lock (_gate)
+        {
+            return _station.Snapshot();
         }
     }
 
@@ -229,7 +322,7 @@ public sealed class OfdmFmStationHost : IDisposable
 
             _disposed = true;
             _stopping = true;
-            handedOver = [.. _requests.Values.Select(r => r.Cancellation).OfType<CancellationTokenSource>()];
+            handedOver = [.. _requests.Values.Select(r => r.Cancellation).OfType<CancellationTokenSource>(), _morseCancel];
         }
 
         // A request still waiting in the channel must not key the radio after its host has gone. One the transmitter has taken goes on regardless.
@@ -267,6 +360,12 @@ public sealed class OfdmFmStationHost : IDisposable
             ApplyInbox();
             PollCarrier();
             _book.Heard(samples);
+            if (!samples.IsEmpty)
+            {
+                _afterMorse = false;
+            }
+
+            QueueMorse();
             HandOver();
         }
     }
@@ -324,7 +423,8 @@ public sealed class OfdmFmStationHost : IDisposable
     /// <summary>Hands the outstanding request to the channel once the count has reached its earliest sample, or refuses it to the station while the transmit lease excludes this host.</summary>
     private void HandOver()
     {
-        while (_book.TakeDue(out long id))
+        // While a Morse ident is wanted, in the channel or just gone, the station's request waits: the two must not run together as one keyed run.
+        while (!(_morseWanted || _morseInChannel || _afterMorse) && _book.TakeDue(out long id))
         {
             if (!_requests.TryGetValue(id, out Outstanding? request))
             {
@@ -341,6 +441,65 @@ public sealed class OfdmFmStationHost : IDisposable
 
             Enqueue(id, request);
         }
+    }
+
+    /// <summary>
+    /// Queues the Morse ident the station's rule asked for, at an unkeyed block with nothing of the station's in the channel. A lease that excludes this host drops it (the next try is the next time the station asks), as does the channel's refusal.
+    /// </summary>
+    private void QueueMorse()
+    {
+        if (!_morseWanted || _morseInChannel || _book.InRun)
+        {
+            return;
+        }
+
+        foreach (Outstanding request in _requests.Values)
+        {
+            if (request.Cancellation is not null)
+            {
+                return;
+            }
+        }
+
+        _morseWanted = false;
+        if (_station.Callsign is not { } callsign || !_channel.TransmitLease.Admits(_morseSource))
+        {
+            return;
+        }
+
+        _morseText = MorseGenerator.IdText(callsign, null);
+        _morseInChannel = true;
+        EnqueueMorse(_morseText);
+    }
+
+    // Apart from QueueMorse for the same reason as Enqueue: the closures are made only when an ident really goes, not on every block.
+    private void EnqueueMorse(string text)
+    {
+        Task sent = _channel.EnqueueTransmit(
+            txDelay => RenderMorse(text, txDelay),
+            rejected: null,
+            ownsChannelTiming: false,
+            source: _morseSource,
+            withdraw: _morseCancel.Token);
+        _ = sent.ContinueWith(
+            finished =>
+            {
+                _ = finished.Exception;
+                _inbox.Enqueue(new Signal(finished.IsCompletedSuccessfully ? SignalKind.MorseSent : SignalKind.MorseRefused, 0));
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    /// <summary>The key-up delay as silence, then the callsign in Morse. Runs on the transmitter's thread.</summary>
+    private float[] RenderMorse(string text, int txDelayMilliseconds)
+    {
+        float[] tone = MorseGenerator.Real(text, _morseTone, _morseAmplitude, _morseSpeed, _channel.SampleRate);
+        int lead = (int)Math.Round(txDelayMilliseconds / 1000.0 * _channel.SampleRate);
+        var audio = new float[lead + tone.Length];
+        tone.CopyTo(audio, lead);
+        return audio;
     }
 
     // Apart from HandOver so that the closures are made only when a request really goes: a closure over a variable of the loop's scope is allocated each time the scope is entered, and this runs on every block.
@@ -388,6 +547,16 @@ public sealed class OfdmFmStationHost : IDisposable
                     }
 
                     break;
+                case SignalKind.MorseSent:
+                case SignalKind.MorseRefused:
+                    _morseInChannel = false;
+                    _afterMorse = true;
+                    if (signal.Kind == SignalKind.MorseSent)
+                    {
+                        MorseIdentSent?.Invoke(_morseText);
+                    }
+
+                    break;
                 default:
                     _book.Finished(signal.Id);
                     if (_requests.Remove(signal.Id, out Outstanding? done))
@@ -423,6 +592,8 @@ public sealed class OfdmFmStationHost : IDisposable
     {
         OnAir,
         Refused,
+        MorseSent,
+        MorseRefused,
         Finished,
     }
 
