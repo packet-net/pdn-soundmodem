@@ -68,6 +68,11 @@ public class TransmitRecordTests
             "the STANAG 5066 node: once the burst has gone to the device, S5066Station's sent callback, "
             + "which Program.cs turns into a journal line and frameLog.RecordTransmitted with the burst's bytes"),
 
+        new("src/Packet.SoundModem/Modems/OfdmFmStation/OfdmFmStationHost.cs",
+            "source: this",
+            "the adaptive OFDM-FM station host: raises Transmitted for each datagram and ModemSent for each burst of the station's own once the burst has left the device; "
+            + "recording them is the hosting program's, and the daemon does not host the station yet (#920)"),
+
         new("src/Packet.SoundModem.Daemon/IdentTransmission.cs",
             "source: owed",
             "the CW ident: recorded in Program.cs beside owed.NoteIdentified(), with the ident text as the "
