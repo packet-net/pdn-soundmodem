@@ -10,15 +10,29 @@ namespace Packet.SoundModem.Tests.Channel;
 /// ARDOP ARQ session, whose turnarounds an AX.25 frame landing mid-sequence would break. This
 /// is what replaced the old rule that an ARDOP channel could carry nothing else.
 /// </summary>
+/// <remarks>
+/// Every test runs on a <see cref="VirtualAir.Clock"/>: a held frame "waits" by the clock being moved
+/// while the transmitter is parked on one of its own slot or poll delays, so what is asserted is what
+/// the channel did and in what order, and how much simulated time it took where that is the point.
+/// </remarks>
 public class TransmitInhibitTests : IAsyncLifetime
 {
     private const int SampleRate = 12000;
 
-    private readonly SoundModemChannel _channel = new(SampleRate, randomSeed: 5);
-    private readonly FakeAudioOutput _output = new(SampleRate);
-    private readonly CancellationTokenSource _cancellation = new(TimeSpan.FromSeconds(30));
+    private readonly VirtualAir.Clock _time = new();
+    private readonly SoundModemChannel _channel;
+    private readonly VirtualAir.PacedSink _output;
+
+    // Cancelled by the test's disposal; the clock's own hang guards turn a stuck transmitter into a failure.
+    private readonly CancellationTokenSource _cancellation = new();
     private Task? _transmitter;
     private volatile bool _inhibited;
+
+    public TransmitInhibitTests()
+    {
+        _channel = new SoundModemChannel(SampleRate, _time, randomSeed: 5);
+        _output = new VirtualAir.PacedSink(SampleRate, _time);
+    }
 
     public ValueTask InitializeAsync()
     {
@@ -58,15 +72,17 @@ public class TransmitInhibitTests : IAsyncLifetime
         _inhibited = true;
 
         Task sent = _channel.EnqueueTransmit(0, Frame());
-        await Task.Delay(500);
+
+        // Half a second of simulated time, a poll at a time, with the transmitter parked at each one.
+        await _time.AdvanceToUnlessAsync(_time.GetUtcNow() + TimeSpan.FromMilliseconds(500), sent);
 
         sent.IsCompleted.Should().BeFalse("the channel is held");
-        _output.WrittenCount.Should().Be(0, "nothing may reach the air during a held session");
+        _output.Written.Should().BeEmpty("nothing may reach the air during a held session");
 
         _inhibited = false;
-        await sent.WaitAsync(TimeSpan.FromSeconds(10));
+        await _time.RunUntilAsync(sent);
 
-        _output.WrittenCount.Should().BeGreaterThan(0, "and it must go out once the hold lifts");
+        _output.Written.Should().NotBeEmpty("and it must go out once the hold lifts");
     }
 
     [Fact]
@@ -79,8 +95,8 @@ public class TransmitInhibitTests : IAsyncLifetime
         Task sent = _channel.EnqueueTransmit(
             _ => new float[SampleRate / 10], rejected: null, ownsChannelTiming: true);
 
-        await sent.WaitAsync(TimeSpan.FromSeconds(10));
-        _output.WrittenCount.Should().BeGreaterThan(0);
+        await _time.RunUntilAsync(sent);
+        _output.Written.Should().NotBeEmpty();
     }
 
     [Fact]
@@ -93,12 +109,14 @@ public class TransmitInhibitTests : IAsyncLifetime
         Exception? reported = null;
         _channel.TransmitRejected += (_, _, reason) => reported = reason;
 
-        Func<Task> send = () => _channel.EnqueueTransmit(0, Frame());
+        // The 300 ms is simulated: the held frame's expiry is a timer on the clock, which the clock
+        // reaches by stepping through the transmitter's inhibit polls.
+        Func<Task> send = () => _time.RunUntilAsync(_channel.EnqueueTransmit(0, Frame()));
 
         await send.Should().ThrowAsync<InvalidOperationException>()
             .Where(e => e.Message.Contains("holding the channel"));
         reported.Should().NotBeNull("the rejection must be observable, not just thrown");
-        _output.WrittenCount.Should().Be(0);
+        _output.Written.Should().BeEmpty();
     }
 
     [Fact]
@@ -111,11 +129,16 @@ public class TransmitInhibitTests : IAsyncLifetime
         _channel.Csma.Persistence = 0;          // never win the roll
         _channel.Csma.SlotTimeMilliseconds = 5_000;
 
+        DateTimeOffset queued = _time.GetUtcNow();
         Task owned = _channel.EnqueueTransmit(
             _ => new float[SampleRate / 10], rejected: null, ownsChannelTiming: true);
 
-        await owned.WaitAsync(TimeSpan.FromSeconds(10));
-        _output.WrittenCount.Should().BeGreaterThan(0, "it must not have waited on p at all");
+        await _time.RunUntilAsync(owned);
+        _output.Written.Should().NotBeEmpty();
+
+        // One lost roll costs a whole slot, so under a slot of simulated time means no roll was waited on.
+        (_time.GetUtcNow() - queued).Should().BeLessThan(
+            TimeSpan.FromMilliseconds(_channel.Csma.SlotTimeMilliseconds), "it must not have waited on p at all");
     }
 
     [Fact]
@@ -125,10 +148,12 @@ public class TransmitInhibitTests : IAsyncLifetime
         _channel.Csma.SlotTimeMilliseconds = 5_000;
 
         Task shared = _channel.EnqueueTransmit(0, Frame());
-        await Task.Delay(600);
+
+        // The roll is lost and the next one is a slot (5 s) away, so 600 ms in nothing has gone out.
+        await _time.AdvanceToUnlessAsync(_time.GetUtcNow() + TimeSpan.FromMilliseconds(600), shared);
 
         shared.IsCompleted.Should().BeFalse("CSMA still applies to everything that shares the channel");
-        _output.WrittenCount.Should().Be(0);
+        _output.Written.Should().BeEmpty();
     }
 
     [Fact]
@@ -136,8 +161,8 @@ public class TransmitInhibitTests : IAsyncLifetime
     {
         _inhibited = false;
 
-        await _channel.EnqueueTransmit(0, Frame()).WaitAsync(TimeSpan.FromSeconds(10));
+        await _time.RunUntilAsync(_channel.EnqueueTransmit(0, Frame()));
 
-        _output.WrittenCount.Should().BeGreaterThan(0);
+        _output.Written.Should().NotBeEmpty();
     }
 }

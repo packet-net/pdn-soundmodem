@@ -21,7 +21,8 @@ public class FrameTransmittedTests
     [Fact]
     public async Task A_Sent_Frame_Is_Announced_With_Its_Sub_Channel_And_Bytes()
     {
-        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        var time = new VirtualAir.Clock();
+        var channel = new SoundModemChannel(SampleRate, time, randomSeed: 7);
         channel.AddModem(3, sink => ModemCatalog.Create("afsk1200", SampleRate, sink));
         channel.Csma.Persistence = 255;
         channel.Csma.TxDelayMilliseconds = 20;
@@ -29,13 +30,13 @@ public class FrameTransmittedTests
         var announced = new List<(int Sub, byte[] Frame)>();
         channel.FrameTransmitted += (sub, frame) => announced.Add((sub, frame));
 
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        var output = new FakeAudioOutput(SampleRate);
+        using var cancellation = new CancellationTokenSource();
+        var output = new VirtualAir.PacedSink(SampleRate, time);
         Task transmitter = channel.RunTransmitterAsync(
             output, new M0LTE.Radio.Audio.NullPtt(), cancellation.Token);
 
         byte[] payload = [0x01, 0x02, 0x03];
-        await channel.EnqueueTransmit(3, payload);
+        await time.RunUntilAsync(channel.EnqueueTransmit(3, payload));
 
         announced.Should().ContainSingle();
         announced[0].Sub.Should().Be(3);
