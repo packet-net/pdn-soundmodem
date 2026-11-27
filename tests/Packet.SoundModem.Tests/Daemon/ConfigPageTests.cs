@@ -603,10 +603,7 @@ public partial class ConfigPageTests : IDisposable
 
         // The answer is written before the restart is asked for, on purpose (the caller hears
         // the outcome first), so the restart can land a moment after the response does.
-        for (int i = 0; i < 100 && station.Restarts == 0; i++)
-        {
-            await Task.Delay(50);
-        }
+        await Eventually.UntilAsync(() => station.Restarts > 0, "the restart to be asked for");
 
         station.Restarts.Should().Be(1);
     }

@@ -1566,11 +1566,11 @@ public class WaterfallWebServerTests : IAsyncLifetime
         int reported() { lock (counts) return counts.Count; }
 
         await first.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
-        await Until(() => reported() == 3, "the closed page is no longer a viewer");
+        await Eventually.UntilAsync(() => reported() == 3, "the closed page is no longer a viewer");
         _server.Viewers.Should().Be(1);
 
         await second.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
-        await Until(() => reported() == 4, "the last page leaving reports nobody");
+        await Eventually.UntilAsync(() => reported() == 4, "the last page leaving reports nobody");
         _server.Viewers.Should().Be(0);
 
         lock (counts)
@@ -1649,10 +1649,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
         await reader.SendAsync(
             """{"name":"pdn-mailcast-receiver","pagePort":8130}"""u8.ToArray(),
             WebSocketMessageType.Text, true, _cancellation.Token);
-        for (int i = 0; i < 100 && server.ChannelAudio.Listeners.Count == 0; i++)
-        {
-            await Task.Delay(20, _cancellation.Token);
-        }
+        await Eventually.UntilAsync(() => server.ChannelAudio.Listeners.Count > 0, "the reader to be listed");
 
         server.ChannelAudio.Listeners.Should().HaveCount(1, "the reader did name itself");
 
@@ -1718,17 +1715,6 @@ public class WaterfallWebServerTests : IAsyncLifetime
                 ? step
                 : WaterfallWebServer.KeepAlivePeriod);
         }
-    }
-
-    private async Task Until(Func<bool> condition, string because)
-    {
-        while (!condition())
-        {
-            _cancellation.Token.ThrowIfCancellationRequested();
-            await Task.Delay(10, _cancellation.Token);
-        }
-
-        condition().Should().BeTrue(because);
     }
 
     private async Task<(WebSocketMessageType Kind, byte[] Payload)> Receive(ClientWebSocket socket)

@@ -226,19 +226,8 @@ internal sealed class FakeSdrConnect
     /// <summary>Ends the connection abruptly, as a crash or a pulled cable would.</summary>
     public void Drop() => _socket.Abort();
 
-    public async Task WaitForAsync(Func<FakeSdrConnect, bool> condition, string what)
-    {
-        DateTime giveUp = DateTime.UtcNow.AddSeconds(10);
-        while (!condition(this))
-        {
-            if (DateTime.UtcNow > giveUp)
-            {
-                throw new TimeoutException($"the fake SDRconnect never saw {what}");
-            }
-
-            await Task.Delay(10);
-        }
-    }
+    public Task WaitForAsync(Func<FakeSdrConnect, bool> condition, string what) =>
+        Eventually.UntilAsync(() => condition(this), $"the fake SDRconnect to see {what}");
 
     private static byte[] Bytes(ReadOnlySpan<short> samples)
     {

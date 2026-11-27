@@ -35,11 +35,11 @@ public class KissClientEventTests
 
         using var first = new TcpClient();
         await first.ConnectAsync(IPAddress.Loopback, server.LocalPort);
-        await WaitFor(() => connects.Count == 1);
+        await Eventually.UntilAsync(() => connects.Count == 1, "the first connect event");
 
         using var second = new TcpClient();
         await second.ConnectAsync(IPAddress.Loopback, server.LocalPort);
-        await WaitFor(() => connects.Count == 2);
+        await Eventually.UntilAsync(() => connects.Count == 2, "the second connect event");
 
         connects[0].Remote.Should().NotBeNull();
         connects[0].Clients.Should().Be(1);
@@ -59,7 +59,7 @@ public class KissClientEventTests
         await client.ConnectAsync(IPAddress.Loopback, server.LocalPort);
         client.Close();
 
-        await WaitFor(() => goodbyes.Count == 1);
+        await Eventually.UntilAsync(() => goodbyes.Count == 1, "the goodbye event");
         goodbyes[0].Reason.Should().BeNull("an orderly close is not a fault and must not read like one");
         goodbyes[0].Clients.Should().Be(0);
         goodbyes[0].Remote.Should().NotBeNull("the address is captured before the socket is disposed");
@@ -83,7 +83,7 @@ public class KissClientEventTests
             SocketOptionLevel.Socket, SocketOptionName.Linger, new LingerOption(true, 0));
         client.Client.Close();
 
-        await WaitFor(() => goodbyes.Count == 1);
+        await Eventually.UntilAsync(() => goodbyes.Count == 1, "the goodbye event");
         goodbyes[0].Reason.Should().NotBeNullOrEmpty(
             "'the host vanished' and 'the host closed' are different problems");
     }
@@ -102,7 +102,7 @@ public class KissClientEventTests
 
         await server.DisposeAsync();
 
-        await WaitFor(() => goodbyes.Count >= 1);
+        await Eventually.UntilAsync(() => goodbyes.Count >= 1, "the goodbye event");
         goodbyes[0].Reason.Should().BeNull(
             "the station stopping is not the host misbehaving, and a journal full of errors on a "
             + "clean shutdown teaches operators to ignore them");
@@ -125,11 +125,11 @@ public class KissClientEventTests
 
         using var attached = new TcpClient();
         await attached.ConnectAsync(IPAddress.Loopback, port);
-        await WaitFor(() => server.ClientCount == 1);
+        await Eventually.UntilAsync(() => server.ClientCount == 1, "the client to be attached");
 
         server.StopTakingWork("this station is stopping");
 
-        await WaitFor(() => goodbyes.Count == 1);
+        await Eventually.UntilAsync(() => goodbyes.Count == 1, "the goodbye event");
         goodbyes[0].Reason.Should().Be("this station is stopping");
         int read = await attached.GetStream().ReadAsync(new byte[16]).AsTask()
             .WaitAsync(TimeSpan.FromSeconds(10))
@@ -141,15 +141,5 @@ public class KissClientEventTests
         await connecting.Should().ThrowAsync<SocketException>("nothing listens on a port that is stopping");
         server.ClientCount.Should().Be(0);
         acceptFailures.Should().BeEmpty("closing the listener on purpose is not an accept failure");
-    }
-
-    private static async Task WaitFor(Func<bool> condition)
-    {
-        for (int i = 0; i < 200 && !condition(); i++)
-        {
-            await Task.Delay(25);
-        }
-
-        condition().Should().BeTrue("the event should have arrived");
     }
 }

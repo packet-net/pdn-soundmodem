@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Rig;
 
@@ -16,18 +15,14 @@ namespace Packet.SoundModem.Tests.Rig;
 /// tests in these classes failed that way, every run.</para>
 /// <para>So the clock moves only while every running watch is waiting on it, never past the end of
 /// one of those waits, and, once one has been reached, not again until that watch has acted on
-/// it. The only wall clock here is a safety net well beyond the 30 s socket timeouts the tests
-/// give the rig, which turns a hung watch into a named failure rather than deciding anything a
-/// slow machine could.</para>
+/// it. The only wall clock here is the shared hang guard (<see cref="Eventually"/>), which turns a
+/// hung watch into a named failure rather than deciding anything a slow machine could.</para>
 /// </remarks>
 internal static class RigClock
 {
-    /// <summary>How long a watch may be away from the clock before it counts as hung.</summary>
-    internal static readonly TimeSpan Patience = TimeSpan.FromSeconds(90);
-
     /// <summary>Waits until every running watch in <paramref name="rigs"/> is waiting on the clock.</summary>
     internal static Task UntilWaitingAsync(IEnumerable<RigControl> rigs) =>
-        UntilAsync(
+        Eventually.UntilAsync(
             () => rigs.All(rig => !rig.Watching || rig.NapUntil is not null),
             "every rig's watch is back waiting on the clock");
 
@@ -71,7 +66,7 @@ internal static class RigClock
     {
         foreach ((RigControl rig, DateTimeOffset until) in due)
         {
-            await UntilAsync(
+            await Eventually.UntilAsync(
                 () => !rig.Watching || rig.NapUntil != until,
                 "a rig's watch acted on the wait the clock ended");
         }
@@ -90,20 +85,5 @@ internal static class RigClock
         List<(RigControl, DateTimeOffset)> due = Due(rigs, next);
         time.SetUtcNow(next);
         await UntilActedAsync(due);
-    }
-
-    private static async Task UntilAsync(Func<bool> condition, string what)
-    {
-        var patience = Stopwatch.StartNew();
-        while (!condition())
-        {
-            if (patience.Elapsed > Patience)
-            {
-                condition().Should().BeTrue($"{what} within {Patience.TotalSeconds:0} s (a hang, not a slow machine)");
-                return;
-            }
-
-            await Task.Delay(1);
-        }
     }
 }

@@ -51,11 +51,11 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
 
         using var reader = await ConnectAsync();
         await AskForBand(reader, 1000, 5000);
-        await Until(() => mock.SliceFilter == (300, 5200), "the slice must open to cover the band, with margin");
+        await Eventually.UntilAsync(() => mock.SliceFilter == (300, 5200), "the slice must open to cover the band, with margin");
         Filts(mock).Should().Contain($"filt {Slice()} 300 5200");
 
         await reader.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
-        await Until(() => mock.SliceFilter == (300, 2700), "the last asking reader went, so the filter goes back");
+        await Eventually.UntilAsync(() => mock.SliceFilter == (300, 2700), "the last asking reader went, so the filter goes back");
         Filts(mock)[^1].Should().Be($"filt {Slice()} 300 2700", "back to exactly what bring-up set");
     }
 
@@ -66,12 +66,12 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
 
         var reader = await ConnectAsync();
         await AskForBand(reader, 500, 4000);
-        await Until(() => mock.SliceFilter == (300, 4200), "widened");
+        await Eventually.UntilAsync(() => mock.SliceFilter == (300, 4200), "widened");
 
         reader.Abort(); // no close handshake: the process on the other end died
         reader.Dispose();
 
-        await Until(() => mock.SliceFilter == (300, 2700), "a reader that vanished is not asking any more");
+        await Eventually.UntilAsync(() => mock.SliceFilter == (300, 2700), "a reader that vanished is not asking any more");
     }
 
     [Fact]
@@ -84,13 +84,13 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
         using var silent = await ConnectAsync(); // asks for nothing, never counts
         await AskForBand(wide, 1000, 5500);
         await AskForBand(narrow, 200, 3500);
-        await Until(() => mock.SliceFilter == (0, 5700), "the union of both bands");
+        await Eventually.UntilAsync(() => mock.SliceFilter == (0, 5700), "the union of both bands");
 
         await wide.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
-        await Until(() => mock.SliceFilter == (0, 3700), "narrowed to the reader still asking");
+        await Eventually.UntilAsync(() => mock.SliceFilter == (0, 3700), "narrowed to the reader still asking");
 
         await narrow.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
-        await Until(() => mock.SliceFilter == (300, 2700), "the reader left asks for no band");
+        await Eventually.UntilAsync(() => mock.SliceFilter == (300, 2700), "the reader left asks for no band");
     }
 
     [Fact]
@@ -103,9 +103,9 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
 
         using var reader = await ConnectAsync();
         await AskForBand(reader, 1000, 2000);
-        await Until(() => BandsAsked() == (1000, 2000), "the band was read");
+        await Eventually.UntilAsync(() => BandsAsked() == (1000, 2000), "the band was read");
         await reader.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
-        await Until(() => _server.ReceiveBandRequested is not null && BandsAsked() is null, "and withdrawn");
+        await Eventually.UntilAsync(() => _server.ReceiveBandRequested is not null && BandsAsked() is null, "and withdrawn");
         await Task.Delay(300);
 
         Filts(mock).Count.Should().Be(before, "nothing to widen, and so nothing to put back");
@@ -118,11 +118,11 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
         // The page server starts before the device opens, so a reader can be first.
         using var reader = await ConnectAsync();
         await AskForBand(reader, 1000, 5000);
-        await Until(() => BandsAsked() == (1000, 5000), "the band was read");
+        await Eventually.UntilAsync(() => BandsAsked() == (1000, 5000), "the band was read");
 
         MockFlexRadio mock = await OpenAsync("flex:mock", baseline: (300, 2700));
 
-        await Until(() => mock.SliceFilter == (300, 5200), "the waiting band is applied as soon as the radio is up");
+        await Eventually.UntilAsync(() => mock.SliceFilter == (300, 5200), "the waiting band is applied as soon as the radio is up");
     }
 
     [Fact]
@@ -134,7 +134,7 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
 
         using var reader = await ConnectAsync();
         await AskForBand(reader, 1000, 5000);
-        await Until(() => BandsAsked() == (1000, 5000), "the band was read");
+        await Eventually.UntilAsync(() => BandsAsked() == (1000, 5000), "the band was read");
         await Task.Delay(300);
 
         Filts(mock).Count.Should().Be(before, "attach mode leaves the operator's filter alone");
@@ -197,7 +197,7 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
         var filter = new FlexStreamFilter((300, 2700), () => "0", Send, _ => { }, _ => { });
 
         filter.Request((1000, 5000));
-        await Until(() => Sent() == 1, "the first widening goes out");
+        await Eventually.UntilAsync(() => Sent() == 1, "the first widening goes out");
 
         // While it is in flight: put back, then widen again. Only the newest is still wanted.
         filter.Request(null);
@@ -206,9 +206,9 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
         Sent().Should().Be(1, "nothing is sent over the top of a command still in flight");
 
         Release();
-        await Until(() => Sent() == 2, "then the latest target, and only that");
+        await Eventually.UntilAsync(() => Sent() == 2, "then the latest target, and only that");
         Release();
-        await Until(() => !filter.Busy, "done");
+        await Eventually.UntilAsync(() => !filter.Busy, "done");
 
         sent.Should().Equal("filt 0 300 5200", "filt 0 300 4200");
         filter.Applied.Should().Be((300, 4200));
@@ -235,11 +235,11 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
         string slice = "0";
         var filter = new FlexStreamFilter((300, 2700), () => slice, Send, _ => { }, _ => { });
         filter.Request((1000, 5000));
-        await Until(() => !filter.Busy && filter.Applied == (300, 5200), "widened");
+        await Eventually.UntilAsync(() => !filter.Busy && filter.Applied == (300, 5200), "widened");
 
         slice = "1";
         filter.SliceRebuilt();
-        await Until(() => !filter.Busy && sent.Count == 2, "widened again on the new slice");
+        await Eventually.UntilAsync(() => !filter.Busy && sent.Count == 2, "widened again on the new slice");
         sent[^1].Should().Be("filt 1 300 5200", "the slice is read when the command is sent");
     }
 
@@ -271,7 +271,7 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
         string slice = "0";
         var filter = new FlexStreamFilter((300, 2700), () => slice, Send, _ => { }, _ => { });
         filter.Request((1000, 5000));
-        await Until(() => Sent() == 1, "the widening goes out to the old slice");
+        await Eventually.UntilAsync(() => Sent() == 1, "the widening goes out to the old slice");
 
         // The radio rebuilds the slice while that command is still in flight; the new slice comes
         // up on the baseline, and the old command's answer must not count for it.
@@ -282,13 +282,13 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
             pending.Dequeue().SetResult();
         }
 
-        await Until(() => Sent() == 2, "the new slice is widened too");
+        await Eventually.UntilAsync(() => Sent() == 2, "the new slice is widened too");
         lock (sent)
         {
             pending.Dequeue().SetResult();
         }
 
-        await Until(() => !filter.Busy, "done");
+        await Eventually.UntilAsync(() => !filter.Busy, "done");
         sent.Should().Equal("filt 0 300 5200", "filt 1 300 5200");
         filter.Applied.Should().Be((300, 5200));
     }
@@ -359,14 +359,4 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
             WebSocketMessageType.Text,
             true,
             _cancellation.Token);
-
-    private static async Task Until(Func<bool> condition, string because)
-    {
-        for (int i = 0; i < 400 && !condition(); i++)
-        {
-            await Task.Delay(25);
-        }
-
-        condition().Should().BeTrue(because);
-    }
 }

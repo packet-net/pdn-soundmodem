@@ -124,7 +124,7 @@ public sealed class FlexIqTransmitterMockTests
             // race 2 by construction, since anything captured past it is the post-burst race, not
             // the burst).
             int floatsExpected = report.Samples * 2;
-            await WaitUntilAsync(() => mock.CapturedWaveformIq.Count >= floatsExpected);
+            await Eventually.UntilAsync(() => mock.CapturedWaveformIq.Count >= floatsExpected, "the whole burst to reach the mock radio");
 
             float[] captured = [.. mock.CapturedWaveformIq];
             captured.Should().NotBeEmpty();
@@ -159,20 +159,6 @@ public sealed class FlexIqTransmitterMockTests
             // only a coarse "the tone is present at roughly the right level" band.
             IqAnalysis.Db(power).Should().BeInRange(IqAnalysis.Db(0.25) - 3.0, IqAnalysis.Db(0.25) + 0.5);
             (IqAnalysis.Db(spectrum.TonePower(-hz)) - IqAnalysis.Db(power)).Should().BeLessThan(-60);
-        }
-    }
-
-    /// <summary>Polls until <paramref name="condition"/> is true or 60 s elapses - for waiting on
-    /// the mock's reflection thread, which paces itself off the real clock rather than an
-    /// injectable one (mirrors the WaitUntilAsync helper in KissTcpServerTests/
-    /// KissServerRobustnessTests/TransmitterPttFailureTests).</summary>
-    private static async Task WaitUntilAsync(Func<bool> condition)
-    {
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        while (!condition())
-        {
-            cancellation.Token.ThrowIfCancellationRequested();
-            await Task.Delay(5, cancellation.Token);
         }
     }
 

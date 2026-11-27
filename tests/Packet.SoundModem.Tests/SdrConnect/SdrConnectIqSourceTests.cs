@@ -426,11 +426,7 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         await second.ChangeAsync("device_sample_rate", "96000");
         await Task.Delay(100, TestContext.Current.CancellationToken);
         await second.SendIqAsync(Ramp(100));
-        DateTime giveUp = DateTime.UtcNow.AddSeconds(10);
-        while (source.Client.FramesDelivered < 300 && DateTime.UtcNow < giveUp)
-        {
-            await Task.Delay(10, TestContext.Current.CancellationToken);
-        }
+        await Eventually.UntilAsync(() => source.Client.FramesDelivered >= 300, "all three runs of frames to be delivered");
 
         ReadPairs(source, 100);
 
@@ -469,11 +465,7 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         host.Refusing = true;
 
         fake.Drop();
-        DateTime giveUp = DateTime.UtcNow.AddSeconds(10);
-        while (lost.IsEmpty && DateTime.UtcNow < giveUp)
-        {
-            await Task.Delay(50, TestContext.Current.CancellationToken);
-        }
+        await Eventually.UntilAsync(() => !lost.IsEmpty, "the source to say it has given up");
 
         await Task.Delay(500, TestContext.Current.CancellationToken);
         lost.Should().ContainSingle().Which.Should().Contain("has delivered nothing for");

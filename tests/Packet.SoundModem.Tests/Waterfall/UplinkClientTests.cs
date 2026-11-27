@@ -367,23 +367,6 @@ public class UplinkClientTests
             Sideband = "usb",
         };
 
-    /// <summary>Waits for something the network has to get around to, or fails the test.</summary>
-    private static async Task Until(Func<bool> condition, string what)
-    {
-        DateTime deadline = DateTime.UtcNow + Patience;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (condition())
-            {
-                return;
-            }
-
-            await Task.Delay(5);
-        }
-
-        throw new TimeoutException($"timed out waiting for {what}");
-    }
-
     /// <summary>
     /// The clock a client under test is given: the test's <see cref="FakeTimeProvider"/>, which
     /// also tells the test about every timer the client makes on it.
@@ -547,7 +530,7 @@ public class UplinkClientTests
         client.Start();
         client.Frame(AFrame());
 
-        await Until(() => monitor.Received.Count >= 1, "the hello");
+        await Eventually.UntilAsync(() => monitor.Received.Count >= 1, "the hello");
 
         (WebSocketMessageType kind, byte[] payload) = monitor.Received[0];
         kind.Should().Be(WebSocketMessageType.Text);
@@ -592,7 +575,7 @@ public class UplinkClientTests
         await using var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
         client.Start();
 
-        await Until(() => client.Publishing, "the welcome");
+        await Eventually.UntilAsync(() => client.Publishing, "the welcome");
         client.Wanted.Should().BeFalse("the monitor has said nobody is watching");
 
         for (int block = 0; block < 250; block++)
@@ -607,14 +590,14 @@ public class UplinkClientTests
             + "somebody opens the page");
 
         await monitor.DemandAsync(1);
-        await Until(() => client.Wanted, "the demand");
+        await Eventually.UntilAsync(() => client.Wanted, "the demand");
 
         for (int block = 0; block < 5; block++)
         {
             client.Audio(Tone(ChannelRate * 40 / 1000), transmitted: false);
         }
 
-        await Until(() => monitor.AudioMessages.Count >= 5, "audio for the viewer");
+        await Eventually.UntilAsync(() => monitor.AudioMessages.Count >= 5, "audio for the viewer");
         monitor.AudioMessages.Should().AllSatisfy(m =>
         {
             m.Length.Should().Be(AudioMessageBytes,
@@ -638,19 +621,19 @@ public class UplinkClientTests
             clock,
             line => { lock (journal) { journal.Add(line); } });
         client.Start();
-        await Until(() => client.Publishing, "the welcome");
+        await Eventually.UntilAsync(() => client.Publishing, "the welcome");
 
         await monitor.DemandAsync(2);
-        await Until(() => client.Wanted, "the demand");
+        await Eventually.UntilAsync(() => client.Wanted, "the demand");
         for (int block = 0; block < 4; block++)
         {
             client.Audio(Tone(ChannelRate * 40 / 1000), transmitted: false);
         }
 
-        await Until(() => monitor.AudioMessages.Count >= 4, "audio for the viewers");
+        await Eventually.UntilAsync(() => monitor.AudioMessages.Count >= 4, "audio for the viewers");
 
         await monitor.DemandAsync(0);
-        await Until(() => !client.Wanted, "the last viewer leaving");
+        await Eventually.UntilAsync(() => !client.Wanted, "the last viewer leaving");
 
         int sent = monitor.AudioMessages.Count;
         for (int block = 0; block < 50; block++)
@@ -686,11 +669,11 @@ public class UplinkClientTests
         await using WaterfallWebServer server = StationServer(clock);
         await using var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
         client.Start();
-        await Until(() => client.Publishing, "the welcome");
+        await Eventually.UntilAsync(() => client.Publishing, "the welcome");
         client.Wanted.Should().BeFalse("nobody is watching, and that is the point of this test");
 
         client.Frame(AFrame());
-        await Until(() => monitor.TextMessagesOfType("frame").Any(), "the frame");
+        await Eventually.UntilAsync(() => monitor.TextMessagesOfType("frame").Any(), "the frame");
 
         JsonElement frame = monitor.TextMessagesOfType("frame").Single();
         frame.GetProperty("sub").GetInt32().Should().Be(0);
@@ -723,10 +706,10 @@ public class UplinkClientTests
         await using WaterfallWebServer server = StationServer(clock);
         await using var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
         client.Start();
-        await Until(() => client.Publishing, "the welcome");
+        await Eventually.UntilAsync(() => client.Publishing, "the welcome");
 
         client.Frame(AFrame() with { Quality = 78 });
-        await Until(() => monitor.TextMessagesOfType("frame").Any(), "the frame");
+        await Eventually.UntilAsync(() => monitor.TextMessagesOfType("frame").Any(), "the frame");
 
         monitor.TextMessagesOfType("frame").Single()
             .GetProperty("quality").GetInt32().Should().Be(78);
@@ -744,10 +727,10 @@ public class UplinkClientTests
         await using WaterfallWebServer server = StationServer(clock);
         await using var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
         client.Start();
-        await Until(() => client.Publishing, "the welcome");
+        await Eventually.UntilAsync(() => client.Publishing, "the welcome");
 
         client.Frame(AFrame());
-        await Until(() => monitor.TextMessagesOfType("frame").Any(), "the frame");
+        await Eventually.UntilAsync(() => monitor.TextMessagesOfType("frame").Any(), "the frame");
 
         monitor.TextMessagesOfType("frame").Single()
             .TryGetProperty("quality", out _).Should().BeFalse(
@@ -766,11 +749,11 @@ public class UplinkClientTests
         await using WaterfallWebServer server = StationServer(clock);
         var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
         client.Start();
-        await Until(() => client.Publishing, "the welcome");
+        await Eventually.UntilAsync(() => client.Publishing, "the welcome");
 
         await client.DisposeAsync();
 
-        await Until(() => monitor.TextMessagesOfType("bye").Any(), "the goodbye");
+        await Eventually.UntilAsync(() => monitor.TextMessagesOfType("bye").Any(), "the goodbye");
         monitor.TextMessagesOfType("bye").Single()
             .GetProperty("reason").GetString().Should().Contain("shutting down");
         client.Publishing.Should().BeFalse();
@@ -785,13 +768,13 @@ public class UplinkClientTests
         await using WaterfallWebServer server = StationServer(clock);
         await using var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
         client.Start();
-        await Until(() => client.Publishing, "the welcome");
+        await Eventually.UntilAsync(() => client.Publishing, "the welcome");
         await monitor.DemandAsync(1);
-        await Until(() => client.Wanted, "the demand");
+        await Eventually.UntilAsync(() => client.Wanted, "the demand");
 
         client.Audio(Tone(BlockSamples), transmitted: false);
         client.Audio(Tone(BlockSamples), transmitted: true);
-        await Until(() => monitor.AudioMessages.Count >= 2, "both blocks");
+        await Eventually.UntilAsync(() => monitor.AudioMessages.Count >= 2, "both blocks");
 
         // A block is never half one and half the other, so the kind is a property of the block.
         monitor.AudioMessages[0][1].Should().Be((byte)0, "audio the station heard");
@@ -809,14 +792,14 @@ public class UplinkClientTests
         await using var client = new UplinkClient(
             server, SettingsFor(monitor.Url, channelRate: 48000, audioRate: 12000), clock);
         client.Start();
-        await Until(() => client.Publishing, "the welcome");
+        await Eventually.UntilAsync(() => client.Publishing, "the welcome");
 
         JsonElement hello = monitor.TextMessagesOfType("hello").Single();
         hello.GetProperty("audioRate").GetInt32().Should().Be(12000);
         hello.GetProperty("blockSamples").GetInt32().Should().Be(480);
 
         await monitor.DemandAsync(1);
-        await Until(() => client.Wanted, "the demand");
+        await Eventually.UntilAsync(() => client.Wanted, "the demand");
 
         // One second of 48 kHz audio is one second of 12 kHz audio, which is 25 blocks of 480.
         var second = new float[48000];
@@ -826,7 +809,7 @@ public class UplinkClientTests
         }
 
         client.Audio(second, transmitted: false);
-        await Until(() => monitor.AudioMessages.Count >= 25, "a second of decimated audio");
+        await Eventually.UntilAsync(() => monitor.AudioMessages.Count >= 25, "a second of decimated audio");
 
         await Task.Delay(100);
         monitor.AudioMessages.Should().HaveCount(25,
@@ -958,7 +941,7 @@ public class UplinkClientTests
 
         // Not one tick of the clock has moved: the reason is said on the attempt it happened on,
         // which is the whole of this issue. Nothing here waits out a quiet period.
-        await Until(() => Lines(journal).Any(l => l.Contains(Refusal, StringComparison.Ordinal)),
+        await Eventually.UntilAsync(() => Lines(journal).Any(l => l.Contains(Refusal, StringComparison.Ordinal)),
             "the site's own reason, on the first attempt");
 
         Lines(journal).Should().Contain(
@@ -1019,10 +1002,10 @@ public class UplinkClientTests
             line => { lock (journal) { journal.Add(line); } });
         client.Start();
 
-        await Until(() => Lines(journal).Any(l => l.Contains(Refusal, StringComparison.Ordinal)),
+        await Eventually.UntilAsync(() => Lines(journal).Any(l => l.Contains(Refusal, StringComparison.Ordinal)),
             "the close frame's reason");
 
-        await Until(() => client.RetryWaits.Count >= 1, "the first wait");
+        await Eventually.UntilAsync(() => client.RetryWaits.Count >= 1, "the first wait");
         client.RetryWaits[0].Should().Be(
             TimeSpan.FromSeconds(60),
             "a close carrying a reason before the welcome is a refusal, whichever way the site "
@@ -1057,7 +1040,7 @@ public class UplinkClientTests
             line => { lock (journal) { journal.Add(line); } });
         client.Start();
 
-        await Until(() => Lines(journal).Any(l => l.Contains(Refusal, StringComparison.Ordinal)),
+        await Eventually.UntilAsync(() => Lines(journal).Any(l => l.Contains(Refusal, StringComparison.Ordinal)),
             "the reason, from the message rather than the close frame");
 
         Lines(journal).Should().Contain(
@@ -1065,7 +1048,7 @@ public class UplinkClientTests
         Lines(journal).Should().NotContain(
             l => l.Contains("dropped the uplink", StringComparison.Ordinal));
 
-        await Until(() => client.RetryWaits.Count >= 1, "the first wait");
+        await Eventually.UntilAsync(() => client.RetryWaits.Count >= 1, "the first wait");
         client.RetryWaits[0].Should().Be(
             TimeSpan.FromSeconds(60),
             "a station the site will not have waits on the refusal ladder however the site said "
@@ -1105,7 +1088,7 @@ public class UplinkClientTests
             line => { lock (journal) { journal.Add(line); } });
         client.Start();
 
-        await Until(() => Lines(journal).Any(l => l.Contains("CRAFTED", StringComparison.Ordinal)),
+        await Eventually.UntilAsync(() => Lines(journal).Any(l => l.Contains("CRAFTED", StringComparison.Ordinal)),
             "the site's badly written reason");
 
         string[] said = Lines(journal);
@@ -1151,7 +1134,7 @@ public class UplinkClientTests
         client.Start();
 
         // A station hearing its band all the way through a flapping uplink.
-        await Until(() => client.ConnectAttempts >= 1, "the first attempt");
+        await Eventually.UntilAsync(() => client.ConnectAttempts >= 1, "the first attempt");
         for (int block = 0; block < 50; block++)
         {
             channel.ProcessReceive(Tone(ChannelRate / 30));
@@ -1189,7 +1172,7 @@ public class UplinkClientTests
         await using WaterfallWebServer server = StationServer(clock);
         await using var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
         client.Start();
-        await Until(() => client.Publishing, "the welcome");
+        await Eventually.UntilAsync(() => client.Publishing, "the welcome");
 
         int ignoredBefore = client.IgnoredMessages;
         int upgradesBefore = monitor.Accepted;
@@ -1235,13 +1218,13 @@ public class UplinkClientTests
             await monitor.SendAsync(message);
         }
 
-        await Until(
+        await Eventually.UntilAsync(
             () => client.IgnoredMessages >= ignoredBefore + mischief.Length - 2,
             "every message but the two demands to be dropped");
 
         // The one with a "viewers" in it did what a demand does and nothing else: no transmit
         // happened because there is nothing here that could make one happen.
-        await Until(() => client.Viewers == 1, "the one demand among them");
+        await Eventually.UntilAsync(() => client.Viewers == 1, "the one demand among them");
         client.Wanted.Should().BeTrue();
 
         // And not one of them cost the session, which is the whole promise of 4.6 layer 2: a
@@ -1288,9 +1271,9 @@ public class UplinkClientTests
         await using var client = new UplinkClient(
             server, SettingsFor(monitor.Url, channelRate: 48000, audioRate: 12000), clock);
         client.Start();
-        await Until(() => client.Publishing, "the welcome");
+        await Eventually.UntilAsync(() => client.Publishing, "the welcome");
         await monitor.DemandAsync(1);
-        await Until(() => client.Wanted, "the demand");
+        await Eventually.UntilAsync(() => client.Wanted, "the demand");
 
         // 2400 samples at 48 kHz are 600 at 12 kHz, so 64 calls are exactly 80 blocks of 480 a
         // kind: 160 in all, under the 200 the send queue holds before it drops the oldest.
@@ -1320,7 +1303,7 @@ public class UplinkClientTests
 
         // Every block, by count. None can have been dropped, so this is all of them and nothing
         // is still to come.
-        await Until(() => monitor.AudioMessages.Count >= 2 * blocksPerKind, "every block offered");
+        await Eventually.UntilAsync(() => monitor.AudioMessages.Count >= 2 * blocksPerKind, "every block offered");
         client.DroppedMessages.Should().Be(
             0, "the offering fits the send queue, so a slow sender delays blocks but loses none");
 
@@ -1401,19 +1384,19 @@ public class UplinkClientTests
         };
 
         client.Start();
-        await Until(() => client.Publishing, "the welcome");
+        await Eventually.UntilAsync(() => client.Publishing, "the welcome");
         await monitor.DemandAsync(1);
 
         // The demand that brought the viewer, all of it, and not merely the moment the count
         // became visible: in the wrong order that moment comes before the call in the gap.
         await gapPassed.Task.WaitAsync(Patience);
-        await Until(() => client.Wanted, "the demand");
+        await Eventually.UntilAsync(() => client.Wanted, "the demand");
 
         // Two whole blocks of what was offered while audio was wanted, however much of it the
         // call in the gap was.
         client.Audio(Tone((2 * BlockSamples) - offeredInTheGap), transmitted: false);
         client.Frame(AFrame("G4FENCE"));
-        await Until(
+        await Eventually.UntilAsync(
             () => monitor.TextMessagesOfType("frame")
                 .Any(f => f.GetProperty("from").GetString() == "G4FENCE"),
             "the fence frame, which is queued behind every block offered before it");
@@ -1444,8 +1427,8 @@ public class UplinkClientTests
         await using WaterfallWebServer server = StationServer(clock);
         var client = new UplinkClient(server, SettingsFor(monitor.Url), catcher);
         client.Start();
-        await Until(() => client.Publishing, "the welcome");
-        await Until(() => catcher.Repeating.Count >= 1, "the watchdog to be armed");
+        await Eventually.UntilAsync(() => client.Publishing, "the welcome");
+        await Eventually.UntilAsync(() => catcher.Repeating.Count >= 1, "the watchdog to be armed");
 
         (TimerCallback tick, object? state) = catcher.Repeating[0];
 
@@ -1484,9 +1467,9 @@ public class UplinkClientTests
 
         await using var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
         client.Start();
-        await Until(() => client.Publishing, "the welcome");
+        await Eventually.UntilAsync(() => client.Publishing, "the welcome");
 
-        await Until(() => monitor.TextMessagesOfType("radio").Any(), "the status sentence");
+        await Eventually.UntilAsync(() => monitor.TextMessagesOfType("radio").Any(), "the status sentence");
         monitor.TextMessagesOfType("radio").First()
             .GetProperty("status").GetString().Should().Be("reference: GPSDO locked");
     }

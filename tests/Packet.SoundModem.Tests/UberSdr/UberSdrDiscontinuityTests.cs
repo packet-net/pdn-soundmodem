@@ -50,7 +50,7 @@ public sealed class UberSdrDiscontinuityTests
 
         // The receiver closed the first session after half a second; the input backs off on its
         // clock before asking again.
-        await UntilAsync(() =>
+        await Eventually.UntilAsync(() =>
         {
             clock.Advance(TimeSpan.FromSeconds(1));
             return receiver.Sessions >= 2;
@@ -75,7 +75,7 @@ public sealed class UberSdrDiscontinuityTests
             receiver.Endpoint, Tuning, log: null, CancellationToken.None, clock);
 
         await DrainAsync(input, 20 * AudioPerFrame);
-        await UntilAsync(() =>
+        await Eventually.UntilAsync(() =>
         {
             clock.Advance(TimeSpan.FromSeconds(1));
             return receiver.Sessions >= 2;
@@ -95,7 +95,7 @@ public sealed class UberSdrDiscontinuityTests
         using UberSdrAudioInput input = await UberSdrAudioInput.OpenAsync(
             receiver.Endpoint, Tuning, log: null, CancellationToken.None, new FakeTimeProvider());
 
-        await UntilAsync(() => receiver.FramesSent >= 500 && input.DroppedSamples > 0, "the ring overflows");
+        await Eventually.UntilAsync(() => receiver.FramesSent >= 500 && input.DroppedSamples > 0, "the ring overflows");
 
         // The last packets may still be on their way through the converter.
         long settled;
@@ -149,19 +149,19 @@ public sealed class UberSdrDiscontinuityTests
         Task running = Task.Factory.StartNew(
             station.Run, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
-        await UntilAsync(() => Interlocked.Read(ref delivered) >= 20 * AudioPerFrame, "the first session is heard");
+        await Eventually.UntilAsync(() => Interlocked.Read(ref delivered) >= 20 * AudioPerFrame, "the first session is heard");
 
         // Empty reads while the receiver is between sessions: the loop turns, nothing is lost.
         await Task.Delay(300);
         Volatile.Read(ref losses).Should().Be(0, "a Read that comes back empty has lost nothing");
 
         long before = Interlocked.Read(ref delivered);
-        await UntilAsync(() =>
+        await Eventually.UntilAsync(() =>
         {
             clock.Advance(TimeSpan.FromSeconds(1));
             return receiver.Sessions >= 2;
         }, "the input reconnects");
-        await UntilAsync(() => Interlocked.Read(ref delivered) >= before + (20 * AudioPerFrame), "the second session is heard");
+        await Eventually.UntilAsync(() => Interlocked.Read(ref delivered) >= before + (20 * AudioPerFrame), "the second session is heard");
 
         Volatile.Read(ref losses).Should().Be(1, "one hole, between the two sessions");
         Interlocked.Read(ref lostAt).Should().Be(before,
@@ -223,20 +223,6 @@ public sealed class UberSdrDiscontinuityTests
             giveUp.Token.ThrowIfCancellationRequested();
             taken += input.Read(buffer);
             await Task.Yield();
-        }
-    }
-
-    private static async Task UntilAsync(Func<bool> condition, string what)
-    {
-        using var giveUp = new CancellationTokenSource(GiveUp);
-        while (!condition())
-        {
-            if (giveUp.IsCancellationRequested)
-            {
-                throw new TimeoutException($"timed out waiting for {what}");
-            }
-
-            await Task.Delay(20, CancellationToken.None);
         }
     }
 

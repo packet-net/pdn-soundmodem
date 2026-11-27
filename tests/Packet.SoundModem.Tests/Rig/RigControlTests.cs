@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json.Nodes;
@@ -86,42 +85,31 @@ public sealed class RigControlTests : IAsyncDisposable
     /// moves only then (<see cref="RigClock"/>), so the bound is a count of steps of fake time,
     /// far beyond anything a working build needs, and a slow rigctld cannot make the clock run on
     /// ahead of what the rig has done. Unstepped, it is waiting for socket work only, and the
-    /// bound is <see cref="RigClock.Patience"/>, a safety net for a hang.
+    /// bound is the shared hang guard (<see cref="Eventually"/>).
     /// </remarks>
-    private async Task Eventually(Func<bool> condition, string what, TimeSpan step = default)
+    private async Task WaitUntil(Func<bool> condition, string what, TimeSpan step = default)
     {
-        var patience = Stopwatch.StartNew();
+        if (step <= TimeSpan.Zero)
+        {
+            await Eventually.UntilAsync(condition, what);
+            return;
+        }
+
         for (int look = 0; ; look++)
         {
-            if (step > TimeSpan.Zero)
-            {
-                await RigClock.UntilWaitingAsync(_rigs);
-            }
-
+            await RigClock.UntilWaitingAsync(_rigs);
             if (condition())
             {
                 return;
             }
 
-            if (step > TimeSpan.Zero)
+            if (look >= 2000)
             {
-                if (look >= 2000)
-                {
-                    break;
-                }
-
-                await RigClock.StepAsync(_time, _rigs, step);
-                await Task.Delay(1);
+                break;
             }
-            else
-            {
-                if (patience.Elapsed > RigClock.Patience)
-                {
-                    break;
-                }
 
-                await Task.Delay(5);
-            }
+            await RigClock.StepAsync(_time, _rigs, step);
+            await Task.Delay(1);
         }
 
         condition().Should().BeTrue(what);
@@ -286,7 +274,7 @@ public sealed class RigControlTests : IAsyncDisposable
 
         _fake.Accepting = true;
         // Connected is set before the new connection has applied the plan, so wait for both.
-        await Eventually(
+        await WaitUntil(
             () => rig.Connected && _fake.DialHz == 7_049_450,
             "the backoff should bring the connection up and the plan be applied",
             TimeSpan.FromSeconds(1));
@@ -306,7 +294,7 @@ public sealed class RigControlTests : IAsyncDisposable
         _fake.Mode = "FM";
         _fake.Kill();
 
-        await Eventually(() => _fake.DialHz == 7_049_450, "the reconnect should restore the plan", TimeSpan.FromSeconds(5));
+        await WaitUntil(() => _fake.DialHz == 7_049_450, "the reconnect should restore the plan", TimeSpan.FromSeconds(5));
         _fake.Mode.Should().Be("USB");
         _said.Should().Contain("rig: the rig is not where the band plan puts it; setting it back to 7.049450 MHz USB (2400 Hz passband)");
         rig.Connected.Should().BeTrue();
@@ -345,7 +333,7 @@ public sealed class RigControlTests : IAsyncDisposable
         rig.Snapshot().Keyed.Should().BeFalse("the station's own idea of keyed is cleared whatever the command does");
 
         // The radio is still keyed (rigctld never got the T 0) until a new connection's first act.
-        await Eventually(() => !_fake.Ptt && _fake.Connections == 2, "the reconnect should unkey the radio", TimeSpan.FromSeconds(1));
+        await WaitUntil(() => !_fake.Ptt && _fake.Connections == 2, "the reconnect should unkey the radio", TimeSpan.FromSeconds(1));
         _fake.Commands.Where(c => c.Connection == 2).Select(c => c.Command).Take(2)
             .Should().Equal(["\\chk_vfo", "T 0"], "after checking it can be spoken to, the unkey is the first thing a new connection does");
         _warned.Should().Contain(w => w.Contains("lost rigctld") && w.Contains("may still be keyed"));
@@ -512,7 +500,7 @@ public sealed class RigControlTests : IAsyncDisposable
         RigControl rig = await Started(plan: new RigTuning(7_049_450, "PKTUSB", 0));
 
         _fake.Kill();
-        await Eventually(
+        await WaitUntil(
             () => _said.Count(s => s.StartsWith("rig: rigctld at", StringComparison.Ordinal)) >= 2,
             "the connection should come back",
             TimeSpan.FromSeconds(5));
@@ -705,12 +693,12 @@ public sealed class RigControlTests : IAsyncDisposable
 
         // The window ends with nobody to tell: the restore is owed, and the station stays off the air.
         _time.Advance(TimeSpan.FromSeconds(60));
-        await Eventually(() => rig.Snapshot().RestoreOwed is not null, "the restore should be owed");
+        await WaitUntil(() => rig.Snapshot().RestoreOwed is not null, "the restore should be owed");
         rig.HoldsTransmitter.Should().BeTrue();
         _fake.DialHz.Should().Be(7_052_000);
 
         _fake.Accepting = true;
-        await Eventually(() => !rig.HoldsTransmitter, "the reconnect should do the restore", TimeSpan.FromSeconds(1));
+        await WaitUntil(() => !rig.HoldsTransmitter, "the reconnect should do the restore", TimeSpan.FromSeconds(1));
         _fake.DialHz.Should().Be(14_074_000);
     }
 
@@ -720,7 +708,7 @@ public sealed class RigControlTests : IAsyncDisposable
         RigControl rig = await Started();
         _fake.Accepting = false;
         _fake.Kill();
-        await Eventually(() => !rig.Connected, "the poll should notice the connection has gone", TimeSpan.FromSeconds(5));
+        await WaitUntil(() => !rig.Connected, "the poll should notice the connection has gone", TimeSpan.FromSeconds(5));
 
         RigTuneResult result = rig.Tune(new RigTuning(7_052_000, "USB", 0), TimeSpan.FromSeconds(60), "mailcast");
 
@@ -981,7 +969,7 @@ public sealed class RigControlTests : IAsyncDisposable
         RigControl next = Rig(persist: true);
         await next.StartAsync(CancellationToken.None);
 
-        await Eventually(() => !next.HoldsTransmitter, "the restore is done on connecting", TimeSpan.FromSeconds(1));
+        await WaitUntil(() => !next.HoldsTransmitter, "the restore is done on connecting", TimeSpan.FromSeconds(1));
         _said.Should().Contain(s => s.Contains("stopped during a tuning window last time"));
         _fake.DialHz.Should().Be(14_074_000);
         _fake.PassbandHz.Should().Be(2400);
@@ -1086,11 +1074,11 @@ public sealed class RigControlTests : IAsyncDisposable
         _warned.Should().ContainSingle(w => w.Contains("the rig did not") && w.Contains("RPRT -5"));
 
         // Still retrying, quietly, with the backoff.
-        await Eventually(() => _fake.Connections >= 3, "the watch keeps trying", TimeSpan.FromSeconds(1));
+        await WaitUntil(() => _fake.Connections >= 3, "the watch keeps trying", TimeSpan.FromSeconds(1));
         _warned.Should().HaveCount(1);
 
         _fake.RigOff = false;
-        await Eventually(() => rig.Connected && _fake.DialHz == 7_049_450, "the rig is picked up", TimeSpan.FromSeconds(1));
+        await WaitUntil(() => rig.Connected && _fake.DialHz == 7_049_450, "the rig is picked up", TimeSpan.FromSeconds(1));
     }
 
     [Fact]
@@ -1098,12 +1086,12 @@ public sealed class RigControlTests : IAsyncDisposable
     {
         RigControl rig = await Started(keysThroughRig: true);
         _fake.RigOff = true;
-        await Eventually(() => rig.Snapshot().LastProblem is not null, "the poll should notice", TimeSpan.FromSeconds(5));
+        await WaitUntil(() => rig.Snapshot().LastProblem is not null, "the poll should notice", TimeSpan.FromSeconds(5));
 
         // The watch is alive: it still acts on what is owed.
         _fake.RigOff = false;
         _fake.Kill();
-        await Eventually(() => _fake.Connections == 2 && rig.Connected, "and still reconnects", TimeSpan.FromSeconds(1));
+        await WaitUntil(() => _fake.Connections == 2 && rig.Connected, "and still reconnects", TimeSpan.FromSeconds(1));
     }
 
     [Fact]
@@ -1150,11 +1138,11 @@ public sealed class RigControlTests : IAsyncDisposable
         rig.Tune(new RigTuning(7_052_000, "USB", 0), TimeSpan.FromSeconds(60), "mailcast")
             .Why.Should().Contain("unkey has not been confirmed");
 
-        await Eventually(() => _warned.Count(w => w.Contains("the unkey was refused")) >= 3, "retried", TimeSpan.FromSeconds(1));
+        await WaitUntil(() => _warned.Count(w => w.Contains("the unkey was refused")) >= 3, "retried", TimeSpan.FromSeconds(1));
         _fake.Ptt.Should().BeTrue();
 
         _fake.RefusesUnkey = false;
-        await Eventually(() => !rig.HoldsTransmitter, "the next retry unkeys", TimeSpan.FromSeconds(1));
+        await WaitUntil(() => !rig.HoldsTransmitter, "the next retry unkeys", TimeSpan.FromSeconds(1));
         _fake.Ptt.Should().BeFalse();
         _said.Should().Contain(s => s.StartsWith("rig: unkeyed the radio after", StringComparison.Ordinal));
     }
@@ -1172,7 +1160,7 @@ public sealed class RigControlTests : IAsyncDisposable
         rig.Snapshot().RestoreOwed.Should().Be(new RigTuning(14_074_000, "USB", 2400));
         rig.HoldsTransmitter.Should().BeTrue();
 
-        await Eventually(() => !rig.HoldsTransmitter, "the reconnect puts it back", TimeSpan.FromSeconds(1));
+        await WaitUntil(() => !rig.HoldsTransmitter, "the reconnect puts it back", TimeSpan.FromSeconds(1));
         _fake.Mode.Should().Be("USB");
         _fake.DialHz.Should().Be(14_074_000);
     }
@@ -1203,7 +1191,7 @@ public sealed class RigControlTests : IAsyncDisposable
         _said.Should().Contain(s => s.Contains("stopped during a tuning window last time"));
 
         _fake.Accepting = true;
-        await Eventually(() => !rig.HoldsTransmitter, "the restore is done on connecting", TimeSpan.FromSeconds(1));
+        await WaitUntil(() => !rig.HoldsTransmitter, "the restore is done on connecting", TimeSpan.FromSeconds(1));
         _fake.DialHz.Should().Be(7_049_450);
         File.Exists(RestorePath).Should().BeFalse();
         _fake.Sets.Should().StartWith(["M USB 2400", "F 7049450"]);
@@ -1228,14 +1216,14 @@ public sealed class RigControlTests : IAsyncDisposable
         await Started();
 
         _fake.DialHz = 14_075_000;
-        await Eventually(() => _said.Any(s => s.Contains("changed outside")), "the first change is said", TimeSpan.FromSeconds(5));
+        await WaitUntil(() => _said.Any(s => s.Contains("changed outside")), "the first change is said", TimeSpan.FromSeconds(5));
         _fake.DialHz = 14_076_000;
-        await Eventually(() => _fake.Commands.Count(c => c.Command == "f") >= 4, "polled again", TimeSpan.FromSeconds(5));
+        await WaitUntil(() => _fake.Commands.Count(c => c.Command == "f") >= 4, "polled again", TimeSpan.FromSeconds(5));
         _said.Count(s => s.Contains("changed outside")).Should().Be(1);
 
         _time.Advance(TimeSpan.FromMinutes(1));
         _fake.DialHz = 14_077_000;
-        await Eventually(() => _said.Count(s => s.Contains("changed outside")) == 2, "a minute later it is said again", TimeSpan.FromSeconds(5));
+        await WaitUntil(() => _said.Count(s => s.Contains("changed outside")) == 2, "a minute later it is said again", TimeSpan.FromSeconds(5));
         _said.Should().Contain(s => s.Contains("14.077000 MHz") && s.Contains("1 more changes since the last line"));
     }
 
@@ -1254,7 +1242,7 @@ public sealed class RigControlTests : IAsyncDisposable
 
         _fake.Commands.Count(c => c.Command == "f").Should().Be(reads);
         _pending = false;
-        await Eventually(() => _fake.Commands.Count(c => c.Command == "f") > reads, "polls resume", TimeSpan.FromSeconds(5));
+        await WaitUntil(() => _fake.Commands.Count(c => c.Command == "f") > reads, "polls resume", TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -1273,7 +1261,7 @@ public sealed class RigControlTests : IAsyncDisposable
 
         _fake.Accepting = false;
         _fake.Kill();
-        await Eventually(() => !_changes.Last().Connected, "a drop is raised", TimeSpan.FromSeconds(5));
+        await WaitUntil(() => !_changes.Last().Connected, "a drop is raised", TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -1329,7 +1317,7 @@ public sealed class RigControlTests : IAsyncDisposable
         RigControl rig = Rig(replyTimeout: TimeSpan.FromSeconds(2));
 
         (await rig.StartAsync(CancellationToken.None)).Should().BeFalse();
-        await Eventually(() => rig.Connected, "the next connection does not ask", TimeSpan.FromSeconds(1));
+        await WaitUntil(() => rig.Connected, "the next connection does not ask", TimeSpan.FromSeconds(1));
 
         _fake.Commands.Count(c => c.Command == "\\chk_vfo").Should().Be(1);
         _warned.Should().ContainSingle(w => w.Contains("did not answer \\chk_vfo"));

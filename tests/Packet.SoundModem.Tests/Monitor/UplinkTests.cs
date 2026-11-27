@@ -85,7 +85,7 @@ public class UplinkTests
         int before = h.Time.Created(UplinkServer.BadTokenDelay);
         Task<WebSocketException> attempt = Assert.ThrowsAsync<WebSocketException>(
             () => StubStation.ConnectAsync(h.Port, "pdnsm_not-a-token-this-site-ever-issued"));
-        await StubStation.UntilAsync(
+        await Eventually.UntilAsync(
             () => h.Time.Created(UplinkServer.BadTokenDelay) > before, "the hold on a wrong token");
         attempt.IsCompleted.Should().BeFalse("a wrong token is held before it is told so");
         h.Time.Advance(UplinkServer.BadTokenDelay);
@@ -205,14 +205,14 @@ public class UplinkTests
         // The stub reads the close and does not answer it, as a station that has gone away does.
         // The monitor waits a deadline for the answer and then lets the connection go; that
         // deadline is on the clock the site was given, so it has not passed until the clock does.
-        await StubStation.UntilAsync(
+        await Eventually.UntilAsync(
             () => h.Time.Created(deadline) > before, "the deadline for the close answer on the clock");
         h.Lines.Should().NotContain(line => line.Contains("disconnected - another connection", StringComparison.Ordinal));
 
         h.Time.Advance(deadline);
 
-        await h.UntilAsync(() => Task.FromResult(
-            h.Lines.ToArray().Any(line => line.Contains("disconnected - another connection", StringComparison.Ordinal))));
+        await Eventually.UntilAsync(() => Task.FromResult(
+            h.Lines.ToArray().Any(line => line.Contains("disconnected - another connection", StringComparison.Ordinal))), "the line saying the old connection was dropped");
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -227,7 +227,7 @@ public class UplinkTests
         int before = h.Time.Created(UplinkServer.HelloDeadline);
         using ClientWebSocket silent = await StubStation.ConnectAsync(h.Port, h.Token);
         silent.State.Should().Be(WebSocketState.Open);
-        await StubStation.UntilAsync(
+        await Eventually.UntilAsync(
             () => h.Time.Created(UplinkServer.HelloDeadline) > before, "the hello deadline on the clock");
 
         h.Time.Advance(UplinkServer.HelloDeadline + TimeSpan.FromSeconds(1));
@@ -273,7 +273,7 @@ public class UplinkTests
 
         var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await station.WelcomedAsync();
-        await h.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+        await Eventually.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean(), "the station to be offered");
 
         JsonElement live = await h.RowAsync(Slug);
         live.GetProperty("kind").GetString().Should().Be("station");
@@ -281,7 +281,7 @@ public class UplinkTests
         live.GetProperty("why").ValueKind.Should().Be(JsonValueKind.Null);
 
         await station.DisposeAsync();
-        await h.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+        await Eventually.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean(), "the station to stop being offered");
 
         JsonElement gone = await h.RowAsync(Slug);
         gone.GetProperty("why").GetString().Should().Be("not connected just now");
@@ -304,10 +304,10 @@ public class UplinkTests
             await watching.UntilTextAsync("frame");
         }
 
-        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
+        await Eventually.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1), "1 frame(s) to be logged");
 
         await station.DisposeAsync();
-        await h.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+        await Eventually.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean(), "the station to stop being offered");
 
         // The page is still there, and so is everything the station sent while it was up. This is
         // the whole reason a station is never torn down: a quiet band an hour later still looks
@@ -330,16 +330,16 @@ public class UplinkTests
         var first = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await first.WelcomedAsync();
         await first.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "before the gap"));
-        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
+        await Eventually.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1), "1 frame(s) to be logged");
         await first.DisposeAsync();
-        await h.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+        await Eventually.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean(), "the station to stop being offered");
 
         await using var again = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await again.WelcomedAsync();
         again.Welcome!.Value.GetProperty("slug").GetString().Should().Be(Slug);
 
         await again.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "after the gap"));
-        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 2));
+        await Eventually.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 2), "2 frame(s) to be logged");
         (await h.StationsAsync()).Should().ContainSingle("the same station came back, not a second one");
     }
 
@@ -351,7 +351,7 @@ public class UplinkTests
         var first = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await first.WelcomedAsync();
         await using Browser browser = await h.WatchAsync(Slug);
-        await StubStation.UntilAsync(() => first.Demands.Contains(1), "a demand for one viewer");
+        await Eventually.UntilAsync(() => first.Demands.Contains(1), "a demand for one viewer");
 
         // A local program reading the relayed station's channel audio, as a decoder would.
         var blocks = new List<(byte Flags, int Samples)>();
@@ -414,15 +414,15 @@ public class UplinkTests
         }
 
         int beforeTheGap = sentBlocks * first.BlockSamples;
-        await StubStation.UntilAsync(() => Blocks() >= 3, "the first connection's audio in the stream");
+        await Eventually.UntilAsync(() => Blocks() >= 3, "the first connection's audio in the stream");
 
         await first.DisposeAsync();
-        await h.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+        await Eventually.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean(), "the station to stop being offered");
         await using var again = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await again.WelcomedAsync();
-        await StubStation.UntilAsync(() => again.Demands.Contains(1), "the viewer's demand, again");
+        await Eventually.UntilAsync(() => again.Demands.Contains(1), "the viewer's demand, again");
         await again.SendSecondsAsync(0.5);
-        await StubStation.UntilAsync(
+        await Eventually.UntilAsync(
             () => Heard() >= beforeTheGap + (beforeTheGap / 2), // the last partial block waits for more
             "the second connection's audio in the stream");
 
@@ -451,7 +451,7 @@ public class UplinkTests
             h.Port, h.Token, Callsign, op: "Tom M0LTE", radio: "IC-7300 into a doublet at 10 m");
         await first.WelcomedAsync();
         await first.DisposeAsync();
-        await h.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+        await Eventually.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean(), "the station to stop being offered");
 
         // An operator changes their publish block and restarts, which is the whole way any of
         // this is configured. Their words used to stay whatever the first hello said for the
@@ -460,7 +460,7 @@ public class UplinkTests
             h.Port, h.Token, Callsign, op: "Someone Else", location: "Newbury, England",
             radio: "FT-991A into a vertical", site: "https://new.example/");
         await again.WelcomedAsync();
-        await h.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+        await Eventually.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean(), "the station to be offered");
 
         JsonElement row = await h.RowAsync(Slug);
         row.GetProperty("operator").GetString().Should().Be("Someone Else");
@@ -483,9 +483,9 @@ public class UplinkTests
         var first = await StubStation.OpenAsync(h.Port, h.Token, Callsign, audioRate: 12000);
         await first.WelcomedAsync();
         await first.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "before the change"));
-        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
+        await Eventually.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1), "1 frame(s) to be logged");
         await first.DisposeAsync();
-        await h.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+        await Eventually.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean(), "the station to stop being offered");
 
         // docs/reference/config.md tells an operator on ADSL that audioRate is one of their two levers. The
         // channel was built at the old rate and the audio checked against the new block length,
@@ -647,7 +647,7 @@ public class UplinkTests
         await station.WelcomedAsync();
         await using Browser browser = await h.WatchAsync(Slug);
         await browser.UntilTextAsync("config");
-        await StubStation.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
+        await Eventually.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
 
         await station.SendSecondsAsync(0.5);
 
@@ -690,7 +690,7 @@ public class UplinkTests
         // moment its bytes crossed the wire.
         DateTimeOffset heardAt = h.Time.GetUtcNow().AddMinutes(-7);
         await station.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "into the log"), at: heardAt);
-        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
+        await Eventually.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1), "1 frame(s) to be logged");
 
         (string from, string mode, string at) = h.LastLoggedFrame();
         from.Should().Be("M0LTE");
@@ -731,7 +731,7 @@ public class UplinkTests
         await station.SendFrameAsync(
             Ax25.Ui("GB7BPQ", "BEACON", "rs only, over the wire"),
             plainIl2p: true, monitorOnly: true);
-        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
+        await Eventually.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1), "1 frame(s) to be logged");
 
         h.LastLoggedFlags().Should().Be(
             (1L, 1L), "the relayed row records what stood behind the frame and what became of it");
@@ -765,7 +765,7 @@ public class UplinkTests
         await station.SendFrameAsync(
             Ax25.Ui("M0LTE", "GB7RDG-2", "from the future"),
             at: new DateTimeOffset(9999, 1, 1, 0, 0, 0, TimeSpan.Zero));
-        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
+        await Eventually.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1), "1 frame(s) to be logged");
         h.LastLoggedFrame().At.Should().NotContain(
             "9999", "a day either side of this site's clock, and nothing beyond it");
 
@@ -773,7 +773,7 @@ public class UplinkTests
         // the moment its bytes happened to cross the wire.
         DateTimeOffset heard = h.Time.GetUtcNow().AddMinutes(-5);
         await station.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "five minutes ago"), at: heard);
-        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 2));
+        await Eventually.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 2), "2 frame(s) to be logged");
         h.LastLoggedFrame().At.Should().Contain(heard.UtcDateTime.ToString("HH:mm:ss"));
     }
 
@@ -788,7 +788,7 @@ public class UplinkTests
         int before = h.Time.Created(UplinkServer.BadTokenDelay);
         Task<WebSocketException> attempt = Assert.ThrowsAsync<WebSocketException>(
             () => StubStation.ConnectAsync(h.Port, new string('x', 600)));
-        await StubStation.UntilAsync(
+        await Eventually.UntilAsync(
             () => h.Time.Created(UplinkServer.BadTokenDelay) > before, "the hold on an unusable value");
         attempt.IsCompleted.Should().BeFalse("an unusable value is held before it is refused");
         h.Time.Advance(UplinkServer.BadTokenDelay);
@@ -811,7 +811,7 @@ public class UplinkTests
             int before = h.Time.Created(UplinkServer.BadTokenDelay);
             Task<WebSocketException> attempt = Assert.ThrowsAsync<WebSocketException>(
                 () => StubStation.ConnectAsync(h.Port, $"pdnsm_guess-{i}"));
-            await StubStation.UntilAsync(
+            await Eventually.UntilAsync(
                 () => h.Time.Created(UplinkServer.BadTokenDelay) > before, "the hold on a wrong token");
             h.Time.Advance(UplinkServer.BadTokenDelay);
             await attempt;
@@ -822,7 +822,7 @@ public class UplinkTests
             "the first is said at once, and the rest are inside the quiet minute");
 
         h.Time.Advance(TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(1));
-        await h.UntilAsync(() => Task.FromResult(h.Errors.Count == 2));
+        await Eventually.UntilAsync(() => Task.FromResult(h.Errors.Count == 2), "2 error line(s) to be logged");
         h.Errors[1].Should().Contain("refused 4 connections").And.Contain("5 in all");
     }
 
@@ -880,17 +880,17 @@ public class UplinkTests
 
         await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await station.WelcomedAsync();
-        await StubStation.UntilAsync(
+        await Eventually.UntilAsync(
             () => station.Demands.Count >= 1, "the demand a station gets on connecting");
         station.Demands[0].Should().Be(0, "nothing flows until somebody is watching");
-        await StubStation.UntilAsync(
+        await Eventually.UntilAsync(
             () => h.Time.Created(UplinkServer.DemandHeartbeat) > beats, "the station's heartbeat timer on the clock");
 
         Browser browser = await h.WatchAsync(Slug);
-        await StubStation.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
+        await Eventually.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
 
         await browser.DisposeAsync();
-        await h.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("viewers").GetInt32() == 0);
+        await Eventually.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("viewers").GetInt32() == 0, "the viewer count to be 0");
 
         // The same linger a receiver's session gets, and for the same reason: a page refresh or a
         // tab switch must not stop and restart a home station's stream. The count is repeated on
@@ -902,7 +902,7 @@ public class UplinkTests
         {
             int sent = station.Demands.Count;
             h.Time.Advance(UplinkServer.DemandHeartbeat);
-            await StubStation.UntilAsync(() => station.Demands.Count > sent, "a heartbeat inside the linger");
+            await Eventually.UntilAsync(() => station.Demands.Count > sent, "a heartbeat inside the linger");
         }
 
         h.Time.Advance(Harness.Linger - (2 * UplinkServer.DemandHeartbeat) - TimeSpan.FromSeconds(1));
@@ -911,7 +911,7 @@ public class UplinkTests
             0, "nothing is stopped inside the linger, however many heartbeats pass");
 
         h.Time.Advance(TimeSpan.FromSeconds(1));
-        await StubStation.UntilAsync(
+        await Eventually.UntilAsync(
             () => station.Demands[^1] == 0, "the demand after the linger");
     }
 
@@ -934,9 +934,9 @@ public class UplinkTests
                     """),
                 WebSocketMessageType.Text, true, CancellationToken.None);
 
-            await h.UntilAsync(async () =>
+            await Eventually.UntilAsync(async () =>
                 (await h.StationsAsync()).Any(r =>
-                    r.GetProperty("offered").GetBoolean()));
+                    r.GetProperty("offered").GetBoolean()), "the station to be offered");
         }
 
         JsonElement row = await h.RowAsync(Slug);
@@ -959,19 +959,19 @@ public class UplinkTests
 
         await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await station.WelcomedAsync();
-        await StubStation.UntilAsync(() => station.Demands.Count >= 1, "the demand on connecting");
-        await StubStation.UntilAsync(
+        await Eventually.UntilAsync(() => station.Demands.Count >= 1, "the demand on connecting");
+        await Eventually.UntilAsync(
             () => h.Time.Created(UplinkServer.DemandHeartbeat) > before, "the station's heartbeat timer on the clock");
 
         // The station's client reconnects after 45 s of silence, so something has to come down
         // this socket well inside that. The count repeated every twenty seconds is that
         // something, which is why the heartbeat is the demand rather than a message of its own.
         h.Time.Advance(UplinkServer.DemandHeartbeat + TimeSpan.FromSeconds(1));
-        await StubStation.UntilAsync(
+        await Eventually.UntilAsync(
             () => station.Demands.Count >= 2, "the viewer count repeated on the heartbeat");
 
         h.Time.Advance(UplinkServer.DemandHeartbeat);
-        await StubStation.UntilAsync(() => station.Demands.Count >= 3, "and again");
+        await Eventually.UntilAsync(() => station.Demands.Count >= 3, "and again");
         station.Demands.Should().AllSatisfy(v => v.Should().Be(0));
     }
 
@@ -1029,7 +1029,7 @@ public class UplinkTests
         await station.SendAsync(new { type = "tx", enable = true });
         await station.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "still listening"));
 
-        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
+        await Eventually.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1), "1 frame(s) to be logged");
         station.Connected.Should().BeTrue("nothing there could have closed this socket");
         (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean().Should().BeTrue();
     }
@@ -1044,13 +1044,13 @@ public class UplinkTests
 
         // The demand a station is sent on connecting carries the count at that moment, so the
         // first browser waits for it: arriving first, it would make that demand a 1.
-        await StubStation.UntilAsync(
+        await Eventually.UntilAsync(
             () => station.Demands.Count >= 1, "the demand a station gets on connecting");
 
         await using Browser first = await h.WatchAsync(Slug);
-        await StubStation.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
+        await Eventually.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
         await using Browser second = await h.WatchAsync(Slug);
-        await StubStation.UntilAsync(() => station.Demands.Contains(2), "a demand for two viewers");
+        await Eventually.UntilAsync(() => station.Demands.Contains(2), "a demand for two viewers");
 
         // Ten people watching cost the station one stream, exactly as ten people watching a
         // receiver cost its operator one session. The monitor fans it out.
@@ -1231,7 +1231,7 @@ public class UplinkTests
         await using var station = await StubStation.OpenAsync(
             h.Port, h.Token, Callsign, site: "javascript:alert(document.cookie)");
         await station.WelcomedAsync();
-        await h.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+        await Eventually.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean(), "the station to be offered");
 
         (await h.RowAsync(Slug)).GetProperty("publicUrl").ValueKind.Should().Be(JsonValueKind.Null);
 
@@ -1267,7 +1267,7 @@ public class UplinkTests
         await using var station = await StubStation.OpenAsync(
             h.Port, h.Token, Callsign, site: "https://gb7rdg.example/");
         await station.WelcomedAsync();
-        await h.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+        await Eventually.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean(), "the station to be offered");
 
         using JsonDocument snapshot = JsonDocument.Parse(await h.GetAsync("/api/instances"));
         JsonElement[] rows = [.. snapshot.RootElement.GetProperty("receivers").EnumerateArray()];
@@ -1467,17 +1467,6 @@ public class UplinkTests
             return connection;
         }
 
-        /// <summary>Waits on the condition rather than sleeping through a guess.</summary>
-        internal async Task UntilAsync(Func<Task<bool>> condition)
-        {
-            using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            while (!await condition())
-            {
-                giveUp.Token.ThrowIfCancellationRequested();
-                await Task.Delay(20, giveUp.Token);
-            }
-        }
-
         public async ValueTask DisposeAsync()
         {
             Browser[] browsers;
@@ -1604,7 +1593,7 @@ public class UplinkTests
         internal async Task<JsonElement> UntilTextAsync(string type, Func<JsonElement, bool> matches)
         {
             JsonElement? found = null;
-            await StubStation.UntilAsync(
+            await Eventually.UntilAsync(
                 () =>
                 {
                     lock (_gate)
@@ -1632,7 +1621,7 @@ public class UplinkTests
         /// <summary>Waits for the first binary message of this type and returns it.</summary>
         internal async Task<byte[]> UntilBinaryAsync(byte type)
         {
-            await StubStation.UntilAsync(
+            await Eventually.UntilAsync(
                 () => Binaries(type).Length > 0, $"a binary message of type {type}");
             return Binaries(type)[0];
         }

@@ -307,48 +307,51 @@ public sealed class MonitorConfigPageBrowserTests : IClassFixture<ConfigPageBrow
         public async Task WaitForStartsAsync(int count)
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-            DateTime deadline = DateTime.UtcNow + TimeSpan.FromMinutes(3);
-            while (DateTime.UtcNow < deadline)
+            try
             {
-                if (_supervising.IsCompleted)
-                {
-                    throw new InvalidOperationException(
-                        $"the daemon stopped for good (exit {_lastExit}). The log:\n{Log}");
-                }
-
-                if (Starts >= count)
-                {
-                    try
+                await Eventually.UntilAsync(
+                    async () =>
                     {
-                        using HttpResponseMessage answer = await client.GetAsync(new Uri(Url("")));
-                        if (answer.StatusCode == HttpStatusCode.OK)
+                        if (_supervising.IsCompleted)
                         {
-                            return;
+                            throw new InvalidOperationException(
+                                $"the daemon stopped for good (exit {_lastExit}). The log:\n{Log}");
                         }
-                    }
-                    catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
-                    {
-                        // Not listening yet.
-                    }
-                }
 
-                await Task.Delay(200);
+                        if (Starts < count)
+                        {
+                            return false;
+                        }
+
+                        try
+                        {
+                            using HttpResponseMessage answer = await client.GetAsync(new Uri(Url("")));
+                            return answer.StatusCode == HttpStatusCode.OK;
+                        }
+                        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+                        {
+                            // Not listening yet.
+                            return false;
+                        }
+                    },
+                    $"the daemon to answer after {count} start(s)");
             }
-
-            throw new TimeoutException($"the daemon was not answering after {count} start(s):\n{Log}");
+            catch (TimeoutException e)
+            {
+                throw new TimeoutException($"{e.Message}:\n{Log}");
+            }
         }
 
         public async Task WaitForLogAsync(string text)
         {
-            DateTime deadline = DateTime.UtcNow + TimeSpan.FromMinutes(1);
-            while (!Log.Contains(text, StringComparison.Ordinal))
+            try
             {
-                if (DateTime.UtcNow > deadline)
-                {
-                    throw new TimeoutException($"the daemon never said \"{text}\":\n{Log}");
-                }
-
-                await Task.Delay(100);
+                await Eventually.UntilAsync(
+                    () => Log.Contains(text, StringComparison.Ordinal), $"the daemon to say \"{text}\"");
+            }
+            catch (TimeoutException e)
+            {
+                throw new TimeoutException($"{e.Message}:\n{Log}");
             }
         }
 

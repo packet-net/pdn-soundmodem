@@ -41,16 +41,6 @@ public class PagingSentTests
         return await reader.ReadLineAsync(timeout.Token) ?? throw new IOException("connection closed");
     }
 
-    private static async Task WaitForAsync(Func<bool> done)
-    {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        while (!done())
-        {
-            timeout.Token.ThrowIfCancellationRequested();
-            await Task.Delay(20, timeout.Token);
-        }
-    }
-
     [Fact]
     public async Task A_Page_That_Goes_On_The_Air_Is_Announced_With_Its_Address_And_Message()
     {
@@ -72,7 +62,7 @@ public class PagingSentTests
             string response = await SendAsync(client, reader, "PAGE 1234567 1 ALPHA HELLO");
             response.Should().StartWith("OK ", "the channel took it");
 
-            await WaitForAsync(() => sent.Count > 0);
+            await Eventually.UntilAsync(() => sent.Count > 0, "the page to be announced as sent");
         }
 
         await stopping.CancelAsync();
@@ -120,7 +110,7 @@ public class PagingSentTests
             response.Should().StartWith("OK ");
 
             clock.Advance(TimeSpan.FromMilliseconds(100));
-            await WaitForAsync(() => drops.Count > 0);
+            await Eventually.UntilAsync(() => drops.Count > 0, "the drop to be announced");
         }
 
         sent.Should().BeEmpty("a transmission that did not happen must not be logged as one");

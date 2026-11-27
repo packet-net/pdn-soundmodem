@@ -32,9 +32,6 @@ public sealed class FlexRuntimeTeardownTests
         await ended.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         Task teardown = runtime.DisposeAsync().AsTask();
-        Task first = await Task.WhenAny(teardown, Task.Delay(TimeSpan.FromSeconds(10)));
-
-        first.Should().BeSameAs(teardown, "a session that has already ended has nothing to wait for");
-        await teardown;
+        await Eventually.SignalAsync(teardown, "the teardown of a session that has already ended, which has nothing to wait for");
     }
 }

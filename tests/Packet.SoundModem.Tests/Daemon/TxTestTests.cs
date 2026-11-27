@@ -491,10 +491,7 @@ public class TxTestTests
         rig.Band.ChannelBusy = true;
 
         Task<TxTestOutcome> first = rig.Runner.RunAsync(new TxTestRequest(true, 0, 2));
-        while (rig.Reports.Count == 0)
-        {
-            await Task.Delay(10);
-        }
+        await Eventually.UntilAsync(() => rig.Reports.Count > 0, "the test to report that it is waiting");
 
         TxTestOutcome second = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
         second.Refusal.Should().Be("a test transmission is already running");
@@ -515,10 +512,7 @@ public class TxTestTests
         rig.Band.ChannelBusy = true;
 
         Task<TxTestOutcome> running = rig.Runner.RunAsync(new TxTestRequest(true, 0, 5));
-        while (rig.Reports.Count == 0)
-        {
-            await Task.Delay(10);
-        }
+        await Eventually.UntilAsync(() => rig.Reports.Count > 0, "the test to report that it is waiting");
 
         rig.Runner.Stop();
         rig.Band.ChannelBusy = false;
@@ -735,10 +729,7 @@ public class TxTestTests
         rig.Band.ChannelBusy = true;
 
         Task<TxTestOutcome> running = rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
-        while (rig.Reports.Count == 0)
-        {
-            await Task.Delay(10);
-        }
+        await Eventually.UntilAsync(() => rig.Reports.Count > 0, "the test to report that it is waiting");
 
         clock.Advance(TimeSpan.FromSeconds(30));
 
@@ -770,10 +761,7 @@ public class TxTestTests
         rig.Band.ChannelBusy = true;
 
         Task<TxTestOutcome> first = rig.Runner.RunAsync(new TxTestRequest(true, 0, 2));
-        while (rig.Reports.Count == 0)
-        {
-            await Task.Delay(10);
-        }
+        await Eventually.UntilAsync(() => rig.Reports.Count > 0, "the test to report that it is waiting");
 
         TxTestOutcome retry = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 2));
         retry.Refusal.Should().Be("a test transmission is already running");
@@ -1112,10 +1100,7 @@ public class TxTestTests
         rig.Band.ChannelBusy = true;
 
         Task<TxTestOutcome> running = rig.Runner.RunAsync(new TxTestRequest(false, 1800, 1));
-        while (rig.Reports.Count == 0)
-        {
-            await Task.Delay(10);
-        }
+        await Eventually.UntilAsync(() => rig.Reports.Count > 0, "the test to report that it is waiting");
 
         clock.Advance(TimeSpan.FromSeconds(21.25));
         rig.Band.ChannelBusy = false;
@@ -1236,10 +1221,7 @@ public class TxTestTests
         await using var rig = ProbeRig();
         rig.Band.ChannelBusy = true;
         Task<TxTestOutcome> running = rig.Runner.RunAsync(new TxTestRequest(false, 1800, 1));
-        while (rig.Reports.Count == 0)
-        {
-            await Task.Delay(10);
-        }
+        await Eventually.UntilAsync(() => rig.Reports.Count > 0, "the test to report that it is waiting");
 
         List<(HttpStatusCode Status, string Body)> answers = await PostAllAsync(rig.Runner,
         [

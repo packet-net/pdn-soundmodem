@@ -246,7 +246,7 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
         (await input.TuneAsync(14_100_000, TestContext.Current.CancellationToken)).Should().BeFalse();
         await receiver.SendAudioAsync(Pcm(1200));
         // Audio from off the dial is read past, and the input says it is quiet on purpose.
-        await WaitForAsync(() => !input.SessionLive);
+        await Eventually.UntilAsync(() => !input.SessionLive, "the session to end");
         (await input.TuneAsync(7_040_000, TestContext.Current.CancellationToken)).Should().BeTrue();
         await receiver.ReceiveTextAsync();
         await receiver.SendAudioAsync(Pcm(1200));
@@ -292,7 +292,7 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
 
         input.RefusedAtStartup.Should().Be("Too many clients");
         input.SessionLive.Should().BeFalse();
-        await WaitForAsync(() => _journal.Any(l => l.Contains("is refusing us for now (Too many clients); asking again in 1 min", StringComparison.Ordinal)));
+        await Eventually.UntilAsync(() => _journal.Any(l => l.Contains("is refusing us for now (Too many clients); asking again in 1 min", StringComparison.Ordinal)), "the refusal to be journalled");
     }
 
     [Fact]
@@ -368,11 +368,11 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
         await receiver.ExpectOpeningAsync();
 
         // The far end says nothing at all.
-        await WaitForAsync(() =>
+        await Eventually.UntilAsync(() =>
         {
             time.Advance(TimeSpan.FromSeconds(1));
             return opening.IsCompleted;
-        });
+        }, "the open to give up (the clock is moved on each look)");
 
         Func<Task> open = () => opening;
         (await open.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Contain(
@@ -408,11 +408,11 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
         // The breath before the reconnect is on the input's clock. Advanced in steps until the
         // input dials again, since the pause may not have started when the first step is taken;
         // the journal below says which pause it was.
-        await WaitForAsync(() =>
+        await Eventually.UntilAsync(() =>
         {
             time.Advance(TimeSpan.FromMilliseconds(250));
             return _accepted.Reader.Count > 0;
-        });
+        }, "a receiver connection (the clock is moved on each look)");
         FakeReceiver second = await NextReceiverAsync();
         await second.GreetAsync(compression: "none");
         await second.SendAudioAsync(pcm.AsMemory(0, 2400));
@@ -431,23 +431,13 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
         await receiver.GreetAsync(compression: "none");
         using OpenWebRxAudioInput input = await opening;
 
-        await WaitForAsync(() =>
+        await Eventually.UntilAsync(() =>
         {
             time.Advance(TimeSpan.FromSeconds(5));
             return _journal.Any(l => l.Contains("no audio within 30 s of starting the demodulator", StringComparison.Ordinal));
-        });
+        }, "the silent-input warning (the clock is moved on each look)");
 
         input.SessionLive.Should().BeFalse();
-    }
-
-    private static async Task WaitForAsync(Func<bool> condition)
-    {
-        DateTime giveUp = DateTime.UtcNow + HangGuard;
-        while (!condition())
-        {
-            DateTime.UtcNow.Should().BeBefore(giveUp, "the condition should have come true by now");
-            await Task.Delay(20, TestContext.Current.CancellationToken);
-        }
     }
 
     public async ValueTask DisposeAsync()

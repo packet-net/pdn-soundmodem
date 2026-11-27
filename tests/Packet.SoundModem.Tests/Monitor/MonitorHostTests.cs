@@ -61,10 +61,10 @@ public class MonitorHostTests
         await h.GetAsync($"/r/{DalgetySlug}/");
 
         using ClientWebSocket first = await h.WatchAsync(DalgetySlug);
-        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).Viewers == 1);
+        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).Viewers == 1, "the viewer count to be 1");
 
         using ClientWebSocket second = await h.WatchAsync(DalgetySlug);
-        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).Viewers == 2);
+        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).Viewers == 2, "the viewer count to be 2");
 
         Row row = await h.RowAsync(DalgetySlug);
         row.State.Should().Be("live");
@@ -80,7 +80,7 @@ public class MonitorHostTests
         await h.GetAsync($"/r/{DalgetySlug}/");
 
         using ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
-        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live");
+        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
 
         // Nothing was combined, shared or warmed up: the other receiver has not been contacted,
         // and does not even have a station.
@@ -98,11 +98,11 @@ public class MonitorHostTests
         await h.GetAsync($"/r/{DalgetySlug}/");
 
         ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
-        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live");
+        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
         FakeSession session = h.LastSession(DalgetyHost);
 
         await h.LeaveAsync(watching);
-        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "lingering");
+        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "lingering", "the row to be lingering");
         session.Disposed.Should().BeFalse();
 
         h.Time.Advance(Harness.Linger - TimeSpan.FromSeconds(1));
@@ -122,15 +122,15 @@ public class MonitorHostTests
         await h.GetAsync($"/r/{DalgetySlug}/");
 
         ClientWebSocket first = await h.WatchAsync(DalgetySlug);
-        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live");
+        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
         FakeSession session = h.LastSession(DalgetyHost);
 
         await h.LeaveAsync(first);
-        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "lingering");
+        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "lingering", "the row to be lingering");
         h.Time.Advance(TimeSpan.FromSeconds(30));
 
         using ClientWebSocket second = await h.WatchAsync(DalgetySlug);
-        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live");
+        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
 
         h.Sessions(DalgetyHost).Should().Be(1, "the held session is the one they came back to");
         session.Disposed.Should().BeFalse();
@@ -147,7 +147,7 @@ public class MonitorHostTests
         await using var h = await Harness.StartAsync();
         await h.GetAsync($"/r/{DalgetySlug}/");
         using ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
-        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live");
+        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
 
         using JsonDocument snapshot = JsonDocument.Parse(await h.GetAsync("/api/instances"));
         JsonElement root = snapshot.RootElement;
@@ -250,14 +250,14 @@ public class MonitorHostTests
         await h.GetAsync($"/r/{DalgetySlug}/");
 
         using ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
-        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "faulted");
+        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "faulted", "the row to be faulted");
 
         h.Errors.Should().Contain(e => e.Contains("cannot reach") && e.Contains("hostname"));
         h.Preflights(DalgetyHost).Should().Be(1);
 
         // And the ladder picks it up again rather than the station being wedged for good.
         await AdvanceWatchingAsync(watching, h.Time, MonitorHost.RebuildAfter);
-        await h.UntilAsync(() => Task.FromResult(h.Preflights(DalgetyHost) >= 2));
+        await Eventually.UntilAsync(() => Task.FromResult(h.Preflights(DalgetyHost) >= 2), "2 preflights to be made");
     }
 
     [Fact]
@@ -271,13 +271,13 @@ public class MonitorHostTests
         await h.GetAsync($"/r/{DalgetySlug}/");
 
         ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
-        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "faulted");
+        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "faulted", "the row to be faulted");
 
         await h.LeaveAsync(watching);
-        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).Viewers == 0);
+        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).Viewers == 0, "the viewer count to be 0");
 
         h.Time.Advance(MonitorHost.RebuildAfter);
-        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "idle");
+        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "idle", "the row to be idle");
         h.Preflights(DalgetyHost).Should().Be(1, "nobody was watching, so nobody was asking");
     }
 
@@ -621,18 +621,6 @@ public class MonitorHostTests
             lock (_sockets)
             {
                 _sockets.Remove(socket);
-            }
-        }
-
-        /// <summary>Waits on the condition rather than sleeping through a guess at how long a
-        /// handshake takes on a loaded runner.</summary>
-        internal async Task UntilAsync(Func<Task<bool>> condition)
-        {
-            using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-            while (!await condition())
-            {
-                giveUp.Token.ThrowIfCancellationRequested();
-                await Task.Delay(20, giveUp.Token);
             }
         }
 

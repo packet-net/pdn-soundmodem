@@ -246,14 +246,14 @@ public class TransmitAnnouncementOrderTests
             "a transmitter that hits a cancellation ends on it, as it always has");
 
         Func<Task> cutAnswer = () => cut;
-        (await Task.WhenAny(cut, Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None))).Should().BeSameAs(cut,
-            "the frame that was cut short must get a definite answer rather than leave its caller waiting");
+        await Eventually.CompletesAsync(
+            cut, "the frame that was cut short to get a definite answer rather than leave its caller waiting");
         await cutAnswer.Should().ThrowAsync<OperationCanceledException>("it never finished going out");
 
         Task next = channel.EnqueueTransmit(2, Broadcast(0x42));
         Task second = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), new RecordingPtt(), cancellation.Token);
-        (await Task.WhenAny(next, Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None))).Should().BeSameAs(next,
-            "the next frame went out on a good output, and its announcement must not wait for the cut one's");
+        await Eventually.CompletesAsync(
+            next, "the next frame to go out on a good output, its announcement not waiting for the cut one's");
         await next;
 
         lock (announced)
@@ -304,14 +304,14 @@ public class TransmitAnnouncementOrderTests
             "a transmitter that hits a cancellation ends on it, as it always has");
 
         Task answered = Task.WhenAll(cut.Select(t => t.ContinueWith(_ => { }, TaskScheduler.Default)));
-        (await Task.WhenAny(answered, Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None))).Should().BeSameAs(answered,
-            "every frame of the burst that was cut short must get a definite answer");
+        await Eventually.CompletesAsync(
+            answered, "every frame of the burst that was cut short to get a definite answer");
         cut.Should().AllSatisfy(t => t.IsCanceled.Should().BeTrue("none of them finished going out"));
 
         Task next = channel.EnqueueTransmit(0, Broadcast(0x43));
         Task second = channel.RunTransmitterAsync(new FakeAudioOutput(PackedRate), new RecordingPtt(), cancellation.Token);
-        (await Task.WhenAny(next, Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None))).Should().BeSameAs(next,
-            "the next frame went out on a good output, and its announcement must not wait for the cut ones'");
+        await Eventually.CompletesAsync(
+            next, "the next frame to go out on a good output, its announcement not waiting for the cut ones'");
         await next;
 
         lock (announced)
@@ -463,8 +463,8 @@ public class TransmitAnnouncementOrderTests
             "a transmitter that hits a cancellation ends on it, as it always has");
 
         Task answered = Task.WhenAll(tasks.Values.Select(t => t.ContinueWith(_ => { }, TaskScheduler.Default)));
-        (await Task.WhenAny(answered, Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None))).Should().BeSameAs(answered,
-            "the burst's frames were taken off the queue, so nothing else will ever answer them");
+        await Eventually.CompletesAsync(
+            answered, "the burst's frames, taken off the queue, to get an answer from the transmitter");
         tasks.Values.Should().AllSatisfy(t => t.IsCanceled.Should().BeTrue("none of them went out"));
         drops.Should().BeEquivalentTo([(0x41, false), (0x42, false)],
             "each is said to be dropped, and said so before its caller is told");

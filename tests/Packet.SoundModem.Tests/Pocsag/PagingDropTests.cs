@@ -80,12 +80,7 @@ public class PagingDropTests
             // 1 ms timeout long expired and faults the page.
             clock.Advance(TimeSpan.FromMilliseconds(100));
 
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            while (drops.Count == 0)
-            {
-                timeout.Token.ThrowIfCancellationRequested();
-                await Task.Delay(20, timeout.Token);
-            }
+            await Eventually.UntilAsync(() => drops.Count > 0, "the page to be dropped");
 
             drops.Should().ContainSingle();
             drops[0].Ric.Should().Be(1234567u);

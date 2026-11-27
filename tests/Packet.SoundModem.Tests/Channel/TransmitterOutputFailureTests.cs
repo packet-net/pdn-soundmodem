@@ -87,12 +87,7 @@ public class TransmitterOutputFailureTests
         // The drop is journalled like any other. Waited for rather than asserted flat: the
         // faulted task releases this test's await on a pool thread, which can win the race
         // against the transmitter thread still invoking the rejected callback.
-        using var settle = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (rejections.Count == 0)
-        {
-            settle.Token.ThrowIfCancellationRequested();
-            await Task.Delay(10, settle.Token);
-        }
+        await Eventually.UntilAsync(() => rejections.Count > 0, "the rejected write to be journalled");
 
         rejections.Should().ContainSingle().Which.Should().BeOfType<IOException>();
 
@@ -128,12 +123,7 @@ public class TransmitterOutputFailureTests
             new FakeAudioOutput(SampleRate), new NullPtt(), cancellation.Token);
         await channel.EnqueueTransmit(0, SampleFrame()).WaitAsync(TimeSpan.FromSeconds(10));
 
-        using var settle = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (resetsWhenAnnounced < 0)
-        {
-            settle.Token.ThrowIfCancellationRequested();
-            await Task.Delay(10, settle.Token);
-        }
+        await Eventually.UntilAsync(() => resetsWhenAnnounced >= 0, "the end of the transmission to be announced");
 
         resetsWhenAnnounced.Should().BeGreaterThan(0,
             "the demodulator sweep must precede the end-of-transmission announcement");

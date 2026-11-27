@@ -524,7 +524,7 @@ public sealed class RtlTcpIqSourceTests
                 int bytes = 2 * actualRate / 10;
                 server.Send(Ramp(bytes));
                 sent += bytes;
-                SpinWait.SpinUntil(() => source.BytesReceived >= sent, HangGuard).Should().BeTrue();
+                Eventually.Until(() => source.BytesReceived >= sent, "the source to take what was sent");
                 clock.Advance(TimeSpan.FromMilliseconds(100));
             }
         }
@@ -541,8 +541,7 @@ public sealed class RtlTcpIqSourceTests
         Stream(5, 100_000);
         source.SessionLive.Should().BeTrue();
         _journal.Should().Contain(l => l.Contains("again", StringComparison.Ordinal));
-        SpinWait.SpinUntil(() => Volatile.Read(ref lastGeneration) == 1, HangGuard).Should().BeTrue(
-            "the first block back is a fresh start");
+        Eventually.Until(() => Volatile.Read(ref lastGeneration) == 1, "the first block back, as a fresh start");
         Volatile.Read(ref lastLost).Should().BeGreaterThan(0, "what was dropped is reported as lost");
 
         reading.Cancel();

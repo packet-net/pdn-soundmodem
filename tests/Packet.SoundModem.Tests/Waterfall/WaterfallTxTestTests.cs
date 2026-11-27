@@ -206,20 +206,14 @@ public class WaterfallTxTestTests : IAsyncLifetime
         await socket.SendAsync(
             Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":false,"toneHz":999,"seconds":600}"""),
             WebSocketMessageType.Text, true, _cancellation.Token);
-        while (_asked.Count == 0)
-        {
-            await Task.Delay(20, _cancellation.Token);
-        }
+        await Eventually.UntilAsync(() => _asked.Count > 0, "the test transmission to be asked for");
 
         _asked.Should().ContainSingle().Which.Should().Be(new TxTestRequest(false, 999, 600));
 
         await socket.SendAsync(
             Encoding.UTF8.GetBytes("""{"type":"txtest","stop":true}"""),
             WebSocketMessageType.Text, true, _cancellation.Token);
-        while (_stops == 0)
-        {
-            await Task.Delay(20, _cancellation.Token);
-        }
+        await Eventually.UntilAsync(() => _stops > 0, "the stop to reach the transmitter");
 
         _stops.Should().Be(1);
         _asked.Should().ContainSingle("a stop is not a second test");
@@ -372,10 +366,7 @@ public class WaterfallTxTestTests : IAsyncLifetime
             Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":30}"""),
             WebSocketMessageType.Text, true, _cancellation.Token);
 
-        while (Refusals().Count < 2)
-        {
-            await Task.Delay(20, _cancellation.Token);
-        }
+        await Eventually.UntilAsync(() => Refusals().Count >= 2, "the second refusal to be journalled");
 
         Refusals()[1].Should().Contain($"and {Asks - 1} more like it in the last minute");
         _asked.Should().BeEmpty("none of them keyed anything");
@@ -463,10 +454,7 @@ public class WaterfallTxTestTests : IAsyncLifetime
         await page.SendAsync(
             Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":3}"""),
             WebSocketMessageType.Text, true, _cancellation.Token);
-        while (_asked.Count == 0)
-        {
-            await Task.Delay(20, _cancellation.Token);
-        }
+        await Eventually.UntilAsync(() => _asked.Count > 0, "the test transmission to be asked for");
 
         _asked.Should().ContainSingle().Which.Should().Be(new TxTestRequest(true, 700, 3));
     }

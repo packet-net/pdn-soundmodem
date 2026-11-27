@@ -158,10 +158,7 @@ public class WaterfallPlainIl2pTests : IAsyncLifetime
                 heard.FrameReceivedWithQuality += (sub, frame, quality) =>
                     writing.Record(sub, frame, quality, audioHz: 2150, rfHz: 7_051_600);
                 heard.ProcessReceive(Transmission("bpsk300-nocrc"));
-                for (int i = 0; i < 100 && writing.Recent(10).Count == 0; i++)
-                {
-                    await Task.Delay(20);
-                }
+                await Eventually.UntilAsync(() => writing.Recent(10).Count > 0, "the burst to be logged");
 
                 writing.Recent(10).Should().ContainSingle("the burst has to have been logged")
                     .Which.From.Should().Be("GB7BPQ");

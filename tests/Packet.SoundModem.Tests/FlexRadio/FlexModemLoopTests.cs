@@ -114,7 +114,7 @@ public sealed class FlexModemLoopTests
         using FlexAudioInput input = station.CreateAudioInput(packetBuffer: 3);
         int expectedPackets = (captured.Length + format.SamplesPerPacket - 1) / format.SamplesPerPacket;
         await mock.ReplayRxAsync(captured);
-        await WaitForAsync(() => input.PacketsReceived >= expectedPackets);
+        await Eventually.UntilAsync(() => input.PacketsReceived >= expectedPackets, "the replayed packets to reach the input");
         input.Flush();
 
         var decoded = new List<byte[]>();
@@ -144,19 +144,5 @@ public sealed class FlexModemLoopTests
         // A trailing silence flush so the demodulator closes the final frame.
         rxChannel.ProcessReceive(new float[dspRate / 2]);
         return decoded;
-    }
-
-    private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 10000)
-    {
-        long start = Environment.TickCount64;
-        while (!condition())
-        {
-            if (Environment.TickCount64 - start > timeoutMs)
-            {
-                throw new TimeoutException("condition not met in time");
-            }
-
-            await Task.Delay(10);
-        }
     }
 }

@@ -260,10 +260,10 @@ public sealed class IqPipeTests : IDisposable
         });
 
         await WriteAsync(fifo, new byte[1000]);
-        await UntilAsync(() => Heard(heard) >= 1000, "the first writer's 500 pairs are read");
+        await Eventually.UntilAsync(() => Heard(heard) >= 1000, "the first writer's 500 pairs are read");
         await Task.Delay(300);
         await WriteAsync(fifo, new byte[1000]);
-        await UntilAsync(() => Heard(heard) >= 2000, "the second writer's are read too");
+        await Eventually.UntilAsync(() => Heard(heard) >= 2000, "the second writer's are read too");
 
         long lost;
         lock (heard)
@@ -483,10 +483,10 @@ public sealed class IqPipeTests : IDisposable
         station.Faulted += faults.Add;
         Task running = Task.Factory.StartNew(station.Run, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
-        await UntilAsync(() => counting.Delivered > 0 && counting.EmptyAfterDelivery >= 3, "the IQ came and then stopped");
+        await Eventually.UntilAsync(() => counting.Delivered > 0 && counting.EmptyAfterDelivery >= 3, "the IQ came and then stopped");
         clock.Advance(TimeSpan.FromSeconds(30));
 
-        await UntilAsync(() => faults.Count > 0, "the starvation watch fires");
+        await Eventually.UntilAsync(() => faults.Count > 0, "the starvation watch fires");
         faults[0].Reason.Should().Be(
             "receive feed starved: the SDR program (head) has delivered no IQ for 30 s - restarting the station to start afresh",
             "the device names what starved, not a sound card");
@@ -634,18 +634,6 @@ public sealed class IqPipeTests : IDisposable
     {
         await using var writer = new FileStream(fifo, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
         await writer.WriteAsync(bytes);
-    }
-
-    private static async Task UntilAsync(Func<bool> condition, string because)
-    {
-        using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        while (!condition())
-        {
-            giveUp.Token.ThrowIfCancellationRequested();
-            await Task.Delay(5, giveUp.Token);
-        }
-
-        condition().Should().BeTrue(because);
     }
 
     /// <summary>A recording in <paramref name="format"/> that crosses every edge of its range,
