@@ -1183,7 +1183,9 @@ channel.FrameTransmittedWithReport += (subChannel, frame, report) =>
         frame,
         channel.Modems.TryGetValue(subChannel, out IModem? sender)
             ? ModeNames.Identity(sender.Mode)
-            : modeBySubChannel.GetValueOrDefault(subChannel, "?"),
+            : channel.Ports.TryGetValue(subChannel, out ISubChannelPort? senderPort)
+                ? ModeNames.Identity(senderPort.Mode)
+                : modeBySubChannel.GetValueOrDefault(subChannel, "?"),
         audio,
         rf,
         trimHz == 0 ? null : trimHz,
@@ -2728,7 +2730,8 @@ runtimeApi?.ServeTxTest(txTestRunner);
 // rate-limited DROPPED line above; what the lease itself does is journalled here.
 var txLeaseJournal = new TxLeaseJournal(
     stationJournal,
-    sub => channel.Modems.TryGetValue(sub, out IModem? leased) ? leased.Mode : "no modem");
+    sub => channel.Modems.TryGetValue(sub, out IModem? leased) ? leased.Mode
+        : channel.Ports.TryGetValue(sub, out ISubChannelPort? leasedPort) ? leasedPort.Mode : "no modem");
 channel.TransmitLease.Changed += txLeaseJournal.Note;
 channel.TransmitLease.CarrierWaitCutShort += txLeaseJournal.NoteCarrierWaitCutShort;
 // Issue #760: with a rig, a take that asks to may tune it for the holder's modem first.
