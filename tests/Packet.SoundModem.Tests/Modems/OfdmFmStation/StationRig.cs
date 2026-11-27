@@ -276,7 +276,7 @@ internal sealed class StationRig : IAsyncDisposable
         }
     }
 
-    /// <summary>Feeds <paramref name="blocks"/> quiet blocks, waiting out any keyup in between.</summary>
+    /// <summary>Feeds <paramref name="blocks"/> quiet blocks, waiting out any keyup in between. For a rig on its own: where rigs radiate into each other use <see cref="PumpAsync(Func{bool}, string, StationRig[])"/>.</summary>
     public async Task FeedAsync(int blocks)
     {
         for (int i = 0; i < blocks; i++)
@@ -296,20 +296,30 @@ internal sealed class StationRig : IAsyncDisposable
         }
     }
 
-    /// <summary>Feeds quiet blocks to every rig in turn, waiting out keyups, until <paramref name="until"/> holds. The block count is a limit that turns "never" into a failure, ten minutes of audio; no outcome depends on it.</summary>
+    /// <summary>
+    /// Feeds quiet blocks to every rig in turn until <paramref name="until"/> holds. With more than one rig, every rig's keyup is waited out after each block fed to any of them: a block can make a station queue a keyup,
+    /// whose thread then radiates into the other rigs' channels, and feeding one of those meanwhile would put two threads in one channel's receive path (<c>StationRigPumpTests</c> builds that case).
+    /// With one rig the keyup is waited out before each block instead, so a test can stop on a keyup being queued. The block count is a limit that turns "never" into a failure, ten minutes of audio; no outcome depends on it.
+    /// </summary>
     public static async Task PumpAsync(Func<bool> until, string because, params StationRig[] rigs)
     {
         const int GiveUpBlocks = 10 * 60 * 50;
         for (int i = 0; i < GiveUpBlocks && !until(); i++)
         {
-            foreach (StationRig rig in rigs)
+            if (rigs.Length == 1)
             {
-                await rig.IdleAsync();
+                await rigs[0].IdleAsync();
+                rigs[0].Channel.ProcessReceive(Quiet);
+                continue;
             }
 
             foreach (StationRig rig in rigs)
             {
                 rig.Channel.ProcessReceive(Quiet);
+                foreach (StationRig other in rigs)
+                {
+                    await other.IdleAsync();
+                }
             }
         }
 
