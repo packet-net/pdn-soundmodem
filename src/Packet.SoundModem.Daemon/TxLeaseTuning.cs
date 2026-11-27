@@ -29,17 +29,29 @@ internal sealed class TxLeaseTuning
 
     private readonly RigControl _rig;
     private readonly Func<int, LeaseTarget> _resolve;
+    private readonly TimeProvider _time;
 
     /// <summary>How long a take waits for a keyed rig to unkey before it gives up on the tune.</summary>
     internal TimeSpan KeyedWait { get; init; } = TimeSpan.FromSeconds(4);
 
+    /// <summary>How long one look at a keyed rig is followed by before the next. A real sleep on the
+    /// calling thread, paced against the rig and not against the clock, so it is a seam: a test
+    /// that holds <see cref="KeyedWait"/> on a fake clock moves that clock from here.</summary>
+    internal Action<TimeSpan> Pause { get; init; } = static pause => Thread.Sleep(pause);
+
+    private static readonly TimeSpan KeyedPoll = TimeSpan.FromMilliseconds(50);
+
     /// <param name="rig">The station's rig.</param>
     /// <param name="lease">The station's lease, whose end puts the rig back.</param>
     /// <param name="resolve">Where the rig goes for a sub-channel's modem, or why it cannot.</param>
-    internal TxLeaseTuning(RigControl rig, TransmitLease lease, Func<int, LeaseTarget> resolve)
+    /// <param name="time">The clock that measures <see cref="KeyedWait"/>; the station's, normally
+    /// the one the rig was given. Defaults to the system clock.</param>
+    internal TxLeaseTuning(
+        RigControl rig, TransmitLease lease, Func<int, LeaseTarget> resolve, TimeProvider? time = null)
     {
         _rig = rig;
         _resolve = resolve;
+        _time = time ?? TimeProvider.System;
         lease.Changed += change =>
         {
             if (change.Change is TransmitLeaseChange.Released or TransmitLeaseChange.Expired)
@@ -91,19 +103,19 @@ internal sealed class TxLeaseTuning
             return target;
         }
 
-        var waited = System.Diagnostics.Stopwatch.StartNew();
+        long waitStarted = _time.GetTimestamp();
         RigTuneResult result;
         while (true)
         {
             result = _rig.Tune(target, WindowFor(seconds), Owner, holdsTransmitter: false);
             RigState state = _rig.Snapshot();
             if (result.Granted || result.Outcome != RigTuneOutcome.Refused
-                || !(state.Keyed || state.UnkeyOwed) || waited.Elapsed >= KeyedWait)
+                || !(state.Keyed || state.UnkeyOwed) || _time.GetElapsedTime(waitStarted) >= KeyedWait)
             {
                 break;
             }
 
-            Thread.Sleep(50);
+            Pause(KeyedPoll);
         }
 
         if (result.Granted)

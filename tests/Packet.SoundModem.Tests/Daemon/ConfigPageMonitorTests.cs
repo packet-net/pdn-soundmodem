@@ -201,10 +201,11 @@ public partial class ConfigPageTests
         string config = Path.Combine(mine, "soundmodem.json");
         File.WriteAllText(config, SiteFile.Replace("\"waterfall\"", $"\"api\": {{ \"key\": \"{SiteKey}\" }}, \"waterfall\""));
 
-        var asked = new TaskCompletionSource<(DateTime At, int Thread)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var asked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var time = new TimerSignalTimeProvider();
         Func<HttpListenerContext, string, Task<bool>> inner = MonitorStartup.ConfigHandlerFor(
             SiteKey, new MonitorStartup.MonitorFile(config, File.ReadAllText(config), false),
-            () => asked.TrySetResult((DateTime.UtcNow, Environment.CurrentManagedThreadId)))!;
+            () => asked.TrySetResult(), time: time)!;
 
         using var listener = new HttpListener();
         string prefix = $"http://127.0.0.1:{FreePorts.Next()}/";
@@ -224,12 +225,16 @@ public partial class ConfigPageTests
         };
         request.Headers.Add("X-API-Key", SiteKey);
         HttpResponseMessage answer = await client.SendAsync(request);
-        DateTime answered = DateTime.UtcNow;
         answer.StatusCode.Should().Be(HttpStatusCode.OK);
         await serving;
 
-        (DateTime at, _) = await asked.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        at.Should().BeOnOrAfter(answered, "the browser has its answer before the site starts going down");
+        // The answer is in the browser's hands. The restart is held by a timer on the clock, so it
+        // has not been asked for until the clock is moved. Advancing is safe: the only thing on this
+        // clock is that one timer, and the test moves it on only once the timer is there.
+        await time.WhenCreatedAsync(MonitorStartup.RestartAfterAnswer).WaitAsync(TimeSpan.FromSeconds(60));
+        asked.Task.IsCompleted.Should().BeFalse("the browser has its answer before the site starts going down");
+        time.Advance(MonitorStartup.RestartAfterAnswer);
+        await asked.Task.WaitAsync(TimeSpan.FromSeconds(60));
         listener.Stop();
     }
 

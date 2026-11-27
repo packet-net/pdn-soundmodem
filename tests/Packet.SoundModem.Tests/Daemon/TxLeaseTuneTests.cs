@@ -20,6 +20,8 @@ public sealed class TxLeaseTuneTests : IAsyncDisposable
     private readonly FakeRigctld _fake = new();
     private readonly FakeTimeProvider _time = new(Noon);
     private readonly List<string> _said = [];
+    private readonly List<TimeSpan> _pauses = [];
+    private Action<int>? _whilePaused;
     private readonly List<RigControl> _rigs = [];
 
     public async ValueTask DisposeAsync()
@@ -65,9 +67,17 @@ public sealed class TxLeaseTuneTests : IAsyncDisposable
         channel.RequireTunedLease(3, () => rig.WindowOwner == TxLeaseTuning.Owner);
         channel.LeaseTuningOpen = () => rig.WindowOwner == TxLeaseTuning.Owner;
         var tuning = new TxLeaseTuning(
-            rig, channel.TransmitLease, sub => TxLeaseTuning.Resolve(sub, modems, plan, alone, 0, null))
+            rig, channel.TransmitLease, sub => TxLeaseTuning.Resolve(sub, modems, plan, alone, 0, null), _time)
         {
             KeyedWait = TimeSpan.FromMilliseconds(100),
+
+            // The wait for a keyed rig is on the fake clock; each pause moves it on and counts.
+            Pause = pause =>
+            {
+                _pauses.Add(pause);
+                _time.Advance(pause);
+                _whilePaused?.Invoke(_pauses.Count);
+            },
         };
         return (channel, rig, tuning, modems, plan);
     }
@@ -222,6 +232,42 @@ public sealed class TxLeaseTuneTests : IAsyncDisposable
         answer["tuneFailed"]!.GetValue<bool>().Should().BeTrue();
         channel.TransmitLease.Holder.Should().BeNull();
         _fake.DialHz.Should().Be(14_074_000);
+    }
+
+    [Fact]
+    public async Task A_Keyed_Rig_Is_Waited_For_Up_To_The_Wait_On_The_Clock_The_Tuning_Was_Given_And_No_Longer()
+    {
+        // The wait is measured on the tuning's clock, which here moves only when the wait pauses: a
+        // rig that stays keyed is looked at again and again until the clock has gone the whole wait,
+        // 100 ms in 50 ms steps, and then the take is given up on. No real time is read.
+        (SoundModemChannel channel, RigControl rig, TxLeaseTuning tuning, _, _) = await Station(keysThroughRig: true);
+        rig.Key();
+
+        (int status, _) = Post(channel, rig, tuning, """{"subChannel": 3, "tune": true}""");
+
+        status.Should().Be(409);
+        _pauses.Should().Equal(TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(50));
+        _fake.DialHz.Should().Be(14_074_000);
+    }
+
+    [Fact]
+    public async Task A_Keyed_Rig_That_Unkeys_During_The_Wait_Is_Tuned_At_The_Next_Look()
+    {
+        (SoundModemChannel channel, RigControl rig, TxLeaseTuning tuning, _, _) = await Station(keysThroughRig: true);
+        rig.Key();
+        _whilePaused = count =>
+        {
+            if (count == 1)
+            {
+                rig.Unkey();
+            }
+        };
+
+        (int status, JsonObject answer) = Post(channel, rig, tuning, """{"subChannel": 3, "tune": true}""");
+
+        status.Should().Be(200);
+        answer["tuned"]!.GetValue<bool>().Should().BeTrue();
+        _pauses.Should().ContainSingle("the rig unkeyed after the first look");
     }
 
     [Fact]

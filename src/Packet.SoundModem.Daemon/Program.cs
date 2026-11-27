@@ -566,6 +566,10 @@ using var shutdown = new ShutdownDeadline(Console.Error.WriteLine, Environment.E
 // opened before the first check still shows whatever that check later finds.
 using var updateCheck = new UpdateCheck(TimeProvider.System, stationJournal.Write);
 
+// The clock the start-up code's own log throttles and polls run on. The system clock: the one place a
+// running station reads it from, named once here so nothing below reaches for the real one.
+TimeProvider stationClock = TimeProvider.System;
+
 // Mode names are checked, and the rate the shared channel runs at is settled, before the band
 // planner and the transmit-filter plan: both ask the catalogue what a mode occupies, and the
 // catalogue answers an unknown mode with its defaults.
@@ -1206,7 +1210,7 @@ channel.FrameTransmittedWithReport += (subChannel, frame, report) =>
 var dropGate = new object();
 var dropSuppressed = new Dictionary<string, int>(StringComparer.Ordinal);
 var dropLastLogged = new Dictionary<string, long>(StringComparer.Ordinal);
-const long DropLogIntervalMs = 60_000;
+TimeSpan dropLogInterval = TimeSpan.FromSeconds(60);
 
 channel.TransmitRejected += (subChannel, frame, reason) =>
 {
@@ -1215,9 +1219,9 @@ channel.TransmitRejected += (subChannel, frame, reason) =>
     int suppressed = 0;
     lock (dropGate)
     {
-        long now = Environment.TickCount64;
+        long now = stationClock.GetTimestamp();
         report = !dropLastLogged.TryGetValue(key, out long last)
-            || now - last >= DropLogIntervalMs;
+            || stationClock.GetElapsedTime(last, now) >= dropLogInterval;
         if (report)
         {
             dropLastLogged[key] = now;
@@ -1965,10 +1969,11 @@ void WatchClients(KissTcpServer server)
     server.FrameOversize += e =>
     {
         string host = e.Remote?.ToString() ?? "(unknown host)";
-        long now = Environment.TickCount64;
+        long now = stationClock.GetTimestamp();
         lock (lastOversizeLog)
         {
-            if (lastOversizeLog.TryGetValue(host, out long last) && now - last < 10_000)
+            if (lastOversizeLog.TryGetValue(host, out long last)
+                && stationClock.GetElapsedTime(last, now) < TimeSpan.FromSeconds(10))
             {
                 return;
             }
@@ -2911,7 +2916,7 @@ if (identifiers.Count > 0)
         {
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(5), cancellation.Token).ConfigureAwait(false);
+                await Task.Delay(TimeSpan.FromSeconds(5), stationClock, cancellation.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
