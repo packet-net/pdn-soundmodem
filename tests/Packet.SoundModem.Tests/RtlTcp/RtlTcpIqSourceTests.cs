@@ -595,47 +595,42 @@ public sealed class RtlTcpIqSourceTests
         // The reads move the clock on by exactly what they returned, so the rate watch closes its
         // windows on a stream at its rate and has nothing to say either: the steady state.
         var buffer = new float[16384];
-        long allocated = 0;
-        int allocatingReads = 0;
-        int pausedReads = 0;
-        for (int read = 0; read < 600; read++)
-        {
-            TimeSpan paused = GC.GetTotalPauseDuration();
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            int got = source.Read(buffer);
-            long after = GC.GetAllocatedBytesForCurrentThread();
-            got.Should().BeGreaterThan(0);
-            if (read >= 100 && GC.GetTotalPauseDuration() != paused)
-            {
-                pausedReads++;
-            }
-            else if (read >= 100 && after != before)
-            {
-                allocated += after - before;
-                allocatingReads++;
-            }
+        void AdvanceBy(int got) => clock.Advance(TimeSpan.FromTicks(TimeSpan.TicksPerSecond * (got / 2) / rate));
 
-            clock.Advance(TimeSpan.FromTicks(TimeSpan.TicksPerSecond * (got / 2) / rate));
+        // Warm-up: a hundred reads, the clock moved on after each.
+        for (int read = 0; read < 100; read++)
+        {
+            int got = source.Read(buffer);
+            got.Should().BeGreaterThan(0);
+            AdvanceBy(got);
         }
 
-        streaming.Cancel();
-        source.Dispose();
-        server.DropClient();
-        await feeder.WaitAsync(HangGuard);
+        // Then stretches of a hundred reads, each through the shared helper. The reads that have to
+        // wait for the feeder's next block are the ones that would allocate on a socket left
+        // non-blocking by an async connect (measured: about a quarter of the reads), and a stretch
+        // holds dozens of them, so a read path that allocates when it waits allocates in every run
+        // and fails this whatever the collector does. The clock is moved on by what the stretch read,
+        // before the next run, not between its reads, so the rate watch closes one window per stretch
+        // on a stream exactly at its rate.
+        int pending = 0;
+        Action stretch = () =>
+        {
+            pending = 0;
+            for (int read = 0; read < 100; read++)
+            {
+                pending += source.Read(buffer);
+            }
+        };
+        Action advance = () =>
+        {
+            AdvanceBy(pending);
+            pending = 0;
+        };
 
-        // Zero, give or take one read, among the reads no collection paused. The runtime retires
-        // the unused rest of a thread's allocation context (under 8 KiB) when it suspends the
-        // thread, which the counter shows as a jump that nothing here allocated; a collection
-        // started by another test's allocations does it on whichever reads it lands in, and on
-        // a loaded box that was two reads, not one (#688). Those reads say nothing about the
-        // read path, so they are set aside, the way #668 set aside the rate bridge's paused
-        // stretches. A real allocation in the read path shows on every read, or on every read
-        // that waits, which with the feeder's pauses is over a hundred of these five hundred
-        // (measured: a socket left non-blocking by an async connect allocates on about 120 of
-        // them), so it fails this whatever the collector does.
-        pausedReads.Should().BeLessThan(250, "most reads need to run unpaused for this to measure anything");
-        allocatingReads.Should().BeLessThanOrEqualTo(1, "a read of a steady stream, rate watch and all, allocates nothing");
-        allocated.Should().BeLessThan(8192);
+        long allocated = AllocationMeasure.Smallest(stretch, advance);
+        AdvanceBy(pending);
+
+        allocated.Should().Be(0, "a read of a steady stream, rate watch and all, allocates nothing");
         source.ProfileDrops.Should().Be(0);
         source.SuspectedProfileChanges.Should().Be(0);
     }

@@ -798,7 +798,17 @@ internal sealed class ChannelAudioStream
                     return length;
                 }
 
-                await _signal.WaitAsync(cancellation).ConfigureAwait(false);
+                // The wait itself takes no token: a semaphore with a cancellable waiter parked on it
+                // allocates on the thread that releases it, and that is the receive thread. The
+                // token wakes the wait through its own registration instead, made here on the
+                // sender's side.
+                cancellation.ThrowIfCancellationRequested();
+                using (cancellation.UnsafeRegister(static signal => ((SemaphoreSlim)signal!).Release(), _signal))
+                {
+                    await _signal.WaitAsync().ConfigureAwait(false);
+                }
+
+                cancellation.ThrowIfCancellationRequested();
             }
         }
 

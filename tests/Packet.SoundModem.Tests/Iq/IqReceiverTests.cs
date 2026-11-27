@@ -538,29 +538,25 @@ public sealed class IqReceiverTests
             }
         }
 
-        // Warm: JIT, tiering, first-touch. Tiered compilation promotes a method only after a delay
-        // and a call count, on a background thread, so pump, give it time, and pump again; on a slow
-        // machine the promotion can otherwise land inside the measurement.
+        // Warm: JIT and first-touch. Tiered compilation promotes a method on a background thread after
+        // a call count, and a promotion landing inside the measurement is a one-off the measurement
+        // below tolerates, so there is nothing to wait for here.
         PumpAndDrain(20);
-        Thread.Sleep(200);
         PumpAndDrain(30);
-        Thread.Sleep(200);
 
-        // GC.GetAllocatedBytesForCurrentThread counts anything this thread allocates, including a
-        // one-off from the runtime itself (a tier-up, a lazily built runtime structure), and that
-        // is not the receiver's. A per-block allocation happens in every round; a one-off lands in
-        // one. So take the smallest of several rounds: zero means the steady state allocates
-        // nothing, and any real per-block allocation still fails because no round is clean.
-        const int rounds = 5;
-        long fewest = long.MaxValue;
-        for (int r = 0; r < rounds; r++)
+        // A per-block allocation happens in every run; a one-off from the runtime itself (a tier-up, a
+        // lazily built runtime structure) lands in one. The shared helper takes the smallest of
+        // several runs: zero means the steady state allocates nothing, and any real per-block
+        // allocation still fails because no run is clean.
+        int runs = 0;
+        Action run = () =>
         {
-            long before = GC.GetAllocatedBytesForCurrentThread();
+            runs++;
             PumpAndDrain(20);
-            fewest = Math.Min(fewest, GC.GetAllocatedBytesForCurrentThread() - before);
-        }
+        };
+        long fewest = AllocationMeasure.Smallest(run);
 
-        pumped.Should().Be(50 + (rounds * 20), "every block was real IQ");
+        pumped.Should().Be(50 + (runs * 20), "every block was real IQ");
         fewest.Should().Be(0, "the per-block path runs in buffers sized at construction");
     }
 
