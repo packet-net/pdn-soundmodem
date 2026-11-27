@@ -34,6 +34,7 @@ public sealed class RadioBusySource : IChannelBusySource, IBusyReadingSource
     private readonly IRadioControl _radio;
     private readonly double? _busyAboveDbm;
     private readonly TimeSpan _pollInterval;
+    private readonly TimeProvider _time;
     private readonly bool _dcdUsable;
     private readonly bool _rssiUsable;
     private volatile bool _rssiBusy;
@@ -44,11 +45,14 @@ public sealed class RadioBusySource : IChannelBusySource, IBusyReadingSource
     /// <param name="radio">An open radio. Not disposed by this class.</param>
     /// <param name="busyAboveDbm">Call the channel busy above this RSSI, or null for DCD only.</param>
     /// <param name="pollInterval">How often to read RSSI. Ignored without a threshold.</param>
+    /// <param name="time">The clock the poll interval runs on. The system clock by default.</param>
     public RadioBusySource(
-        IRadioControl radio, double? busyAboveDbm = null, TimeSpan? pollInterval = null)
+        IRadioControl radio, double? busyAboveDbm = null, TimeSpan? pollInterval = null,
+        TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(radio);
         _radio = radio;
+        _time = time ?? TimeProvider.System;
         _busyAboveDbm = busyAboveDbm;
         _pollInterval = pollInterval ?? TimeSpan.FromMilliseconds(100);
 
@@ -142,7 +146,7 @@ public sealed class RadioBusySource : IChannelBusySource, IBusyReadingSource
             try
             {
                 await PollOnceAsync(cancellationToken).ConfigureAwait(false);
-                await Task.Delay(_pollInterval, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(_pollInterval, _time, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {

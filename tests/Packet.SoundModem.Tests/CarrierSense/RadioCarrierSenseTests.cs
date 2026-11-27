@@ -29,6 +29,9 @@ public class RadioCarrierSenseTests
 
         public int RssiReads { get; private set; }
 
+        /// <summary>Released once for every RSSI read, for a test that waits on the loop.</summary>
+        public SemaphoreSlim Read { get; } = new(0);
+
         public bool RssiThrows { get; set; }
 
 #pragma warning disable CS0067 // Nothing here subscribes: this source reads ChannelBusy, which the
@@ -47,6 +50,7 @@ public class RadioCarrierSenseTests
         public ValueTask<float> ReadRssiDbmAsync(CancellationToken cancellationToken = default)
         {
             RssiReads++;
+            Read.Release();
             if (RssiThrows)
             {
                 throw new IOException("the cable fell out");
@@ -71,6 +75,31 @@ public class RadioCarrierSenseTests
 
     private static RadioBusySource Source(FakeRadio radio, double? busyAbove = null) =>
         new(radio, busyAbove);
+
+    [Fact]
+    public async Task The_Poll_Loop_Reads_Again_Only_When_The_Clock_Has_Run_The_Interval_Out()
+    {
+        // The read is awaited and then a timer is put on the clock for the interval, so a timer's
+        // existence means the first read is done and the second cannot have started: the clock is
+        // moved on at that point and not before. Nothing on this clock but that one timer.
+        var radio = new FakeRadio { ChannelBusy = false };
+        var time = new TimerSignalTimeProvider();
+        var interval = TimeSpan.FromMilliseconds(250);
+        var source = new RadioBusySource(radio, -110, interval, time);
+        using var stop = new CancellationTokenSource();
+
+        Task loop = source.StartAsync(stop.Token);
+        await radio.Read.WaitAsync(TimeSpan.FromSeconds(60));
+        await time.WhenCreatedAsync(interval).WaitAsync(TimeSpan.FromSeconds(60));
+        radio.RssiReads.Should().Be(1, "the interval is still to run");
+
+        time.Advance(interval);
+        await radio.Read.WaitAsync(TimeSpan.FromSeconds(60));
+        radio.RssiReads.Should().Be(2);
+
+        await stop.CancelAsync();
+        await loop.WaitAsync(TimeSpan.FromSeconds(60));
+    }
 
     [Fact]
     public void The_Radios_Squelch_Alone_Answers_The_Question()

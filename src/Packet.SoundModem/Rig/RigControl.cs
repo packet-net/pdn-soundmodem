@@ -917,7 +917,7 @@ public sealed class RigControl : IAsyncDisposable
         try
         {
             opened = await RigctldConnection.OpenAsync(
-                    Endpoint, _options.ConnectTimeout, _options.ReplyTimeout, cancellation)
+                    Endpoint, _options.ConnectTimeout, _options.ReplyTimeout, cancellation, _time)
                 .ConfigureAwait(false);
         }
         catch (IOException unreachable)

@@ -186,11 +186,12 @@ internal sealed class RigctldConnection : IDisposable
 
     /// <summary>Connects, or throws <see cref="IOException"/> saying why not.</summary>
     internal static async Task<RigctldConnection> OpenAsync(
-        RigctldEndpoint endpoint, TimeSpan timeout, TimeSpan replyTimeout, CancellationToken cancellation)
+        RigctldEndpoint endpoint, TimeSpan timeout, TimeSpan replyTimeout, CancellationToken cancellation,
+        TimeProvider? time = null)
     {
         var client = new TcpClient { NoDelay = true };
-        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        limit.CancelAfter(timeout);
+        using var expiry = new CancellationTokenSource(timeout, time ?? TimeProvider.System);
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation, expiry.Token);
         try
         {
             await client.ConnectAsync(endpoint.Host, endpoint.Port, limit.Token).ConfigureAwait(false);

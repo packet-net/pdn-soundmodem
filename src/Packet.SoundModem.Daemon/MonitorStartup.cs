@@ -239,8 +239,11 @@ internal static class MonitorStartup
     /// <param name="apiKey">The file's <c>api.key</c>, or empty.</param>
     /// <param name="file">The file this run came from, or null for a run with no page to offer.</param>
     /// <param name="requestRestart">What a change that has been validated and written does next.</param>
+    /// <param name="recent">The recent output to serve with the report, or null.</param>
+    /// <param name="time">The clock the restart's short delay runs on; the system clock by default.</param>
     internal static Func<System.Net.HttpListenerContext, string, Task<bool>>? ConfigHandlerFor(
-        string apiKey, MonitorFile? file, Action requestRestart, RecentOutput? recent = null)
+        string apiKey, MonitorFile? file, Action requestRestart, RecentOutput? recent = null,
+        TimeProvider? time = null)
     {
         if (file is null || string.IsNullOrEmpty(apiKey))
         {
@@ -260,7 +263,7 @@ internal static class MonitorStartup
                 // back can be mid-request on the listener as it goes. Letting the answer reach the
                 // browser first, and taking the site down from a thread of its own, keeps the
                 // teardown from racing the request that started it.
-                await Task.Delay(RestartAfterAnswer).ConfigureAwait(false);
+                await Task.Delay(RestartAfterAnswer, time ?? TimeProvider.System).ConfigureAwait(false);
                 requestRestart();
             }),
             openConfiguration: false);
