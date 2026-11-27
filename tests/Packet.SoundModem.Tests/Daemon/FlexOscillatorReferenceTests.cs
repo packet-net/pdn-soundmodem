@@ -358,7 +358,7 @@ public sealed class FlexOscillatorReferenceTests
 
         hold = false;
         release.Set();
-        await stuck.WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(stuck, "stuck to complete");
         _journal.Should().NotContain(l => l.StartsWith("flex:", StringComparison.Ordinal), "nothing has published it yet");
 
         _time.Advance(GpsdoReference.CheckEvery);

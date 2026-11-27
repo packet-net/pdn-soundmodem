@@ -29,11 +29,11 @@ public sealed class SdrConnectConnectTimeoutTests
             144_800_000,
             TestContext.Current.CancellationToken);
 
-        await clock.WhenCreatedAsync(limit).WaitAsync(HangGuard, TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(clock.WhenCreatedAsync(limit), "clock.WhenCreatedAsync(limit) to complete");
         clock.Advance(limit);
 
         Func<Task> open = () => opening;
-        (await open.Should().ThrowAsync<SdrConnectUnreachableException>().WaitAsync(HangGuard)).Which.Reason
+        (await Eventually.SignalAsync(open.Should().ThrowAsync<SdrConnectUnreachableException>(), "open.Should().ThrowAsync<SdrConnectUnreachableException>() to complete")).Which.Reason
             .Should().Be(SdrConnectFailure.NoAnswer);
     }
 }

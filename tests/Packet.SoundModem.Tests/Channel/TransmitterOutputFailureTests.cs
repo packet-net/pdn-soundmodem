@@ -81,7 +81,7 @@ public class TransmitterOutputFailureTests
         // The device dies under the burst: the frame's task faults with the device's own
         // exception - a definite answer, not an ACKMODE host waiting forever.
         Task doomed = channel.EnqueueTransmit(0, SampleFrame());
-        await FluentActions.Awaiting(() => doomed.WaitAsync(TimeSpan.FromSeconds(10)))
+        await FluentActions.Awaiting(() => Eventually.SignalAsync(doomed, "doomed to complete"))
             .Should().ThrowAsync<IOException>().WithMessage("*unplugged*");
 
         // The drop is journalled like any other. Waited for rather than asserted flat: the
@@ -93,7 +93,7 @@ public class TransmitterOutputFailureTests
 
         // And the loop's fault reaches its owner - the daemon turns it into a logged exit
         // rather than a silent transmit-dead station.
-        await FluentActions.Awaiting(() => transmitter.WaitAsync(TimeSpan.FromSeconds(10)))
+        await FluentActions.Awaiting(() => Eventually.SignalAsync(transmitter, "transmitter to complete"))
             .Should().ThrowAsync<IOException>();
     }
 
@@ -121,7 +121,7 @@ public class TransmitterOutputFailureTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         Task transmitter = channel.RunTransmitterAsync(
             new FakeAudioOutput(SampleRate), new NullPtt(), cancellation.Token);
-        await channel.EnqueueTransmit(0, SampleFrame()).WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(channel.EnqueueTransmit(0, SampleFrame()), "channel.EnqueueTransmit(0, SampleFrame()) to complete");
 
         await Eventually.UntilAsync(() => resetsWhenAnnounced >= 0, "the end of the transmission to be announced");
 

@@ -20,7 +20,28 @@ public class OwnsTimingPriorityTests
 
         public bool CarrierDetect => false;
 
-        public bool ChannelBusy { get; set; }
+        private int _looks;
+        private readonly TaskCompletionSource _lookedTwice = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Whether the band is busy. Each look by the transmitter is counted, and the second one
+        /// completes <see cref="LookedTwice"/>: the transmitter has weighed a frame against the busy band,
+        /// deferred it, and come round to weigh it again.</summary>
+        public bool ChannelBusy
+        {
+            get
+            {
+                if (Interlocked.Increment(ref _looks) >= 2)
+                {
+                    _lookedTwice.TrySetResult();
+                }
+
+                return field;
+            }
+
+            set;
+        }
+
+        public Task LookedTwice => _lookedTwice.Task;
 
         public void Process(ReadOnlySpan<float> samples)
         {
@@ -63,7 +84,7 @@ public class OwnsTimingPriorityTests
 
         // The packet frame: queued first, and it cannot go out while the band is busy.
         Task packet = channel.EnqueueTransmit(0, Frame());
-        await Task.Delay(300);
+        await Eventually.SignalAsync(band.LookedTwice, "the transmitter to defer the packet frame on the busy band");
         packet.IsCompleted.Should().BeFalse("the band is busy, so the packet frame must defer");
 
         // The ARDOP burst: owns the channel's timing, so carrier sense is not its gate.
@@ -112,7 +133,7 @@ public class OwnsTimingPriorityTests
         Task ardop = channel.EnqueueTransmit(
             _ => new float[SampleRate / 10], rejected: null, ownsChannelTiming: true, source: new object());
 
-        await Task.WhenAll(packet, ardop).WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(Task.WhenAll(packet, ardop), "both transmissions to go out on a clear band");
 
         await stop.CancelAsync();
         try

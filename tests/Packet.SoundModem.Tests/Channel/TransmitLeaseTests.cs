@@ -159,7 +159,7 @@ public class TransmitLeaseTests
 
         // A sub-channel frame's task is the announcing wrapper's, which resumes on its own
         // continuation, so it is awaited rather than read; the refusal itself was synchronous.
-        Func<Task> waiting = () => queuedBefore.WaitAsync(TimeSpan.FromSeconds(10));
+        Func<Task> waiting = () => Eventually.SignalAsync(queuedBefore, "queuedBefore to complete");
         await waiting.Should().ThrowAsync<InvalidOperationException>(
             "a queue would release stale frames when the lease ends, so it is emptied instead");
         service.IsFaulted.Should().BeTrue("a transmission that names no sub-channel belongs to nobody");
@@ -215,7 +215,7 @@ public class TransmitLeaseTests
         var ptt = new RecordingPtt();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         Task transmitter = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), ptt, cancellation.Token);
-        await holders.WaitAsync(TimeSpan.FromSeconds(30));
+        await Eventually.SignalAsync(holders, "holders to complete");
         await cancellation.CancelAsync();
         try
         {
@@ -398,7 +398,7 @@ public class TransmitLeaseTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         Task transmitter = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), ptt, cancellation.Token);
 
-        Func<Task> waiting = () => frame.WaitAsync(TimeSpan.FromMinutes(1));
+        Func<Task> waiting = () => Eventually.SignalAsync(frame, "frame to complete");
         await waiting.Should().ThrowAsync<InvalidOperationException>();
         clearing.Fired.Should().BeTrue("the lease arrived from inside carrier sense");
         ptt.Events.Should().BeEmpty("nothing keys for a frame the lease does not cover");
@@ -454,7 +454,7 @@ public class TransmitLeaseTests
         changes.Should().Equal(TransmitLeaseChange.Taken);
 
         ident.SetResult();
-        await released.WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(released, "released to complete");
         changes.Should().Equal(TransmitLeaseChange.Taken, TransmitLeaseChange.Released);
         channel.TransmitLease.Holder.Should().BeNull();
         channel.TransmitLease.IsClosing.Should().BeFalse();
@@ -473,7 +473,7 @@ public class TransmitLeaseTests
         channel.TransmitLease.Holder.Should().Be(3);
 
         time.Advance(TimeSpan.FromSeconds(1));
-        await released.WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(released, "released to complete");
         channel.TransmitLease.Holder.Should().BeNull("a busy channel cannot hold everyone off for ever");
     }
 
@@ -493,7 +493,7 @@ public class TransmitLeaseTests
         channel.TransmitLease.Holder.Should().Be(3);
 
         ident.SetResult();
-        await expired.WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(expired, "expired to complete");
         changes.Should().Equal(TransmitLeaseChange.Taken, TransmitLeaseChange.Expired);
         channel.TransmitLease.Holder.Should().BeNull();
     }
@@ -549,10 +549,10 @@ public class TransmitLeaseTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         Task normal = channel.EnqueueTransmit(0, Frame(0x43));
         Task transmitter = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), ptt, cancellation.Token);
-        await normal.WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(normal, "normal to complete");
         foreach (Task frame in frames)
         {
-            Func<Task> waiting = () => frame.WaitAsync(TimeSpan.FromMinutes(1));
+            Func<Task> waiting = () => Eventually.SignalAsync(frame, "frame to complete");
             await waiting.Should().ThrowAsync<InvalidOperationException>();
         }
 
@@ -646,7 +646,7 @@ public class TransmitLeaseTests
         // cranked rather than jumped: each slot's wait is set on the transmitter's own thread, and
         // a jump taken before one was set would be a jump nothing was waiting for.
         frame.IsCompleted.Should().BeFalse("the channel is busy and the clock has not moved");
-        await busy.Asked.Task.WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(busy.Asked.Task, "busy.Asked.Task to complete");
         using var crank = new CancellationTokenSource();
         _ = Task.Run(
             async () =>
@@ -658,7 +658,7 @@ public class TransmitLeaseTests
                 }
             },
             CancellationToken.None);
-        await frame.WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(frame, "frame to complete");
         await crank.CancelAsync();
         await cancellation.CancelAsync();
         try
@@ -695,7 +695,7 @@ public class TransmitLeaseTests
         {
             try
             {
-                await task.WaitAsync(TimeSpan.FromMinutes(1));
+                await Eventually.SignalAsync(task, "task to complete");
             }
             catch (InvalidOperationException)
             {

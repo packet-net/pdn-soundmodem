@@ -142,7 +142,14 @@ public class ArdopReplyWindowTests
 
         // And now that the channel is free, it still must not go out.
         Task transmitter = channel.RunTransmitterAsync(output, ptt, stop.Token);
-        await Task.Delay(200);
+
+        // A burst queued behind it is the witness. The transmitter works its queue in order, so
+        // once the second has gone out the withdrawn one has had its turn, and the radio keyed
+        // for the second alone.
+        await Eventually.SignalAsync(
+            channel.EnqueueTransmit(
+                _ => new float[SampleRate / 10], rejected: null, ownsChannelTiming: true, source: new object()),
+            "the burst queued behind the withdrawn one to go out");
         await stop.CancelAsync();
         try
         {
@@ -152,6 +159,6 @@ public class ArdopReplyWindowTests
         {
         }
 
-        ptt.Events.Should().BeEmpty("the radio must not key for a burst that was withdrawn");
+        ptt.Events.Should().Equal(["key", "unkey"], "the radio keyed for the burst behind it, and not for the one that was withdrawn");
     }
 }

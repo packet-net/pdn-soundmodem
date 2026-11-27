@@ -81,7 +81,7 @@ public class ChannelLoopbackTests
         Task transmitter = channel.RunTransmitterAsync(output, ptt, cancellation.Token);
 
         var completions = frames.Select(f => channel.EnqueueTransmit(f.SubChannel, f.Frame)).ToArray();
-        await Task.WhenAll(completions).WaitAsync(TimeSpan.FromSeconds(8));
+        await Eventually.SignalAsync(Task.WhenAll(completions), "Task.WhenAll(completions) to complete");
 
         await cancellation.CancelAsync();
         try

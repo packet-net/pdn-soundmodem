@@ -217,7 +217,8 @@ public sealed class IqPipeTests : IDisposable
     {
         using var source = Source(Command("exec /nonexistent/rx_sdr"), IqSampleFormat.Cf32, rate: 48_000, maxYoungRuns: 3);
         source.StartNow();
-        int got = await Task.Run(() => source.Read(new float[64])).WaitAsync(TimeSpan.FromSeconds(20));
+        int got = await Eventually.SignalAsync(
+            Task.Run(() => source.Read(new float[64])), "the read to end once the command is given up on");
         got.Should().Be(0);
         source.IsLost.Should().BeTrue();
         Errors().Should().Contain(line => line.Contains("exited with code 127"));
@@ -226,14 +227,19 @@ public sealed class IqPipeTests : IDisposable
     [Fact]
     public async Task Disposing_Kills_The_Child_And_Ends_A_Blocked_Read()
     {
-        using var source = Source(Command("exec sleep 600"), IqSampleFormat.Cu8, rate: 48_000, maxYoungRuns: 3);
+        // The child says one word on standard error and then sleeps, so the word is the signal
+        // that it is running and holding its output open with nothing written to it.
+        using var source = Source(
+            Command("echo ready >&2; exec sleep 600"), IqSampleFormat.Cu8, rate: 48_000, maxYoungRuns: 3);
         source.StartNow();
         Task<int> reading = Task.Run(() => source.Read(new float[64]));
-        await Task.Delay(200);
+        await Eventually.UntilAsync(
+            () => Lines().Any(line => line.EndsWith(": ready", StringComparison.Ordinal)),
+            "the child to say it is running");
         reading.IsCompleted.Should().BeFalse("nothing has been written");
 
         source.Dispose();
-        (await reading.WaitAsync(TimeSpan.FromSeconds(10))).Should().Be(0);
+        (await Eventually.SignalAsync(reading, "the blocked read to end when the source is disposed")).Should().Be(0);
         Errors().Should().BeEmpty("a stop is not a failure");
     }
 
@@ -244,7 +250,10 @@ public sealed class IqPipeTests : IDisposable
     {
         string fifo = Path.Combine(_dir, "iq");
         PipeAudio.EnsureFifo(fifo);
-        var source = Source(new FifoIqFeedLauncher(fifo), IqSampleFormat.Cu8, rate: 10_000, maxYoungRuns: 5);
+        // The gap between the writers is virtual: the clock is moved 300 ms once the source is parked
+        // on its restart delay, so how long the writers' silence lasted is what the test says it was.
+        var clock = new TimerSignalTimeProvider();
+        var source = Source(new FifoIqFeedLauncher(fifo), IqSampleFormat.Cu8, rate: 10_000, maxYoungRuns: 5, clock: clock);
         var heard = new List<(int Floats, long Lost)>();
         Task reader = Task.Run(() =>
         {
@@ -261,7 +270,9 @@ public sealed class IqPipeTests : IDisposable
 
         await WriteAsync(fifo, new byte[1000]);
         await Eventually.UntilAsync(() => Heard(heard) >= 1000, "the first writer's 500 pairs are read");
-        await Task.Delay(300);
+        await Eventually.SignalAsync(
+            clock.WhenCreatedAsync(TimeSpan.FromMilliseconds(20)), "the source to park on its restart delay");
+        clock.Advance(TimeSpan.FromMilliseconds(300));
         await WriteAsync(fifo, new byte[1000]);
         await Eventually.UntilAsync(() => Heard(heard) >= 2000, "the second writer's are read too");
 
@@ -271,11 +282,11 @@ public sealed class IqPipeTests : IDisposable
             lost = heard[^1].Lost;
         }
 
-        lost.Should().BeGreaterThan(2000, "300 ms or more passed between the writers, at 10 kS/s");
+        lost.Should().Be(3000, "300 ms passed between the writers, at 10 kS/s");
 
         // The source waits in open for a third writer; disposing wakes it.
         source.Dispose();
-        await reader.WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(reader, "the reader to end when the source is disposed");
     }
 
     // ---- gaps and the rate, against a fake clock ----
@@ -488,7 +499,7 @@ public sealed class IqPipeTests : IDisposable
         faults[0].Reason.Should().Be(
             "receive feed starved: the SDR program (head) has delivered no IQ for 30 s - restarting the station to start afresh",
             "the device names what starved, not a sound card");
-        await running.WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(running, "running to complete");
         counting.Dispose();
     }
 

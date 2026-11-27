@@ -273,7 +273,7 @@ public sealed class GpsdoReferenceTests : IDisposable
         (await tick).Should().BeFalse("it skipped");
 
         release.Set();
-        await stuck.WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(stuck, "stuck to complete");
         reference.Tick().Should().BeTrue("once the lock is free the tick runs");
     }
 
@@ -1053,7 +1053,7 @@ public sealed class GpsdoReferenceTests : IDisposable
         _errors[0].Should().Be("gpsdo: lost the MQTT broker at broker.lan:1883 (connection reset); reconnecting");
 
         await stop.CancelAsync();
-        await running.WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(running, "running to complete");
     }
 
     // ---------------------------------------------------------------- /api/txlease

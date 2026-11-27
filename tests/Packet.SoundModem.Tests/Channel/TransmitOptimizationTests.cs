@@ -85,7 +85,7 @@ public class TransmitOptimizationTests : IAsyncLifetime
             output ?? new FakeAudioOutput(SampleRate), ptt ?? new NullPtt(), _stop.Token);
 
     private static async Task Complete(params Task[] tasks) =>
-        await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(Task.WhenAll(tasks), "Task.WhenAll(tasks) to complete");
 
     [Fact]
     public async Task Acknowledgements_Accumulated_While_Busy_Are_Compacted_When_The_Channel_Clears()
@@ -167,7 +167,7 @@ public class TransmitOptimizationTests : IAsyncLifetime
         foreach (Task request in requests)
         {
             Exception? actual = await Record.ExceptionAsync(
-                () => request.WaitAsync(TimeSpan.FromSeconds(10)));
+                () => Eventually.SignalAsync(request, "request to complete"));
             actual.Should().BeSameAs(failure);
         }
 

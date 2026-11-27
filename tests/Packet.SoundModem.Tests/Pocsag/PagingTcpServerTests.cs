@@ -1,4 +1,5 @@
 using M0LTE.Pocsag;
+using M0LTE.Radio.Audio;
 using System.Net.Sockets;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Pocsag;
@@ -19,7 +20,7 @@ public class PagingTcpServerTests : IAsyncLifetime
     private readonly SoundModemChannel _channel;
     private readonly PagingTcpServer _server;
     private readonly FakeAudioOutput _output = new(SampleRate);
-    private readonly RecordingPtt _ptt = new();
+    private readonly SignallingPtt _ptt = new();
     private readonly CancellationTokenSource _cancellation = new(TimeSpan.FromSeconds(20));
     private Task? _transmitter;
 
@@ -117,23 +118,30 @@ public class PagingTcpServerTests : IAsyncLifetime
         }
     }
 
+    /// <summary>A PTT that records its events and says when it has been let go, which is after
+    /// the transmitter's last write: so the audio is complete when it does.</summary>
+    private sealed class SignallingPtt : IPttControl
+    {
+        private readonly TaskCompletionSource _unkeyed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public List<string> Events { get; } = [];
+
+        public Task Unkeyed => _unkeyed.Task;
+
+        public void Key() => Events.Add("key");
+
+        public void Unkey()
+        {
+            Events.Add("unkey");
+            _unkeyed.TrySetResult();
+        }
+    }
+
     private async Task<float[]> CaptureTransmissionAsync()
     {
-        // Wait for the transmitter to render and finish (sample count stops growing).
-        int seen = 0;
-        for (int i = 0; i < 100; i++)
-        {
-            await Task.Delay(100);
-            int now = _output.WrittenCount;
-            if (now > 0 && now == seen)
-            {
-                return _output.Snapshot();
-            }
-
-            seen = now;
-        }
-
-        throw new TimeoutException("no transmission captured");
+        // The transmitter has rendered and finished once it lets the PTT go.
+        await Eventually.SignalAsync(_ptt.Unkeyed, "the transmitter to finish and unkey");
+        return _output.Snapshot();
     }
 
     [Fact]

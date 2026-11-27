@@ -516,7 +516,7 @@ public class OnDemandUberSdrInputTests
     {
         try
         {
-            await task.WaitAsync(HangGuard);
+            await Eventually.SignalAsync(task, "task to complete");
         }
         catch (TimeoutException)
         {
@@ -705,7 +705,7 @@ public class OnDemandUberSdrInputTests
 
         public async Task<TaskCompletionSource<IUberSdrSession>> NextAttemptAsync()
         {
-            (await _attemptStarted.WaitAsync(HangGuard))
+            (await _attemptStarted.WaitAsync(Eventually.HangGuard))
                 .Should().BeTrue("the input should have asked to open a session");
             lock (_pending)
             {

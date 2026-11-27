@@ -61,7 +61,7 @@ public class TransmitterHeldTests
         Task settled = Task.WhenAll(
             first.ContinueWith(_ => { }, TaskScheduler.Default),
             second.ContinueWith(_ => { }, TaskScheduler.Default));
-        await settled.WaitAsync(TimeSpan.FromSeconds(30));
+        await Eventually.SignalAsync(settled, "settled to complete");
 
         new[] { first, second }.Count(t => t.IsFaulted).Should().Be(1);
         new[] { first, second }.Single(t => t.IsFaulted).Exception!.InnerException
@@ -87,7 +87,7 @@ public class TransmitterHeldTests
         Task second = channel.EnqueueTransmit(_ => new float[1200], rejected: null, ownsChannelTiming: false, source: b);
         Task transmitter = channel.RunTransmitterAsync(output, ptt, stop.Token);
 
-        Func<Task> both = () => Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(30));
+        Func<Task> both = () => Eventually.SignalAsync(Task.WhenAll(first, second), "Task.WhenAll(first, second) to complete");
         await both.Should().ThrowAsync<IOException>();
         first.IsFaulted.Should().BeTrue();
         second.IsFaulted.Should().BeTrue();

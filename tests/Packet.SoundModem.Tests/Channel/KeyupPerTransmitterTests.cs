@@ -72,7 +72,7 @@ public class KeyupPerTransmitterTests
         var ptt = new RecordingPtt();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         Task transmitter = channel.RunTransmitterAsync(output, ptt, cancellation.Token);
-        await Task.WhenAll(completions).WaitAsync(TimeSpan.FromSeconds(25));
+        await Eventually.SignalAsync(Task.WhenAll(completions), "Task.WhenAll(completions) to complete");
 
         await cancellation.CancelAsync();
         try

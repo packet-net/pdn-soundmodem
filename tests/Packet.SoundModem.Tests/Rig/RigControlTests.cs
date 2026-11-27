@@ -667,15 +667,16 @@ public sealed class RigControlTests : IAsyncDisposable
         RigTuneResult window = rig.Tune(new RigTuning(7_052_000, "USB", 0), TimeSpan.FromSeconds(60), "mailcast");
 
         Task during = channel.EnqueueTransmit(_ => new float[1200], rejected: null, ownsChannelTiming: true);
-        Func<Task> waitDuring = () => during.WaitAsync(TimeSpan.FromSeconds(30));
+        Func<Task> waitDuring = () => Eventually.SignalAsync(during, "during to complete");
 
         (await waitDuring.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*tuned to 7.052000 MHz*");
         line.Keys.Should().Be(0);
         output.WrittenCount.Should().Be(0);
 
         window.Window!.Dispose();
-        await channel.EnqueueTransmit(_ => new float[1200], rejected: null, ownsChannelTiming: true)
-            .WaitAsync(TimeSpan.FromSeconds(30));
+        await Eventually.SignalAsync(
+            channel.EnqueueTransmit(_ => new float[1200], rejected: null, ownsChannelTiming: true),
+            "the transmission to go out once the window is gone");
         line.Keys.Should().Be(1);
 
         await stop.CancelAsync();
@@ -1053,8 +1054,8 @@ public sealed class RigControlTests : IAsyncDisposable
 
         ReceiveWindowApi.Handle(rig, channel.TransmitLease, "POST", """{"release": true}""").Status.Should().Be(200);
 
-        await Task.WhenAll(kiss, ident, page).WaitAsync(TimeSpan.FromSeconds(60));
-        (await test.WaitAsync(TimeSpan.FromSeconds(60))).Ran.Should().BeTrue();
+        await Eventually.SignalAsync(Task.WhenAll(kiss, ident, page), "Task.WhenAll(kiss, ident, page) to complete");
+        (await Eventually.SignalAsync(test, "test to complete")).Ran.Should().BeTrue();
         line.Keys.Should().BeGreaterThanOrEqualTo(4);
         _fake.DialHz.Should().Be(14_074_000);
         await stop.CancelAsync();

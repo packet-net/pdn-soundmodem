@@ -231,10 +231,10 @@ public partial class ConfigPageTests
         // The answer is in the browser's hands. The restart is held by a timer on the clock, so it
         // has not been asked for until the clock is moved. Advancing is safe: the only thing on this
         // clock is that one timer, and the test moves it on only once the timer is there.
-        await time.WhenCreatedAsync(MonitorStartup.RestartAfterAnswer).WaitAsync(TimeSpan.FromSeconds(60));
+        await Eventually.SignalAsync(time.WhenCreatedAsync(MonitorStartup.RestartAfterAnswer), "time.WhenCreatedAsync(MonitorStartup.RestartAfterAnswer) to complete");
         asked.Task.IsCompleted.Should().BeFalse("the browser has its answer before the site starts going down");
         time.Advance(MonitorStartup.RestartAfterAnswer);
-        await asked.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        await Eventually.SignalAsync(asked.Task, "asked.Task to complete");
         listener.Stop();
     }
 
@@ -458,18 +458,19 @@ public partial class ConfigPageTests
         var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
         using var station = new Station(_dir, key: "right", time: time);
 
-        var watch = System.Diagnostics.Stopwatch.StartNew();
-        HttpResponseMessage[] answers = await Task.WhenAll(Enumerable.Range(0, 400).Select(async i =>
+        // The clock is frozen and nothing here moves it, so a refusal held back on a delay would
+        // never come: every one of the 400 being answered is the proof that none was.
+        Task<HttpResponseMessage[]> asking = Task.WhenAll(Enumerable.Range(0, 400).Select(async i =>
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, station.Url("api/config"));
             request.Headers.Add("X-API-Key", $"guess-{i}");
             return await station.Client.SendAsync(request);
         }));
-        watch.Stop();
+        HttpResponseMessage[] answers = await Eventually.SignalAsync(
+            asking, "all 400 wrong keys to be answered with the clock frozen, none held on a delay");
 
         answers.Count(a => a.StatusCode == HttpStatusCode.Unauthorized).Should().Be(3, "three keys were compared, the free ones");
         answers.Count(a => (int)a.StatusCode == 429).Should().Be(397, "the rest were not looked at");
-        watch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(30), "nothing was held waiting on a delay");
     }
 
     // ---------------------------------------------------------------- the page's own model

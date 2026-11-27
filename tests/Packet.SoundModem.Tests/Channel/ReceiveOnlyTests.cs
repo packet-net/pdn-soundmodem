@@ -44,11 +44,15 @@ public class ReceiveOnlyTests
         SoundModemChannel channel = ReceiveOnlyChannel();
         channel.TransmitInhibitTimeout = TimeSpan.FromMinutes(5);
 
-        var elapsed = System.Diagnostics.Stopwatch.StartNew();
-        Func<Task> transmit = () => channel.EnqueueTransmit(0, [0x01]);
-        await transmit.Should().ThrowAsync<InvalidOperationException>();
+        // No transmitter is running and the inhibit is on, so a frame that was queued would sit
+        // there. Only a refusal at the door ends the task at all: it is awaited under the shared
+        // hang guard, and the test says nothing about how long that took.
+        channel.TransmitInhibit = () => true;
+        Task refused = channel.EnqueueTransmit(0, [0x01]);
+        await Eventually.CompletesAsync(refused, "the frame to be refused rather than held for the inhibit");
 
-        elapsed.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(1));
+        refused.IsFaulted.Should().BeTrue();
+        refused.Exception!.InnerException.Should().BeOfType<InvalidOperationException>();
     }
 
     [Fact]

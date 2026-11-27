@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.WebSockets;
 using System.Text;
 using AwesomeAssertions;
+using M0LTE.Radio.Audio;
 using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
@@ -90,21 +91,28 @@ public sealed class UberSdrDiscontinuityTests
     [Fact]
     public async Task Samples_Dropped_Because_The_Buffer_Filled_Count()
     {
-        // Ten seconds of IQ into an eight-second ring that nobody reads.
-        using var receiver = new FakeReceiver([new Session(Frames: 500, Hold: true)]);
+        // Ten seconds of IQ into an eight-second ring that nobody reads. The receiver closes the
+        // session after the last packet, and the input takes the packets and the close in order:
+        // once it has said the session ended, every packet has been through the converter and
+        // into the ring, and the drop count has stopped moving. Its clock is not moved, so it
+        // stays in the wait before the next attempt.
+        var journal = new List<string>();
+        using var receiver = new FakeReceiver([new Session(Frames: 500, Hold: false)]);
         using UberSdrAudioInput input = await UberSdrAudioInput.OpenAsync(
-            receiver.Endpoint, Tuning, log: null, CancellationToken.None, new FakeTimeProvider());
+            receiver.Endpoint, Tuning, line => { lock (journal) { journal.Add(line); } },
+            CancellationToken.None, new FakeTimeProvider());
 
-        await Eventually.UntilAsync(() => receiver.FramesSent >= 500 && input.DroppedSamples > 0, "the ring overflows");
-
-        // The last packets may still be on their way through the converter.
-        long settled;
-        do
-        {
-            settled = input.DroppedSamples;
-            await Task.Delay(200);
-        }
-        while (input.DroppedSamples != settled);
+        await Eventually.UntilAsync(
+            () =>
+            {
+                lock (journal)
+                {
+                    return journal.Any(l => l.Contains("reconnecting to", StringComparison.Ordinal)
+                        || l.Contains("the session ended after", StringComparison.Ordinal));
+                }
+            },
+            "the input to say the session ended, after taking all 500 packets");
+        input.DroppedSamples.Should().BeGreaterThan(0, "ten seconds went into an eight-second ring");
 
         input.Discontinuities.Should().Be(0, "the count is as of the last Read, and nothing has been read");
         input.Read(new float[1200]).Should().Be(1200);
@@ -121,6 +129,7 @@ public sealed class UberSdrDiscontinuityTests
             receiver.Endpoint, Tuning, log: null, CancellationToken.None, clock);
 
         var channel = new SoundModemChannel(12000);
+        var reads = new EmptyReadCounter(input);
         int losses = 0;
         long delivered = 0;
         long lostAt = -1;
@@ -138,7 +147,7 @@ public sealed class UberSdrDiscontinuityTests
             new StationOptions
             {
                 Channel = channel,
-                Input = input,
+                Input = reads,
                 DspRate = 12000,
                 Journal = new StationJournal("", _ => { }, _ => { }),
                 DeviceKind = DeadFeedDevice.UberSdr,
@@ -151,8 +160,10 @@ public sealed class UberSdrDiscontinuityTests
 
         await Eventually.UntilAsync(() => Interlocked.Read(ref delivered) >= 20 * AudioPerFrame, "the first session is heard");
 
-        // Empty reads while the receiver is between sessions: the loop turns, nothing is lost.
-        await Task.Delay(300);
+        // Empty reads while the receiver is between sessions: the loop turns, nothing is lost. The
+        // station has been round on empty reads a few times once the counter says so; the input's
+        // clock is not moved, so it cannot reconnect before then.
+        await Eventually.UntilAsync(() => reads.EmptyReads >= 3, "the station to read the empty input a few times");
         Volatile.Read(ref losses).Should().Be(0, "a Read that comes back empty has lost nothing");
 
         long before = Interlocked.Read(ref delivered);
@@ -169,7 +180,7 @@ public sealed class UberSdrDiscontinuityTests
             + "came before it and none of the second");
 
         await stopping.CancelAsync();
-        await running.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.SignalAsync(running, "running to complete");
     }
 
     [Fact]
@@ -200,8 +211,8 @@ public sealed class UberSdrDiscontinuityTests
         {
             // Either the receiver is waiting for its connections, or it has already closed the
             // listener without: both are reached by construction, whichever way it is written.
-            await Task.WhenAny(receiver.WaitingForConnections, receiver.ListenerClosed).WaitAsync(GiveUp);
-            await parked.Task.WaitAsync(GiveUp);
+            await Eventually.SignalAsync(Task.WhenAny(receiver.WaitingForConnections, receiver.ListenerClosed), "Task.WhenAny(receiver.WaitingForConnections, receiver.ListenerClosed) to complete");
+            await Eventually.SignalAsync(parked.Task, "parked.Task to complete");
             receiver.ListenerOpen.Should().BeTrue("a connection is still letting go of its socket");
         }
         finally
@@ -209,7 +220,7 @@ public sealed class UberSdrDiscontinuityTests
             release.TrySetResult();
         }
 
-        await disposing.WaitAsync(GiveUp);
+        await Eventually.SignalAsync(disposing, "disposing to complete");
         receiver.ListenerOpen.Should().BeFalse("once the connection has finished the listener is closed");
     }
 
@@ -223,6 +234,33 @@ public sealed class UberSdrDiscontinuityTests
             giveUp.Token.ThrowIfCancellationRequested();
             taken += input.Read(buffer);
             await Task.Yield();
+        }
+    }
+
+    /// <summary>The input the station reads from, counting the reads that come back empty after
+    /// it has delivered something, which is what a receiver between sessions looks like.</summary>
+    private sealed class EmptyReadCounter(UberSdrAudioInput inner) : IAudioInput
+    {
+        private long _empty;
+        private long _delivered;
+
+        public long EmptyReads => Interlocked.Read(ref _empty);
+
+        public int SampleRate => inner.SampleRate;
+
+        public int Read(Span<float> destination)
+        {
+            int got = inner.Read(destination);
+            if (got > 0)
+            {
+                Interlocked.Add(ref _delivered, got);
+            }
+            else if (Interlocked.Read(ref _delivered) > 0)
+            {
+                Interlocked.Increment(ref _empty);
+            }
+
+            return got;
         }
     }
 
@@ -392,7 +430,7 @@ public sealed class UberSdrDiscontinuityTests
                 }
             }
 
-            await Task.WhenAll(running).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            await Eventually.SignalAsync(Task.WhenAll(running), "Task.WhenAll(running) to complete").ConfigureAwait(false);
         }
 
         private async Task AnswerAsync(HttpListenerContext context)

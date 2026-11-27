@@ -69,7 +69,7 @@ public class TransmitterPttFailureTests
         // The keyup fails: the frame's task faults with the PTT's own exception - a definite
         // answer, exactly what an ACKMODE host needs to decide the frame is lost.
         Task doomed = channel.EnqueueTransmit(0, SampleFrame());
-        await FluentActions.Awaiting(() => doomed.WaitAsync(TimeSpan.FromSeconds(10)))
+        await FluentActions.Awaiting(() => Eventually.SignalAsync(doomed, "doomed to complete"))
             .Should().ThrowAsync<InvalidOperationException>().WithMessage("*holds the PA*");
 
         // Waited for rather than asserted outright, the same way the unkey test below does it.
@@ -84,7 +84,7 @@ public class TransmitterPttFailureTests
 
         // The PTT recovers; the loop must still be alive and the next frame transmits.
         ptt.FailKey = false;
-        await channel.EnqueueTransmit(0, SampleFrame()).WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(channel.EnqueueTransmit(0, SampleFrame()), "channel.EnqueueTransmit(0, SampleFrame()) to complete");
         output.WrittenCount.Should().BeGreaterThan(0, "the loop survived the failure");
         transmitter.IsCompleted.Should().BeFalse("the loop is still serving");
 
@@ -107,7 +107,7 @@ public class TransmitterPttFailureTests
 
         // The burst itself succeeded; the unkey failing afterwards is the radio's problem to
         // announce, not a reason to fault a frame whose audio fully left the device.
-        await channel.EnqueueTransmit(0, SampleFrame()).WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(channel.EnqueueTransmit(0, SampleFrame()), "channel.EnqueueTransmit(0, SampleFrame()) to complete");
         output.WrittenCount.Should().BeGreaterThan(0);
         await Eventually.UntilAsync(() => failures.Count == 1, "the keyup failure to be reported");
         failures.Single().Should().BeOfType<IOException>();

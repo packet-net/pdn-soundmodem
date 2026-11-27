@@ -187,7 +187,7 @@ public class TransmitOrderTests : IAsyncLifetime
 
         // And on far enough for A's own next poll, whenever it falls.
         await RunUntilAsync(() => OnAir().Length == 3, TimeSpan.FromSeconds(10));
-        await Task.WhenAll(first, second, third).WaitAsync(TimeSpan.FromSeconds(30));
+        await Eventually.SignalAsync(Task.WhenAll(first, second, third), "Task.WhenAll(first, second, third) to complete");
 
         OnAir().Should().Be("ABC",
             "the host handed them over in that order, and a link's sequence numbers are on the "
@@ -228,7 +228,7 @@ public class TransmitOrderTests : IAsyncLifetime
 
         held = false;
         await RunUntilAsync(() => OnAir().Length == 1, TimeSpan.FromSeconds(10));
-        await queued.WaitAsync(TimeSpan.FromSeconds(30));
+        await Eventually.SignalAsync(queued, "queued to complete");
         OnAir().Should().Be("A");
     }
 
@@ -259,7 +259,7 @@ public class TransmitOrderTests : IAsyncLifetime
         OnAir().Should().BeEmpty("nothing may reach the air while another service holds the channel");
 
         await RunUntilAsync(() => OnAir().Length == 5, TimeSpan.FromSeconds(10));
-        await Task.WhenAll(queued).WaitAsync(TimeSpan.FromSeconds(30));
+        await Eventually.SignalAsync(Task.WhenAll(queued), "Task.WhenAll(queued) to complete");
 
         OnAir().Should().Be("ABCDE");
     }

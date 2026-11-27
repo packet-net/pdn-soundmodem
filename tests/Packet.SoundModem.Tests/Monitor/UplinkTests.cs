@@ -405,7 +405,7 @@ public class UplinkTests
             }
         }
 
-        await greeted.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        await Eventually.SignalAsync(greeted.Task, "greeted.Task to complete");
         // Half a second, as SendSecondsAsync counts it.
         int sentBlocks = (int)Math.Round(0.5 * first.AudioRate / first.BlockSamples);
         for (int i = 0; i < sentBlocks; i++)
@@ -1709,7 +1709,7 @@ public class UplinkTests
             {
                 try
                 {
-                    await _reading.WaitAsync(TimeSpan.FromSeconds(5));
+                    await Eventually.SignalAsync(_reading, "_reading to complete");
                 }
                 catch (Exception)
                 {

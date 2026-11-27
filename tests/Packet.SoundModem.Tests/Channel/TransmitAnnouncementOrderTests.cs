@@ -194,7 +194,7 @@ public class TransmitAnnouncementOrderTests
         Task c = channel.EnqueueTransmit(2, Broadcast(0x43));
         var output = new FakeAudioOutput(SampleRate);
         Task transmitter = channel.RunTransmitterAsync(output, new RecordingPtt(), cancellation.Token);
-        await Task.WhenAll(a, b, c).WaitAsync(TimeSpan.FromSeconds(60));
+        await Eventually.SignalAsync(Task.WhenAll(a, b, c), "Task.WhenAll(a, b, c) to complete");
 
         lock (announced)
         {
@@ -376,11 +376,11 @@ public class TransmitAnnouncementOrderTests
 
         // And once that one has been, the failed frame's place opens behind it. Awaited rather
         // than read: it completes on the thread pool, after the first frame's place does.
-        await channel.LastAnnouncement.WaitAsync(TimeSpan.FromSeconds(60));
+        await Eventually.SignalAsync(channel.LastAnnouncement, "channel.LastAnnouncement to complete");
 
         Task c = channel.EnqueueTransmit(2, Broadcast(0x43));
         Task second = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), new RecordingPtt(), cancellation.Token);
-        await c.WaitAsync(TimeSpan.FromSeconds(60));
+        await Eventually.SignalAsync(c, "c to complete");
         lock (announced)
         {
             announced.Should().Equal([0x41, 0x43], "the rows are in the order the frames went out");

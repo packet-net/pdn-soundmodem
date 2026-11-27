@@ -423,7 +423,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
         using var transmitCancel = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var output = new Channel.FakeAudioOutput(SampleRate);
         Task transmitter = _channel.RunTransmitterAsync(output, new NullPtt(), transmitCancel.Token);
-        await _channel.EnqueueTransmit(0, TestFrame()).WaitAsync(TimeSpan.FromSeconds(15));
+        await Eventually.SignalAsync(_channel.EnqueueTransmit(0, TestFrame()), "_channel.EnqueueTransmit(0, TestFrame()) to complete");
 
         byte[]? txLine = null;
         for (int i = 0; i < 20 && txLine is null; i++)
@@ -464,7 +464,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
         using var transmitCancel = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var output = new Channel.FakeAudioOutput(SampleRate);
         Task transmitter = _channel.RunTransmitterAsync(output, new NullPtt(), transmitCancel.Token);
-        await _channel.EnqueueTransmit(0, TestFrame()).WaitAsync(TimeSpan.FromSeconds(15));
+        await Eventually.SignalAsync(_channel.EnqueueTransmit(0, TestFrame()), "_channel.EnqueueTransmit(0, TestFrame()) to complete");
 
         JsonDocument? frame = null;
         for (int i = 0; i < 40 && frame is null; i++)

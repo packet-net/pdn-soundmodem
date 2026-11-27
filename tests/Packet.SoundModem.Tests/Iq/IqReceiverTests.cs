@@ -107,7 +107,7 @@ public sealed class IqReceiverTests
         Task<float[]> fm = Task.Run(() => Drain(receiver.Channels[0]));
         Task<float[]> ssb = Task.Run(() => Drain(receiver.Channels[1]));
         receiver.Start();
-        float[][] heard = await Task.WhenAll(fm, ssb).WaitAsync(TimeSpan.FromSeconds(60));
+        float[][] heard = await Eventually.SignalAsync(Task.WhenAll(fm, ssb), "Task.WhenAll(fm, ssb) to complete");
 
         fmSim.Decode(heard[0], fmFrame).Matched.Should().BeTrue();
         ssbSim.Decode(heard[1], ssbFrame).Matched.Should().BeTrue();

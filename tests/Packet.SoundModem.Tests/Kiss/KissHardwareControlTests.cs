@@ -131,8 +131,15 @@ public class KissHardwareControlTests : IAsyncLifetime
         KissHardwareEvent refusal = await WaitForHardwareEventAsync();
         refusal.Applied.Should().BeFalse();
         _channel.Modems[0].Mode.Should().Be("ms110d-wn6");
-        await FluentActions.Awaiting(() => ReadFrameAsync(client, TimeSpan.FromMilliseconds(400)))
-            .Should().ThrowAsync<OperationCanceledException>("a refused SETHW must stay silent");
+
+        // A refused SETHW stays silent. A valid one sent behind it is the witness: the server deals
+        // with a connection's frames in order, so the first frame to come back is the echo of the
+        // valid one ([2]), and had the refused one been echoed it would have come back first ([9]).
+        await client.GetStream().WriteAsync(
+            KissCodec.Encode(new KissFrame(0, KissCommand.SetHardware, [2])));
+        KissFrame first = await ReadFrameAsync(client, Eventually.HangGuard);
+        first.Payload.Should().Equal([2], "a refused SETHW must stay silent: the first echo is the valid one's");
+        _channel.Modems[0].Mode.Should().Be("ms110d-wn2");
     }
 
     [Fact]

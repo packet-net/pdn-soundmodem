@@ -106,13 +106,13 @@ public class TurnaroundHoldTests
         Task other = channel.EnqueueTransmit(0, Broadcast()); // the other link, queued behind it
         Task transmitter = await StartAsync(channel, time, cancellation.Token);
 
-        await poll.WaitAsync(TimeSpan.FromSeconds(15));
+        await Eventually.SignalAsync(poll, "poll to complete");
         // The polling modem is done; the other one must still be waiting out the turnaround.
         other.IsCompleted.Should().BeFalse(
             "the reply to the poll has not had its chance yet, and keying over it is exactly "
             + "what this station was doing 97 % of the time");
 
-        await other.WaitAsync(TimeSpan.FromSeconds(15));
+        await Eventually.SignalAsync(other, "other to complete");
         await cancellation.CancelAsync();
         await Ignore(transmitter);
     }
@@ -127,7 +127,7 @@ public class TurnaroundHoldTests
         Task other = channel.EnqueueTransmit(0, Broadcast());
         Task transmitter = await StartAsync(channel, time, cancellation.Token);
 
-        await Task.WhenAll(ident, other).WaitAsync(TimeSpan.FromSeconds(20));
+        await Eventually.SignalAsync(Task.WhenAll(ident, other), "Task.WhenAll(ident, other) to complete");
         await cancellation.CancelAsync();
         await Ignore(transmitter);
         // Reaching here at all is the assertion: neither frame expects an answer, so neither
@@ -145,7 +145,7 @@ public class TurnaroundHoldTests
         Task other = channel.EnqueueTransmit(0, Poll());
         Task transmitter = await StartAsync(channel, time, cancellation.Token);
 
-        await Task.WhenAll(poll, other).WaitAsync(TimeSpan.FromSeconds(20));
+        await Eventually.SignalAsync(Task.WhenAll(poll, other), "Task.WhenAll(poll, other) to complete");
         await cancellation.CancelAsync();
         await Ignore(transmitter);
     }
@@ -173,13 +173,13 @@ public class TurnaroundHoldTests
         Task service = channel.EnqueueTransmit(_ => new float[SampleRate / 20]);
         Task transmitter = await StartAsync(channel, time, cancellation.Token);
 
-        await poll.WaitAsync(TimeSpan.FromSeconds(20));
+        await Eventually.SignalAsync(poll, "poll to complete");
         second.IsCompleted.Should().BeFalse("every other transmitter waits out the turnaround");
         third.IsCompleted.Should().BeFalse();
         service.IsCompleted.Should().BeFalse("a service transmitter is one of them too");
 
         // And none of them is starved: once the window lapses unanswered they all get the air.
-        await Task.WhenAll(second, third, service).WaitAsync(TimeSpan.FromSeconds(20));
+        await Eventually.SignalAsync(Task.WhenAll(second, third, service), "Task.WhenAll(second, third, service) to complete");
         await cancellation.CancelAsync();
         await Ignore(transmitter);
     }
@@ -202,9 +202,9 @@ public class TurnaroundHoldTests
         Task held = channel.EnqueueTransmit(0, Broadcast());
         Task transmitter = await StartAsync(channel, time, cancellation.Token);
 
-        await poll.WaitAsync(TimeSpan.FromSeconds(15));
+        await Eventually.SignalAsync(poll, "poll to complete");
         held.IsCompleted.Should().BeFalse("the turnaround is still running");
-        await held.WaitAsync(TimeSpan.FromSeconds(15)); // must release, not hang
+        await Eventually.SignalAsync(held, "held to complete"); // must release, not hang
 
         await cancellation.CancelAsync();
         await Ignore(transmitter);
@@ -288,23 +288,24 @@ public class TurnaroundHoldTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         Task firstPoll = channel.EnqueueTransmit(2, Poll());
         Task transmitter = channel.RunTransmitterAsync(output, new RecordingPtt(), cancellation.Token);
-        await firstPoll.WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(firstPoll, "the first poll to go out");
 
         // The other port's frame, much longer than a poll so its burst is easy to tell apart.
         clock.Rearm();
         byte[] waiting = [.. Broadcast(), .. new byte[60]];
         Task other = channel.EnqueueTransmit(0, waiting);
-        TimeSpan hold = await clock.NextWait.WaitAsync(TimeSpan.FromMinutes(1));
+        TimeSpan hold = await Eventually.SignalAsync(clock.NextWait, "the transmitter to wait out the hold");
         hold.Should().BeGreaterThan(TimeSpan.Zero, "the transmitter is now sleeping out the hold");
 
         // The owner's next poll, during the hold. It must stay queued: the clock is frozen, so
-        // nothing correct can send it. The second here is a window for a wrong scheduler to show
-        // itself in, not a pace - a correct one cannot fail this however loaded the box is.
+        // nothing correct can send it, and the transmitter does not look at the queue again until
+        // the hold ends. There is nothing to wait for here: the proof that it was held is the order
+        // at the end, since a scheduler that sent it at once would put it ahead of the frame that
+        // was waiting first.
         Task secondPoll = channel.EnqueueTransmit(2, Poll());
-        await Task.WhenAny(secondPoll, Task.Delay(TimeSpan.FromSeconds(1), CancellationToken.None));
         secondPoll.IsCompleted.Should().BeFalse("a new frame from the hold's owner waits for the hold too");
         fake.Advance(channel.TurnaroundHold + TimeSpan.FromMilliseconds(100));
-        await Task.WhenAll(other, secondPoll).WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(Task.WhenAll(other, secondPoll), "both frames to go out once the hold ends");
         await cancellation.CancelAsync();
         await Ignore(transmitter);
 

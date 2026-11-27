@@ -226,6 +226,24 @@ internal sealed class FakeSdrConnect
     /// <summary>Ends the connection abruptly, as a crash or a pulled cable would.</summary>
     public void Drop() => _socket.Abort();
 
+    /// <summary>Ends the connection with a close message. Unlike <see cref="Drop"/> it arrives after
+    /// everything sent before it, so the other end has been through all of that when it sees it.</summary>
+    public async Task CloseAsync()
+    {
+        await _send.WaitAsync();
+        try
+        {
+            await _socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        }
+        catch (Exception e) when (e is WebSocketException or IOException or ObjectDisposedException)
+        {
+        }
+        finally
+        {
+            _send.Release();
+        }
+    }
+
     public Task WaitForAsync(Func<FakeSdrConnect, bool> condition, string what) =>
         Eventually.UntilAsync(() => condition(this), $"the fake SDRconnect to see {what}");
 

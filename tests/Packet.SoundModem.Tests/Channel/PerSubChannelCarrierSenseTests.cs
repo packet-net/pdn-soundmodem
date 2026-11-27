@@ -183,7 +183,7 @@ public class PerSubChannelCarrierSenseTests
 
         Task sent = channel.EnqueueTransmit(Bpsk2150, Broadcast());
         Task transmitter = await StartAsync(channel, time, cancellation.Token);
-        await sent.WaitAsync(TimeSpan.FromSeconds(20));
+        await Eventually.SignalAsync(sent, "sent to complete");
 
         sent.IsCompletedSuccessfully.Should().BeTrue(
             "the modem with the traffic had a clear passband; GB7RDG had fourteen such gaps in "
@@ -215,7 +215,7 @@ public class PerSubChannelCarrierSenseTests
             "the neighbouring modem is hearing something in this frame's own passband");
 
         modems[Afsk987].Busy = false;
-        await sent.WaitAsync(TimeSpan.FromSeconds(20));
+        await Eventually.SignalAsync(sent, "sent to complete");
 
         sent.IsCompletedSuccessfully.Should().BeTrue("the passband cleared");
 
@@ -246,7 +246,7 @@ public class PerSubChannelCarrierSenseTests
             + "still decides for everybody");
 
         radio.Busy = false;
-        await sent.WaitAsync(TimeSpan.FromSeconds(20));
+        await Eventually.SignalAsync(sent, "sent to complete");
         sent.IsCompletedSuccessfully.Should().BeTrue("the radio let go");
 
         await cancellation.CancelAsync();
@@ -277,7 +277,7 @@ public class PerSubChannelCarrierSenseTests
 
         Task sent = channel.EnqueueTransmit(Bpsk2150, Broadcast());
         Task transmitter = await StartAsync(channel, time, cancellation.Token);
-        await sent.WaitAsync(TimeSpan.FromSeconds(20));
+        await Eventually.SignalAsync(sent, "sent to complete");
 
         busyForAnother.Should().BeTrue(
             "a sub-channel 1.03 kHz away cannot be transmitted on while we are keyed either: one "
@@ -311,7 +311,7 @@ public class PerSubChannelCarrierSenseTests
             + "and the conservative answer for an unknown passband is the station's");
 
         modems[Afsk850].Busy = false;
-        await sent.WaitAsync(TimeSpan.FromSeconds(20));
+        await Eventually.SignalAsync(sent, "sent to complete");
         sent.IsCompletedSuccessfully.Should().BeTrue();
 
         await cancellation.CancelAsync();

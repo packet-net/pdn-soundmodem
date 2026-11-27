@@ -312,7 +312,7 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
             {
             }
 
-            await Tnc.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(20));
+            await Eventually.SignalAsync(Tnc.DisposeAsync().AsTask(), "Tnc.DisposeAsync().AsTask() to complete");
 
             await _stopTransmitter.CancelAsync();
             try
@@ -506,7 +506,7 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
         (await WaitUntil(() => !bench.Caller.IsConnected && !bench.Listener.IsConnected, 90_000))
             .Should().BeTrue($"the disconnect handshake must complete. {bench.Caller.Transcript()}");
 
-        await packet.WaitAsync(TimeSpan.FromSeconds(60));
+        await Eventually.SignalAsync(packet, "packet to complete");
         (await WaitUntil(() => bench.Listener.PacketFrameCount() > 0, 60_000))
             .Should().BeTrue("the held frame must go out once the session releases the channel");
         bench.Listener.FirstPacketFrame().Should().Equal(PacketFrame(), "and arrive intact at the far station");
