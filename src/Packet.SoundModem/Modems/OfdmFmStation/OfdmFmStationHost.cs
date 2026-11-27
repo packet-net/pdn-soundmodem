@@ -1,4 +1,5 @@
 using M0LTE.OfdmFm;
+using Packet.SoundModem.Channel;
 using OfdmStation = M0LTE.OfdmFm.Station;
 
 namespace Packet.SoundModem.Modems.OfdmFmStation;
