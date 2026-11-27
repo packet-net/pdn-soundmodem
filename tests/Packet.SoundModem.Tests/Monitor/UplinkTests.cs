@@ -78,18 +78,20 @@ public class UplinkTests
     {
         await using var h = await Harness.StartAsync();
 
-        // On the real clock, because the delay is what makes a guessing run cost something and a
-        // fake one would let it be skipped. It is not the defence - 256 bits is - but it is the
+        // The hold is what makes a guessing run cost something. It is a timer on the clock the
+        // site was given: the attempt is still waiting once the timer is set, and is answered when
+        // the clock reaches it, not before. It is not the defence - 256 bits is - but it is the
         // reason an attempt is not free.
-        var elapsed = Stopwatch.StartNew();
-        WebSocketException refused = await Assert.ThrowsAsync<WebSocketException>(
+        int before = h.Time.Created(UplinkServer.BadTokenDelay);
+        Task<WebSocketException> attempt = Assert.ThrowsAsync<WebSocketException>(
             () => StubStation.ConnectAsync(h.Port, "pdnsm_not-a-token-this-site-ever-issued"));
-        elapsed.Stop();
+        await StubStation.UntilAsync(
+            () => h.Time.Created(UplinkServer.BadTokenDelay) > before, "the hold on a wrong token");
+        attempt.IsCompleted.Should().BeFalse("a wrong token is held before it is told so");
+        h.Time.Advance(UplinkServer.BadTokenDelay);
+        WebSocketException refused = await attempt;
 
         Status(refused).Should().Be(401);
-        elapsed.Elapsed.Should().BeGreaterThan(
-            UplinkServer.BadTokenDelay - TimeSpan.FromMilliseconds(150),
-            "a wrong token is held before it is told so");
 
         h.Errors.Should().ContainSingle(
             line => line.Contains("token this site has not issued", StringComparison.Ordinal),
@@ -183,6 +185,34 @@ public class UplinkTests
         first.ClosedBecause.Should().Contain("another connection authenticated");
         second.Connected.Should().BeTrue();
         (await h.StationsAsync()).Should().ContainSingle("one station, however many sockets have claimed it");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task A_Station_That_Never_Answers_The_Close_Is_Let_Go_When_The_Clock_Passes_The_Deadline()
+    {
+        await using var h = await Harness.StartAsync();
+        TimeSpan deadline = TimeSpan.FromSeconds(5);
+
+        await using var first = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await first.WelcomedAsync();
+
+        // Counted from here: building the first station puts timers of its own on the clock.
+        int before = h.Time.Created(deadline);
+        await using var second = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await second.WelcomedAsync();
+        await first.ClosedAsync();
+
+        // The stub reads the close and does not answer it, as a station that has gone away does.
+        // The monitor waits a deadline for the answer and then lets the connection go; that
+        // deadline is on the clock the site was given, so it has not passed until the clock does.
+        await StubStation.UntilAsync(
+            () => h.Time.Created(deadline) > before, "the deadline for the close answer on the clock");
+        h.Lines.Should().NotContain(line => line.Contains("disconnected - another connection", StringComparison.Ordinal));
+
+        h.Time.Advance(deadline);
+
+        await h.UntilAsync(() => Task.FromResult(
+            h.Lines.ToArray().Any(line => line.Contains("disconnected - another connection", StringComparison.Ordinal))));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -755,14 +785,16 @@ public class UplinkTests
         // A bearer value this site could never have issued - too long to be one of its tokens -
         // is still somebody presenting something. It used to be refused instantly and silently,
         // which made a run of them invisible in the journal.
-        var elapsed = Stopwatch.StartNew();
-        WebSocketException refused = await Assert.ThrowsAsync<WebSocketException>(
+        int before = h.Time.Created(UplinkServer.BadTokenDelay);
+        Task<WebSocketException> attempt = Assert.ThrowsAsync<WebSocketException>(
             () => StubStation.ConnectAsync(h.Port, new string('x', 600)));
-        elapsed.Stop();
+        await StubStation.UntilAsync(
+            () => h.Time.Created(UplinkServer.BadTokenDelay) > before, "the hold on an unusable value");
+        attempt.IsCompleted.Should().BeFalse("an unusable value is held before it is refused");
+        h.Time.Advance(UplinkServer.BadTokenDelay);
+        WebSocketException refused = await attempt;
 
         Status(refused).Should().Be(401);
-        elapsed.Elapsed.Should().BeGreaterThan(
-            UplinkServer.BadTokenDelay - TimeSpan.FromMilliseconds(150));
         h.Errors.Should().ContainSingle(
             line => line.Contains("token this site has not issued", StringComparison.Ordinal));
     }
@@ -776,8 +808,13 @@ public class UplinkTests
         // used to end with the journal reporting the first attempt and never mentioning the rest.
         for (int i = 0; i < 5; i++)
         {
-            await Assert.ThrowsAsync<WebSocketException>(
+            int before = h.Time.Created(UplinkServer.BadTokenDelay);
+            Task<WebSocketException> attempt = Assert.ThrowsAsync<WebSocketException>(
                 () => StubStation.ConnectAsync(h.Port, $"pdnsm_guess-{i}"));
+            await StubStation.UntilAsync(
+                () => h.Time.Created(UplinkServer.BadTokenDelay) > before, "the hold on a wrong token");
+            h.Time.Advance(UplinkServer.BadTokenDelay);
+            await attempt;
         }
 
         h.Errors.Should().ContainSingle(
@@ -839,12 +876,15 @@ public class UplinkTests
     public async Task A_Viewer_Arriving_Sends_Demand_And_Leaving_Sends_It_Again_After_The_Linger()
     {
         await using var h = await Harness.StartAsync();
+        int beats = h.Time.Created(UplinkServer.DemandHeartbeat);
 
         await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await station.WelcomedAsync();
         await StubStation.UntilAsync(
             () => station.Demands.Count >= 1, "the demand a station gets on connecting");
         station.Demands[0].Should().Be(0, "nothing flows until somebody is watching");
+        await StubStation.UntilAsync(
+            () => h.Time.Created(UplinkServer.DemandHeartbeat) > beats, "the station's heartbeat timer on the clock");
 
         Browser browser = await h.WatchAsync(Slug);
         await StubStation.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
@@ -856,8 +896,16 @@ public class UplinkTests
         // tab switch must not stop and restart a home station's stream. The count is repeated on
         // the heartbeat while the linger runs, which is why this asks whether a zero ever went out
         // rather than counting messages.
-        h.Time.Advance(Harness.Linger - TimeSpan.FromSeconds(1));
-        await Task.Delay(200);
+        // Each heartbeat is waited for in turn, so the claim is about the two that really went
+        // out, and not about however many had got out by the time somebody looked.
+        for (int beat = 0; beat < 2; beat++)
+        {
+            int sent = station.Demands.Count;
+            h.Time.Advance(UplinkServer.DemandHeartbeat);
+            await StubStation.UntilAsync(() => station.Demands.Count > sent, "a heartbeat inside the linger");
+        }
+
+        h.Time.Advance(Harness.Linger - (2 * UplinkServer.DemandHeartbeat) - TimeSpan.FromSeconds(1));
         List<int> sinceWatched = [.. station.Demands.SkipWhile(v => v == 0)];
         sinceWatched.Should().NotContain(
             0, "nothing is stopped inside the linger, however many heartbeats pass");

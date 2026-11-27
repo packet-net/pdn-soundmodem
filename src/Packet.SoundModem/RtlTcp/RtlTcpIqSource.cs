@@ -874,8 +874,8 @@ public sealed class RtlTcpIqSource : IIqSource, IDisposable
     private async Task<Socket> ConnectAsync(CancellationToken cancellation)
     {
         cancellation.ThrowIfCancellationRequested();
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        timeout.CancelAfter(_options.ConnectTimeout);
+        using var expiry = new CancellationTokenSource(_options.ConnectTimeout, _time);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation, expiry.Token);
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
         var progress = new ConnectProgress();
         Task<RtlTcpHeader?> attempt = Task.Factory.StartNew(

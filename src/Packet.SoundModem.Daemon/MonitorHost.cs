@@ -1098,7 +1098,7 @@ internal sealed class MonitorHost : IAsyncDisposable
             input?.Dispose();
             if (running is not null)
             {
-                await running.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+                await running.WaitAsync(TimeSpan.FromSeconds(5), _host._time).ConfigureAwait(false);
             }
 
             station?.Dispose();

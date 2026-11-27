@@ -1535,7 +1535,7 @@ if (surveyConfig is not null)
                     capture.PeakSnrDb,
                     // Age rather than a line index: the survey's spectrum clock is its own, and
                     // by the time a capture is on disk a moment more has passed.
-                    (DateTimeOffset.UtcNow - capture.CapturedAt).TotalSeconds,
+                    (surveyOptions.TimeProvider.GetUtcNow() - capture.CapturedAt).TotalSeconds,
                     Path.GetFileName(wav));
                 PushStatus();
             };

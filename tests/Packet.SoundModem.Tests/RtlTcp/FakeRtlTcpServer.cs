@@ -30,6 +30,7 @@ internal sealed class FakeRtlTcpServer : IDisposable
     private TcpClient? _client;
     private int _connections;
     private long _bytesFromClient;
+    private int _clientsEnded;
 
     public FakeRtlTcpServer(RtlTcpHeader? header = null)
     {
@@ -103,6 +104,12 @@ internal sealed class FakeRtlTcpServer : IDisposable
     /// <summary>Waits until <paramref name="count"/> commands have arrived, in the same way.</summary>
     public void WaitForCommands(int count) =>
         WaitFor(() => _commands.Count >= count, () => $"waited for {count} commands; have {Commands.Count}");
+
+    /// <summary>Waits until <paramref name="count"/> clients have closed their end, which is after
+    /// every byte they sent has been read here: a way to say "nothing more is coming" without a
+    /// pause.</summary>
+    public void WaitForClientsEnded(int count) =>
+        WaitFor(() => _clientsEnded >= count, () => $"waited for {count} clients to end; have {_clientsEnded}");
 
     /// <summary>Waits under the lock for <paramref name="condition"/>, which every change it reads
     /// pulses.</summary>
@@ -213,6 +220,14 @@ internal sealed class FakeRtlTcpServer : IDisposable
         }
         catch (Exception e) when (e is IOException or ObjectDisposedException or EndOfStreamException or SocketException or InvalidOperationException)
         {
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _clientsEnded++;
+                System.Threading.Monitor.PulseAll(_gate);
+            }
         }
     }
 }

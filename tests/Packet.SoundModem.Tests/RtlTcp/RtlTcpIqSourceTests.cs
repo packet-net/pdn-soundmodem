@@ -186,7 +186,10 @@ public sealed class RtlTcpIqSourceTests
 
         await source.OpenAsync(CancellationToken.None);
         server.WaitForCommands(5);
-        Thread.Sleep(100);
+
+        // Gain comes before AGC in the order the commands go, so with AGC in hand none is coming.
+        source.Dispose();
+        server.WaitForClientsEnded(1);
 
         server.Commands.Select(c => c.Command).Should().NotContain(RtlTcpCommand.SetGain);
         server.Commands.Should().Contain(c => c.Command == RtlTcpCommand.SetGainMode && c.Parameter == 0);
@@ -203,14 +206,17 @@ public sealed class RtlTcpIqSourceTests
 
         server.Send([0, 255, 127, 128]);
         float[] got = ReadAtLeast(source, 4);
-        Thread.Sleep(200);
 
         got.Should().Equal(-1f, 1f, -0.5f / 127.5f, 0.5f / 127.5f);
-        server.BytesFromClient.Should().Be(0, "a read-only server is never sent a byte");
         Action tune = () => source.Tune(145_000_000);
         tune.Should().Throw<InvalidOperationException>().WithMessage("*read-only*");
         source.TuningGeneration.Should().Be(0);
         source.SamplesLost.Should().Be(0);
+
+        // Closing our end ends the server's read, so what it counted is everything that was sent.
+        source.Dispose();
+        server.WaitForClientsEnded(1);
+        server.BytesFromClient.Should().Be(0, "a read-only server is never sent a byte");
     }
 
     [Fact]
@@ -347,41 +353,63 @@ public sealed class RtlTcpIqSourceTests
         source.Read(new float[64]).Should().Be(0, "a source that has given up stays closed");
     }
 
-    // 192.0.2.1 is TEST-NET-1 (RFC 5737): routed nowhere, so a connect to it either hangs for
-    // the OS's own timeout or fails at once, depending on the network. Either way these must
-    // come back promptly.
-    private static readonly RtlTcpEndpoint Blackhole = new("192.0.2.1", 1234);
+    // A server that takes the connection and never sends the header: the connect is then waiting
+    // on the connect timeout, on the source's clock, and only that, a dispose or a cancel.
+    private static FakeRtlTcpServer Silent() => new() { Header = null };
 
     [Fact]
-    public async Task Disposing_While_Connecting_To_A_Host_That_Never_Answers_Returns_Promptly()
+    public async Task A_Connect_That_Gets_No_Header_Gives_Up_When_The_Providers_Connect_Timeout_Passes()
     {
-        var source = new RtlTcpIqSource(Blackhole, ReadOnly() with
+        var clock = new TimerSignalTimeProvider();
+        using FakeRtlTcpServer server = Silent();
+        using var source = new RtlTcpIqSource(server.Endpoint, ReadOnly() with
+        {
+            ConnectTimeout = TimeSpan.FromMinutes(5),
+            TimeProvider = clock,
+        });
+
+        Task opening = source.OpenAsync(CancellationToken.None);
+        await clock.WhenCreatedAsync(TimeSpan.FromMinutes(5)).WaitAsync(HangGuard);
+        server.WaitForConnections(1);
+        clock.Advance(TimeSpan.FromMinutes(5));
+
+        Func<Task> open = () => opening;
+        (await open.Should().ThrowAsync<IOException>().WaitAsync(HangGuard)).Which.Message
+            .Should().Contain("accepted the connection and then sent nothing in 300 s");
+    }
+
+    [Fact]
+    public async Task Disposing_While_Connecting_To_A_Host_That_Never_Answers_Ends_The_Wait()
+    {
+        using FakeRtlTcpServer server = Silent();
+        var source = new RtlTcpIqSource(server.Endpoint, ReadOnly() with
         {
             ConnectTimeout = TimeSpan.FromMinutes(5),
             ReconnectDelay = TimeSpan.FromMilliseconds(10),
             GiveUpAfter = TimeSpan.MaxValue,
         });
         Task<int> reading = Task.Run(() => source.Read(new float[64]));
-        await Task.Delay(300);
+        server.WaitForConnections(1);
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
         source.Dispose();
         int got = await reading.WaitAsync(HangGuard);
 
-        got.Should().Be(0);
-        clock.Elapsed.Should().BeLessThan(HangGuard, "the dispose ends the wait, not the five minute connect timeout");
+        got.Should().Be(0, "the dispose ends the wait, not the five minute connect timeout");
     }
 
     [Fact]
-    public async Task An_Open_To_A_Host_That_Never_Answers_Is_Cancelled_Promptly()
+    public async Task An_Open_To_A_Host_That_Never_Answers_Is_Ended_By_Cancelling_It()
     {
-        using var source = new RtlTcpIqSource(Blackhole, ReadOnly() with { ConnectTimeout = TimeSpan.FromMinutes(5) });
-        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        using FakeRtlTcpServer server = Silent();
+        using var source = new RtlTcpIqSource(server.Endpoint, ReadOnly() with { ConnectTimeout = TimeSpan.FromMinutes(5) });
+        using var cancel = new CancellationTokenSource();
 
-        Func<Task> open = () => source.OpenAsync(cancel.Token);
+        Task opening = source.OpenAsync(cancel.Token);
+        server.WaitForConnections(1);
+        await cancel.CancelAsync();
 
-        // Cancelled, or refused by a network that says so at once: never the five minutes.
-        await open.Should().ThrowAsync<Exception>().WaitAsync(HangGuard);
+        Func<Task> open = () => opening;
+        await open.Should().ThrowAsync<OperationCanceledException>().WaitAsync(HangGuard);
     }
 
     [Fact]
