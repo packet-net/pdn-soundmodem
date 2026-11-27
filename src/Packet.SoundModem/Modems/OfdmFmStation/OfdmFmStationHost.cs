@@ -126,14 +126,14 @@ public sealed class OfdmFmStationHost : IDisposable
     /// </summary>
     public long BurstsDropped => _station.BurstsDropped;
 
-    /// <summary>The samples given to the station so far, heard and skipped together.</summary>
+    /// <summary>The station's own clock: the samples it has been given so far, heard and skipped together.</summary>
     public long SampleCount
     {
         get
         {
             lock (_gate)
             {
-                return _book.SampleCount;
+                return _station.SampleCount;
             }
         }
     }
