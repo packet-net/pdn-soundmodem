@@ -138,18 +138,6 @@ public class StationTests : IDisposable
         }
     }
 
-    private async Task UntilAsync(Func<bool> condition, string because)
-    {
-        using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        while (!condition())
-        {
-            giveUp.Token.ThrowIfCancellationRequested();
-            await Task.Delay(5, giveUp.Token);
-        }
-
-        condition().Should().BeTrue(because);
-    }
-
     /// <summary>The CT 146 shape: a receive-only UberSDR station at 12 kHz, dead-feed thresholds
     /// left at the device family's own defaults, which is how the live one runs.</summary>
     private StationOptions UberSdrOptions(
@@ -181,7 +169,7 @@ public class StationTests : IDisposable
         Task running = RunAsync(station);
 
         // The loop is turning: it keeps asking the input for audio.
-        await UntilAsync(() => input.Reads >= 5, "the loop keeps asking the input for audio");
+        await Eventually.UntilAsync(() => input.Reads >= 5, "the loop keeps asking the input for audio");
         running.IsCompleted.Should().BeFalse("nothing has asked the station to stop");
 
         await stopping.CancelAsync();
@@ -204,7 +192,7 @@ public class StationTests : IDisposable
         station.Faulted += faults.Add;
 
         Task running = RunAsync(station);
-        await UntilAsync(() => input.Reads >= 2, "the loop is turning");
+        await Eventually.UntilAsync(() => input.Reads >= 2, "the loop is turning");
 
         clock.Advance(TimeSpan.FromSeconds(30));
 
@@ -232,7 +220,7 @@ public class StationTests : IDisposable
         station.Faulted += faults.Add;
 
         Task running = RunAsync(station);
-        await UntilAsync(() => input.Reads >= 2, "the loop is turning");
+        await Eventually.UntilAsync(() => input.Reads >= 2, "the loop is turning");
 
         clock.Advance(TimeSpan.FromSeconds(30));
         await running.WaitAsync(TimeSpan.FromSeconds(5));
@@ -331,7 +319,7 @@ public class StationTests : IDisposable
                 $"an excused silence is not a fault: {fault.Reason}");
 
             Task running = RunAsync(station);
-            await UntilAsync(() => Errors().Count > 0, "the excused silence is journalled");
+            await Eventually.UntilAsync(() => Errors().Count > 0, "the excused silence is journalled");
 
             await stopping.CancelAsync();
             await running.WaitAsync(TimeSpan.FromSeconds(5));
@@ -368,7 +356,7 @@ public class StationTests : IDisposable
         using var station = new DaemonStation(options, stopping.Token);
 
         Task running = RunAsync(station);
-        await UntilAsync(() => input.Reads >= 2, "the loop is turning");
+        await Eventually.UntilAsync(() => input.Reads >= 2, "the loop is turning");
 
         // The loop notices the clock on its next turn, not at once, so moving it does not mean the
         // poll has happened. The host's check is the last thing a poll reads: once it has run, that
@@ -377,7 +365,7 @@ public class StationTests : IDisposable
         // counters before the change and the host's check after it, which reports the two the
         // wrong way round (and the audio at the poll after).
         clock.Advance(TimeSpan.FromSeconds(10));
-        await UntilAsync(() => Volatile.Read(ref checks) >= 1, "the first poll has run to its end");
+        await Eventually.UntilAsync(() => Volatile.Read(ref checks) >= 1, "the first poll has run to its end");
         Errors().Should().BeEmpty("a healthy station's poll is silent");
 
         captureXruns = 3;
@@ -388,7 +376,7 @@ public class StationTests : IDisposable
         // Safe to move: the receive loop does no timed work of its own, it reads the clock once
         // a turn, and the only poll this can start is the one that finds both conditions set.
         clock.Advance(TimeSpan.FromSeconds(10));
-        await UntilAsync(() => Errors().Count >= 2, "both probes have something to say");
+        await Eventually.UntilAsync(() => Errors().Count >= 2, "both probes have something to say");
 
         await stopping.CancelAsync();
         await running.WaitAsync(TimeSpan.FromSeconds(5));
@@ -437,7 +425,7 @@ public class StationTests : IDisposable
         using var station = new DaemonStation(options, stopping.Token);
 
         Task running = RunAsync(station);
-        await UntilAsync(() => input.Reads >= 2, "the loop is turning");
+        await Eventually.UntilAsync(() => input.Reads >= 2, "the loop is turning");
 
         clock.Advance(TimeSpan.FromSeconds(10));
         await counted.Task.WaitAsync(TimeSpan.FromSeconds(60));
@@ -445,11 +433,11 @@ public class StationTests : IDisposable
         logDrops = "frame log: 2 frames dropped unwritten (2 total) - the disk cannot keep up, "
             + "is full, or is unwritable";
         resume.Set();
-        await UntilAsync(() => Errors().Count >= 1, "the first poll reports what it saw last");
+        await Eventually.UntilAsync(() => Errors().Count >= 1, "the first poll reports what it saw last");
 
         // Safe to move: the first poll has reported, so the next one starts only from this.
         clock.Advance(TimeSpan.FromSeconds(10));
-        await UntilAsync(() => Errors().Count >= 2, "the next poll reports the audio");
+        await Eventually.UntilAsync(() => Errors().Count >= 2, "the next poll reports the audio");
 
         await stopping.CancelAsync();
         await running.WaitAsync(TimeSpan.FromSeconds(5));
@@ -477,7 +465,7 @@ public class StationTests : IDisposable
         station.Faulted += faults.Add;
 
         Task running = RunAsync(station);
-        await UntilAsync(() => input.Reads >= 2, "the loop is turning");
+        await Eventually.UntilAsync(() => input.Reads >= 2, "the loop is turning");
 
         clock.Advance(TimeSpan.FromMinutes(10));
         faults.Should().BeEmpty("quiet with nobody watching is the arrangement, not a fault");
@@ -507,7 +495,7 @@ public class StationTests : IDisposable
                 wedged.WaitUntilWedged();
                 clock.Advance(TimeSpan.FromSeconds(30));
                 clock.Advance(TimeSpan.FromSeconds(15));
-                await UntilAsync(() => Errors().Count >= 2, "starved, then stalled");
+                await Eventually.UntilAsync(() => Errors().Count >= 2, "starved, then stalled");
                 wedged.Release();
             });
 
@@ -581,7 +569,7 @@ public class StationTests : IDisposable
 
         Task runningOne = RunAsync(stationOne);
         Task runningTwo = RunAsync(stationTwo);
-        await UntilAsync(
+        await Eventually.UntilAsync(
             () => first.Recent(10).Count > 0 && second.Recent(10).Count > 0,
             "each station decoded its own recording into its own log");
 
@@ -674,7 +662,7 @@ public class StationTests : IDisposable
             stopping.Token);
 
         Task running = RunAsync(station);
-        await UntilAsync(() => input.Reads >= reads, "the loop has read the whole script");
+        await Eventually.UntilAsync(() => input.Reads >= reads, "the loop has read the whole script");
         await stopping.CancelAsync();
         await running.WaitAsync(TimeSpan.FromSeconds(5));
         lock (seen)
@@ -738,7 +726,7 @@ public class StationTests : IDisposable
             stopping.Token);
 
         Task running = RunAsync(station);
-        await UntilAsync(() => input.Reads >= 3, "the loop has read the script");
+        await Eventually.UntilAsync(() => input.Reads >= 3, "the loop has read the script");
         await stopping.CancelAsync();
         await running.WaitAsync(TimeSpan.FromSeconds(5));
 

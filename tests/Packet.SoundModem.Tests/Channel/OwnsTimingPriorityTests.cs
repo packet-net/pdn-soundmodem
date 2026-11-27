@@ -74,7 +74,9 @@ public class OwnsTimingPriorityTests
             ownsChannelTiming: true,
             source: ardopSource);
 
-        Task finished = await Task.WhenAny(ardop, Task.Delay(TimeSpan.FromSeconds(5)));
+        await Eventually.CompletesAsync(
+            ardop, "a burst that owns the channel's timing to finish without waiting on a packet frame's carrier sense");
+        bool wentOut = ardop.IsCompletedSuccessfully;
 
         await stop.CancelAsync();
         try
@@ -85,8 +87,7 @@ public class OwnsTimingPriorityTests
         {
         }
 
-        finished.Should().BeSameAs(
-            ardop,
+        wentOut.Should().BeTrue(
             "a burst that owns the channel's timing must not wait on a packet frame's carrier sense");
     }
 

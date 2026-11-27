@@ -23,7 +23,8 @@ public class KissHardwareControlTests : IAsyncLifetime
     private readonly KissTcpServer _server;
     private readonly FakeAudioOutput _output = new(SampleRate);
     private readonly CancellationTokenSource _cancellation = new(TimeSpan.FromSeconds(30));
-    private readonly List<KissHardwareEvent> _hardwareEvents = [];
+    private readonly TaskCompletionSource<KissHardwareEvent> _hardwareEvent =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task? _transmitter;
 
     public KissHardwareControlTests()
@@ -33,13 +34,7 @@ public class KissHardwareControlTests : IAsyncLifetime
         _channel.AddModem(1, sink => ModemCatalog.Create("afsk1200", SampleRate, sink));
         _channel.Csma.Persistence = 255;
         _server = new KissTcpServer(_channel, port: 0);
-        _server.HardwareCommand += e =>
-        {
-            lock (_hardwareEvents)
-            {
-                _hardwareEvents.Add(e);
-            }
-        };
+        _server.HardwareCommand += e => _hardwareEvent.TrySetResult(e);
     }
 
     public ValueTask InitializeAsync()
@@ -92,22 +87,8 @@ public class KissHardwareControlTests : IAsyncLifetime
         return frames[0];
     }
 
-    private async Task<KissHardwareEvent> WaitForHardwareEventAsync()
-    {
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (true)
-        {
-            lock (_hardwareEvents)
-            {
-                if (_hardwareEvents.Count > 0)
-                {
-                    return _hardwareEvents[^1];
-                }
-            }
-
-            await Task.Delay(20, cancellation.Token);
-        }
-    }
+    private Task<KissHardwareEvent> WaitForHardwareEventAsync() =>
+        Eventually.SignalAsync(_hardwareEvent.Task, "the server to report the hardware command");
 
     [Fact]
     public async Task Sethw_Switches_The_Tx_Waveform_And_Echoes_The_Applied_Frame()
@@ -117,7 +98,7 @@ public class KissHardwareControlTests : IAsyncLifetime
         await client.GetStream().WriteAsync(
             KissCodec.Encode(new KissFrame(0, KissCommand.SetHardware, [2])));
 
-        KissFrame echo = await ReadFrameAsync(client, TimeSpan.FromSeconds(5));
+        KissFrame echo = await ReadFrameAsync(client, Eventually.HangGuard);
         echo.Command.Should().Be(KissCommand.SetHardware);
         echo.Payload.Should().Equal([2], "the echo is the confirmation KISS never defined");
         _channel.Modems[0].Mode.Should().Be("ms110d-wn2");
@@ -132,7 +113,7 @@ public class KissHardwareControlTests : IAsyncLifetime
         await client.GetStream().WriteAsync(
             KissCodec.Encode(new KissFrame(0, KissCommand.SetHardware, [4, 1])));
 
-        (await ReadFrameAsync(client, TimeSpan.FromSeconds(5))).Payload.Should().Equal([4, 1]);
+        (await ReadFrameAsync(client, Eventually.HangGuard)).Payload.Should().Equal([4, 1]);
         _channel.Modems[0].Mode.Should().Be("ms110d-wn4");
         (await WaitForHardwareEventAsync()).Description.Should().Contain("long");
     }
@@ -179,13 +160,13 @@ public class KissHardwareControlTests : IAsyncLifetime
 
         await client.GetStream().WriteAsync(
             KissCodec.Encode(new KissFrame(0, KissCommand.AckModeData, [0xBE, 0xEF])));
-        KissFrame ack = await ReadFrameAsync(client, TimeSpan.FromSeconds(5));
+        KissFrame ack = await ReadFrameAsync(client, Eventually.HangGuard);
         ack.Command.Should().Be(KissCommand.AckModeData);
         ack.Port.Should().Be(0, "everything a dedicated port says is relabelled to nibble 0");
 
         await client.GetStream().WriteAsync(
             KissCodec.Encode(new KissFrame(0, KissCommand.SetHardware, [3])));
-        KissFrame echo = await ReadFrameAsync(client, TimeSpan.FromSeconds(5));
+        KissFrame echo = await ReadFrameAsync(client, Eventually.HangGuard);
         echo.Port.Should().Be(0);
         _channel.Modems[0].Mode.Should().Be("ms110d-wn3");
     }
@@ -198,7 +179,7 @@ public class KissHardwareControlTests : IAsyncLifetime
         await client.GetStream().WriteAsync(
             KissCodec.Encode(new KissFrame(0, KissCommand.AckModeData, [0x12, 0x34])));
 
-        KissFrame ack = await ReadFrameAsync(client, TimeSpan.FromSeconds(5));
+        KissFrame ack = await ReadFrameAsync(client, Eventually.HangGuard);
         ack.Payload.Should().Equal([0x12, 0x34],
             "transmission of nothing is trivially complete, and the host is owed its id back");
         _output.WrittenCount.Should().Be(0, "there was nothing to put on the air");
@@ -241,19 +222,15 @@ public class KissHardwareControlTests : IAsyncLifetime
                 new KissFrame(0, KissCommand.AckModeData, [(byte)i, 0xAA])));
         }
 
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        while (true)
-        {
-            lock (frames)
+        await Eventually.UntilAsync(
+            () =>
             {
-                if (frames.Count >= idOnly)
+                lock (frames)
                 {
-                    break;
+                    return frames.Count >= idOnly;
                 }
-            }
-
-            await Task.Delay(20, cancellation.Token);
-        }
+            },
+            "every ack to come back");
 
         lock (frames)
         {

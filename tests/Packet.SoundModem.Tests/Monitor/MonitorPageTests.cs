@@ -219,7 +219,9 @@ public class MonitorPageTests
         await using var station = await StubStation.OpenAsync(host.Port, host.Token, "GB7RDG-2",
             site: "https://gb7rdg.example/");
         await station.WelcomedAsync();
-        await UntilRowAsync(host);
+        await Eventually.UntilAsync(
+            async () => (await host.InstancesAsync()).Contains("\"kind\":\"station\"", StringComparison.Ordinal),
+            "the station's row in /api/instances");
 
         Probe probe = await RunProbeAsync(node, host.Port);
 
@@ -279,7 +281,9 @@ public class MonitorPageTests
             radio: "\"><b>bold</b>",
             site: "javascript:alert(3)");
         await station.WelcomedAsync();
-        await UntilRowAsync(host);
+        await Eventually.UntilAsync(
+            async () => (await host.InstancesAsync()).Contains("\"kind\":\"station\"", StringComparison.Ordinal),
+            "the station's row in /api/instances");
 
         Probe probe = await RunProbeAsync(node, host.Port);
 
@@ -292,23 +296,6 @@ public class MonitorPageTests
             .And.Contain("&quot;&gt;&lt;b&gt;bold&lt;/b&gt;");
         row.Should().NotContain(
             "class=\"own\"", "a station with no usable site URL gets no link at all");
-    }
-
-    /// <summary>Waits for the station's row to appear in the API the picker polls.</summary>
-    private static async Task UntilRowAsync(Harness host)
-    {
-        for (int attempt = 0; attempt < 200; attempt++)
-        {
-            if ((await host.InstancesAsync()).Contains(
-                    "\"kind\":\"station\"", StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            await Task.Delay(20);
-        }
-
-        Assert.Fail("the station never appeared in /api/instances");
     }
 
     private static async Task<Probe> RunProbeAsync(string node, int port)

@@ -375,10 +375,8 @@ public class ChannelAudioStreamTests : IAsyncLifetime
 
             // Paced by the fast reader, never by the slow one: it is never more than a few
             // blocks behind, so its own queue never overflows.
-            while (i - Volatile.Read(ref fastBlocks) > 16)
-            {
-                await Task.Delay(1, _cancellation.Token);
-            }
+            await Eventually.UntilAsync(
+                () => i - Volatile.Read(ref fastBlocks) <= 16, "the fast reader to be within 16 blocks");
         }
 
         await fastReader.WaitAsync(_cancellation.Token);
@@ -416,7 +414,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
         socket.Dispose();
 
-        await WaitUntil(() => Stream().ClientCount == 0, "the dropped client must be removed, not leaked");
+        await Eventually.UntilAsync(() => Stream().ClientCount == 0, "the dropped client must be removed, not leaked");
     }
 
     [Fact]
@@ -432,7 +430,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         await SendText(receiver, """{"name":"pdn-mailcast-receiver","pagePort":8130}""");
         await SendText(recorder, """{"name":"recorder"}""");
 
-        await WaitUntil(() => Stream().Listeners.Count == 2, "both named readers are listed");
+        await Eventually.UntilAsync(() => Stream().Listeners.Count == 2, "both named readers are listed");
         Stream().Listeners.Should().BeEquivalentTo(
             [new Listener("pdn-mailcast-receiver", 8130), new Listener("recorder", null)],
             "a reader that gave no page port is listed without one, and one that gave no name not at all");
@@ -440,7 +438,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         await receiver.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
         receiver.Dispose();
 
-        await WaitUntil(() => Stream().Listeners.Count == 1, "a reader that goes is taken off the list");
+        await Eventually.UntilAsync(() => Stream().Listeners.Count == 1, "a reader that goes is taken off the list");
         Stream().Listeners.Should().Equal(new Listener("recorder", null));
     }
 
@@ -468,13 +466,13 @@ public class ChannelAudioStreamTests : IAsyncLifetime
 
         await SendText(socket, """{"name":"test","band":{"lowHz":1000,"highHz":2000}}""");
 
-        await WaitUntil(() => Count(seen) >= 1, "the identify message must trigger the band hook");
+        await Eventually.UntilAsync(() => Count(seen) >= 1, "the identify message must trigger the band hook");
         Last(seen).Should().Be((1000, 2000));
 
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
         socket.Dispose();
 
-        await WaitUntil(() => Count(seen) >= 2 && Last(seen) is null,
+        await Eventually.UntilAsync(() => Count(seen) >= 2 && Last(seen) is null,
             "no connection asking for a band any more must fire null");
     }
 
@@ -486,7 +484,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         using var socket = await ConnectAsync();
         await Receive(socket); // hello
         await SendText(socket, """{"band":{"lowHz":500,"highHz":5000}}""");
-        await WaitUntil(() => FirstClientBand() is not null, "the band is recorded");
+        await Eventually.UntilAsync(() => FirstClientBand() is not null, "the band is recorded");
 
         var seen = new List<(int LowHz, int HighHz)?>();
         _server.ReceiveBandRequested = requested => { lock (seen) { seen.Add(requested); } };
@@ -505,7 +503,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
 
         await SendText(socket, """{"band":{"lowHz":-300,"highHz":20000}}""");
 
-        await WaitUntil(() => Count(seen) >= 1, "a band partly outside the channel is still a band");
+        await Eventually.UntilAsync(() => Count(seen) >= 1, "a band partly outside the channel is still a band");
         Last(seen).Should().Be((0, SampleRate / 2));
     }
 
@@ -526,7 +524,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
 
         await SendText(socket, message);
         await SendText(socket, """{"band":{"lowHz":1000,"highHz":2000}}""");
-        await WaitUntil(() => Count(seen) >= 1, "a good message after a bad one is still read");
+        await Eventually.UntilAsync(() => Count(seen) >= 1, "a good message after a bad one is still read");
         Last(seen).Should().Be((1000, 2000));
         Count(seen).Should().Be(1, "the bad message asked for nothing");
 
@@ -548,7 +546,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         await socket.SendAsync(whole.AsMemory(10, 20), WebSocketMessageType.Text, false, _cancellation.Token);
         await socket.SendAsync(whole.AsMemory(30), WebSocketMessageType.Text, true, _cancellation.Token);
 
-        await WaitUntil(() => Count(seen) >= 1, "the pieces make one message");
+        await Eventually.UntilAsync(() => Count(seen) >= 1, "the pieces make one message");
         Last(seen).Should().Be((700, 2300));
     }
 
@@ -564,7 +562,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         await SendText(socket, "{\"band\":{\"lowHz\":100,\"highHz\":200}," + padding + "\"name\":\"long\"}");
         await SendText(socket, """{"band":{"lowHz":1000,"highHz":2000}}""");
 
-        await WaitUntil(() => Count(seen) >= 1, "the message after the long one is read");
+        await Eventually.UntilAsync(() => Count(seen) >= 1, "the message after the long one is read");
         Count(seen).Should().Be(1);
         Last(seen).Should().Be((1000, 2000), "nothing from the over-long message was applied");
     }
@@ -716,16 +714,6 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         byte[] header = [0x96, 0x82, 0x64, 0x88, 0x8A, 0xAE, 0xE4, 0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6F, 0x03, 0xF0];
         header.CopyTo(frame, 0);
         return frame;
-    }
-
-    private static async Task WaitUntil(Func<bool> condition, string because)
-    {
-        for (int i = 0; i < 200 && !condition(); i++)
-        {
-            await Task.Delay(25);
-        }
-
-        condition().Should().BeTrue(because);
     }
 
     private readonly record struct AudioBlock(byte Flags, ulong Index, float[] Samples);

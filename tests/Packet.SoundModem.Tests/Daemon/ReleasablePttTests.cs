@@ -71,9 +71,9 @@ public class ReleasablePttTests
         // Wait until the release is blocked (it has reached the PTT and is held out by the keyup in
         // progress) or has finished (it was not held out, and the next line says so), by its thread's
         // state and not by a sleep.
-        SpinWait.SpinUntil(
-            () => (releasing.ThreadState & ThreadState.WaitSleepJoin) != 0 || !releasing.IsAlive, HangAfter)
-            .Should().BeTrue("the last unkey should have reached the PTT");
+        Eventually.Until(
+            () => (releasing.ThreadState & ThreadState.WaitSleepJoin) != 0 || !releasing.IsAlive,
+            "the last unkey to reach the PTT");
         inner.Snapshot().Should().Equal(["key started"], "the last unkey must not land inside the keyup");
 
         inner.LetKeyFinish.Set();

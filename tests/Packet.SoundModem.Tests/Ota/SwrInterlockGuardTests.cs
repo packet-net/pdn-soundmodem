@@ -30,22 +30,6 @@ public sealed class SwrInterlockGuardTests
         return (mock, client, meters);
     }
 
-    private static async Task<string?> WaitForAbortAsync(SwrInterlock interlock, TimeSpan timeout)
-    {
-        DateTime deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (interlock.AbortReason is string reason)
-            {
-                return reason;
-            }
-
-            await Task.Delay(20);
-        }
-
-        return interlock.AbortReason;
-    }
-
     [Fact]
     public async Task Forward_power_over_the_ceiling_aborts()
     {
@@ -63,7 +47,8 @@ public sealed class SwrInterlockGuardTests
             // 40 dBm = 10 W, twice the ceiling.
             mock.PushMeters((FwdPwrId, Dbm(40)));
 
-            string? reason = await WaitForAbortAsync(interlock, TimeSpan.FromSeconds(2));
+            await Eventually.UntilAsync(() => interlock.AbortReason is not null, "the interlock to abort on 10 W");
+            string? reason = interlock.AbortReason;
             reason.Should().NotBeNull("10 W is over the 5 W ceiling");
             reason.Should().Contain("W").And.Contain("5.0");
         }

@@ -269,7 +269,7 @@ public sealed class GpsdoReferenceTests : IDisposable
         inside.Wait(TimeSpan.FromSeconds(10)).Should().BeTrue();
 
         Task<bool> tick = Task.Run(reference.Tick);
-        (await Task.WhenAny(tick, Task.Delay(TimeSpan.FromSeconds(5)))).Should().BeSameAs(tick, "the tick must not block");
+        await Eventually.SignalAsync(tick, "the tick to return rather than block");
         (await tick).Should().BeFalse("it skipped");
 
         release.Set();

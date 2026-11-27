@@ -16,31 +16,50 @@ namespace Packet.SoundModem.Tests.Daemon;
 /// </remarks>
 public class ProspectorWorkerTests
 {
+    /// <summary>
+    /// A channel rate no mode runs at (modes run at 12000 or 48000, or at a rate that divides the
+    /// station's), so the worker's sweep tries nothing and is instant. These tests are about the
+    /// queue, the throttle and the shutdown, none of which depends on what a sweep reads, and a
+    /// real sweep of 17 modes takes as long as the machine makes it: under load it was the one
+    /// thing here that could outlast a hang guard.
+    /// </summary>
+    private const int NoModesRate = 8000;
+
     [Fact]
-    public void A_Queued_Capture_Is_Examined_And_The_Caller_Does_Not_Wait()
+    public void The_Instant_Sweep_Really_Tries_Nothing()
+    {
+        // What the tests below lean on: if a mode ever ran at this rate they would be sweeping again.
+        CaptureSweep.ModesFor(NoModesRate).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task A_Queued_Capture_Is_Examined_And_The_Caller_Does_Not_Wait()
     {
         using var scratch = new ScratchDirectory("prospector-worker-tests");
         var prospector = new ModemProspector(new ModemProspectorOptions(), []);
-        using var worker = new ProspectorWorker(prospector, 12000);
+        Task examined = Examined(prospector);
+        using var worker = new ProspectorWorker(prospector, NoModesRate);
 
         string wav = Path.Combine(scratch.FullName, "capture.wav");
         WavFile.WriteMono(wav, new float[12000], 12000);
 
         worker.Examine(Capture(), wav);
 
-        Wait(() => prospector.Examined == 1).Should().BeTrue("the worker should pick it up");
+        await Eventually.SignalAsync(examined, "the worker to pick the capture up");
+        prospector.Examined.Should().Be(1);
         worker.Dropped.Should().Be(0);
     }
 
     [Fact]
-    public void A_Capture_That_Has_Been_Pruned_Away_Is_A_Lost_Race_Rather_Than_An_Error()
+    public async Task A_Capture_That_Has_Been_Pruned_Away_Is_A_Lost_Race_Rather_Than_An_Error()
     {
         // The capture writer's byte budget deletes oldest-first while this worker is reading, so
         // a file that is no longer there is expected. It must not take the worker down: the next
         // capture is the one that matters, and there is always a next capture.
         using var scratch = new ScratchDirectory("prospector-worker-tests");
         var prospector = new ModemProspector(new ModemProspectorOptions(), []);
-        using var worker = new ProspectorWorker(prospector, 12000);
+        Task examined = Examined(prospector);
+        using var worker = new ProspectorWorker(prospector, NoModesRate);
 
         worker.Examine(Capture(), Path.Combine(scratch.FullName, "gone.wav"));
 
@@ -48,8 +67,8 @@ public class ProspectorWorkerTests
         WavFile.WriteMono(present, new float[12000], 12000);
         worker.Examine(Capture(), present);
 
-        Wait(() => prospector.Examined == 1).Should().BeTrue(
-            "the missing one is skipped and the real one still runs");
+        await Eventually.SignalAsync(examined, "the real capture to be examined after the missing one is skipped");
+        prospector.Examined.Should().Be(1);
     }
 
     [Fact]
@@ -93,17 +112,17 @@ public class ProspectorWorkerTests
         long origin = clock.GetTimestamp();
         var time = new SleepWatcher(clock);
         prospector.ExaminedCapture += (_, _) => clock.Advance(TimeSpan.FromSeconds(1));
-        var worker = new ProspectorWorker(prospector, 12000, time, shutdownWait: TimeSpan.Zero);
+        var worker = new ProspectorWorker(prospector, NoModesRate, time, shutdownWait: TimeSpan.Zero);
         worker.Examine(Capture(), wav);
 
-        TimeSpan sleep = await time.Sleeping.WaitAsync(TimeSpan.FromSeconds(30));
+        TimeSpan sleep = await Eventually.SignalAsync(time.Sleeping, "the worker to start the throttle's sleep");
         sleep.Should().Be(TimeSpan.FromSeconds(ProspectorWorker.Idle), "19x a one-second sweep");
 
         worker.Dispose();
 
-        // A safety net, not a budget: on the fake clock the throttle has nineteen seconds to go
-        // for ever, and only the cancellation can end it.
-        await worker.Exited.WaitAsync(TimeSpan.FromSeconds(30));
+        // On the fake clock the throttle has nineteen seconds to go for ever, and only the
+        // cancellation can end it.
+        await Eventually.SignalAsync(worker.Exited, "the worker to leave the throttle once disposed");
         clock.GetElapsedTime(origin).Should().Be(TimeSpan.FromSeconds(1), "the clock never moved on");
     }
 
@@ -118,20 +137,22 @@ public class ProspectorWorkerTests
         // wait at all that is exactly the slow-sweep case, every time, with no clock involved.
         using var scratch = new ScratchDirectory("prospector-worker-tests");
         var prospector = new ModemProspector(new ModemProspectorOptions(), []);
-        using var inside = new ManualResetEventSlim();
+        var inside = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var release = new ManualResetEventSlim();
         prospector.ExaminedCapture += (_, _) =>
         {
-            inside.Set();
-            release.Wait();
+            inside.TrySetResult();
+
+            // The limit only stops a failed test from leaving this thread parked for ever.
+            release.Wait(Eventually.HangGuard);
         };
 
         string wav = Path.Combine(scratch.FullName, "capture.wav");
         WavFile.WriteMono(wav, new float[12000], 12000);
 
-        var worker = new ProspectorWorker(prospector, 12000, shutdownWait: TimeSpan.Zero);
+        var worker = new ProspectorWorker(prospector, NoModesRate, shutdownWait: TimeSpan.Zero);
         worker.Examine(Capture(), wav);
-        inside.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue("the worker should pick it up");
+        await Eventually.SignalAsync(inside.Task, "the worker to pick the capture up and be held in the sweep");
 
         worker.Dispose();
         worker.Exited.IsCompleted.Should().BeFalse("the sweep is still being held");
@@ -141,26 +162,16 @@ public class ProspectorWorkerTests
         worker.Invoking(w => w.Examine(Capture(), wav)).Should().NotThrow();
 
         release.Set();
-        await worker.Exited.WaitAsync(TimeSpan.FromSeconds(30));
+        await Eventually.SignalAsync(worker.Exited, "the worker to finish the held sweep and leave");
         prospector.Examined.Should().Be(1);
     }
 
-    /// <summary>Polls for a condition the worker thread satisfies. Not a wall-clock assertion:
-    /// the deadline only bounds a failure, and every passing run leaves as soon as it is
-    /// true.</summary>
-    private static bool Wait(Func<bool> until)
+    /// <summary>Completes when the prospector has finished examining a capture.</summary>
+    private static Task Examined(ModemProspector prospector)
     {
-        for (int i = 0; i < 600; i++)
-        {
-            if (until())
-            {
-                return true;
-            }
-
-            Thread.Sleep(50);
-        }
-
-        return false;
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        prospector.ExaminedCapture += (_, _) => done.TrySetResult();
+        return done.Task;
     }
 
     /// <summary>The fake clock, and a signal when the worker starts a sleep on it.</summary>

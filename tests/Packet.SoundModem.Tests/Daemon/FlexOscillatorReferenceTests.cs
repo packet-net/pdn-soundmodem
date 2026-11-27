@@ -143,7 +143,7 @@ public sealed class FlexOscillatorReferenceTests
 
         await mock.InjectStatusAsync("S0|" + status);
         // The library sets Reference before it raises ReferenceChanged, so wait for both.
-        await Until(
+        await Eventually.UntilAsync(
             () => RadioOscillator.FromFlex(client.Reference).Source is not null && SeenAny(),
             "the radio said which oscillator it is on");
 
@@ -352,7 +352,7 @@ public sealed class FlexOscillatorReferenceTests
         inside.Wait(TimeSpan.FromSeconds(10)).Should().BeTrue();
 
         Task<bool> flexCall = Task.Run(() => reference.FlexOscillator(() => Tcxo));
-        (await Task.WhenAny(flexCall, Task.Delay(TimeSpan.FromSeconds(5)))).Should().BeSameAs(flexCall, "the read loop must not block");
+        await Eventually.SignalAsync(flexCall, "the read loop to return rather than block");
         (await flexCall).Should().BeFalse("it left the publication to the tick");
         reference.Current.State.Should().Be(ReferenceState.Ok, "the change is taken on at once, published or not");
 
@@ -395,15 +395,5 @@ public sealed class FlexOscillatorReferenceTests
         Action unreadable = () => reference.FlexOscillator(() => throw new InvalidOperationException("radio gone"));
         unreadable.Should().NotThrow();
         reference.Current.State.Should().Be(ReferenceState.Unknown);
-    }
-
-    private static async Task Until(Func<bool> condition, string because)
-    {
-        for (int i = 0; i < 400 && !condition(); i++)
-        {
-            await Task.Delay(25);
-        }
-
-        condition().Should().BeTrue(because);
     }
 }

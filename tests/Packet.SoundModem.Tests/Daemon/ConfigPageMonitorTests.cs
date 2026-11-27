@@ -184,7 +184,7 @@ public partial class ConfigPageTests
         applied.Should().Be(HttpStatusCode.OK);
         JsonNode.Parse(answer)!["restarting"]!.GetValue<bool>().Should().BeTrue();
         // The restart is asked for just after the answer goes out.
-        await WaitForAsync(() => site.Restarts == 1);
+        await Eventually.UntilAsync(() => site.Restarts == 1, "the site to ask for a restart");
         File.ReadAllText(site.PendingPath).Should().Contain("A better site");
         File.ReadAllText(site.ConfigPath).Should().Contain("\"A site\"", "a one-run change leaves the file alone");
 
@@ -686,16 +686,6 @@ public partial class ConfigPageTests
     }
 
     // ---------------------------------------------------------------- helpers
-
-    private static async Task WaitForAsync(Func<bool> condition)
-    {
-        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
-        while (!condition())
-        {
-            DateTime.UtcNow.Should().BeBefore(deadline, "the condition should have come true");
-            await Task.Delay(50);
-        }
-    }
 
     /// <summary>
     /// A real <see cref="MonitorHost"/> on a loopback port, with the settings page handed to it

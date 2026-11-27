@@ -411,19 +411,26 @@ public class WaterfallRelayTests : IDisposable
         relay.WaitUntilInside(_cancellation.Token);
 
         Task receiving = Task.Run(() => channel.ProcessReceive(new float[HopSamples]), _cancellation.Token);
-        // Awaited against a deadline rather than blocked on, so that the bug this pins shows up as
-        // a failed assertion with a sentence rather than as a suite that never finishes.
-        Task first = await Task.WhenAny(receiving, Task.Delay(TimeSpan.FromSeconds(5)));
-        bool returned = ReferenceEquals(first, receiving);
-        bool stillInside = relay.Inside;
-        relay.Release();
+        // Awaited with a hang guard rather than blocked on, so that the bug this pins shows up as
+        // a failure with a sentence rather than as a suite that never finishes. The relay is let
+        // go whichever way it ends.
+        bool stillInside;
+        try
+        {
+            await Eventually.CompletesAsync(
+                receiving, "the station's audio read thread to return rather than wait on a relay painting a keyup");
+        }
+        finally
+        {
+            stillInside = relay.Inside;
+            relay.Release();
+        }
+
         await receiving;
         await painting;
 
         stillInside.Should().BeTrue(
             "the relay must still have been parked in the transmit offer, or this proves nothing");
-        returned.Should().BeTrue(
-            "the station's audio read thread must not wait on a relay that is painting a keyup");
 
         // And it went through the gate rather than round it, which is what says it took the lock
         // the relay would have been holding.

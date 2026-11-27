@@ -289,23 +289,8 @@ internal sealed class StubStation : IAsyncDisposable
         }
     }
 
-    /// <summary>Waits on the condition rather than sleeping through a guess.</summary>
-    internal static async Task UntilAsync(Func<bool> condition, string what)
-    {
-        using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        while (!condition())
-        {
-            if (giveUp.IsCancellationRequested)
-            {
-                throw new TimeoutException($"waited 20 s for {what} and it did not happen");
-            }
-
-            await Task.Delay(20, CancellationToken.None);
-        }
-    }
-
     /// <summary>Waits for the welcome, which is what says the monitor accepted this station.</summary>
-    internal Task WelcomedAsync() => UntilAsync(() => Welcome is not null, "a welcome");
+    internal Task WelcomedAsync() => Eventually.UntilAsync(() => Welcome is not null, "a welcome");
 
     /// <summary>
     /// Waits for the monitor to hang up and for this station to have read why: the reader ends

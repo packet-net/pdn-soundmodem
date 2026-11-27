@@ -53,16 +53,6 @@ public class TransmitterPttFailureTests
         return frame;
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
-    {
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!condition())
-        {
-            cancellation.Token.ThrowIfCancellationRequested();
-            await Task.Delay(20, cancellation.Token);
-        }
-    }
-
     [Fact]
     public async Task A_Failed_Keyup_Faults_The_Queue_Announces_And_The_Loop_Survives()
     {
@@ -87,7 +77,7 @@ public class TransmitterPttFailureTests
         // (SoundModemChannel's keyup catch does them in that order), so the await above can resume
         // before the announcement has been made. Asserting immediately passes on an idle machine
         // and fails on a loaded one, which is exactly what it did on CI.
-        await WaitUntilAsync(() => failures.Count == 1);
+        await Eventually.UntilAsync(() => failures.Count == 1, "the keyup failure to be reported");
         failures.Should().ContainSingle();
         output.WrittenCount.Should().Be(0, "nothing may go out through a failed keyup");
         ptt.Unkeys.Should().Be(0, "there is nothing to unkey after a failed keyup");
@@ -119,7 +109,7 @@ public class TransmitterPttFailureTests
         // announce, not a reason to fault a frame whose audio fully left the device.
         await channel.EnqueueTransmit(0, SampleFrame()).WaitAsync(TimeSpan.FromSeconds(10));
         output.WrittenCount.Should().BeGreaterThan(0);
-        await WaitUntilAsync(() => failures.Count == 1);
+        await Eventually.UntilAsync(() => failures.Count == 1, "the keyup failure to be reported");
         failures.Single().Should().BeOfType<IOException>();
         transmitter.IsCompleted.Should().BeFalse("an unkey failure must not kill the loop");
 
