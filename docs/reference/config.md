@@ -201,7 +201,7 @@ Rules and refusals:
 | Key | Type | Default | What it is |
 |---|---|---|---|
 | `callsign` | string | none; required | The callsign sent. |
-| `intervalMinutes` | number | `10` | Minutes between idents. The clock runs only while this modem transmits; an idle modem never keys to identify. |
+| `intervalMinutes` | number | `10` | The minimum minutes between idents. An ident follows the first transmission after that long; an idle modem never keys to identify. |
 | `wpm` | number | `20` | Sending speed, PARIS words per minute. |
 | `toneHz` | number | the modem's `frequency` when written, else the band plan's centre for it | The audio tone keyed. |
 | `rfFrequency` | number | none | Where to identify in absolute Hz, as an alternative to `toneHz`; needs a band plan. |

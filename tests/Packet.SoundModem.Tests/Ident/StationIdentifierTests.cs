@@ -9,7 +9,9 @@ namespace Packet.SoundModem.Tests.Ident;
 /// <remarks>
 /// <para>The rule has two halves and the interesting cases are where they disagree: time alone
 /// must not make an ident due (a silent station announcing itself is QRM, not compliance), and
-/// traffic alone must not either (that would key up after every frame). Both halves are asserted
+/// traffic alone must not either (that would key up after every frame). An ident is owed only by
+/// a transmission, and only after the interval since the last one (changed 2026-11-27: no
+/// catch-up ident for a transmission the last ident already covers). Both halves are asserted
 /// against a moved clock rather than a real one, so a ten-minute rule costs no wall clock to
 /// prove. House rule (CLAUDE.md): wall clock via TimeProvider only.</para>
 /// <para>The companion is <see cref="MorseGeneratorTests"/>, which owns the rendering; this owns
@@ -50,6 +52,7 @@ public class StationIdentifierTests
 
         id.NoteTransmission();
 
+        id.TransmittedSinceIdentification.Should().BeTrue();
         id.IdentificationDue.Should().BeTrue(
             "the station has now transmitted and has never identified, so it is already owed");
     }
@@ -63,6 +66,7 @@ public class StationIdentifierTests
 
         id.NoteIdentified();
 
+        id.TransmittedSinceIdentification.Should().BeFalse();
         id.IdentificationDue.Should().BeFalse("it has just identified");
         time.Advance(TimeSpan.FromHours(1));
         id.IdentificationDue.Should().BeFalse(
@@ -71,22 +75,60 @@ public class StationIdentifierTests
     }
 
     [Fact]
-    public void A_further_identification_falls_due_only_after_the_interval()
+    public void A_transmission_inside_the_interval_owes_nothing_then_or_later()
     {
         FakeTimeProvider time = Clock();
         StationIdentifier id = Identifier(time, intervalMinutes: 10);
         id.NoteTransmission();
         id.NoteIdentified();
 
+        time.Advance(TimeSpan.FromMinutes(2));
         id.NoteTransmission();
-        id.IdentificationDue.Should().BeFalse("only moments since the last identification");
+        id.IdentificationDue.Should().BeFalse("the ident two minutes ago covers it");
+        id.TransmittedSinceIdentification.Should().BeTrue("the closing-ident question is unchanged");
+
+        time.Advance(TimeSpan.FromMinutes(8));
+        id.IdentificationDue.Should().BeFalse("the interval mark passing owes nothing by itself");
+
+        time.Advance(TimeSpan.FromDays(3));
+        id.IdentificationDue.Should().BeFalse("an idle modem never keys to identify");
+        id.TransmittedSinceIdentification.Should().BeTrue();
+    }
+
+    [Fact]
+    public void The_first_transmission_after_the_interval_owes_an_identification()
+    {
+        FakeTimeProvider time = Clock();
+        StationIdentifier id = Identifier(time, intervalMinutes: 10);
+        id.NoteTransmission();
+        id.NoteIdentified();
 
         time.Advance(TimeSpan.FromMinutes(9));
-        id.IdentificationDue.Should().BeFalse("still inside the ten-minute interval");
+        id.NoteTransmission();
+        id.IdentificationDue.Should().BeFalse("still inside the interval");
 
         time.Advance(TimeSpan.FromMinutes(1));
-        id.IdentificationDue.Should().BeTrue(
-            "ten minutes have passed and the modem has transmitted since it last identified");
+        id.IdentificationDue.Should().BeFalse("time alone owes nothing");
+        id.NoteTransmission();
+        id.IdentificationDue.Should().BeTrue("ten minutes have passed and the modem transmitted");
+        id.TransmittedSinceIdentification.Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_transmission_after_a_long_quiet_spell_owes_an_identification()
+    {
+        FakeTimeProvider time = Clock();
+        StationIdentifier id = Identifier(time, intervalMinutes: 10);
+        id.NoteTransmission();
+        id.NoteIdentified();
+
+        time.Advance(TimeSpan.FromHours(5));
+        id.IdentificationDue.Should().BeFalse();
+        id.TransmittedSinceIdentification.Should().BeFalse();
+
+        id.NoteTransmission();
+        id.IdentificationDue.Should().BeTrue();
+        id.TransmittedSinceIdentification.Should().BeTrue();
     }
 
     [Fact]
@@ -106,23 +148,31 @@ public class StationIdentifierTests
         }
 
         time.Advance(TimeSpan.FromMinutes(1));
-        id.IdentificationDue.Should().BeTrue("the interval is up");
+        id.IdentificationDue.Should().BeFalse("time alone owes nothing");
+        id.NoteTransmission();
+        id.IdentificationDue.Should().BeTrue("the first transmission past the interval mark owes it");
     }
 
     [Fact]
-    public void The_clock_runs_from_the_identification_not_from_the_traffic()
+    public void An_owed_identification_stays_owed_across_traffic_and_time_until_it_is_sent()
     {
         FakeTimeProvider time = Clock();
         StationIdentifier id = Identifier(time, intervalMinutes: 10);
 
         // Transmit, then leave the ident un-sent for a while - a busy channel deferring it, say.
         id.NoteTransmission();
+        id.IdentificationDue.Should().BeTrue();
+        time.Advance(TimeSpan.FromMinutes(30));
+        id.NoteTransmission();
         time.Advance(TimeSpan.FromMinutes(30));
         id.IdentificationDue.Should().BeTrue("still owed, and more so");
+        id.TransmittedSinceIdentification.Should().BeTrue();
 
         id.NoteIdentified();
-        id.NoteTransmission();
+        id.IdentificationDue.Should().BeFalse();
+        id.TransmittedSinceIdentification.Should().BeFalse();
 
+        id.NoteTransmission();
         time.Advance(TimeSpan.FromMinutes(9));
         id.IdentificationDue.Should().BeFalse(
             "the interval is measured from when we identified, not from the traffic that owed it");

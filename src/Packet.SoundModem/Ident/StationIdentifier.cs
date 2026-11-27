@@ -10,15 +10,21 @@ namespace Packet.SoundModem.Ident;
 /// others - and, worse, would usually land on top of one of them. Hanging the policy off a modem
 /// lets the ident default to that modem's own centre, which is both the useful answer and the one
 /// that needs no maintenance when the band plan moves.</para>
-/// <para><b>An ident is owed only after transmitting.</b> Identification is a licence condition on
-/// <em>transmissions</em>, so a station that has sent nothing owes nothing: keying up on a
-/// ten-minute timer to announce a callsign nobody has heard transmit is pure QRM. So the clock
-/// starts at the first transmission and an ident becomes due when one has happened since the last
-/// identification and the interval has elapsed. This is also what a NinoTNC does - its manual
-/// specifies a beacon every 9.5 minutes "while the station is transmitting" - and matching the
-/// established behaviour on this network is worth more than inventing a better rule.</para>
-/// <para>The first transmission of a session makes an ident due immediately, because at that point
-/// the station has transmitted and never identified.</para>
+/// <para><b>An ident is owed only by a transmission.</b> Identification is a licence condition
+/// on <em>transmissions</em>, so a station that has sent nothing owes nothing, and an idle one
+/// never keys up to announce a callsign nobody has heard transmit. The rule: an ident becomes owed
+/// at the moment a transmission is noted, and only if this modem has never identified or
+/// <see cref="Interval"/> has elapsed since it last did. A transmission made within the interval
+/// after an ident is covered by that ident and owes nothing, then or later. Once owed it stays
+/// owed until <see cref="NoteIdentified"/>. So the first transmission ever, or the first after a
+/// quiet spell longer than the interval, is followed by an ident; a modem that keeps transmitting
+/// identifies after the first transmission past the interval mark; a modem that stops
+/// transmitting owes nothing further, ever. This was changed on 2026-11-27: before it, a modem
+/// that had transmitted inside the interval keyed up by itself at the interval mark to cover
+/// that transmission.</para>
+/// <para>The closing ident of a transmit lease asks a different question, answered by
+/// <see cref="TransmittedSinceIdentification"/>: any transmission since the last ident, whatever
+/// the interval says.</para>
 /// <para>Wall clock through an injected <see cref="TimeProvider"/>, per the house rule, so the
 /// ten-minute rule is provable with a <c>FakeTimeProvider</c> instead of ten minutes of test.</para>
 /// </remarks>
@@ -30,6 +36,7 @@ public sealed class StationIdentifier
     private readonly int _sampleRate;
     private readonly Lock _gate = new();
     private bool _transmittedSinceIdent;
+    private bool _owed;
     private DateTimeOffset? _lastIdentified;
 
     /// <param name="callsign">The station callsign, e.g. <c>M0LTE</c>.</param>
@@ -133,12 +140,19 @@ public sealed class StationIdentifier
         }
     }
 
-    /// <summary>Records that this modem transmitted, which is what starts the clock.</summary>
+    /// <summary>
+    /// Records that this modem transmitted. This is the only place an ident becomes owed: when the
+    /// modem has never identified or <see cref="Interval"/> has elapsed since it last did.
+    /// </summary>
     public void NoteTransmission()
     {
         lock (_gate)
         {
             _transmittedSinceIdent = true;
+            if (_lastIdentified is not DateTimeOffset last || _time.GetUtcNow() - last >= Interval)
+            {
+                _owed = true;
+            }
         }
     }
 
@@ -158,8 +172,9 @@ public sealed class StationIdentifier
     }
 
     /// <summary>
-    /// Whether an identification is owed now: this modem has transmitted since it last
-    /// identified, and either it never has or <see cref="Interval"/> has elapsed since.
+    /// Whether an identification is owed: a transmission was noted when this modem had never
+    /// identified or <see cref="Interval"/> had elapsed since it last did, and it has not
+    /// identified since. Time alone never makes it true.
     /// </summary>
     public bool IdentificationDue
     {
@@ -167,9 +182,7 @@ public sealed class StationIdentifier
         {
             lock (_gate)
             {
-                return _transmittedSinceIdent
-                    && (_lastIdentified is not DateTimeOffset last
-                        || _time.GetUtcNow() - last >= Interval);
+                return _owed;
             }
         }
     }
@@ -180,7 +193,7 @@ public sealed class StationIdentifier
 
     /// <summary>
     /// Records that an identification has been sent: stamps the clock and clears the debt, so
-    /// nothing further is owed until this modem transmits again.
+    /// nothing further is owed until a transmission is noted after the interval.
     /// </summary>
     public void NoteIdentified()
     {
@@ -188,6 +201,7 @@ public sealed class StationIdentifier
         {
             _lastIdentified = _time.GetUtcNow();
             _transmittedSinceIdent = false;
+            _owed = false;
         }
     }
 }

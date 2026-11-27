@@ -2834,9 +2834,9 @@ else
     stationJournal.Write($"tx test: unavailable - {txTestRefusal}");
 }
 
-// Identification. Two halves: every frame a configured modem sends starts its clock, and a
-// slow poll sends the ident once one falls due. Polling rather than a timer per modem because
-// the decision is StationIdentifier's and depends on traffic as well as time - there is no
+// Identification. Two halves: every frame a configured modem sends is noted, which is the only
+// moment an ident can become owed, and a slow poll sends the ident once one is owed. Polling rather than a timer per
+// modem because the decision is StationIdentifier's and depends on traffic as well as time - there is no
 // instant to schedule in advance, only a condition to notice - and at a ten-minute interval a
 // five-second granularity costs nothing.
 if (identifiers.Count > 0)
