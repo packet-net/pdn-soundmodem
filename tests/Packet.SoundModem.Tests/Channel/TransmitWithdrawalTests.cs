@@ -17,16 +17,82 @@ namespace Packet.SoundModem.Tests.Channel;
 /// <para>Nothing else uses it. The token defaults to one that cannot be cancelled, so every
 /// existing path takes no registration and behaves exactly as it did.</para>
 /// </remarks>
+/// <remarks>
+/// Every test runs on a <see cref="VirtualAir.Clock"/>. A transmission "stuck behind carrier sense"
+/// is the transmitter parked on its slot delays while the test moves the clock; nothing waits on the
+/// wall clock. Where a test shows that something did not happen later, it ends with a transmission
+/// queued behind the withdrawn one and looks at what that one carried and what keyed the radio.
+/// </remarks>
 public class TransmitWithdrawalTests : IAsyncLifetime
 {
     private const int SampleRate = 12000;
 
-    private readonly SoundModemChannel _channel = new(SampleRate, randomSeed: 5);
-    private readonly FakeAudioOutput _output = new(SampleRate);
-    private readonly RecordingPtt _ptt = new();
-    private readonly CancellationTokenSource _stop = new(TimeSpan.FromSeconds(30));
+    private readonly VirtualAir.Clock _time = new();
+    private readonly SoundModemChannel _channel;
+    private readonly VirtualAir.PacedSink _output;
+    private readonly SignallingPtt _ptt = new();
+
+    // Cancelled by the test's disposal; the clock's own hang guards turn a stuck transmitter into a failure.
+    private readonly CancellationTokenSource _stop = new();
     private readonly Busy _band = new();
     private Task? _transmitter;
+
+    /// <summary>
+    /// A PTT that records what reached it and lets a test wait for an event count on the simulated
+    /// clock, so the end of a keyup is a signal rather than a guess.
+    /// </summary>
+    private sealed class SignallingPtt : IPttControl
+    {
+        private readonly object _gate = new();
+        private readonly List<string> _events = [];
+        private readonly List<(int Count, TaskCompletionSource Reached)> _waiters = [];
+
+        public string[] Events
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return [.. _events];
+                }
+            }
+        }
+
+        public void Key() => Add("key");
+
+        public void Unkey() => Add("unkey");
+
+        /// <summary>Completes once at least <paramref name="count"/> events have reached the PTT.</summary>
+        public Task WhenAsync(int count)
+        {
+            lock (_gate)
+            {
+                if (_events.Count >= count)
+                {
+                    return Task.CompletedTask;
+                }
+
+                var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _waiters.Add((count, reached));
+                return reached.Task;
+            }
+        }
+
+        private void Add(string what)
+        {
+            lock (_gate)
+            {
+                _events.Add(what);
+                foreach ((int count, TaskCompletionSource reached) in _waiters)
+                {
+                    if (_events.Count >= count)
+                    {
+                        reached.TrySetResult();
+                    }
+                }
+            }
+        }
+    }
 
     /// <summary>A modem whose carrier sense this test drives.</summary>
     private sealed class Busy : IModem
@@ -46,6 +112,12 @@ public class TransmitWithdrawalTests : IAsyncLifetime
         public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds) => [];
 
         public void ResetCarrierState() => FrameDecoded?.Invoke([], default!);
+    }
+
+    public TransmitWithdrawalTests()
+    {
+        _channel = new SoundModemChannel(SampleRate, _time, randomSeed: 5);
+        _output = new VirtualAir.PacedSink(SampleRate, _time, keepSamples: true);
     }
 
     public ValueTask InitializeAsync()
@@ -83,21 +155,15 @@ public class TransmitWithdrawalTests : IAsyncLifetime
         return audio;
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
-    {
-        using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!condition())
-        {
-            giveUp.Token.ThrowIfCancellationRequested();
-            await Task.Delay(20, giveUp.Token);
-        }
-    }
+    /// <summary>Only ever turns a hang into a failure: nothing passes or fails on how long it took.</summary>
+    private static readonly TimeSpan HangAfter = TimeSpan.FromSeconds(60);
 
     [Fact]
     public async Task A_Withdrawn_Transmission_Never_Keys_The_Radio_Even_When_The_Channel_Clears()
     {
         using var withdraw = new CancellationTokenSource();
         var rendered = false;
+        DateTimeOffset start = _time.GetUtcNow();
         Task queued = _channel.EnqueueTransmit(
             _ =>
             {
@@ -107,19 +173,22 @@ public class TransmitWithdrawalTests : IAsyncLifetime
             withdraw: withdraw.Token);
 
         // Queued and stuck behind carrier sense, which is where a test transmission waits.
-        await Task.Delay(200);
+        await _time.AdvanceToUnlessAsync(start + TimeSpan.FromMilliseconds(200), queued);
         _ptt.Events.Should().BeEmpty("the band is busy, so nothing has keyed");
 
         await withdraw.CancelAsync();
-        await FluentActions.Awaiting(() => queued.WaitAsync(TimeSpan.FromSeconds(10)))
+        await FluentActions.Awaiting(() => queued.WaitAsync(HangAfter))
             .Should().ThrowAsync<OperationCanceledException>(
                 "the caller is told its transmission was taken back");
 
-        // The whole point: the channel clears and nothing happens.
+        // The whole point: the channel clears and nothing happens. The way to see nothing happen
+        // is to send something behind it: the next keyup is that one's alone, and only its audio
+        // goes out.
         _band.ChannelBusy = false;
-        await Task.Delay(600);
-        _ptt.Events.Should().BeEmpty("a withdrawn transmission never keys, then or later");
-        _output.Snapshot().Should().BeEmpty();
+        Task behind = _channel.EnqueueTransmit(_ => Tone(600));
+        await _time.RunUntilAsync(Task.WhenAll(behind, _ptt.WhenAsync(2)));
+        _ptt.Events.Should().Equal(["key", "unkey"], "a withdrawn transmission never keys, then or later");
+        _output.Samples().Should().HaveCount(600, "only the one sent behind it went out");
         rendered.Should().BeFalse("it was never even asked for its audio");
     }
 
@@ -138,14 +207,11 @@ public class TransmitWithdrawalTests : IAsyncLifetime
         await withdraw.CancelAsync();
         _band.ChannelBusy = false;
 
-        await Task.WhenAll(first, last).WaitAsync(TimeSpan.FromSeconds(10));
+        // A transmission's task completes when its audio has left the device, and the unkey comes
+        // after the tail and the whole loop, so the keyup's end is waited for as its own signal.
+        await _time.RunUntilAsync(Task.WhenAll(first, last, _ptt.WhenAsync(2)));
         sent.Should().Equal(["first", "last"]);
         doomed.IsCanceled.Should().BeTrue();
-
-        // Waited for rather than asserted outright: a transmission's task completes when its
-        // audio has left the device, and the unkey comes after the tail and the whole loop, so
-        // reading the events straight after the await is racing them.
-        await WaitUntilAsync(() => _ptt.Events.Count >= 2);
         _ptt.Events.Should().Equal(["key", "unkey"], "the survivors still share one keyup");
     }
 
@@ -159,12 +225,12 @@ public class TransmitWithdrawalTests : IAsyncLifetime
         _band.ChannelBusy = false;
 
         Task queued = _channel.EnqueueTransmit(_ => Tone(SampleRate / 4), withdraw: withdraw.Token);
-        await queued.WaitAsync(TimeSpan.FromSeconds(10));
+        await _time.RunUntilAsync(queued);
 
         await withdraw.CancelAsync();
         queued.IsCompletedSuccessfully.Should().BeTrue();
-        _output.Snapshot().Should().NotBeEmpty();
-        await WaitUntilAsync(() => _ptt.Events.Count >= 2);
+        _output.Samples().Should().NotBeEmpty();
+        await _time.RunUntilAsync(_ptt.WhenAsync(2));
         _ptt.Events.Should().Equal(["key", "unkey"]);
     }
 
@@ -177,16 +243,19 @@ public class TransmitWithdrawalTests : IAsyncLifetime
         using var withdraw = new CancellationTokenSource();
 
         Task queued = _channel.EnqueueTransmit(_ => Tone(600), withdraw: withdraw.Token);
-        await Task.Delay(150);
+        await _time.AdvanceToUnlessAsync(_time.GetUtcNow() + TimeSpan.FromMilliseconds(150), queued);
         await withdraw.CancelAsync();
 
-        await FluentActions.Awaiting(() => queued.WaitAsync(TimeSpan.FromSeconds(10)))
+        await FluentActions.Awaiting(() => queued.WaitAsync(HangAfter))
             .Should().ThrowAsync<OperationCanceledException>();
 
+        // The hold lifts and the band clears: the next keyup is the one sent behind it, alone.
         _channel.TransmitInhibit = null;
         _band.ChannelBusy = false;
-        await Task.Delay(400);
-        _ptt.Events.Should().BeEmpty();
+        Task behind = _channel.EnqueueTransmit(_ => Tone(600));
+        await _time.RunUntilAsync(Task.WhenAll(behind, _ptt.WhenAsync(2)));
+        _ptt.Events.Should().Equal(["key", "unkey"]);
+        _output.Samples().Should().HaveCount(600);
     }
 
     [Fact]
@@ -195,6 +264,10 @@ public class TransmitWithdrawalTests : IAsyncLifetime
         // Six hundred cancellations racing the transmitter's dequeue, from four transmitters at
         // once, each one having to end as either sent or withdrawn - and the channel still
         // answering afterwards.
+        //
+        // The race is between real threads, so this one keeps them: nothing in it waits for time to
+        // pass (the band is clear and the roll always wins), and the virtual clock is moved by the
+        // sound card alone. The limits are hang guards for a wedged lock, not assertions.
         //
         // What this does NOT do is force the interleaving that nearly shipped here: the
         // transmitter holds the channel's lock to dequeue an item and then lets go of its
@@ -224,22 +297,22 @@ public class TransmitWithdrawalTests : IAsyncLifetime
                     // never happen is neither.
                     try
                     {
-                        await queued.WaitAsync(TimeSpan.FromSeconds(10));
+                        await queued.WaitAsync(HangAfter);
                     }
                     catch (OperationCanceledException)
                     {
                     }
 
-                    await firing.WaitAsync(TimeSpan.FromSeconds(10));
+                    await firing.WaitAsync(HangAfter);
                 }
             }));
         }
 
-        await Task.WhenAll(racing).WaitAsync(TimeSpan.FromSeconds(25));
+        await Task.WhenAll(racing).WaitAsync(HangAfter);
 
         // And the channel still answers. A wedged lock hangs this rather than failing it, which
         // is what the waits above are for.
-        await _channel.EnqueueTransmit(_ => Tone(120)).WaitAsync(TimeSpan.FromSeconds(10));
+        await _time.RunUntilAsync(_channel.EnqueueTransmit(_ => Tone(120)));
         _ptt.Events.Should().NotBeEmpty("the transmitter is still running");
     }
 
@@ -248,10 +321,10 @@ public class TransmitWithdrawalTests : IAsyncLifetime
     {
         _band.ChannelBusy = false;
 
-        await _channel.EnqueueTransmit(_ => Tone(SampleRate / 8)).WaitAsync(TimeSpan.FromSeconds(10));
+        Task sent = _channel.EnqueueTransmit(_ => Tone(SampleRate / 8));
+        await _time.RunUntilAsync(Task.WhenAll(sent, _ptt.WhenAsync(2)));
 
-        await WaitUntilAsync(() => _ptt.Events.Count >= 2);
         _ptt.Events.Should().Equal(["key", "unkey"]);
-        _output.Snapshot().Should().HaveCount(SampleRate / 8, "TXTAIL is off in this rig");
+        _output.Samples().Should().HaveCount(SampleRate / 8, "TXTAIL is off in this rig");
     }
 }

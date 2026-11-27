@@ -196,6 +196,22 @@ internal static class VirtualAir
             await done.ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// <see cref="AdvanceToAsync"/>, except that it hands back as soon as <paramref name="early"/>
+        /// completes, wherever the clock has got to. For a test that moves the clock to show that
+        /// something does NOT happen: if it happens, the test's own assertion on
+        /// <paramref name="early"/> fails at once, rather than the advance waiting out its hang guard.
+        /// </summary>
+        internal async Task AdvanceToUnlessAsync(DateTimeOffset until, Task early)
+        {
+            Task advanced = AdvanceToAsync(until);
+            await Task.WhenAny(advanced, early).ConfigureAwait(false);
+            if (advanced.IsCompleted)
+            {
+                await advanced.ConfigureAwait(false);
+            }
+        }
+
         /// <summary>The signal for the next change, and the due time of the earliest armed delay.</summary>
         private (Task Changed, long? Due) Look()
         {
@@ -389,9 +405,22 @@ internal static class VirtualAir
     /// A sound card that costs the clock what the audio costs the air: the write moves the clock on
     /// by exactly the burst's own duration before it returns.
     /// </summary>
-    internal sealed class PacedSink(int sampleRate, Clock clock) : IAudioOutput
+    internal sealed class PacedSink(int sampleRate, Clock clock, bool keepSamples = false) : IAudioOutput
     {
         private readonly List<DateTimeOffset> _written = [];
+        private readonly List<float> _samples = [];
+
+        /// <summary>
+        /// Everything written, if the sink was made to keep it. Off by default: most tests only
+        /// care when a burst ended.
+        /// </summary>
+        public float[] Samples()
+        {
+            lock (_written)
+            {
+                return [.. _samples];
+            }
+        }
 
         public int SampleRate { get; } = sampleRate;
 
@@ -416,6 +445,14 @@ internal static class VirtualAir
 
         public void Write(ReadOnlySpan<float> samples)
         {
+            if (keepSamples)
+            {
+                lock (_written)
+                {
+                    _samples.AddRange(samples.ToArray());
+                }
+            }
+
             clock.Elapse(TimeSpan.FromTicks(samples.Length * TimeSpan.TicksPerSecond / SampleRate));
             lock (_written)
             {
