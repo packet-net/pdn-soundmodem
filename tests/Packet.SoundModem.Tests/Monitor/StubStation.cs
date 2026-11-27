@@ -309,7 +309,7 @@ internal sealed class StubStation : IAsyncDisposable
         {
             // A safety net that names a monitor that never hangs up, not a budget: the close is
             // one event, and every test that waits for it carries its own 30 s timeout as well.
-            await _reading.WaitAsync(TimeSpan.FromSeconds(20));
+            await Eventually.SignalAsync(_reading, "_reading to complete");
         }
         catch (TimeoutException)
         {
@@ -322,7 +322,7 @@ internal sealed class StubStation : IAsyncDisposable
         await _stopping.CancelAsync();
         try
         {
-            await _reading.WaitAsync(TimeSpan.FromSeconds(5));
+            await Eventually.SignalAsync(_reading, "_reading to complete");
         }
         catch (Exception)
         {

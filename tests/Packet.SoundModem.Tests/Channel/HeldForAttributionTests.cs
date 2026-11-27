@@ -143,7 +143,7 @@ public class HeldForAttributionTests
         // instant it is queued, which is a keyup of three rather than the two-then-one this is
         // about. The enqueue task of the last frame completes inside the keyup, one write before
         // the tail and the unkey, so awaiting it is not the same as waiting for the keyup.
-        await unkeyed.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        await Eventually.SignalAsync(unkeyed.Task, "unkeyed.Task to complete");
 
         // Now a second keyup, after a fresh wait of its own, to prove the ledger is per frame and
         // not something cumulative that keeps counting from the first one.

@@ -231,10 +231,10 @@ public partial class ConfigPageTests
         // The answer is in the browser's hands. The restart is held by a timer on the clock, so it
         // has not been asked for until the clock is moved. Advancing is safe: the only thing on this
         // clock is that one timer, and the test moves it on only once the timer is there.
-        await time.WhenCreatedAsync(MonitorStartup.RestartAfterAnswer).WaitAsync(TimeSpan.FromSeconds(60));
+        await Eventually.SignalAsync(time.WhenCreatedAsync(MonitorStartup.RestartAfterAnswer), "time.WhenCreatedAsync(MonitorStartup.RestartAfterAnswer) to complete");
         asked.Task.IsCompleted.Should().BeFalse("the browser has its answer before the site starts going down");
         time.Advance(MonitorStartup.RestartAfterAnswer);
-        await asked.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        await Eventually.SignalAsync(asked.Task, "asked.Task to complete");
         listener.Stop();
     }
 

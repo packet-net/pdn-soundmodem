@@ -177,7 +177,7 @@ public class TransmitWithdrawalTests : IAsyncLifetime
         _ptt.Events.Should().BeEmpty("the band is busy, so nothing has keyed");
 
         await withdraw.CancelAsync();
-        await FluentActions.Awaiting(() => queued.WaitAsync(HangAfter))
+        await FluentActions.Awaiting(() => Eventually.SignalAsync(queued, "queued to complete"))
             .Should().ThrowAsync<OperationCanceledException>(
                 "the caller is told its transmission was taken back");
 
@@ -246,7 +246,7 @@ public class TransmitWithdrawalTests : IAsyncLifetime
         await _time.AdvanceToUnlessAsync(_time.GetUtcNow() + TimeSpan.FromMilliseconds(150), queued);
         await withdraw.CancelAsync();
 
-        await FluentActions.Awaiting(() => queued.WaitAsync(HangAfter))
+        await FluentActions.Awaiting(() => Eventually.SignalAsync(queued, "queued to complete"))
             .Should().ThrowAsync<OperationCanceledException>();
 
         // The hold lifts and the band clears: the next keyup is the one sent behind it, alone.
@@ -297,18 +297,18 @@ public class TransmitWithdrawalTests : IAsyncLifetime
                     // never happen is neither.
                     try
                     {
-                        await queued.WaitAsync(HangAfter);
+                        await Eventually.SignalAsync(queued, "queued to complete");
                     }
                     catch (OperationCanceledException)
                     {
                     }
 
-                    await firing.WaitAsync(HangAfter);
+                    await Eventually.SignalAsync(firing, "firing to complete");
                 }
             }));
         }
 
-        await Task.WhenAll(racing).WaitAsync(HangAfter);
+        await Eventually.SignalAsync(Task.WhenAll(racing), "Task.WhenAll(racing) to complete");
 
         // And the channel still answers. A wedged lock hangs this rather than failing it, which
         // is what the waits above are for.

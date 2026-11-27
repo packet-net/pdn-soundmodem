@@ -89,16 +89,16 @@ public class RadioCarrierSenseTests
         using var stop = new CancellationTokenSource();
 
         Task loop = source.StartAsync(stop.Token);
-        await radio.Read.WaitAsync(TimeSpan.FromSeconds(60));
-        await time.WhenCreatedAsync(interval).WaitAsync(TimeSpan.FromSeconds(60));
+        (await radio.Read.WaitAsync(Eventually.HangGuard)).Should().BeTrue("the radio to be read");
+        await Eventually.SignalAsync(time.WhenCreatedAsync(interval), "time.WhenCreatedAsync(interval) to complete");
         radio.RssiReads.Should().Be(1, "the interval is still to run");
 
         time.Advance(interval);
-        await radio.Read.WaitAsync(TimeSpan.FromSeconds(60));
+        (await radio.Read.WaitAsync(Eventually.HangGuard)).Should().BeTrue("the radio to be read");
         radio.RssiReads.Should().Be(2);
 
         await stop.CancelAsync();
-        await loop.WaitAsync(TimeSpan.FromSeconds(60));
+        await Eventually.SignalAsync(loop, "loop to complete");
     }
 
     [Fact]

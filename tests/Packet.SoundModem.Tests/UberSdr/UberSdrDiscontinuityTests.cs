@@ -180,7 +180,7 @@ public sealed class UberSdrDiscontinuityTests
             + "came before it and none of the second");
 
         await stopping.CancelAsync();
-        await running.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.SignalAsync(running, "running to complete");
     }
 
     [Fact]
@@ -211,8 +211,8 @@ public sealed class UberSdrDiscontinuityTests
         {
             // Either the receiver is waiting for its connections, or it has already closed the
             // listener without: both are reached by construction, whichever way it is written.
-            await Task.WhenAny(receiver.WaitingForConnections, receiver.ListenerClosed).WaitAsync(GiveUp);
-            await parked.Task.WaitAsync(GiveUp);
+            await Eventually.SignalAsync(Task.WhenAny(receiver.WaitingForConnections, receiver.ListenerClosed), "Task.WhenAny(receiver.WaitingForConnections, receiver.ListenerClosed) to complete");
+            await Eventually.SignalAsync(parked.Task, "parked.Task to complete");
             receiver.ListenerOpen.Should().BeTrue("a connection is still letting go of its socket");
         }
         finally
@@ -220,7 +220,7 @@ public sealed class UberSdrDiscontinuityTests
             release.TrySetResult();
         }
 
-        await disposing.WaitAsync(GiveUp);
+        await Eventually.SignalAsync(disposing, "disposing to complete");
         receiver.ListenerOpen.Should().BeFalse("once the connection has finished the listener is closed");
     }
 
@@ -430,7 +430,7 @@ public sealed class UberSdrDiscontinuityTests
                 }
             }
 
-            await Task.WhenAll(running).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            await Eventually.SignalAsync(Task.WhenAll(running), "Task.WhenAll(running) to complete").ConfigureAwait(false);
         }
 
         private async Task AnswerAsync(HttpListenerContext context)

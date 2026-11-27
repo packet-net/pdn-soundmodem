@@ -40,7 +40,7 @@ public sealed class SdrConnectInputTests
             TestContext.Current.CancellationToken);
         FakeSdrConnect fake = await host.NextAsync();
         using SdrConnectIqInput input = await opening;
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
 
         fake.Value("device_sample_rate").Should().Be("250000", "the default rate is asked for when none is given");
         input.Source.SampleRate.Should().Be(250_000);
@@ -90,7 +90,7 @@ public sealed class SdrConnectInputTests
             TestContext.Current.CancellationToken);
         FakeSdrConnect fake = await host.NextAsync();
         using SdrConnectAudioInput input = await opening;
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
 
         fake.AudioOn.Should().BeTrue();
         fake.IqOn.Should().BeFalse();
@@ -165,7 +165,7 @@ public sealed class SdrConnectInputTests
             TestContext.Current.CancellationToken);
         FakeSdrConnect fake = await host.NextAsync();
         using SdrConnectAudioInput input = await opening;
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
         await fake.SendAudioAsync(new short[2 * 4800]);
         Read(input, SdrConnectProtocol.AudioRate, 0.1);
 
@@ -191,7 +191,7 @@ public sealed class SdrConnectInputTests
             TestContext.Current.CancellationToken);
         FakeSdrConnect fake = await host.NextAsync();
         using SdrConnectAudioInput input = await opening;
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
         _journal.Should().Contain(l => l.Contains("SSB audio with its AGC off", StringComparison.Ordinal)
             && l.Contains("\"mode\": \"iq\" is recommended", StringComparison.Ordinal));
 

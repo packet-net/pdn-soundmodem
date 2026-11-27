@@ -82,8 +82,8 @@ public class KeyupDrainOnceTests
         var recorder = new KeyupRecorder(SampleRate);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         Task transmitter = channel.RunTransmitterAsync(recorder, recorder, cancellation.Token);
-        await ended.Task.WaitAsync(TimeSpan.FromSeconds(25));
-        await Task.WhenAll(completions).WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.SignalAsync(ended.Task, "ended.Task to complete");
+        await Eventually.SignalAsync(Task.WhenAll(completions), "Task.WhenAll(completions) to complete");
 
         await cancellation.CancelAsync();
         try

@@ -263,7 +263,7 @@ public class WaterfallLevelMeterTests : IAsyncLifetime
         finally
         {
             await stopping.CancelAsync();
-            await loop.WaitAsync(TimeSpan.FromSeconds(20));
+            await Eventually.SignalAsync(loop, "loop to complete");
         }
     }
 

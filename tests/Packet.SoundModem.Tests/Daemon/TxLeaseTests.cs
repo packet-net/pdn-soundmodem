@@ -231,7 +231,7 @@ public class TxLeaseTests
         HttpResponseMessage granted = await keyed.PostAsync(
             url, new StringContent("""{"subChannel": 3, "seconds": 60}""", Encoding.UTF8, "application/json"));
 
-        await serving.WaitAsync(TimeSpan.FromSeconds(30));
+        await Eventually.SignalAsync(serving, "serving to complete");
         listener.Close();
 
         refused.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -281,7 +281,7 @@ public class TxLeaseTests
         HttpResponseMessage released = await keyed.PostAsync(
             url, new StringContent("""{"subChannel": 3, "release": true}""", Encoding.UTF8, "application/json"));
 
-        await serving.WaitAsync(TimeSpan.FromSeconds(30));
+        await Eventually.SignalAsync(serving, "serving to complete");
         listener.Close();
 
         granted.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -335,7 +335,7 @@ public class TxLeaseTests
         Task transmitter = channel.RunTransmitterAsync(output, ptt, cancellation.Token);
         try
         {
-            await sent.WaitAsync(TimeSpan.FromMinutes(1));
+            await Eventually.SignalAsync(sent, "sent to complete");
         }
         finally
         {
@@ -445,8 +445,8 @@ public class TxLeaseTests
         var ptt = new Packet.SoundModem.Tests.Channel.RecordingPtt();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         Task transmitter = channel.RunTransmitterAsync(new Packet.SoundModem.Tests.Channel.FakeAudioOutput(12000), ptt, cancellation.Token);
-        await identSent!.WaitAsync(TimeSpan.FromMinutes(1));
-        await released.Task.WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(identSent!, "identSent! to complete");
+        await Eventually.SignalAsync(released.Task, "released.Task to complete");
         await cancellation.CancelAsync();
         try
         {

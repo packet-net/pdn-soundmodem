@@ -87,7 +87,7 @@ public class TxTestTests
         /// hanging the run; it is never what makes the test pass.
         /// </remarks>
         internal Task SettledAsync(int events = 2) =>
-            _counted.ReachedAsync(events).WaitAsync(TimeSpan.FromMinutes(2));
+            Eventually.SignalAsync(_counted.ReachedAsync(events), "_counted.ReachedAsync(events) to complete");
 
         private readonly CountingPtt _counted;
 
@@ -1111,7 +1111,7 @@ public class TxTestTests
         clock.Advance(TimeSpan.FromSeconds(21.25));
         rig.Band.ChannelBusy = false;
 
-        TxTestOutcome outcome = await running.WaitAsync(TimeSpan.FromSeconds(20));
+        TxTestOutcome outcome = await Eventually.SignalAsync(running, "running to complete");
         outcome.Ran.Should().BeTrue(outcome.Refusal);
     }
 
@@ -1149,7 +1149,7 @@ public class TxTestTests
             answers.Add((response.StatusCode, await response.Content.ReadAsStringAsync()));
         }
 
-        await serving.WaitAsync(TimeSpan.FromSeconds(30));
+        await Eventually.SignalAsync(serving, "serving to complete");
         listener.Close();
         return answers;
     }
@@ -1236,7 +1236,7 @@ public class TxTestTests
 
         answers[0].Status.Should().Be(HttpStatusCode.OK, answers[0].Body);
         answers[0].Body.Should().Contain("\"stopped\": true");
-        TxTestOutcome outcome = await running.WaitAsync(TimeSpan.FromSeconds(20));
+        TxTestOutcome outcome = await Eventually.SignalAsync(running, "running to complete");
         outcome.Ran.Should().BeFalse();
         outcome.Refusal.Should().Contain("nothing was transmitted");
         rig.Band.ChannelBusy = false;

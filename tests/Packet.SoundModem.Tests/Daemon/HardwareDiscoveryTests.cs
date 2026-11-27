@@ -412,7 +412,7 @@ public sealed class HardwareDiscoveryTests
             flexListen: TimeSpan.FromMilliseconds(10));
 
         Task<JsonObject> described = discovery.DescribeAsync(false, CancellationToken.None);
-        await time.WhenCreatedAsync(TimeSpan.FromMilliseconds(300), atLeast: 1).WaitAsync(TimeSpan.FromSeconds(60));
+        await Eventually.SignalAsync(time.WhenCreatedAsync(TimeSpan.FromMilliseconds(300), atLeast: 1), "time.WhenCreatedAsync(TimeSpan.FromMilliseconds(300), atLeast: 1) to complete");
         JsonObject found;
         try
         {
@@ -425,7 +425,7 @@ public sealed class HardwareDiscoveryTests
             gate.Set();
         }
 
-        found = await described.WaitAsync(TimeSpan.FromSeconds(60));
+        found = await Eventually.SignalAsync(described, "described to complete");
         found["uberSdr"]!["problem"]!.GetValue<string>().Should().Contain("did not answer");
         found["soundCards"]!["problem"].Should().BeNull();
     }
@@ -445,10 +445,10 @@ public sealed class HardwareDiscoveryTests
         Task<JsonObject> described = Discovery(
                 Shack(), flex, new FakeUber(() => never.Task), time, fastLimit: TimeSpan.FromHours(1))
             .DescribeAsync(false, CancellationToken.None);
-        await time.WhenCreatedAsync(TimeSpan.FromMilliseconds(300), atLeast: 1)
-            .WaitAsync(TimeSpan.FromSeconds(60));
+        await Eventually.SignalAsync(
+            time.WhenCreatedAsync(TimeSpan.FromMilliseconds(300), atLeast: 1), "the discovery to wait on its fast limit");
         time.Advance(TimeSpan.FromMilliseconds(300));
-        JsonObject found = await described.WaitAsync(TimeSpan.FromSeconds(60));
+        JsonObject found = await Eventually.SignalAsync(described, "described to complete");
 
         found["flexRadios"]!["problem"]!.GetValue<string>().Should().Contain("cannot listen for FlexRadios");
         found["uberSdr"]!["problem"]!.GetValue<string>().Should().Contain("did not answer");

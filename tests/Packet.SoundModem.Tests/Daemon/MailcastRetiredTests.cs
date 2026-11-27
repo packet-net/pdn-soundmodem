@@ -176,7 +176,7 @@ public sealed class MailcastRetiredTests : IDisposable
         process.BeginErrorReadLine();
         try
         {
-            string line = await found.Task.WaitAsync(TimeSpan.FromSeconds(60));
+            string line = await Eventually.SignalAsync(found.Task, "found.Task to complete");
             // The notice is printed well before the filter line, so it has been seen by now.
             lock (noticeLines)
             {

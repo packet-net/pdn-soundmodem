@@ -110,7 +110,7 @@ public class KissQualityFrameTests : IAsyncLifetime
         {
             var client = new TcpClient();
             await client.ConnectAsync("127.0.0.1", _server.LocalPort);
-            await registered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await Eventually.SignalAsync(registered.Task, "registered.Task to complete");
             return client;
         }
         finally

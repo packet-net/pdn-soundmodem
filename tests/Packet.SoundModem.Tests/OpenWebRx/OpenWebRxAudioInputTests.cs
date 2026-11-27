@@ -326,11 +326,11 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
         Task<OpenWebRxAudioInput> opening = OpenWebRxAudioInput.OpenAsync(
             endpoint, Tuning(), journal: null, cancellation: TestContext.Current.CancellationToken, time: time);
 
-        await time.WhenCreatedAsync(TimeSpan.FromSeconds(15)).WaitAsync(HangGuard, TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(time.WhenCreatedAsync(TimeSpan.FromSeconds(15)), "time.WhenCreatedAsync(TimeSpan.FromSeconds(15)) to complete");
         time.Advance(TimeSpan.FromSeconds(15));
 
         Func<Task> open = () => opening;
-        (await open.Should().ThrowAsync<InvalidOperationException>().WaitAsync(HangGuard)).Which.Message
+        (await Eventually.SignalAsync(open.Should().ThrowAsync<InvalidOperationException>(), "open.Should().ThrowAsync<InvalidOperationException>() to complete")).Which.Message
             .Should().Contain("cannot reach the OpenWebRX receiver").And.Contain("within 15 s");
     }
 

@@ -1616,7 +1616,7 @@ public sealed class ConfigPageBrowserTests : IClassFixture<ConfigPageBrowserTest
 
             try
             {
-                await _supervising.WaitAsync(TimeSpan.FromSeconds(30));
+                await Eventually.SignalAsync(_supervising, "_supervising to complete");
             }
             catch (Exception e)
             {

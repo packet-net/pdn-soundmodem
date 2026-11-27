@@ -684,8 +684,8 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         Task completion = _channel.EnqueueTransmit(0, Frame());
         Task transmitter = _channel.RunTransmitterAsync(recorder, recorder, cancellation.Token);
-        await ended.Task.WaitAsync(TimeSpan.FromSeconds(15));
-        await completion.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.SignalAsync(ended.Task, "ended.Task to complete");
+        await Eventually.SignalAsync(completion, "completion to complete");
         await cancellation.CancelAsync();
         try
         {

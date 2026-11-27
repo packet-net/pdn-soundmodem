@@ -792,12 +792,12 @@ public class FrameLevelTests
             TaskScheduler.Default);
         try
         {
-            return await decoded.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            return await Eventually.SignalAsync(decoded.Task, "decoded.Task to complete");
         }
         finally
         {
             await stopping.CancelAsync();
-            await loop.WaitAsync(TimeSpan.FromSeconds(20));
+            await Eventually.SignalAsync(loop, "loop to complete");
         }
     }
 

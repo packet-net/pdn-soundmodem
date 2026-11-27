@@ -173,7 +173,7 @@ public class StationTests : IDisposable
         running.IsCompleted.Should().BeFalse("nothing has asked the station to stop");
 
         await stopping.CancelAsync();
-        await running.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.SignalAsync(running, "running to complete");
 
         Errors().Should().BeEmpty("a station stopped by its host has nothing to report");
         _out.Should().BeEmpty("a receive loop that is working says nothing at all");
@@ -203,7 +203,7 @@ public class StationTests : IDisposable
 
         // The station stopped itself, without the host having to ask - and without ending the
         // process, which is what this whole extraction exists to make possible.
-        await running.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.SignalAsync(running, "running to complete");
     }
 
     [Fact]
@@ -223,7 +223,7 @@ public class StationTests : IDisposable
         await Eventually.UntilAsync(() => input.Reads >= 2, "the loop is turning");
 
         clock.Advance(TimeSpan.FromSeconds(30));
-        await running.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.SignalAsync(running, "running to complete");
 
         clock.Advance(TimeSpan.FromMinutes(5));
 
@@ -263,7 +263,7 @@ public class StationTests : IDisposable
             Stalled: true));
 
         input.Release();
-        await running.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.SignalAsync(running, "running to complete");
     }
 
     [Fact]
@@ -284,7 +284,7 @@ public class StationTests : IDisposable
         // is how fifty stations in one journal stay readable.
         station.Faulted += fault => journal.WriteError(fault.Reason);
 
-        await RunAsync(station).WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(RunAsync(station), "RunAsync(station) to complete");
 
         Errors().Should().ContainSingle().Which.Should().Be(
             "m9psy-1: receive feed dead: 1 s of unbroken digital silence from the receiver's IQ "
@@ -322,7 +322,7 @@ public class StationTests : IDisposable
             await Eventually.UntilAsync(() => Errors().Count > 0, "the excused silence is journalled");
 
             await stopping.CancelAsync();
-            await running.WaitAsync(TimeSpan.FromSeconds(5));
+            await Eventually.SignalAsync(running, "running to complete");
 
             Errors()[0].Should().Be(tag.Length == 0 ? Excuse : $"m9psy-1: {Excuse}");
         }
@@ -379,7 +379,7 @@ public class StationTests : IDisposable
         await Eventually.UntilAsync(() => Errors().Count >= 2, "both probes have something to say");
 
         await stopping.CancelAsync();
-        await running.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.SignalAsync(running, "running to complete");
 
         List<string> errors = Errors();
         errors[0].Should().StartWith(
@@ -428,7 +428,7 @@ public class StationTests : IDisposable
         await Eventually.UntilAsync(() => input.Reads >= 2, "the loop is turning");
 
         clock.Advance(TimeSpan.FromSeconds(10));
-        await counted.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        await Eventually.SignalAsync(counted.Task, "counted.Task to complete");
         captureXruns = 3;
         logDrops = "frame log: 2 frames dropped unwritten (2 total) - the disk cannot keep up, "
             + "is full, or is unwritable";
@@ -440,7 +440,7 @@ public class StationTests : IDisposable
         await Eventually.UntilAsync(() => Errors().Count >= 2, "the next poll reports the audio");
 
         await stopping.CancelAsync();
-        await running.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.SignalAsync(running, "running to complete");
 
         List<string> errors = Errors();
         errors[0].Should().Be($"m9psy-1: {logDrops}");
@@ -471,7 +471,7 @@ public class StationTests : IDisposable
         faults.Should().BeEmpty("quiet with nobody watching is the arrangement, not a fault");
 
         await stopping.CancelAsync();
-        await running.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.SignalAsync(running, "running to complete");
     }
 
     [Fact]
@@ -537,7 +537,7 @@ public class StationTests : IDisposable
             await running();
         }
 
-        await loop.WaitAsync(TimeSpan.FromSeconds(30));
+        await Eventually.SignalAsync(loop, "loop to complete");
     }
 
     [Fact]
@@ -575,7 +575,7 @@ public class StationTests : IDisposable
 
         await stoppingOne.CancelAsync();
         await stoppingTwo.CancelAsync();
-        await Task.WhenAll(runningOne, runningTwo).WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(Task.WhenAll(runningOne, runningTwo), "Task.WhenAll(runningOne, runningTwo) to complete");
 
         // One station closing must not reach across and shut every other station's connection
         // pools, which is what a process-wide ClearAllPools did - and there are two pools per
@@ -664,7 +664,7 @@ public class StationTests : IDisposable
         Task running = RunAsync(station);
         await Eventually.UntilAsync(() => input.Reads >= reads, "the loop has read the whole script");
         await stopping.CancelAsync();
-        await running.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.SignalAsync(running, "running to complete");
         lock (seen)
         {
             return [.. seen];
@@ -728,7 +728,7 @@ public class StationTests : IDisposable
         Task running = RunAsync(station);
         await Eventually.UntilAsync(() => input.Reads >= 3, "the loop has read the script");
         await stopping.CancelAsync();
-        await running.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.SignalAsync(running, "running to complete");
 
         Volatile.Read(ref losses).Should().Be(0, "overruns from before the station started are not this stream's");
     }

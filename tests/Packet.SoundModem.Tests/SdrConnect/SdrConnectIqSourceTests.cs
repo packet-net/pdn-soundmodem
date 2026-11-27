@@ -79,7 +79,7 @@ public sealed class SdrConnectIqSourceTests : IDisposable
     {
         using var host = new FakeSdrConnectHost();
         (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(host, Options() with { LnaState = 4, Antenna = "Antenna B" });
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
 
         List<SdrConnectMessage> sent = [.. fake.Received];
         int Index(string eventType, string property = "") =>
@@ -132,7 +132,7 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(host, Options());
         double centreAtOpen = source.CentreFrequencyHz;
         long generationAtOpen = source.TuningGeneration;
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
         await fake.ChangeAsync("device_center_frequency", "7080000");
 
         // Same socket, same receive loop: the report is taken in before the IQ sent behind it.
@@ -261,7 +261,7 @@ public sealed class SdrConnectIqSourceTests : IDisposable
     {
         using var host = new FakeSdrConnectHost();
         (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(host, Options());
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
 
         short[] first = Ramp(500);
         short[] second = Ramp(500, start: 500);
@@ -282,7 +282,7 @@ public sealed class SdrConnectIqSourceTests : IDisposable
     {
         using var host = new FakeSdrConnectHost();
         (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(host, Options());
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
         await fake.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
         int setsBefore = fake.Sets("device_center_frequency").Count();
@@ -303,7 +303,7 @@ public sealed class SdrConnectIqSourceTests : IDisposable
     {
         using var host = new FakeSdrConnectHost();
         (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(host, Options());
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
         await fake.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
 
@@ -324,29 +324,15 @@ public sealed class SdrConnectIqSourceTests : IDisposable
     [Fact]
     public async Task A_Retune_Is_Followed_When_SDRconnect_Does_Not_Report_A_Set_Back_To_The_Client_That_Made_It()
     {
-        using var host = new FakeSdrConnectHost(f => f.EchoSets = false);
-        var clock = new TimerSignalTimeProvider();
-        TimeSpan answer = TimeSpan.FromMilliseconds(500);
-        var source = new SdrConnectIqSource(
-            FakeSdrConnectHost.Endpoint, Options() with { AnswerTimeout = answer, TimeProvider = clock }, host.ConnectAsync);
-        _owned.Add(source);
-        Task opening = source.OpenAsync(TestContext.Current.CancellationToken);
-        FakeSdrConnect fake = await host.NextAsync();
+        using var host = new FakeSdrConnectHost();
+        var clock = new FakeTimeProvider();
+        (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(
+            host, Options() with { AnswerTimeout = TimeSpan.FromMilliseconds(500), TimeProvider = clock });
 
-        // This SDRconnect does not report a set back, so the open's wait for the LO to land runs out
-        // on the source's clock. Each time the open parks on one of its answer timers, the clock is
-        // moved on to it, once, until the open is done.
-        for (int parked = 1; !opening.IsCompleted; parked++)
-        {
-            await Task.WhenAny(opening, clock.WhenCreatedAsync(answer, parked));
-            if (!opening.IsCompleted)
-            {
-                clock.Advance(answer);
-            }
-        }
-
-        await opening;
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        // From here SDRconnect does not report a set back to the client that made it. (Not from the
+        // start: the open's own waits for a reported set would then have to be run out on the clock.)
+        fake.EchoSets = false;
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
         await fake.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
 
@@ -378,7 +364,7 @@ public sealed class SdrConnectIqSourceTests : IDisposable
     {
         using var host = new FakeSdrConnectHost();
         (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(host, Options());
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
         await fake.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
 
@@ -397,13 +383,13 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         using var host = new FakeSdrConnectHost();
         (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(
             host, Options() with { ReconnectDelay = TimeSpan.FromMilliseconds(100) });
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
         await fake.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
 
         fake.Drop();
         FakeSdrConnect second = await host.NextAsync();
-        await second.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(second.Streaming.Task, "second.Streaming.Task to complete");
         await second.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
 
@@ -421,7 +407,7 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         TimeSpan first = TimeSpan.FromMilliseconds(1500);
         (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(
             host, Options() with { ReconnectDelay = first, TimeProvider = clock });
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
         await fake.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
 
@@ -431,13 +417,13 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         await Eventually.SignalAsync(clock.WhenCreatedAsync(first), "the source to wait before it reconnects");
         clock.Advance(first);
         FakeSdrConnect second = await host.NextAsync();
-        await second.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(second.Streaming.Task, "second.Streaming.Task to complete");
         await second.SendAudioAsync(Ramp(100)); // binary, but not the stream taken
         await second.CloseAsync();              // arrives after the audio, so the audio has been taken in
         await Eventually.SignalAsync(clock.WhenCreatedAsync(first * 2), "the source to wait again");
         clock.Advance(first * 2);
         FakeSdrConnect third = await host.NextAsync();
-        await third.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(third.Streaming.Task, "third.Streaming.Task to complete");
         await third.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
 
@@ -453,13 +439,13 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         using var host = new FakeSdrConnectHost();
         (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(
             host, Options() with { ReconnectDelay = TimeSpan.FromMilliseconds(500) });
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
         await fake.SendIqAsync(Ramp(100));
         ReadPairs(source, 100);
 
         fake.Drop();
         FakeSdrConnect second = await host.NextAsync();
-        await second.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(second.Streaming.Task, "second.Streaming.Task to complete");
         await second.SendIqAsync(Ramp(100)); // after the gap, and not read yet
         await second.ChangeAsync("device_sample_rate", "96000");
         await second.SendIqAsync(Ramp(100));
@@ -481,7 +467,7 @@ public sealed class SdrConnectIqSourceTests : IDisposable
             ReconnectDelay = TimeSpan.FromMilliseconds(100),
         });
 
-        await fake.Closed.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Closed.Task, "fake.Closed.Task to complete");
         await host.NextAsync();
 
         _journal.Should().Contain(l => l.Contains("sent nothing for 1 s", StringComparison.Ordinal));

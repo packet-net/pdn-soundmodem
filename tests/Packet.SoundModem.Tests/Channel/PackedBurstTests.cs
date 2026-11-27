@@ -93,8 +93,9 @@ public class PackedBurstTests
         var ptt = new RecordingPtt();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         Task transmitter = channel.RunTransmitterAsync(output, ptt, cancellation.Token);
-        await Task.WhenAll(completions.Select(c => c.ContinueWith(_ => { }, TaskScheduler.Default)))
-            .WaitAsync(TimeSpan.FromSeconds(55));
+        await Eventually.SignalAsync(
+            Task.WhenAll(completions.Select(c => c.ContinueWith(_ => { }, TaskScheduler.Default))),
+            "every transmission to finish");
         await cancellation.CancelAsync();
         try
         {
@@ -239,7 +240,7 @@ public class PackedBurstTests
         // a jump nothing was waiting for.
         using var crank = new CancellationTokenSource();
         Crank(time, crank.Token);
-        await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(Task.WhenAll(first, second), "Task.WhenAll(first, second) to complete");
         await crank.CancelAsync();
         await cancellation.CancelAsync();
         try
@@ -374,7 +375,7 @@ public class PackedBurstTests
         List<Task> sends = Enumerable.Range(1, 3).Select(i => channel.EnqueueTransmit(0, UiFrame(i, 20))).ToList();
         using var cancellation = new CancellationTokenSource();
         Task transmitter = channel.RunTransmitterAsync(output, new LoggingPtt(log), cancellation.Token);
-        await Task.WhenAll(sends).WaitAsync(TimeSpan.FromSeconds(30));
+        await Eventually.SignalAsync(Task.WhenAll(sends), "Task.WhenAll(sends) to complete");
         await cancellation.CancelAsync();
         try
         {
@@ -435,13 +436,13 @@ public class PackedBurstTests
         var ptt = new RecordingPtt();
         using var cancellation = new CancellationTokenSource();
         Task transmitter = channel.RunTransmitterAsync(new BurstRecorder(SampleRate), ptt, cancellation.Token);
-        await Task.WhenAll(plain, urgent).WaitAsync(TimeSpan.FromSeconds(30));
+        await Eventually.SignalAsync(Task.WhenAll(plain, urgent), "Task.WhenAll(plain, urgent) to complete");
         gathering.IsCompleted.Should().BeFalse("its gather has not run out on a clock that has not moved");
 
         // Cranked rather than jumped, for the reason the gather test above gives.
         using var crank = new CancellationTokenSource();
         Crank(time, crank.Token);
-        await gathering.WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(gathering, "gathering to complete");
         await crank.CancelAsync();
         await cancellation.CancelAsync();
         try
@@ -534,10 +535,10 @@ public class PackedBurstTests
         Task send = channel.EnqueueTransmit(0, UiFrame(1, 20));
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         Task transmitter = channel.RunTransmitterAsync(new BurstRecorder(SampleRate), new LoggingPtt(log), cancellation.Token);
-        await busy.Asked.Task.WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(busy.Asked.Task, "busy.Asked.Task to complete");
         channel.Csma.TxDelayMilliseconds = 120;
         busy.Clear();
-        await send.WaitAsync(TimeSpan.FromMinutes(1));
+        await Eventually.SignalAsync(send, "send to complete");
         await cancellation.CancelAsync();
         try
         {

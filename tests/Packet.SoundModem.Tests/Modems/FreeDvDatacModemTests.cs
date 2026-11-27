@@ -305,7 +305,7 @@ public class FreeDvDatacModemTests(ITestOutputHelper output)
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         Task transmitter = txChannel.RunTransmitterAsync(outputDevice, ptt, cancellation.Token);
         Task[] completions = [txChannel.EnqueueTransmit(0, first), txChannel.EnqueueTransmit(0, second)];
-        await Task.WhenAll(completions).WaitAsync(TimeSpan.FromSeconds(20));
+        await Eventually.SignalAsync(Task.WhenAll(completions), "Task.WhenAll(completions) to complete");
         await cancellation.CancelAsync();
         try
         {
@@ -349,11 +349,11 @@ public class FreeDvDatacModemTests(ITestOutputHelper output)
         Task transmitter = channel.RunTransmitterAsync(outputDevice, new RecordingPtt(), cancellation.Token);
 
         Task oversize = channel.EnqueueTransmit(0, new byte[Il2pCodec.MaxPayloadBytes + 1]);
-        await oversize.Invoking(t => t.WaitAsync(TimeSpan.FromSeconds(20)))
+        await oversize.Invoking(t => Eventually.SignalAsync(t, "t to complete"))
             .Should().ThrowAsync<ArgumentException>("the rejected frame's task must fault");
 
         // The transmitter loop must survive the rejection and still send the next frame.
-        await channel.EnqueueTransmit(0, good).WaitAsync(TimeSpan.FromSeconds(20));
+        await Eventually.SignalAsync(channel.EnqueueTransmit(0, good), "channel.EnqueueTransmit(0, good) to complete");
         await cancellation.CancelAsync();
         try
         {

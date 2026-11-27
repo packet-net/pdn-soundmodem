@@ -317,7 +317,7 @@ public sealed class RtlTcpIqSourceTests
         ReadAtLeast(source, 10);
 
         server.Stop();
-        int got = await Task.Run(() => source.Read(new float[64])).WaitAsync(HangGuard);
+        int got = await Eventually.SignalAsync(Task.Run(() => source.Read(new float[64])), "Task.Run(() => source.Read(new float[64])) to complete");
 
         got.Should().Be(0, "a source that has given up is closing");
         lost.Should().ContainSingle().Which.Should().Contain("delivered nothing").And.Contain("Connection refused");
@@ -345,7 +345,7 @@ public sealed class RtlTcpIqSourceTests
         // From now on every connection is taken, given a header, and closed at once.
         server.CloseOnAccept = true;
         server.DropClient();
-        int got = await Task.Run(() => source.Read(new float[64])).WaitAsync(HangGuard);
+        int got = await Eventually.SignalAsync(Task.Run(() => source.Read(new float[64])), "Task.Run(() => source.Read(new float[64])) to complete");
 
         got.Should().Be(0);
         lost.Should().ContainSingle().Which.Should().Contain("delivered nothing");
@@ -369,12 +369,12 @@ public sealed class RtlTcpIqSourceTests
         });
 
         Task opening = source.OpenAsync(CancellationToken.None);
-        await clock.WhenCreatedAsync(TimeSpan.FromMinutes(5)).WaitAsync(HangGuard);
+        await Eventually.SignalAsync(clock.WhenCreatedAsync(TimeSpan.FromMinutes(5)), "clock.WhenCreatedAsync(TimeSpan.FromMinutes(5)) to complete");
         server.WaitForConnections(1);
         clock.Advance(TimeSpan.FromMinutes(5));
 
         Func<Task> open = () => opening;
-        (await open.Should().ThrowAsync<IOException>().WaitAsync(HangGuard)).Which.Message
+        (await Eventually.SignalAsync(open.Should().ThrowAsync<IOException>(), "open.Should().ThrowAsync<IOException>() to complete")).Which.Message
             .Should().Contain("accepted the connection and then sent nothing in 300 s");
     }
 
@@ -392,7 +392,7 @@ public sealed class RtlTcpIqSourceTests
         server.WaitForConnections(1);
 
         source.Dispose();
-        int got = await reading.WaitAsync(HangGuard);
+        int got = await Eventually.SignalAsync(reading, "reading to complete");
 
         got.Should().Be(0, "the dispose ends the wait, not the five minute connect timeout");
     }
@@ -409,7 +409,7 @@ public sealed class RtlTcpIqSourceTests
         await cancel.CancelAsync();
 
         Func<Task> open = () => opening;
-        await open.Should().ThrowAsync<OperationCanceledException>().WaitAsync(HangGuard);
+        await Eventually.SignalAsync(open.Should().ThrowAsync<OperationCanceledException>(), "open.Should().ThrowAsync<OperationCanceledException>() to complete");
     }
 
     [Fact]
@@ -546,7 +546,7 @@ public sealed class RtlTcpIqSourceTests
 
         reading.Cancel();
         source.Dispose();
-        await reader.WaitAsync(HangGuard);
+        await Eventually.SignalAsync(reader, "reader to complete");
     }
 
     [Fact]

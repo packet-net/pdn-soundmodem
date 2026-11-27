@@ -42,7 +42,7 @@ public sealed class SdrConnectAllocationTests
         Task opening = source.OpenAsync(TestContext.Current.CancellationToken);
         FakeSdrConnect fake = await host.NextAsync();
         await opening;
-        await fake.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await Eventually.SignalAsync(fake.Streaming.Task, "fake.Streaming.Task to complete");
 
         // One message of 4096 pairs, built once and sent over and over.
         var message = new byte[2 + (4 * 4096)];

@@ -29,7 +29,7 @@ public sealed class FlexRuntimeTeardownTests
         runtime.Station.Client.Disconnected += () => ended.TrySetResult();
 
         await mock.DisposeAsync();
-        await ended.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(ended.Task, "ended.Task to complete");
 
         Task teardown = runtime.DisposeAsync().AsTask();
         await Eventually.SignalAsync(teardown, "the teardown of a session that has already ended, which has nothing to wait for");

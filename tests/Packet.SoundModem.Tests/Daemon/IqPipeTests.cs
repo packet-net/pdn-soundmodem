@@ -499,7 +499,7 @@ public sealed class IqPipeTests : IDisposable
         faults[0].Reason.Should().Be(
             "receive feed starved: the SDR program (head) has delivered no IQ for 30 s - restarting the station to start afresh",
             "the device names what starved, not a sound card");
-        await running.WaitAsync(TimeSpan.FromSeconds(10));
+        await Eventually.SignalAsync(running, "running to complete");
         counting.Dispose();
     }
 
