@@ -387,8 +387,16 @@ public sealed class HardwareDiscoveryTests
         var never = new TaskCompletionSource<IReadOnlyList<FoundUberSdr>>();
         var flex = new FakeFlex(() => throw new InvalidOperationException("cannot listen for FlexRadios on UDP 4992"));
 
-        JsonObject found = await Discovery(Shack(), flex, new FakeUber(() => never.Task))
+        // The limit on a probe is a timer on the clock the discovery was given. The four quick
+        // lookups and the hanging slow one each put theirs on it (flex answers, by failing, at once);
+        // the clock is moved on when all five are there, and the hanging one is then given up on.
+        var time = new TimerSignalTimeProvider();
+        Task<JsonObject> described = Discovery(Shack(), flex, new FakeUber(() => never.Task), time)
             .DescribeAsync(false, CancellationToken.None);
+        await time.WhenCreatedAsync(TimeSpan.FromMilliseconds(300), atLeast: 5)
+            .WaitAsync(TimeSpan.FromSeconds(60));
+        time.Advance(TimeSpan.FromMilliseconds(300));
+        JsonObject found = await described;
 
         found["flexRadios"]!["problem"]!.GetValue<string>().Should().Contain("cannot listen for FlexRadios");
         found["uberSdr"]!["problem"]!.GetValue<string>().Should().Contain("did not answer");

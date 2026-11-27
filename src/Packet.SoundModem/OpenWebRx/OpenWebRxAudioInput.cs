@@ -185,7 +185,9 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
         Action<string>? journal,
         CancellationToken cancellation,
         TimeProvider? time = null) =>
-        OpenAsync(endpoint, tuning, ct => ConnectAsync(endpoint, ct), journal, cancellation, time);
+        OpenAsync(
+            endpoint, tuning, ct => ConnectAsync(endpoint, time ?? TimeProvider.System, ct), journal,
+            cancellation, time);
 
     /// <summary>The same, over a socket from <paramref name="connect"/>; the tests hand it one end
     /// of a pair whose other end is a fake receiver.</summary>
@@ -338,14 +340,15 @@ public sealed class OpenWebRxAudioInput : IAudioInput, IReceiverTuner, IDisposab
         _stopping.Dispose();
     }
 
-    private static async Task<WebSocket> ConnectAsync(OpenWebRxEndpoint endpoint, CancellationToken cancellation)
+    private static async Task<WebSocket> ConnectAsync(
+        OpenWebRxEndpoint endpoint, TimeProvider time, CancellationToken cancellation)
     {
         var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("User-Agent", UserAgent);
         try
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(15), time);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation, limit.Token);
             await socket.ConnectAsync(endpoint.WebSocketUri, timeout.Token).ConfigureAwait(false);
             return socket;
         }

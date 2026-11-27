@@ -314,6 +314,27 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_Receiver_That_Never_Answers_The_Connect_Is_Given_Up_On_When_The_Providers_Fifteen_Seconds_Pass()
+    {
+        // A listener that takes the connection and never speaks WebSocket. The connect limit is
+        // a timer on the clock the input was given, so the test moves that clock on, once the
+        // timer is on it.
+        using var silent = new TcpListener(IPAddress.Loopback, 0);
+        silent.Start();
+        var endpoint = new OpenWebRxEndpoint("127.0.0.1", ((IPEndPoint)silent.LocalEndpoint).Port, Ssl: false);
+        var time = new TimerSignalTimeProvider();
+        Task<OpenWebRxAudioInput> opening = OpenWebRxAudioInput.OpenAsync(
+            endpoint, Tuning(), journal: null, cancellation: TestContext.Current.CancellationToken, time: time);
+
+        await time.WhenCreatedAsync(TimeSpan.FromSeconds(15)).WaitAsync(HangGuard, TestContext.Current.CancellationToken);
+        time.Advance(TimeSpan.FromSeconds(15));
+
+        Func<Task> open = () => opening;
+        (await open.Should().ThrowAsync<InvalidOperationException>().WaitAsync(HangGuard)).Which.Message
+            .Should().Contain("cannot reach the OpenWebRX receiver").And.Contain("within 15 s");
+    }
+
+    [Fact]
     public async Task A_Profile_In_The_Config_Is_Asked_For_Before_The_Demodulator_Is_Placed()
     {
         var time = new FakeTimeProvider();
@@ -326,7 +347,6 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
 
         // Not asked at once: OpenWebRX+ counts a quick change against the client. The next
         // message after ten seconds carries the ask.
-        await Task.Delay(200, TestContext.Current.CancellationToken);
         time.Advance(OpenWebRxAudioInput.ProfileAskDelay);
         await receiver.SendTextAsync("""{"type":"smeter","value":-90.0}""");
 

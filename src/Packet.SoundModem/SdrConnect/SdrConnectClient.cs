@@ -163,7 +163,7 @@ internal sealed class SdrConnectClient : IDisposable
         _endpoint = endpoint;
         _options = options;
         _sink = sink;
-        _connect = connect ?? (ct => ConnectAsync(endpoint, options.ConnectTimeout, ct));
+        _connect = connect ?? (ct => ConnectAsync(endpoint, options.ConnectTimeout, options.TimeProvider, ct));
         _time = options.TimeProvider;
         _wantedType = options.Stream == SdrConnectStream.Iq ? SdrConnectProtocol.PrimaryIq : SdrConnectProtocol.PrimaryAudio;
         _wantedCentreHz = options.CentreFrequencyHz;
@@ -345,14 +345,15 @@ internal sealed class SdrConnectClient : IDisposable
         _sink.End();
     }
 
-    private static async Task<WebSocket> ConnectAsync(SdrConnectEndpoint endpoint, TimeSpan timeout, CancellationToken cancellation)
+    private static async Task<WebSocket> ConnectAsync(
+        SdrConnectEndpoint endpoint, TimeSpan timeout, TimeProvider time, CancellationToken cancellation)
     {
         var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("User-Agent", "pdn-soundmodem (sdrconnect: receive device)");
         try
         {
-            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-            limit.CancelAfter(timeout);
+            using var expiry = new CancellationTokenSource(timeout, time);
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation, expiry.Token);
             await socket.ConnectAsync(endpoint.WebSocketUri, limit.Token).ConfigureAwait(false);
             return socket;
         }

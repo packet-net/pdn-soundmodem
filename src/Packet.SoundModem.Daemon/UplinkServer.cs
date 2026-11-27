@@ -200,7 +200,7 @@ internal sealed class UplinkServer : IAsyncDisposable
         // silently, which made a run of them invisible in the journal.
         if (presented is null || Match(presented) is not { } entry)
         {
-            await Task.Delay(BadTokenDelay, _options.Stopping).ConfigureAwait(false);
+            await Task.Delay(BadTokenDelay, _options.TimeProvider, _options.Stopping).ConfigureAwait(false);
             NoteBadToken(context);
             await RefuseAsync(context, HttpStatusCode.Unauthorized, "uplink: unknown token")
                 .ConfigureAwait(false);
@@ -528,7 +528,7 @@ internal sealed class UplinkServer : IAsyncDisposable
             try
             {
                 await session.CloseAsync("the monitor is shutting down")
-                    .WaitAsync(CloseTimeout).ConfigureAwait(false);
+                    .WaitAsync(CloseTimeout, _options.TimeProvider).ConfigureAwait(false);
             }
             catch (Exception e) when (e is TimeoutException or WebSocketException
                                           or ObjectDisposedException)
@@ -550,6 +550,7 @@ internal sealed class UplinkServer : IAsyncDisposable
         private readonly WebSocket _socket;
         private readonly SemaphoreSlim _sending = new(1, 1);
         private readonly CancellationTokenSource _stopping;
+        private ITimer? _teardown;
 
         // One buffer per session, rented once and reused for every message, rather than a
         // MemoryStream and an 8 kB chunk per 40 ms block. CLAUDE.md's zero-steady-state-allocation
@@ -643,6 +644,7 @@ internal sealed class UplinkServer : IAsyncDisposable
                 }
 
                 _socket.Dispose();
+                _teardown?.Dispose();
                 _stopping.Dispose();
                 _sending.Dispose();
             }
@@ -1011,7 +1013,7 @@ internal sealed class UplinkServer : IAsyncDisposable
                     // it is read on somebody else's console. Bounded, because a station that has
                     // stopped reading must not hold this send open.
                     string ascii = UberSdrDirectory.Ascii(reason);
-                    using var giveUp = new CancellationTokenSource(CloseTimeout);
+                    using var giveUp = new CancellationTokenSource(CloseTimeout, _server._options.TimeProvider);
                     await _socket.CloseOutputAsync(
                         WebSocketCloseStatus.NormalClosure,
                         ascii.Length > 120 ? ascii[..120] : ascii,
@@ -1025,14 +1027,21 @@ internal sealed class UplinkServer : IAsyncDisposable
                 // inside the timeout. Either way it is going.
             }
 
-            try
-            {
-                _stopping.CancelAfter(TimeSpan.FromSeconds(5));
-            }
-            catch (ObjectDisposedException)
-            {
-                // The loop this would have woken has already come down of its own accord.
-            }
+            // On the server's clock, like the rest of this session; the timer is the deadline, and
+            // RunAsync disposes it with the connection.
+            _teardown = _server._options.TimeProvider.CreateTimer(
+                _ =>
+                {
+                    try
+                    {
+                        _stopping.Cancel();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // The loop this would have woken has already come down of its own accord.
+                    }
+                },
+                null, TimeSpan.FromSeconds(5), Timeout.InfiniteTimeSpan);
         }
 
         /// <summary>
@@ -1070,7 +1079,7 @@ internal sealed class UplinkServer : IAsyncDisposable
             {
                 if (_socket.State == WebSocketState.Open)
                 {
-                    using var giveUp = new CancellationTokenSource(CloseTimeout);
+                    using var giveUp = new CancellationTokenSource(CloseTimeout, _server._options.TimeProvider);
                     await _socket.SendAsync(
                         message, WebSocketMessageType.Text, endOfMessage: true,
                         giveUp.Token).ConfigureAwait(false);

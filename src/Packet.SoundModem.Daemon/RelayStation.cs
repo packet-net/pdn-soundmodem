@@ -485,7 +485,7 @@ internal sealed class RelayStation : IMonitorStation
         {
             try
             {
-                await running.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+                await running.WaitAsync(TimeSpan.FromSeconds(5), _time).ConfigureAwait(false);
             }
             catch (TimeoutException)
             {
@@ -503,7 +503,7 @@ internal sealed class RelayStation : IMonitorStation
 
         try
         {
-            await oldServer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))
+            await oldServer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5), _time)
                 .ConfigureAwait(false);
         }
         catch (TimeoutException)
@@ -1002,13 +1002,13 @@ internal sealed class RelayStation : IMonitorStation
         _input.Dispose();
         if (running is not null)
         {
-            await running.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            await running.WaitAsync(TimeSpan.FromSeconds(5), _time).ConfigureAwait(false);
         }
 
         station?.Dispose();
         try
         {
-            await Server.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))
+            await Server.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5), _time)
                 .ConfigureAwait(false);
         }
         catch (TimeoutException)

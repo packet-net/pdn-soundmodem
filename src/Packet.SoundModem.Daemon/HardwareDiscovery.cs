@@ -296,7 +296,7 @@ internal sealed class HardwareDiscovery
         try
         {
             Task<IReadOnlyList<T>> work = probe();
-            Task finished = await Task.WhenAny(work, Task.Delay(limit, cancellation)).ConfigureAwait(false);
+            Task finished = await Task.WhenAny(work, Task.Delay(limit, _time, cancellation)).ConfigureAwait(false);
             if (finished != work)
             {
                 cancellation.ThrowIfCancellationRequested();
