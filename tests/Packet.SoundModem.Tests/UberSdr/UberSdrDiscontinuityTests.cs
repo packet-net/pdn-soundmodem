@@ -172,6 +172,47 @@ public sealed class UberSdrDiscontinuityTests
         await running.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task The_Test_Receiver_Lets_Its_Connections_Finish_Before_It_Closes_Its_Listener()
+    {
+        // The teardown race of #754, held still. Closing the listener closes every connection it
+        // still holds, and a connection that is at that moment letting go of its own socket makes
+        // that Close throw ObjectDisposedException. The connection here is held part way through
+        // letting go, on a gate; the receiver is disposed meanwhile. It has to wait for the
+        // connection, with the listener still open, rather than close the listener over it.
+        var parked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var receiver = new FakeReceiver([new Session(Frames: 1, Hold: true)])
+        {
+            BeforeConnectionTeardown = async () =>
+            {
+                parked.TrySetResult();
+                await release.Task;
+            },
+        };
+        using var client = new ClientWebSocket();
+        await client.ConnectAsync(
+            new Uri($"ws://127.0.0.1:{receiver.Endpoint.Port}/ws?user_session_id=held"), CancellationToken.None);
+        await client.ReceiveAsync(new byte[64 * 1024], CancellationToken.None);
+
+        Task disposing = Task.Run(receiver.Dispose);
+        try
+        {
+            // Either the receiver is waiting for its connections, or it has already closed the
+            // listener without: both are reached by construction, whichever way it is written.
+            await Task.WhenAny(receiver.WaitingForConnections, receiver.ListenerClosed).WaitAsync(GiveUp);
+            await parked.Task.WaitAsync(GiveUp);
+            receiver.ListenerOpen.Should().BeTrue("a connection is still letting go of its socket");
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+
+        await disposing.WaitAsync(GiveUp);
+        receiver.ListenerOpen.Should().BeFalse("once the connection has finished the listener is closed");
+    }
+
     private static async Task DrainAsync(UberSdrAudioInput input, int samples)
     {
         var buffer = new float[1200];
@@ -214,6 +255,10 @@ public sealed class UberSdrDiscontinuityTests
         private readonly Session[] _script;
         private readonly bool _refuseEndedSessions;
         private readonly Task _serving;
+        private readonly List<Task> _connections = [];
+        private readonly TaskCompletionSource _waitingForConnections = new();
+        private readonly TaskCompletionSource _listenerClosed = new();
+        private bool _closing;
         private readonly List<string> _preflightIds = [];
         private readonly List<string> _socketIds = [];
         private int _sessions;
@@ -245,6 +290,20 @@ public sealed class UberSdrDiscontinuityTests
         /// <summary>Sockets closed at once because their session id had been served before.</summary>
         public int Refused => Volatile.Read(ref _refused);
 
+        /// <summary>Test seam: runs on a connection's own task once its session is over and before
+        /// it lets go of its socket, so a test can hold a connection part way through tearing down.</summary>
+        public Func<Task>? BeforeConnectionTeardown { get; set; }
+
+        /// <summary>Whether the listener is still accepting and holding connections.</summary>
+        public bool ListenerOpen => _listener.IsListening;
+
+        /// <summary>Completes when <see cref="Dispose"/> has told the connections to finish and is
+        /// waiting for them, with the listener still open.</summary>
+        public Task WaitingForConnections => _waitingForConnections.Task;
+
+        /// <summary>Completes when <see cref="Dispose"/> has closed the listener.</summary>
+        public Task ListenerClosed => _listenerClosed.Task;
+
         /// <summary>The user_session_id of every pre-flight, in order.</summary>
         public IReadOnlyList<string> PreflightIds
         {
@@ -271,8 +330,41 @@ public sealed class UberSdrDiscontinuityTests
 
         public void Dispose()
         {
+            // Connections first, listener last. Closing the listener closes every connection it still
+            // holds, writing the end of the response to each; a connection whose own task is at that
+            // moment letting go of its socket (the session was just cancelled) has its stream disposed
+            // between the listener's "can I write" check and the write, and the listener's Close throws
+            // ObjectDisposedException on the test's thread. So the connections finish, and unhook
+            // themselves, before the listener is closed. Seen once on CI (#754).
             _stop.Cancel();
-            _listener.Close();
+            Task[] serving;
+            lock (_connections)
+            {
+                _closing = true;
+                serving = [.. _connections];
+            }
+
+            _waitingForConnections.TrySetResult();
+            try
+            {
+                Task.WaitAll(serving, TimeSpan.FromSeconds(5));
+            }
+            catch (AggregateException)
+            {
+                // A connection that failed on its way out has nothing left to tell the test.
+            }
+
+            try
+            {
+                _listener.Close();
+            }
+            catch (ObjectDisposedException)
+            {
+                // A keep-alive connection nobody serves a task for can still be hanging up on its own
+                // thread as the listener closes it; the connection being gone is what is wanted.
+            }
+
+            _listenerClosed.TrySetResult();
             try
             {
                 _serving.Wait(TimeSpan.FromSeconds(5));
@@ -300,7 +392,18 @@ public sealed class UberSdrDiscontinuityTests
                     break;
                 }
 
-                running.Add(Task.Run(() => AnswerAsync(context)));
+                lock (_connections)
+                {
+                    if (_closing)
+                    {
+                        // Left for the listener to close: Dispose is no longer waiting for new tasks.
+                        continue;
+                    }
+
+                    Task connection = Task.Run(() => AnswerAsync(context));
+                    _connections.Add(connection);
+                    running.Add(connection);
+                }
             }
 
             await Task.WhenAll(running).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
@@ -382,6 +485,11 @@ public sealed class UberSdrDiscontinuityTests
             }
             catch (Exception e) when (e is OperationCanceledException or WebSocketException or ObjectDisposedException)
             {
+            }
+
+            if (BeforeConnectionTeardown is { } beforeTeardown)
+            {
+                await beforeTeardown();
             }
         }
 

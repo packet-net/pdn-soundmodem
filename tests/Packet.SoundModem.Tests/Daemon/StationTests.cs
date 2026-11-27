@@ -351,10 +351,18 @@ public class StationTests : IDisposable
         int captureXruns = 0;
         int playbackXruns = 0;
         string? logDrops = null;
+        int checks = 0;
         StationOptions options = UberSdrOptions(input, Journal("m9psy-1"), clock) with
         {
             XrunCounters = () => (captureXruns, playbackXruns),
-            HealthChecks = [() => logDrops],
+            HealthChecks =
+            [
+                () =>
+                {
+                    Interlocked.Increment(ref checks);
+                    return logDrops;
+                },
+            ],
         };
         using var stopping = new CancellationTokenSource();
         using var station = new DaemonStation(options, stopping.Token);
@@ -362,14 +370,23 @@ public class StationTests : IDisposable
         Task running = RunAsync(station);
         await UntilAsync(() => input.Reads >= 2, "the loop is turning");
 
+        // The loop notices the clock on its next turn, not at once, so moving it does not mean the
+        // poll has happened. The host's check is the last thing a poll reads: once it has run, that
+        // poll has read every counter it is going to, and the next one needs the clock moved again.
+        // Changing the counters before then lets a poll that is half way through read the audio
+        // counters before the change and the host's check after it, which reports the two the
+        // wrong way round (and the audio at the poll after).
         clock.Advance(TimeSpan.FromSeconds(10));
-        await UntilAsync(() => input.Reads >= 10, "the poll has come round with nothing to say");
+        await UntilAsync(() => Volatile.Read(ref checks) >= 1, "the first poll has run to its end");
         Errors().Should().BeEmpty("a healthy station's poll is silent");
 
         captureXruns = 3;
         playbackXruns = 1;
         logDrops = "frame log: 2 frames dropped unwritten (2 total) - the disk cannot keep up, "
             + "is full, or is unwritable";
+
+        // Safe to move: the receive loop does no timed work of its own, it reads the clock once
+        // a turn, and the only poll this can start is the one that finds both conditions set.
         clock.Advance(TimeSpan.FromSeconds(10));
         await UntilAsync(() => Errors().Count >= 2, "both probes have something to say");
 
@@ -381,6 +398,65 @@ public class StationTests : IDisposable
             "m9psy-1: audio: 3 capture overruns, 1 playback underrun (4 since start)");
         errors[1].Should().Be($"m9psy-1: {logDrops}");
         errors.Should().HaveCount(2, "an xrun is reported once, as a delta, not every poll");
+    }
+
+    [Fact]
+    public async Task A_Poll_Caught_Half_Way_Through_A_Change_Reports_What_It_Read_When_It_Read_It()
+    {
+        // The interleaving that made the test above fail on a busy box, held still: the poll has
+        // read the audio counters (nothing lost yet) and is parked before the host's checks while
+        // the audio counters and the check's text both change. Each line then comes at the poll
+        // that saw it, so the host's line precedes the audio line. A poll reads its sources in
+        // turn and promises nothing across a change, which is why the test above waits for a poll
+        // to end before it changes anything.
+        var clock = new FakeTimeProvider();
+        var input = new TestInput(12000, level: 0.1f);
+        int captureXruns = 0;
+        string? logDrops = null;
+        var counted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new ManualResetEventSlim();
+        int reads = 0;
+        StationOptions options = UberSdrOptions(input, Journal("m9psy-1"), clock) with
+        {
+            XrunCounters = () =>
+            {
+                int seen = captureXruns;
+                if (Interlocked.Increment(ref reads) == 1)
+                {
+                    counted.TrySetResult();
+
+                    // Only stops a broken test waiting for ever.
+                    resume.Wait(TimeSpan.FromSeconds(60)).Should().BeTrue("the test lets the poll go");
+                }
+
+                return (seen, 0);
+            },
+            HealthChecks = [() => logDrops],
+        };
+        using var stopping = new CancellationTokenSource();
+        using var station = new DaemonStation(options, stopping.Token);
+
+        Task running = RunAsync(station);
+        await UntilAsync(() => input.Reads >= 2, "the loop is turning");
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await counted.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        captureXruns = 3;
+        logDrops = "frame log: 2 frames dropped unwritten (2 total) - the disk cannot keep up, "
+            + "is full, or is unwritable";
+        resume.Set();
+        await UntilAsync(() => Errors().Count >= 1, "the first poll reports what it saw last");
+
+        // Safe to move: the first poll has reported, so the next one starts only from this.
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await UntilAsync(() => Errors().Count >= 2, "the next poll reports the audio");
+
+        await stopping.CancelAsync();
+        await running.WaitAsync(TimeSpan.FromSeconds(5));
+
+        List<string> errors = Errors();
+        errors[0].Should().Be($"m9psy-1: {logDrops}");
+        errors[1].Should().StartWith("m9psy-1: audio: 3 capture overruns (3 since start)");
     }
 
     [Fact]
