@@ -28,8 +28,9 @@ internal sealed class Ax25Bench : IAsyncDisposable
     private const int BlockMilliseconds = 20;
     private readonly Lock _timeline = new();
 
-    public Ax25Bench()
+    public Ax25Bench(int noiseSeed = 5)
     {
+        _noise = new Random(noiseSeed);
         Clock = new FakeTimeProvider(new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero));
         Caller = new Side("G4ABC-1", 11, Clock);
         Answerer = new Side("M0XYZ-1", 12, Clock);
@@ -47,6 +48,11 @@ internal sealed class Ax25Bench : IAsyncDisposable
 
     /// <summary>Asked for each burst a station puts on the air: the station and the number of its keyup (1 is its first). True: the other station hears silence for it.</summary>
     public Func<Side, int, bool>? Lose { get; set; }
+
+    /// <summary>Asked for each burst a station puts on the air: the standard deviation of white noise added to what the other station hears, 0 for none. Fixed seed; the noise only has to be there.</summary>
+    public Func<Side, int, double>? NoiseFor { get; set; }
+
+    private readonly Random _noise;
 
     public async Task StartAsync()
     {
@@ -92,14 +98,30 @@ internal sealed class Ax25Bench : IAsyncDisposable
 
     private void Hear(Side from, Side to, ReadOnlySpan<float> chunk)
     {
-        if (Lose?.Invoke(from, from.Rig.Air.KeyAttempts) == true)
+        int keyup = from.Rig.Air.KeyAttempts;
+        if (Lose?.Invoke(from, keyup) == true)
         {
             to.Rig.Channel.ProcessReceive(new float[chunk.Length]);
+            return;
         }
-        else
+
+        double sigma = NoiseFor?.Invoke(from, keyup) ?? 0;
+        if (sigma > 0)
         {
-            to.Rig.Channel.ProcessReceive(chunk);
+            // The rig's air is clean; a path that gets worse is white noise on what is heard. Under the timeline lock, so one thread draws at a time.
+            float[] noisy = chunk.ToArray();
+            for (int i = 0; i < noisy.Length; i++)
+            {
+                double u1 = 1.0 - _noise.NextDouble();
+                double u2 = _noise.NextDouble();
+                noisy[i] += (float)(sigma * Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2));
+            }
+
+            to.Rig.Channel.ProcessReceive(noisy);
+            return;
         }
+
+        to.Rig.Channel.ProcessReceive(chunk);
     }
 
     internal sealed class Side : IAsyncDisposable

@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using Packet.Ax25;
 using Packet.Ax25.Session;
+using M0LTE.OfdmFm;
 using Packet.Core;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems.OfdmFmStation;
@@ -16,6 +17,10 @@ namespace Packet.SoundModem.OfdmFmTool.Ax25;
 internal sealed class Ax25Link : IAsyncDisposable
 {
     private readonly OfdmFmFramePort _port;
+    private readonly OfdmFmStationHost _host;
+    private readonly ConcurrentDictionary<uint, LinkStateEvent> _latest = new();
+    private readonly ConcurrentDictionary<uint, Ax25Session> _linked = new();
+    private readonly ConcurrentDictionary<uint, Tuning> _applied = new();
     private readonly StampedLog _log;
     private readonly Callsign _call;
     private readonly string _callText;
@@ -36,8 +41,11 @@ internal sealed class Ax25Link : IAsyncDisposable
         _time = time;
         _callText = call;
         _call = Callsign.Parse(call);
+        _host = host;
         _port = OfdmFmFramePort.Attach(channel, 0, host);
         Transport = new OfdmFmAx25Transport(_port, host, channel, 0, time);
+        Transport.Refused += reason => Say($"Modem refused a frame: {reason}");
+        host.LinkState += OnLinkState;
     }
 
     /// <summary>Every line this link has written, as it was written (the log's own queue is written out later).</summary>
@@ -71,10 +79,16 @@ internal sealed class Ax25Link : IAsyncDisposable
             switch (signal)
             {
                 case DataLinkConnectIndication:
-                    _counters[peer] = new RepeatCounter();
+                    _counters[peer] = new RepeatCounter(session.Context.IsExtended ? 128 : 8);
+                    Remember(session);
+                    Retune(session);
                     var behaviour = new AnswerBehaviour(
                         _callText,
-                        bytes => session.PostEvent(new DlDataRequest(bytes, Ax25Frame.PidNoLayer3)),
+                        bytes =>
+                        {
+                            Retune(session);
+                            session.PostEvent(new DlDataRequest(bytes, Ax25Frame.PidNoLayer3));
+                        },
                         () => session.PostEvent(new DlDisconnectRequest()),
                         () => _counters.TryGetValue(peer, out RepeatCounter? counter) ? counter.Counts : (0, 0));
                     behaviours[session] = behaviour;
@@ -136,7 +150,9 @@ internal sealed class Ax25Link : IAsyncDisposable
             {
                 case DataLinkConnectConfirm:
                     link = session;
-                    _counters[remote.ToString()] = new RepeatCounter();
+                    _counters[remote.ToString()] = new RepeatCounter(session.Context.IsExtended ? 128 : 8);
+                    Remember(session);
+                    Retune(session);
                     Say($"Connected to {to}");
                     connected.TrySetResult();
                     if (measurement is not null)
@@ -155,6 +171,7 @@ internal sealed class Ax25Link : IAsyncDisposable
                             long sent = words.Length > 1 && long.TryParse(words[1], NumberStyles.None, CultureInfo.InvariantCulture, out long s) ? s : 0;
                             long repeated = words.Length > 2 && long.TryParse(words[2], NumberStyles.None, CultureInfo.InvariantCulture, out long r) ? r : 0;
                             Say(measurement.Result(sent, repeated));
+                            Say(RatesLine(remote.ToString()));
                             outcome = measurement.Damaged == 0 ? 0 : 1;
                             Disconnect();
                         }
@@ -185,7 +202,7 @@ internal sealed class Ax25Link : IAsyncDisposable
         };
 
         // The stack's own dial polls in real time, so its result is only read for a failure; the link itself is followed through its signals.
-        Task dial = _listener!.ConnectAsync(remote, _call, extended: false, preConnectXidNegotiatesSrej: false, stop);
+        Task dial = _listener!.ConnectAsync(remote, _call, extended: true, preConnectXidNegotiatesSrej: false, stop);
         _ = dial.ContinueWith(
             failed => closed.TrySetResult(failed.Exception!.GetBaseException().Message),
             CancellationToken.None,
@@ -248,6 +265,69 @@ internal sealed class Ax25Link : IAsyncDisposable
         }
     }
 
+    /// <summary>The modem's rate each way to a peer, for the end of a transfer.</summary>
+    internal string RatesLine(string peer)
+    {
+        LinkStateEvent? state = ViewOf(LinkAddress.FromAscii(peer).Key, fromEvent: null);
+        string rate(double? bps) => bps is { } b ? $"{PingSummary.Rate(b)} kbit/s" : "not known";
+        return state is { } known
+            ? $"Modem rates to {peer}: {rate(known.RateBitsPerSecond)} out, {rate(known.RecommendedRateBitsPerSecond)} back"
+            : $"Modem rates to {peer}: not known";
+    }
+
+    private void Remember(Ax25Session session) => _linked[LinkAddress.FromAscii(session.Context.Remote.ToString()).Key] = session;
+
+    private void OnLinkState(LinkStateEvent state)
+    {
+        // Raised inside the host's lock: no call back into the host, only the event's own figures.
+        _latest[state.Address.Key] = state;
+        if (_linked.TryGetValue(state.Address.Key, out Ax25Session? session))
+        {
+            Apply(session, state.Address.Key, state);
+        }
+    }
+
+    private LinkStateEvent? ViewOf(uint key, LinkStateEvent? fromEvent)
+    {
+        if (fromEvent is { } given)
+        {
+            return given;
+        }
+
+        if (_latest.TryGetValue(key, out LinkStateEvent known))
+        {
+            return known;
+        }
+
+        foreach (LinkStateEvent state in _host.Snapshot())
+        {
+            _latest[state.Address.Key] = state;
+        }
+
+        return _latest.TryGetValue(key, out known) ? known : null;
+    }
+
+    /// <summary>Sets the link's window and acknowledgement timer from what the modem says now. From the stack's own thread, never from inside a host event.</summary>
+    private void Retune(Ax25Session session)
+    {
+        uint key = LinkAddress.FromAscii(session.Context.Remote.ToString()).Key;
+        Apply(session, key, ViewOf(key, null));
+    }
+
+    private void Apply(Ax25Session session, uint key, LinkStateEvent? state)
+    {
+        LinkView view = state is { } s ? new LinkView(s.Located, s.RateBitsPerSecond, s.RecommendedRateBitsPerSecond) : new LinkView(false, null, null);
+        Tuning tuning = LinkTuner.Compute(view);
+        session.Context.K = tuning.K;
+        session.Context.T1V = tuning.T1V;
+        session.Context.Srt = tuning.T1V / 2;
+        if (!_applied.TryGetValue(key, out Tuning before) || before != tuning)
+        {
+            _applied[key] = tuning;
+            Say($"Link to {session.Context.Remote}: window {tuning.K}, acknowledgement timer {tuning.T1V.TotalSeconds.ToString("0", CultureInfo.InvariantCulture)} s");
+        }
+    }
+
     /// <summary>The stack's counts of the I frames it sent to a peer and how many were repeats.</summary>
     internal (long Sent, long Repeated) CountsFor(string peer) => _counters.TryGetValue(peer, out RepeatCounter? counter) ? counter.Counts : (0, 0);
 
@@ -259,6 +339,7 @@ internal sealed class Ax25Link : IAsyncDisposable
             await _listener.DisposeAsync().ConfigureAwait(false);
         }
 
+        _host.LinkState -= OnLinkState;
         await Transport.DisposeAsync().ConfigureAwait(false);
         _port.Dispose();
     }

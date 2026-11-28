@@ -90,8 +90,83 @@ public class Ax25LinkTests
         await answering;
     }
 
+    [Fact]
+    public async Task A_get_of_20000_bytes_from_cold_follows_the_modems_rate_and_reaches_a_share_of_it()
+    {
+        await using var bench = new Ax25Bench();
+        await bench.StartAsync();
+        using var stop = new CancellationTokenSource();
+        Task<int> answering = bench.Answerer.Link.AnswerAsync(stop.Token);
+        Task<int> calling = bench.Caller.Link.CallAsync("M0XYZ-1", 20000, null, stop.Token);
+
+        await bench.PumpAsync(() => calling.IsCompleted, "the transfer and the link to end");
+
+        (await calling).Should().Be(0);
+        Report("cold, clean path", bench);
+        stop.Cancel();
+        await answering;
+    }
+
+    [Fact]
+    public async Task A_get_of_20000_bytes_with_one_burst_lost_still_completes_and_counts_the_repeats()
+    {
+        await using var bench = new Ax25Bench();
+        await bench.StartAsync();
+        bench.Lose = (side, keyup) => ReferenceEquals(side, bench.Answerer) && keyup == LostBigKeyup;
+        using var stop = new CancellationTokenSource();
+        Task<int> answering = bench.Answerer.Link.AnswerAsync(stop.Token);
+        Task<int> calling = bench.Caller.Link.CallAsync("M0XYZ-1", 20000, null, stop.Token);
+
+        await bench.PumpAsync(() => calling.IsCompleted, "the transfer to complete in spite of the lost burst");
+
+        (await calling).Should().Be(0);
+        Report("one burst lost", bench);
+        (long sent, long repeated) = bench.Answerer.Link.CountsFor("G4ABC-1");
+        repeated.Should().BeGreaterThan(0);
+        stop.Cancel();
+        await answering;
+    }
+
+    /// <summary>The number of the answering station's keyup that is lost: the first of the large data bursts of a 20000 byte transfer.</summary>
+    private const int LostBigKeyup = 3;
+
+    [Theory]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(7)]
+    public async Task A_path_that_gets_worse_part_way_through_a_transfer_shrinks_the_window_and_the_transfer_still_completes(int noiseSeed)
+    {
+        // White noise on the answering side's bursts from its fourth keyup on. The seeds are three draws of the same noise, not a search: the claim is the same for each.
+        await using var bench = new Ax25Bench(noiseSeed);
+        await bench.StartAsync();
+        bench.NoiseFor = (side, keyup) => ReferenceEquals(side, bench.Answerer) && keyup >= 4 ? 0.1 : 0;
+        using var stop = new CancellationTokenSource();
+        Task<int> answering = bench.Answerer.Link.AnswerAsync(stop.Token);
+        Task<int> calling = bench.Caller.Link.CallAsync("M0XYZ-1", 20000, null, stop.Token);
+
+        await bench.PumpAsync(() => calling.IsCompleted, "the transfer to end");
+
+        (await calling).Should().Be(0, "every byte arrived and none was damaged");
+        Report($"path steps down, seed {noiseSeed}", bench);
+        int[] windows = [.. bench.Answerer.Link.Said.Where(l => l.StartsWith("Link to", StringComparison.Ordinal)).Select(l => int.Parse(l.Split("window ")[1].Split(',')[0], System.Globalization.CultureInfo.InvariantCulture))];
+        windows.Should().StartWith([1, 32], "first contact, then the full window on the clean path");
+        windows.Last().Should().BeLessThan(32, "the rate the modem allows fell, and the window with it");
+        windows.Skip(2).Should().OnlyContain(w => w < 32, "once the rate fell, the window stayed under the full one");
+        bench.Caller.Link.Said.Single(l => l.StartsWith("Modem rates to", StringComparison.Ordinal)).Should().NotContain("70.4 kbit/s back");
+        stop.Cancel();
+        await answering;
+    }
+
+    private static void Report(string what, Ax25Bench bench)
+    {
+        string result = bench.Caller.Link.Said.Single(l => l.StartsWith("Received ", StringComparison.Ordinal));
+        string rates = bench.Caller.Link.Said.Single(l => l.StartsWith("Modem rates to", StringComparison.Ordinal));
+        Console.WriteLine($"[{what}] {result}\n[{what}] {rates}\n[{what}] answerer: " + string.Join(" | ", bench.Answerer.Link.Said.Where(l => l.StartsWith("Link to", StringComparison.Ordinal))));
+        Console.WriteLine($"[{what}] caller: " + string.Join(" | ", bench.Caller.Link.Said.Where(l => l.StartsWith("Link to", StringComparison.Ordinal))));
+    }
+
     /// <summary>The number of the answering station's keyup that is lost: one that carries the transfer's data.</summary>
-    private const int LostKeyup = 4;
+    private const int LostKeyup = 3;
 
     [Fact]
     public async Task A_frame_equal_to_one_still_waiting_in_the_modem_is_not_sent_again_and_its_task_ends_as_the_originals_does()
@@ -117,6 +192,24 @@ public class Ax25LinkTests
         Task<Packet.Ax25.Transport.TxCompletion> again = transport.SendAwaitingCompletionAsync(frame);
         await rig.PumpAsync(() => again.IsCompleted, "the frame to go again");
         rig.Transmitted.Should().HaveCount(3);
+        await transport.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task A_frame_the_modem_refuses_is_reported_once_with_its_reason_and_the_task_fails()
+    {
+        await using var rig = new StationRig();
+        rig.Host.SetIdentity("G4ABC");
+        using var port = OfdmFmFramePort.Attach(rig.Channel, 0, rig.Host);
+        var transport = new OfdmFmAx25Transport(port, rig.Host, rig.Channel, 0, rig.Clock);
+        var reasons = new List<string>();
+        transport.Refused += reasons.Add;
+        byte[] tooBig = Ax25Frame.Ui(new Callsign("M0XYZ", 1), new Callsign("G4ABC", 1), new byte[600], Ax25Frame.PidNoLayer3).ToBytes();
+
+        Task<Packet.Ax25.Transport.TxCompletion> sent = transport.SendAwaitingCompletionAsync(tooBig);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sent);
+        reasons.Should().ContainSingle().Which.Should().Contain("too large");
         await transport.DisposeAsync();
     }
 

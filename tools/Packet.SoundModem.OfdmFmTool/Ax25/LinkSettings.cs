@@ -4,8 +4,9 @@ using Packet.Core;
 namespace Packet.SoundModem.OfdmFmTool.Ax25;
 
 /// <summary>
-/// The AX.25 link's timers and window for the trial, fixed. The first exchange from cold holds two identifications with Morse (about 25 s), so the acknowledgement timer starts high and the stack's own smoothing brings it down
-/// from measured round trips. It is started from <c>Transmitted</c>, not from the moment a frame was handed to the modem. The window is four frames of 256 bytes, modulo 8, which the modem carries at any rate it has.
+/// The AX.25 link's starting timers and window. The first exchange from cold holds two identifications with Morse (about 25 s), so the acknowledgement timer starts high, and the window at one frame: both are then set from
+/// what the modem says about the link (<see cref="LinkTuner"/>). The timer is started from <c>Transmitted</c>, not from the moment a frame was handed to the modem. Numbering is modulo 128 (SABME), which the stack
+/// falls back from for a peer that cannot; frames are 256 bytes, which the modem carries at any rate it has.
 /// </summary>
 internal static class LinkSettings
 {
@@ -17,7 +18,7 @@ internal static class LinkSettings
 
     public const int Retries = 10;
 
-    public const int Window = 4;
+    public const int FirstContactWindow = 1;
 
     /// <summary>The largest information field the stack is held to, and so the most one I frame carries. It stays well inside the 331 bytes one burst carries at the slowest rate.</summary>
     public const int Paclen = 256;
@@ -26,12 +27,12 @@ internal static class LinkSettings
     {
         MyCall = call,
         PortName = "ofdm-fm",
-        T1V = T1,
+        T1V = LinkTuner.FirstContactT1,
         T2 = T2,
         T3 = T3,
         N2 = Retries,
-        K = Window,
-        PreferExtendedConnect = false,
+        K = FirstContactWindow,
+        PreferExtendedConnect = true,
         PreConnectXidNegotiatesSrej = false,
         RestartT1OnTxComplete = true,
         ConfigureSession = configure,
