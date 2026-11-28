@@ -1737,20 +1737,10 @@ if (stationDevice.PttRefusal is string pttRefusal && (pttSpec is not null || ptt
 
 if (pttSpec is not null)
 {
-    string[] parts = pttSpec.Split(':');
-    if (parts.Length >= 2)
+    pttConfig = PttSpec.TryParse(pttSpec, out string pttSpecProblem);
+    if (pttConfig is null)
     {
-        pttConfig = new PttConfig
-        {
-            Type = parts[0],
-            Device = parts[1],
-            Line = parts[0] == "serial" && parts.Length > 2 ? parts[2] : null,
-            Gpio = parts[0] == "cm108" && parts.Length > 2 ? int.Parse(parts[2]) : null,
-        };
-    }
-    else
-    {
-        Console.Error.WriteLine("--ptt expects serial:<dev>[:rts|:dtr] or cm108:<hidraw>[:gpio]");
+        Console.Error.WriteLine(pttSpecProblem);
         return 2;
     }
 }

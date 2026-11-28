@@ -105,6 +105,7 @@ public sealed class OfdmFmStationHost : IDisposable
     private readonly TaskScheduler _signalScheduler;
     private int _signalsOwed;
     private readonly Dictionary<long, Outstanding> _requests = [];
+    private Action<TraceEvent>? _trace;
     private bool? _indicated;
     private bool _noticed;
     private volatile bool _stopping;
@@ -235,6 +236,68 @@ public sealed class OfdmFmStationHost : IDisposable
 
     /// <summary>A line for the operator, raised once: the channel cannot transmit and every request will be refused. Same rules as <see cref="Received"/>.</summary>
     public event Action<string>? Notice;
+
+    /// <summary>
+    /// One line of the station's readable trace (docs/trace.md in the M0LTE.OfdmFm package): what it heard, decided and sent, and why.
+    /// Raised inside the host's lock like every other event, so a handler must return promptly and must not call the host: queue the line and print it from another thread.
+    /// It comes on the receive thread for what the station notices with the audio, and on the calling thread, inside the same lock, for a line about a host call (<see cref="Send"/>, <see cref="Cancel(HostTag)"/>, <see cref="SetIdentity"/>).
+    /// Decode workers never raise it. Subscribe before the first <see cref="Send"/>: an address sent from earlier is shown by its key. The station builds no text while nobody is subscribed.
+    /// </summary>
+    public event Action<TraceEvent>? Trace
+    {
+        add
+        {
+            lock (_gate)
+            {
+                if (_trace is null)
+                {
+                    _station.Trace += OnTrace;
+                }
+
+                _trace += value;
+            }
+        }
+
+        remove
+        {
+            lock (_gate)
+            {
+                _trace -= value;
+                if (_trace is null)
+                {
+                    _station.Trace -= OnTrace;
+                }
+            }
+        }
+    }
+
+    /// <summary>The level of trace lines <see cref="Trace"/> is given: <see cref="TraceLevel.Flow"/> until set. Takes the host's lock; call it from outside the host's events.</summary>
+    public TraceLevel TraceLevel
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _station.TraceLevel;
+            }
+        }
+
+        set
+        {
+            lock (_gate)
+            {
+                _station.TraceLevel = value;
+            }
+        }
+    }
+
+    private void OnTrace(TraceEvent line)
+    {
+        if (!_disposed)
+        {
+            _trace?.Invoke(line);
+        }
+    }
 
     /// <summary>
     /// Gives the station the callsign it transmits as. Until it is accepted the station only listens. Takes the host's lock; call it from outside the host's events.

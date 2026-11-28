@@ -120,10 +120,10 @@ public class OfdmFmFramePortStationTests
         b.Rig.Received.Single().Addressing.Should().Be(Addressing.ToEveryone);
         b.Rig.Received.Single().FromKey.Should().Be(LinkAddress.FromAscii("G4ABC-1").Key);
         FrameQuality quality = b.Qualities.Single();
-        quality.Mode.Should().Be("ofdm-fm-auto");
+        quality.Mode.Should().Be("ofdm-fm");
         quality.FrameBytes.Should().Be(beacon.Length);
         quality.CrcValid.Should().BeTrue();
-        a.Port.Mode.Should().Be("ofdm-fm-auto");
+        a.Port.Mode.Should().Be("ofdm-fm");
         a.Rig.Transmitted.Should().ContainSingle();
     }
 

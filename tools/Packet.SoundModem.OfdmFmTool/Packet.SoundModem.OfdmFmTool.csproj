@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>pdn-ofdm</AssemblyName>
+    <RootNamespace>Packet.SoundModem.OfdmFmTool</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
+    <!-- The daemon's device kinds, PTT reading and receive loop: the tool opens a radio the way the daemon does, through the same code. -->
+    <ProjectReference Include="../../src/Packet.SoundModem.Daemon/Packet.SoundModem.Daemon.csproj" />
+    <!-- The streaming WAV writer. -->
+    <ProjectReference Include="../Packet.SoundModem.UberSdr/Packet.SoundModem.UberSdr.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
+  </ItemGroup>
+
+</Project>

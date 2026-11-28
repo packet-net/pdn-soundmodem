@@ -18,6 +18,7 @@
     <Project Path="tools/Packet.SoundModem.SdrConnectProbe/Packet.SoundModem.SdrConnectProbe.csproj" />
     <Project Path="tools/Packet.SoundModem.OfdmFmLab/Packet.SoundModem.OfdmFmLab.csproj" />
     <Project Path="tools/Packet.SoundModem.Ota/Packet.SoundModem.Ota.csproj" />
+    <Project Path="tools/Packet.SoundModem.OfdmFmTool/Packet.SoundModem.OfdmFmTool.csproj" />
     <Project Path="tools/Packet.SoundModem.UberSdr/Packet.SoundModem.UberSdr.csproj" />
   </Folder>
   <Folder Name="/tests/">

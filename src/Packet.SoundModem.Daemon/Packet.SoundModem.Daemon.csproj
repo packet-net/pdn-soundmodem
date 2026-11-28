@@ -39,6 +39,8 @@
     <!-- DeviceDiagnostics' messages are the first thing an admin reads in journalctl on a
          fresh install, so they are pinned by tests. -->
     <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
+    <!-- pdn-ofdm opens its audio device and PTT through the daemon's device kinds, not a second layer of its own. -->
+    <InternalsVisibleTo Include="pdn-ofdm" />
   </ItemGroup>
 
 </Project>
