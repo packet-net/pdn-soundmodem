@@ -109,6 +109,54 @@ public class KissClientEventTests
     }
 
     [Fact]
+    public async Task A_Host_Accepted_Just_As_The_Server_Stops_Is_Not_Reported_As_A_Fault()
+    {
+        // The interleaving a loaded box found: the session is registered (so the client count
+        // already says 1) but its read loop has not started when the server is disposed. Dispose
+        // closes the socket first, the loop's first act then fails on a disposed TcpClient, and
+        // that ObjectDisposedException used to go on the disconnect line as the host's fault.
+        // Built here every time: the connect event, raised between the two, is held until the
+        // server has closed the session's socket, which the host's end sees as the connection
+        // closing.
+        var server = new KissTcpServer(Channel(), 0, IPAddress.Loopback);
+        var goodbyes = new List<KissClientEvent>();
+        server.ClientDisconnected += goodbyes.Add;
+        using var client = new TcpClient();
+        using var connected = new ManualResetEventSlim();
+        var disposing = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.ClientConnected += _ =>
+        {
+            disposing.SetResult(Task.Run(async () => await server.DisposeAsync()));
+            if (!connected.Wait(Eventually.HangGuard))
+            {
+                throw new TimeoutException("the host never finished connecting");
+            }
+
+            client.ReceiveTimeout = (int)Eventually.HangGuard.TotalMilliseconds; // a hang guard only
+            try
+            {
+                while (client.GetStream().Read(new byte[16]) > 0)
+                {
+                }
+            }
+            catch (IOException)
+            {
+                // Reset rather than closed: closed all the same.
+            }
+        };
+        server.Start();
+
+        await client.ConnectAsync(IPAddress.Loopback, server.LocalPort);
+        connected.Set();
+        Task disposed = await Eventually.SignalAsync(disposing.Task, "the connect event");
+        await Eventually.SignalAsync(disposed, "the server to stop");
+
+        await Eventually.UntilAsync(() => goodbyes.Count >= 1, "the goodbye event");
+        goodbyes.Should().ContainSingle().Which.Reason.Should().BeNull(
+            "the station stopping is not the host misbehaving, wherever the session had got to");
+    }
+
+    [Fact]
     public async Task A_Stopping_Station_Refuses_New_Hosts_And_Lets_Attached_Ones_Go_With_The_Reason()
     {
         // Issue #790: a station stuck on its way down kept taking KISS hosts and SETHW for 21

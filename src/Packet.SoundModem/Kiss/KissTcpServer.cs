@@ -259,16 +259,18 @@ public sealed class KissTcpServer : IAsyncDisposable
                 decoder.Push(buffer.AsSpan(0, got));
             }
         }
-        catch (OperationCanceledException)
-        {
-            // The server is shutting down, not the client misbehaving: a clean end.
-        }
         catch (Exception e)
         {
             // Client errors only ever cost that client its connection - but say which and why,
             // because "the host vanished" and "the host closed" are different problems. A
             // session dropped for not reading records that, not the socket teardown it causes.
-            reason = session.Fault ?? e.Message;
+            //
+            // Unless the server is stopping: then whatever surfaced is the teardown, not the
+            // host. Decided by the server's state, never by the exception's type, because which
+            // one surfaces depends on where this loop was when DisposeAsync disposed the socket:
+            // a cancelled read, or, for a session accepted just before, the ObjectDisposedException
+            // from GetStream on a client already disposed. A reason StopTakingWork gave stands.
+            reason = _stopping.IsCancellationRequested ? null : session.Fault ?? e.Message;
         }
         finally
         {
@@ -529,9 +531,11 @@ public sealed class KissTcpServer : IAsyncDisposable
         // as long as the host cares to stop reading - which for the receive path means every
         // modem, tap and other client on the channel goes deaf with it. The per-client write
         // loop serialises frames, so they cannot interleave mid-frame either.
-        if (Interlocked.Add(ref session.QueuedBytes, data.Length) <= MaxQueuedBytes
-            && session.SendQueue.Writer.TryWrite(data))
+        if (Interlocked.Add(ref session.QueuedBytes, data.Length) <= MaxQueuedBytes)
         {
+            // A queue that will not take it has been completed: the session is closing, for
+            // whatever reason it is closing, and that is not this host failing to read.
+            session.SendQueue.Writer.TryWrite(data);
             return;
         }
 
