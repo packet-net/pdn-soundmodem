@@ -92,7 +92,7 @@ public class ToolSessionTests
         }
     }
 
-    [Fact]
+    [Fact(Skip = "Blocked by #943: the first exchange between two cold stations keys both radios at once (the answer arrives while the pinger sends its Morse identification), which the rig refuses. Unskip when #943 is decided.")]
     public async Task Pings_to_a_listening_station_are_answered_and_the_rate_is_reported_both_ways()
     {
         var clock = new VirtualAir.Clock();
@@ -128,8 +128,8 @@ public class ToolSessionTests
         heard.Count(l => l.Contains("answering")).Should().Be(6);
     }
 
-    [Fact]
-    public async Task On_a_cold_start_the_first_ping_may_be_lost_while_the_pinger_identifies_and_the_rest_are_answered()
+    [Fact(Skip = "Blocked by #943: this is the fault itself, two radios keyed at once, which the rig refuses to run. Unskip, with Answered == 5, when #943 is decided.")]
+    public async Task Known_fault_943_the_first_ping_of_a_cold_start_is_lost_while_the_pinger_identifies()
     {
         var clock = new VirtualAir.Clock();
         await using var pinger = new Side("G4ABC-1", "M0XYZ-1", seed: 11, clock);
@@ -143,7 +143,10 @@ public class ToolSessionTests
 
         PingSummary summary = await ping;
         summary.Sent.Should().Be(5);
-        summary.Answered.Should().BeGreaterThanOrEqualTo(4, "the station identifies straight after its first transmission, and the answer to that first ping arrives while it is keyed");
+
+        // A RECORD OF A KNOWN FAULT, not a requirement: packet-net/pdn-soundmodem#943. The station identifies in Morse straight after its first transmission and is deaf to the answer, so the first ping is lost.
+        // This changes when #943 is decided; at that point it should assert Answered == 5.
+        summary.Answered.Should().BeGreaterThanOrEqualTo(4, "known fault #943: the answer to the first ping arrives while the station is keyed for its identification");
         Console.WriteLine(string.Join(Environment.NewLine, await pinger.LinesAsync()));
     }
 

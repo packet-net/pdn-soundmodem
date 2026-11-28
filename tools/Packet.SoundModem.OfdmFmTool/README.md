@@ -35,7 +35,7 @@ Every line starts with UTC time, then the modem's own words. This is a simulated
 00:00:41.29  5 sent, 4 answered, 70.4 kbit/s both ways
 ```
 
-The first ping of a cold start is often lost: the station identifies in Morse straight after its first transmission and is keyed when the answer arrives. Run ping again, or send once first.
+The first ping of a cold start is often lost: the station identifies in Morse straight after its first transmission and is keyed when the answer arrives. Run ping again, or send once first (known fault, packet-net/pdn-soundmodem#943).
 
 ## The echo
 
