@@ -23,7 +23,6 @@ namespace Packet.SoundModem.Tests.S5066;
 public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
 {
     private const int ChannelRate = 48000;
-    private const int BlockMs = 20;
 
     private readonly ScratchDirectory _dir = new("pdnsm-stanag");
 
@@ -127,8 +126,10 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
     [Fact]
     public async Task The_Daemon_Starts_No_Node_Without_The_Section()
     {
-        string path = Write(StationJson(""));
-        string said = await RunUntilAsync(path, "flex: setting the slice receive filter to ", linger: TimeSpan.FromSeconds(2));
+        // The paging line is printed after the point where the node would start, so by the time it is
+        // seen the node has been started or not.
+        string path = Write(StationJson($$""" "paging": { "port": {{FreePorts.Next()}} }, """));
+        string said = await RunUntilAsync(path, "paging tcp: ");
         said.Should().NotContain("s5066 sis tcp").And.NotContain("s5066:").And.NotContain("SIS listening");
     }
 
@@ -137,7 +138,7 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
     {
         int port = FreePorts.Next();
         string path = Write(StationJson($$""" "s5066": { "port": {{port}}, "node": {{Node}} }, """));
-        await RunUntilAsync(path, "s5066 sis tcp: ", linger: TimeSpan.Zero, whileRunning: async said =>
+        await RunUntilAsync(path, "s5066 sis tcp: ", whileRunning: async said =>
         {
             said.Should().Contain($"s5066 sis tcp: 127.0.0.1:{port} (node 0.0.1.1, MIL-STD-188-110D on the 48000 Hz channel");
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -149,32 +150,39 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
 
     // ------------------------------------------------------------------------ two stations
 
-    // Quarantined (#871): this bench runs in real time from end to end (a capture loop paced by a
-    // real stopwatch, a sink that sleeps, protocol timers of seconds), so on a busy build machine
-    // it runs out of time, as it did twice on 2026-11-26. It still runs in the build's
-    // non-blocking quarantine step. It comes back here when it is on virtual time.
+    // On virtual time (#871): both nodes share one fake clock, which only the bench moves, one
+    // millisecond at a time and only while every thread of both stations is at rest. Nothing here
+    // waits on real time; the guards on the awaits only turn a hang into a failure.
     [Fact]
-    [Trait("Category", "Quarantine")]
     public async Task Two_Stations_Exchange_A_Confirmed_Message_Over_Simulated_Audio()
     {
-        await using var bench = new Bench();
+        await using var bench = new VirtualBench();
         await using S5066Station a = bench.StartNode(0, "0.0.1.1", "0000000000000001");
         await using S5066Station b = bench.StartNode(1, "0.0.1.2", "0000000000000002");
-        bench.Run();
+        await bench.SettleAsync();
 
-        await using SisClient ca = await SisClient.ConnectAsync(a.SisEndpoint);
-        await using SisClient cb = await SisClient.ConnectAsync(b.SisEndpoint);
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        await ca.BindAsync(5, new ServiceType(1), cts.Token);
-        await cb.BindAsync(5, new ServiceType(1), cts.Token);
+        await using SisClient ca = await bench.Guard(SisClient.ConnectAsync(a.SisEndpoint));
+        await using SisClient cb = await bench.Guard(SisClient.ConnectAsync(b.SisEndpoint));
+        await bench.Guard(ca.BindAsync(5, new ServiceType(1)));
+        await bench.Guard(cb.BindAsync(5, new ServiceType(1)));
+        await bench.SettleAsync();
 
-        var elapsed = Stopwatch.StartNew();
         byte[] message = Encoding.ASCII.GetBytes("over pdn-soundmodem's channel\r\n");
-        SendResult sent = await ca.SendAsync(
-            new UnidataSend(SisAddress.FromParts(0, 0, 1, 2), 5, message) { DeliveryMode = new ServiceType(1, Confirm: 1) },
-            cts.Token);
-        SisUnidataIndication got = await cb.Received.ReadAsync(cts.Token);
-        output.WriteLine($"confirmed in {elapsed.Elapsed.TotalSeconds:F1} s; journal:\n{bench.Journal()}");
+        int outputs = bench.OutputsOf(0);
+        Task<SendResult> sending = await bench.Guard(ca.StartSendAsync(
+            new UnidataSend(SisAddress.FromParts(0, 0, 1, 2), 5, message) { DeliveryMode = new ServiceType(1, Confirm: 1) }));
+
+        // The request travels over a real socket: the clock stays put until the node has acted on it.
+        await bench.OutputAfterAsync(0, outputs);
+        Task<SisUnidataIndication> receiving = cb.Received.ReadAsync().AsTask();
+        while (!(sending.IsCompleted && receiving.IsCompleted))
+        {
+            await bench.StepAsync();
+        }
+
+        SendResult sent = await sending;
+        SisUnidataIndication got = await receiving;
+        output.WriteLine($"confirmed after about {bench.VirtualMs / 1000.0:F1} s of virtual time; journal:\n{bench.Journal()}");
 
         got.UPdu.ToArray().Should().Equal(message);
         sent.Status.Should().Be(SendStatus.Confirmed);
@@ -189,7 +197,7 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
         var channel = new SoundModemChannel(ChannelRate, randomSeed: 3);
         channel.Csma.TxDelayMilliseconds = 100;
         var written = new List<float>();
-        var sink = new PacedSink(block =>
+        var sink = new RecordingSink(block =>
         {
             lock (written)
             {
@@ -272,10 +280,9 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
         + $" \"modems\": [ {{ \"mode\": \"afsk1200\", \"port\": {FreePorts.Next()} }} ] }}";
 
     /// <summary>Runs the daemon until a line starting <paramref name="until"/>, then runs
-    /// <paramref name="whileRunning"/> or waits <paramref name="linger"/>, stops it and returns all it
-    /// printed.</summary>
+    /// <paramref name="whileRunning"/>, stops it and returns all it printed.</summary>
     private static async Task<string> RunUntilAsync(
-        string path, string until, TimeSpan linger, Func<string, Task>? whileRunning = null)
+        string path, string until, Func<string, Task>? whileRunning = null)
     {
         string dll = Path.Combine(AppContext.BaseDirectory, "pdn-soundmodem.dll");
         var info = new ProcessStartInfo(UsageTests.DotnetHost())
@@ -331,7 +338,6 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
                 await whileRunning(Said());
             }
 
-            await Task.Delay(linger);
             return Said();
         }
         finally
@@ -352,169 +358,6 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
         return dir?.FullName ?? throw new InvalidOperationException("repo root not found");
     }
 
-    /// <summary>
-    /// Two stations and the air between them: each a <see cref="SoundModemChannel"/> at 48 kHz with
-    /// an afsk1200 modem, as the daemon builds one, and its own transmitter loop, playing in real
-    /// time into the other's capture, which delivers 20 ms blocks continuously, silence included.
-    /// The pattern of <c>ArdopSharedChannelSessionTests</c>.
-    /// </summary>
-    private sealed class Bench : IAsyncDisposable
-    {
-        private readonly SoundModemChannel[] _channels = new SoundModemChannel[2];
-        private readonly Queue<float[]>[] _inbound = [new(), new()];
-        private readonly Task[] _transmitters = new Task[2];
-        private readonly CancellationTokenSource _stop = new();
-        private readonly StringBuilder _journal = new();
-        private Task? _capture;
-        private int _keyups;
-        private int _sent;
-        private int _heard;
-
-        public Bench()
-        {
-            for (int i = 0; i < 2; i++)
-            {
-                int other = 1 - i;
-                var channel = new SoundModemChannel(ChannelRate, randomSeed: 11 + (18 * i));
-                channel.AddModem(0, sink => ModemCatalog.Create("afsk1200", ChannelRate, sink));
-                channel.TransmittingChanged += keyed =>
-                {
-                    if (keyed)
-                    {
-                        Interlocked.Increment(ref _keyups);
-                    }
-                };
-                var sink = new PacedSink(block =>
-                {
-                    lock (_inbound[other])
-                    {
-                        _inbound[other].Enqueue(block);
-                    }
-                });
-                _transmitters[i] = channel.RunTransmitterAsync(sink, sink, _stop.Token);
-                _channels[i] = channel;
-            }
-        }
-
-        public int Keyups => Volatile.Read(ref _keyups);
-
-        /// <summary>Bursts the stations reported sent, for the journal and the frame log.</summary>
-        public int Sent => Volatile.Read(ref _sent);
-
-        /// <summary>Bursts the stations reported heard with decoded bytes.</summary>
-        public int Heard => Volatile.Read(ref _heard);
-
-        public S5066Station StartNode(int station, string address, string seed)
-        {
-            // The short CSMA, CAS and DTS values M0LTE.S5066's own audio test uses: a bench, not air.
-            string node = $$"""
-                {
-                  "local_address": "{{address}}",
-                  "prng_seed": "{{seed}}",
-                  "csma": { "mode": "jitter", "num_cont_slots": 4, "cont_slot_width_ms": 200, "lbt_wait_dcd_ms": 2000, "lbt_wait_vdcd_ms": 500 },
-                  "drc": { "default_speed": { "wn": 6, "interleaver": "short" } },
-                  "cas": { "max_links": 4, "link_request_timeout_ms": 8000, "link_request_retries": 5, "break_retries": 3 },
-                  "dts": { "max_transmission_ms": 6000, "ack_wait_ms": 8000 }
-                }
-                """;
-            var config = new S5066Config { Port = 0, Node = JsonDocument.Parse(node).RootElement.Clone() };
-            void Note(string line)
-            {
-                lock (_journal)
-                {
-                    _journal.AppendLine($"[{station}] {line}");
-                }
-            }
-
-            return S5066Station.Start(
-                _channels[station], config, IPAddress.Loopback, Note,
-                sent: burst =>
-                {
-                    Interlocked.Increment(ref _sent);
-                    Note($"sent {burst.Waveform} {burst.Bytes.Length} bytes");
-                },
-                heard: burst =>
-                {
-                    if (burst.Bytes.Length > 0)
-                    {
-                        Interlocked.Increment(ref _heard);
-                    }
-
-                    Note($"heard {burst.Waveform} {burst.Bytes.Length} bytes, SNR {burst.SnrDb}, {burst.Ended}");
-                });
-        }
-
-        /// <summary>Starts the capture clock, once both nodes have their receive taps in.</summary>
-        public void Run() => _capture = CaptureAsync(_stop.Token);
-
-        public string Journal()
-        {
-            lock (_journal)
-            {
-                return _journal.ToString();
-            }
-        }
-
-        private async Task CaptureAsync(CancellationToken cancellation)
-        {
-            var elapsed = Stopwatch.StartNew();
-            var quiet = new float[ChannelRate * BlockMs / 1000];
-            var random = new Random(5);
-            long delivered = 0;
-            try
-            {
-                while (!cancellation.IsCancellationRequested)
-                {
-                    await Task.Delay(BlockMs, cancellation);
-                    long due = elapsed.ElapsedMilliseconds / BlockMs;
-                    while (delivered < due)
-                    {
-                        for (int i = 0; i < 2; i++)
-                        {
-                            float[]? block;
-                            lock (_inbound[i])
-                            {
-                                block = _inbound[i].Count > 0 ? _inbound[i].Dequeue() : null;
-                            }
-
-                            float[] heard = (float[])(block ?? quiet).Clone();
-                            for (int s = 0; s < heard.Length; s++)
-                            {
-                                // A little noise, so nothing downstream sees digital silence.
-                                heard[s] += (float)((random.NextDouble() - 0.5) * 0.002);
-                            }
-
-                            _channels[i].ProcessReceive(heard);
-                        }
-
-                        delivered++;
-                    }
-                }
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            await _stop.CancelAsync();
-            foreach (Task t in _transmitters.Append(_capture ?? Task.CompletedTask))
-            {
-                try
-                {
-                    await t;
-                }
-                catch (OperationCanceledException)
-                {
-                }
-            }
-
-            _stop.Dispose();
-        }
-    }
-
-    /// <summary>The playback device: hands each 20 ms block to the air as it plays, in real time.</summary>
     private sealed class FakeModem : IHostModem
     {
         public IModemEvents? Events { get; private set; }
@@ -561,28 +404,12 @@ public sealed class S5066StationTests(ITestOutputHelper output) : IDisposable
         }
     }
 
-    private sealed class PacedSink(Action<float[]> onBlock) : IAudioOutput, IPttControl
+    /// <summary>A sound card that records what it is given and takes no time to play it.</summary>
+    private sealed class RecordingSink(Action<float[]> onBlock) : IAudioOutput, IPttControl
     {
-        private readonly int _blockSamples = ChannelRate * BlockMs / 1000;
-
         public int SampleRate => ChannelRate;
 
-        public void Write(ReadOnlySpan<float> samples)
-        {
-            var elapsed = Stopwatch.StartNew();
-            long played = 0;
-            for (int i = 0; i < samples.Length; i += _blockSamples)
-            {
-                int count = Math.Min(_blockSamples, samples.Length - i);
-                onBlock(samples.Slice(i, count).ToArray());
-                played += count;
-                int wait = (int)((played * 1000 / ChannelRate) - elapsed.ElapsedMilliseconds);
-                if (wait > 0)
-                {
-                    Thread.Sleep(wait);
-                }
-            }
-        }
+        public void Write(ReadOnlySpan<float> samples) => onBlock(samples.ToArray());
 
         public void Drain()
         {

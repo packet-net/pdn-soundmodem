@@ -1342,6 +1342,10 @@ public sealed class SoundModemChannel
     /// </remarks>
     public event Action<bool>? TransmittingChanged;
 
+    /// <summary>Raised once the transmitter has finished ending a keyup, after receive is open
+    /// again. For tests that drive the channel by hand; see <see cref="EndKeyup"/>.</summary>
+    internal event Action? KeyupEnded;
+
     /// <summary>
     /// Raised with the sample count of a receive block that arrived while the channel was
     /// transmitting - the block <see cref="ProcessReceive"/> skipped its modems and its receive
@@ -3457,6 +3461,11 @@ public sealed class SoundModemChannel
         TransmittingChanged?.Invoke(false);
         _transmitting = false;
         EnterWait(WaitSlot.Unattributed, null);
+
+        // The last thing a keyup does. It exists so that a hand-driven test knows the transmitter
+        // has finished ending a keyup, receive is open again and nothing more will run until the
+        // next one: TransmittingChanged(false) is raised before the gate opens, by design.
+        KeyupEnded?.Invoke();
     }
 
     /// <summary>Whether a packed render has ended since <paramref name="seen"/> was read: one that
