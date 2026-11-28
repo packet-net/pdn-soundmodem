@@ -353,4 +353,27 @@ public class OfdmFmStationHostIdentTests
         DateTimeOffset when = starts.Should().ContainSingle().Subject;
         when.Should().BeOnOrAfter(before).And.BeOnOrBefore(rig.Clock.GetUtcNow());
     }
+
+    [Fact]
+    public async Task Only_the_request_the_station_flags_as_its_identification_carries_the_morse_whatever_order_the_requests_come_in()
+    {
+        // The library never lets a lone report wait behind an identification, so after IdentificationDue a report can be requested first. It cannot be made to happen on the rig without choosing the moment
+        // a burst arrives to the sample (a race between the identification waiting for a busy channel and the report that is then owed), so the host is fed the two requests directly, in that order.
+        await using var rig = new StationRig(cold: true);
+        Identify(rig);
+        float[] report = new float[4000];
+        float[] burst = new float[30000];
+        Array.Fill(report, 0.25f);
+        Array.Fill(burst, 0.5f);
+        int lead = 100 * Rate / 1000;
+
+        float[] reported = rig.Host.RenderRequestForTests(new TransmitRequestEvent(101, report, 0) { Identification = false }, 100);
+        float[] identified = rig.Host.RenderRequestForTests(new TransmitRequestEvent(102, burst, 0) { Identification = true }, 100);
+
+        reported.Length.Should().Be(lead + report.Length, "the report is the report and nothing more: no gap and no Morse");
+        reported.AsSpan(lead).ToArray().Should().Equal(report);
+        float[] morse = StationRig.ExpectedMorse();
+        identified.Length.Should().Be(lead + burst.Length + (Rate / 4) + morse.Length);
+        identified.AsSpan(lead + burst.Length + (Rate / 4)).ToArray().Should().Equal(morse, "the Morse lands on the flagged request");
+    }
 }

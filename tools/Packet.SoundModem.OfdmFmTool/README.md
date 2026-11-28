@@ -16,7 +16,7 @@ pdn-ofdm ping   --device SPEC  --ptt SPEC  --call CALL --to ADDRESS [--count N] 
   `pdn-ofdm listen --device plughw:CARD=Device,DEV=0 --ptt cm108:/dev/hidraw0 --call M0XYZ-1`
 - `send` sends the text as one datagram, says whether it was transmitted or dropped, and exits. A text too big for one datagram is refused.
   `pdn-ofdm send --device plughw:CARD=Device,DEV=0 --ptt cm108:/dev/hidraw0 --call G4ABC-1 --to M0XYZ-1 hello`
-- `ping` sends `--count` datagrams (default 5) of `--size` bytes (default 32), one at a time, each asking for a report. For each it prints the round trip, from handing the datagram to the modem to the echo arriving, and the rate in each direction. The summary gives the rate the link supports both ways: the lower of the two. An echo not back in 60 s is counted as no answer.
+- `ping` sends `--count` datagrams (default 5) of `--size` bytes (default 32), one at a time, each asking for a report. For each it prints the round trip, from handing the datagram to the modem to the echo arriving, and the rate in each direction. The first ping from cold includes both stations identifying. The summary gives the rate the link supports both ways: the lower of the two. An echo not back in 60 s is counted as no answer.
   `pdn-ofdm ping --device plughw:CARD=Device,DEV=0 --ptt cm108:/dev/hidraw0 --call G4ABC-1 --to M0XYZ-1 --count 10`
 
 `--detail` raises the trace to detail level. `--log FILE` appends every line to a file. `--record FILE.wav` writes the received audio, 48 kHz mono. Ctrl-C stops cleanly and releases the PTT.

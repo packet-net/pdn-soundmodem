@@ -83,7 +83,7 @@ public sealed class OfdmFmStationHostOptions
 /// </para>
 /// <para>
 /// <b>Identification and the Morse.</b> The one rule for when is the station's: before a transmission of its own accord, when it has never identified or ten minutes of its own clock have passed since its last identification burst started
-/// (an idle station never identifies), the station asks to transmit its identification first, and the transmission that made it due follows. The host recognises that request (the first one after <c>IdentificationDue</c>) and keys it as
+/// (an idle station never identifies), the station asks to transmit its identification first, and the transmission that made it due follows. The host recognises that request (the station flags it, <c>TransmitRequestEvent.Identification</c>; a lone report may be requested ahead of it and carries no Morse) and keys it as
 /// one transmission: the key-up delay as silence, the identification burst, a short gap, then the callsign in Morse (tone, speed and level from the options). The station is told the Morse's length beforehand
 /// (<c>SetIdentificationTail</c>, whenever the identity is set) so that every station that hears the burst stays off the channel until it is over, and is told the transmission ended when the Morse has gone.
 /// The host runs no clock of its own for this and does not use <see cref="StationIdentifier"/>'s rule. <see cref="MorseIdentSent"/> is raised when the Morse has gone, and <see cref="IdentificationStarted"/>, with the time on the host's clock,
@@ -121,7 +121,7 @@ public sealed class OfdmFmStationHost : IDisposable
     private volatile bool _disposed;
     private long _audioLost;
 
-    // The identification's Morse. Touched under the lock. The station's request for its identification is the first one after it raises IdentificationDue.
+    // The identification's Morse. Touched under the lock. Only the request the station flags as its identification carries it.
     private const double MorseGapSeconds = 0.25;
     private readonly double _morseTone;
     private readonly double _morseSpeed;
@@ -129,8 +129,6 @@ public sealed class OfdmFmStationHost : IDisposable
     private readonly TimeProvider _time;
     private float[] _morse = [];
     private string _morseText = "";
-    private bool _identPending;
-    private long _identRequest;
 
     /// <summary>Makes the host and starts listening.</summary>
     /// <param name="channel">The channel to listen on. It must run at 48000 Hz.</param>
@@ -185,9 +183,6 @@ public sealed class OfdmFmStationHost : IDisposable
         _station.ChannelBusy += e => { if (!_disposed) { ChannelBusy?.Invoke(e); } };
         _station.BurstNotDecoded += e => { if (!_disposed) { BurstNotDecoded?.Invoke(e); } };
         _station.Congestion += e => { if (!_disposed) { Congestion?.Invoke(e); } };
-
-        // The station's one rule for when. The host only notes that the next request is the identification, whose key-up carries the Morse.
-        _station.IdentificationDue += _ => _identPending = true;
 
         if (options.LastIdentification is { } last)
         {
@@ -400,6 +395,18 @@ public sealed class OfdmFmStationHost : IDisposable
     /// <summary>Raised, on whatever thread posted it, after a transmission's end signal has been posted. For the same tests as <see cref="SignalsOwed"/>.</summary>
     internal event Action? SignalPosted;
 
+    /// <summary>For a test: takes a request as if the station had raised it, and says what the host would key for it (the key-up delay as silence, the samples, and the Morse for an identification), without keying anything.</summary>
+    internal float[] RenderRequestForTests(TransmitRequestEvent request, int txDelayMilliseconds)
+    {
+        lock (_gate)
+        {
+            OnTransmitRequest(request);
+            Outstanding taken = _requests[request.Id];
+            _requests.Remove(request.Id);
+            return taken.Render(txDelayMilliseconds, _channel.SampleRate);
+        }
+    }
+
     /// <summary>The station, for tests that look at what it was asked.</summary>
     internal OfdmStation StationForTests => _station;
 
@@ -477,7 +484,6 @@ public sealed class OfdmFmStationHost : IDisposable
 
         if (e.Kind == ModemSentKind.Identification)
         {
-            _identPending = false;
             IdentificationStarted?.Invoke(_time.GetUtcNow());
         }
 
@@ -525,11 +531,9 @@ public sealed class OfdmFmStationHost : IDisposable
         }
 
         var request = new Outstanding(e.Samples, e.EarliestSample);
-        if (_identPending)
+        if (e.Identification)
         {
-            // The identification: its key-up carries the Morse after the burst.
-            _identPending = false;
-            _identRequest = e.Id;
+            // The identification, and only it: its key-up carries the Morse after the burst.
             request.Morse = _morse;
             request.MorseText = _morseText;
         }
@@ -548,11 +552,6 @@ public sealed class OfdmFmStationHost : IDisposable
         _book.Withdrawn(e.Id);
         if (_requests.TryGetValue(e.Id, out Outstanding? request))
         {
-            if (request.Morse.Length > 0 && e.Id == _identRequest)
-            {
-                // The station offers its identification again: the next request is it.
-                _identPending = true;
-            }
 
             if (request.Cancellation is { } cancellation)
             {
@@ -579,7 +578,6 @@ public sealed class OfdmFmStationHost : IDisposable
             if (!_channel.TransmitLease.Admits(this))
             {
                 // Refused here, so the station keeps offering by its own rules and no queue builds up in the channel; the lease is nobody's news.
-                _identPending |= request.Morse.Length > 0;
                 _requests.Remove(id);
                 _station.TransmitRefused(id);
                 continue;
@@ -638,8 +636,6 @@ public sealed class OfdmFmStationHost : IDisposable
                 case SignalKind.Refused:
                     if (_book.Refused(signal.Id))
                     {
-                        // The station offers its identification again, and the next request is it.
-                        _identPending |= _requests.TryGetValue(signal.Id, out Outstanding? refused) && refused.Morse.Length > 0;
                         if (_channel.ReceiveOnlyReason is { } reason && !_noticed)
                         {
                             _noticed = true;
