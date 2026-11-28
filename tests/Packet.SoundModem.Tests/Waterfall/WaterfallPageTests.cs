@@ -233,7 +233,7 @@ public class WaterfallPageTests
         await reader.SendAsync(
             """{"name":"pdn-mailcast-receiver","pagePort":8130}"""u8.ToArray(),
             WebSocketMessageType.Text, true, connecting.Token);
-        await Eventually.UntilAsync(() => server.ChannelAudio.Listeners.Count > 0, "the reader to be listed");
+        await server.ChannelAudio.WhenClientsAsync(() => server.ChannelAudio.Listeners.Count > 0, "the reader to be listed");
 
         Probe probe = await RunProbeAsync(node, port);
 

@@ -116,6 +116,21 @@ internal sealed class SignalledCounter
         return value;
     }
 
+    /// <summary>Adds <paramref name="amount"/> and wakes whoever is waiting; returns the new value.</summary>
+    public long Add(long amount)
+    {
+        long value = Interlocked.Add(ref _value, amount);
+        _changes.Pulse();
+        return value;
+    }
+
+    /// <summary>Sets the value and wakes whoever is waiting.</summary>
+    public void Set(long value)
+    {
+        Interlocked.Exchange(ref _value, value);
+        _changes.Pulse();
+    }
+
     /// <summary>Waits until <paramref name="condition"/> holds of the value.</summary>
     public Task WhenAsync(Func<long, bool> condition, string what) =>
         WhenAsync(condition, what, Eventually.HangGuard);
@@ -153,6 +168,35 @@ internal sealed class ChangeSignal
     /// <summary>Waits, with the hang guard, until <paramref name="condition"/> holds; looked at again on every pulse.</summary>
     public Task WhenAsync(Func<bool> condition, string what, Func<string> held) =>
         WhenAsync(condition, what, held, Eventually.HangGuard);
+
+    /// <summary>The same for a condition that is itself asynchronous (a look over HTTP, say).</summary>
+    public async Task WhenTrueAsync(Func<Task<bool>> condition, string what, Func<string> held)
+    {
+        using var guard = new CancellationTokenSource(Eventually.HangGuard);
+        while (true)
+        {
+            Task changed = Next();
+            if (await condition())
+            {
+                return;
+            }
+
+            try
+            {
+                await changed.WaitAsync(guard.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                if (await condition())
+                {
+                    return;
+                }
+
+                throw new TimeoutException(
+                    $"waited {Eventually.HangGuard.TotalSeconds:0.###} s for {what}, and it never happened; it held {held()}");
+            }
+        }
+    }
 
     public async Task WhenAsync(Func<bool> condition, string what, Func<string> held, TimeSpan limit)
     {

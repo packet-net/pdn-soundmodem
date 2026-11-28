@@ -42,7 +42,7 @@ public sealed class UberSdrDiscontinuityTests
     public async Task A_Reconnect_Counts_One_Discontinuity()
     {
         using var receiver = new FakeReceiver([new Session(Frames: 25, Hold: false), new Session(Frames: 25, Hold: true)]);
-        var clock = new FakeTimeProvider();
+        var clock = new AnnouncingClock();
         using UberSdrAudioInput input = await UberSdrAudioInput.OpenAsync(
             receiver.Endpoint, Tuning, log: null, CancellationToken.None, clock);
 
@@ -51,11 +51,7 @@ public sealed class UberSdrDiscontinuityTests
 
         // The receiver closed the first session after half a second; the input backs off on its
         // clock before asking again.
-        await Eventually.UntilAsync(() =>
-        {
-            clock.Advance(TimeSpan.FromSeconds(1));
-            return receiver.Sessions >= 2;
-        }, "the input reconnects");
+        await clock.AdvanceUntilAsync(receiver.WhenSessionsAsync(2, "the input reconnects"), "the input's next wait");
         await DrainAsync(input, 20 * AudioPerFrame);
 
         input.Discontinuities.Should().Be(1, "the time between the two sessions was not heard");
@@ -71,16 +67,12 @@ public sealed class UberSdrDiscontinuityTests
         using var receiver = new FakeReceiver(
             [new Session(Frames: 25, Hold: false), new Session(Frames: 25, Hold: true)],
             refuseEndedSessions: true);
-        var clock = new FakeTimeProvider();
+        var clock = new AnnouncingClock();
         using UberSdrAudioInput input = await UberSdrAudioInput.OpenAsync(
             receiver.Endpoint, Tuning, log: null, CancellationToken.None, clock);
 
         await DrainAsync(input, 20 * AudioPerFrame);
-        await Eventually.UntilAsync(() =>
-        {
-            clock.Advance(TimeSpan.FromSeconds(1));
-            return receiver.Sessions >= 2;
-        }, "the input reconnects");
+        await clock.AdvanceUntilAsync(receiver.WhenSessionsAsync(2, "the input reconnects"), "the input's next wait");
         await DrainAsync(input, 20 * AudioPerFrame);
 
         receiver.Refused.Should().Be(0, "no session id was offered twice");
@@ -96,21 +88,15 @@ public sealed class UberSdrDiscontinuityTests
         // once it has said the session ended, every packet has been through the converter and
         // into the ring, and the drop count has stopped moving. Its clock is not moved, so it
         // stays in the wait before the next attempt.
-        var journal = new List<string>();
+        var journal = new SignalledList<string>();
         using var receiver = new FakeReceiver([new Session(Frames: 500, Hold: false)]);
         using UberSdrAudioInput input = await UberSdrAudioInput.OpenAsync(
-            receiver.Endpoint, Tuning, line => { lock (journal) { journal.Add(line); } },
+            receiver.Endpoint, Tuning, journal.Add,
             CancellationToken.None, new FakeTimeProvider());
 
-        await Eventually.UntilAsync(
-            () =>
-            {
-                lock (journal)
-                {
-                    return journal.Any(l => l.Contains("reconnecting to", StringComparison.Ordinal)
-                        || l.Contains("the session ended after", StringComparison.Ordinal));
-                }
-            },
+        await journal.WhenAsync(
+            lines => lines.Any(l => l.Contains("reconnecting to", StringComparison.Ordinal)
+                || l.Contains("the session ended after", StringComparison.Ordinal)),
             "the input to say the session ended, after taking all 500 packets");
         input.DroppedSamples.Should().BeGreaterThan(0, "ten seconds went into an eight-second ring");
 
@@ -124,21 +110,21 @@ public sealed class UberSdrDiscontinuityTests
     public async Task A_Reconnect_Reaches_The_Channel_As_Lost_Audio_And_Empty_Reads_Do_Not()
     {
         using var receiver = new FakeReceiver([new Session(Frames: 25, Hold: false), new Session(Frames: 25, Hold: true)]);
-        var clock = new FakeTimeProvider();
+        var clock = new AnnouncingClock();
         using UberSdrAudioInput input = await UberSdrAudioInput.OpenAsync(
             receiver.Endpoint, Tuning, log: null, CancellationToken.None, clock);
 
         var channel = new SoundModemChannel(12000);
         var reads = new EmptyReadCounter(input);
         int losses = 0;
-        long delivered = 0;
+        var delivered = new SignalledCounter();
         long lostAt = -1;
         channel.ReceiveAudioLost += () =>
         {
             Interlocked.Increment(ref losses);
-            Interlocked.Exchange(ref lostAt, Interlocked.Read(ref delivered));
+            Interlocked.Exchange(ref lostAt, delivered.Value);
         };
-        channel.AddReceiveTap(samples => Interlocked.Add(ref delivered, samples.Length));
+        channel.AddReceiveTap(samples => delivered.Add(samples.Length));
         using var stopping = new CancellationTokenSource();
 
         // Wired as UberSdrStationDevice wires it. The station runs on the real clock: the fake one
@@ -158,21 +144,17 @@ public sealed class UberSdrDiscontinuityTests
         Task running = Task.Factory.StartNew(
             station.Run, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
-        await Eventually.UntilAsync(() => Interlocked.Read(ref delivered) >= 20 * AudioPerFrame, "the first session is heard");
+        await delivered.WhenAsync(d => d >= 20 * AudioPerFrame, "the first session is heard");
 
         // Empty reads while the receiver is between sessions: the loop turns, nothing is lost. The
         // station has been round on empty reads a few times once the counter says so; the input's
         // clock is not moved, so it cannot reconnect before then.
-        await Eventually.UntilAsync(() => reads.EmptyReads >= 3, "the station to read the empty input a few times");
+        await reads.WhenEmptyReadsAsync(3, "the station to read the empty input a few times");
         Volatile.Read(ref losses).Should().Be(0, "a Read that comes back empty has lost nothing");
 
-        long before = Interlocked.Read(ref delivered);
-        await Eventually.UntilAsync(() =>
-        {
-            clock.Advance(TimeSpan.FromSeconds(1));
-            return receiver.Sessions >= 2;
-        }, "the input reconnects");
-        await Eventually.UntilAsync(() => Interlocked.Read(ref delivered) >= before + (20 * AudioPerFrame), "the second session is heard");
+        long before = delivered.Value;
+        await clock.AdvanceUntilAsync(receiver.WhenSessionsAsync(2, "the input reconnects"), "the input's next wait");
+        await delivered.WhenAsync(d => d >= before + (20 * AudioPerFrame), "the second session is heard");
 
         Volatile.Read(ref losses).Should().Be(1, "one hole, between the two sessions");
         Interlocked.Read(ref lostAt).Should().Be(before,
@@ -241,10 +223,12 @@ public sealed class UberSdrDiscontinuityTests
     /// it has delivered something, which is what a receiver between sessions looks like.</summary>
     private sealed class EmptyReadCounter(UberSdrAudioInput inner) : IAudioInput
     {
-        private long _empty;
+        private readonly SignalledCounter _empty = new();
         private long _delivered;
 
-        public long EmptyReads => Interlocked.Read(ref _empty);
+        public long EmptyReads => _empty.Value;
+
+        public Task WhenEmptyReadsAsync(long count, string what) => _empty.WhenAsync(e => e >= count, what);
 
         public int SampleRate => inner.SampleRate;
 
@@ -257,7 +241,7 @@ public sealed class UberSdrDiscontinuityTests
             }
             else if (Interlocked.Read(ref _delivered) > 0)
             {
-                Interlocked.Increment(ref _empty);
+                _empty.Increment();
             }
 
             return got;
@@ -307,6 +291,12 @@ public sealed class UberSdrDiscontinuityTests
 
         /// <summary>WebSocket sessions opened so far.</summary>
         public int Sessions => Volatile.Read(ref _sessions);
+
+        private readonly ChangeSignal _sessionsChanged = new();
+
+        /// <summary>Waits, without polling, until at least <paramref name="count"/> sessions have been opened.</summary>
+        public Task WhenSessionsAsync(int count, string what) =>
+            _sessionsChanged.WhenAsync(() => Sessions >= count, what, () => $"{Sessions} session(s)");
 
         /// <summary>IQ packets sent so far, over every session.</summary>
         public int FramesSent => Volatile.Read(ref _framesSent);
@@ -485,6 +475,7 @@ public sealed class UberSdrDiscontinuityTests
             }
 
             int index = Interlocked.Increment(ref _sessions) - 1;
+            _sessionsChanged.Pulse();
             HttpListenerWebSocketContext socketContext = await context.AcceptWebSocketAsync(null);
             using WebSocket socket = socketContext.WebSocket;
             Session session = _script[Math.Min(index, _script.Length - 1)];

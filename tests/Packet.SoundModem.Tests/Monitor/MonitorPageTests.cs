@@ -219,9 +219,7 @@ public class MonitorPageTests
         await using var station = await StubStation.OpenAsync(host.Port, host.Token, "GB7RDG-2",
             site: "https://gb7rdg.example/");
         await station.WelcomedAsync();
-        await Eventually.UntilAsync(
-            async () => (await host.InstancesAsync()).Contains("\"kind\":\"station\"", StringComparison.Ordinal),
-            "the station's row in /api/instances");
+        await host.WhenRowsAsync(async () => (await host.InstancesAsync()).Contains("\"kind\":\"station\"", StringComparison.Ordinal), "the station's row in /api/instances");
 
         Probe probe = await RunProbeAsync(node, host.Port);
 
@@ -281,9 +279,7 @@ public class MonitorPageTests
             radio: "\"><b>bold</b>",
             site: "javascript:alert(3)");
         await station.WelcomedAsync();
-        await Eventually.UntilAsync(
-            async () => (await host.InstancesAsync()).Contains("\"kind\":\"station\"", StringComparison.Ordinal),
-            "the station's row in /api/instances");
+        await host.WhenRowsAsync(async () => (await host.InstancesAsync()).Contains("\"kind\":\"station\"", StringComparison.Ordinal), "the station's row in /api/instances");
 
         Probe probe = await RunProbeAsync(node, host.Port);
 
@@ -431,6 +427,25 @@ public class MonitorPageTests
         internal Task RefreshAsync() => _host.RefreshDirectoryAsync();
 
         /// <summary>What the API says, as against what the page made of it.</summary>
+        /// <summary>
+        /// Waits, without polling, until <paramref name="condition"/> holds, looked at again whenever a
+        /// station's row may have changed (<see cref="MonitorHost.RowsChanged"/>).
+        /// </summary>
+        internal async Task WhenRowsAsync(Func<Task<bool>> condition, string what)
+        {
+            var changes = new ChangeSignal();
+            void Pulse() => changes.Pulse();
+            _host.RowsChanged += Pulse;
+            try
+            {
+                await changes.WhenTrueAsync(condition, what, () => "the rows as last read");
+            }
+            finally
+            {
+                _host.RowsChanged -= Pulse;
+            }
+        }
+
         internal Task<string> InstancesAsync() => _http.GetStringAsync("/api/instances");
 
         public async ValueTask DisposeAsync()

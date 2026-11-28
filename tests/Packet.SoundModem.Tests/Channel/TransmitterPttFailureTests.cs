@@ -61,7 +61,7 @@ public class TransmitterPttFailureTests
         channel.Csma.Persistence = 255;
         var output = new FakeAudioOutput(SampleRate);
         var ptt = new FlakyPtt { FailKey = true };
-        var failures = new List<Exception>();
+        var failures = new SignalledList<Exception>();
         channel.PttFailed += failures.Add;
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         Task transmitter = channel.RunTransmitterAsync(output, ptt, cancellation.Token);
@@ -77,7 +77,7 @@ public class TransmitterPttFailureTests
         // (SoundModemChannel's keyup catch does them in that order), so the await above can resume
         // before the announcement has been made. Asserting immediately passes on an idle machine
         // and fails on a loaded one, which is exactly what it did on CI.
-        await Eventually.UntilAsync(() => failures.Count == 1, "the keyup failure to be reported");
+        await failures.WhenAsync(f => f.Count == 1, "the keyup failure to be reported");
         failures.Should().ContainSingle();
         output.WrittenCount.Should().Be(0, "nothing may go out through a failed keyup");
         ptt.Unkeys.Should().Be(0, "there is nothing to unkey after a failed keyup");
@@ -100,7 +100,7 @@ public class TransmitterPttFailureTests
         channel.Csma.Persistence = 255;
         var output = new FakeAudioOutput(SampleRate);
         var ptt = new FlakyPtt { FailUnkey = true };
-        var failures = new List<Exception>();
+        var failures = new SignalledList<Exception>();
         channel.PttFailed += failures.Add;
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         Task transmitter = channel.RunTransmitterAsync(output, ptt, cancellation.Token);
@@ -109,7 +109,7 @@ public class TransmitterPttFailureTests
         // announce, not a reason to fault a frame whose audio fully left the device.
         await Eventually.SignalAsync(channel.EnqueueTransmit(0, SampleFrame()), "channel.EnqueueTransmit(0, SampleFrame()) to complete");
         output.WrittenCount.Should().BeGreaterThan(0);
-        await Eventually.UntilAsync(() => failures.Count == 1, "the keyup failure to be reported");
+        await failures.WhenAsync(f => f.Count == 1, "the keyup failure to be reported");
         failures.Single().Should().BeOfType<IOException>();
         transmitter.IsCompleted.Should().BeFalse("an unkey failure must not kill the loop");
 

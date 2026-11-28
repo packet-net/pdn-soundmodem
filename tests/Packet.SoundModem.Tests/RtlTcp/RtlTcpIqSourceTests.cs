@@ -502,7 +502,7 @@ public sealed class RtlTcpIqSourceTests
         await source.OpenAsync(CancellationToken.None);
         server.WaitForConnections(1);
 
-        long lastGeneration = 0;
+        var lastGeneration = new SignalledCounter();
         long lastLost = 0;
         using var reading = new CancellationTokenSource();
         Task reader = Task.Run(() =>
@@ -510,7 +510,7 @@ public sealed class RtlTcpIqSourceTests
             var buffer = new float[65536];
             while (!reading.IsCancellationRequested && source.Read(buffer) > 0)
             {
-                Volatile.Write(ref lastGeneration, source.TuningGeneration);
+                lastGeneration.Set(source.TuningGeneration);
                 Volatile.Write(ref lastLost, source.SamplesLost);
             }
         });
@@ -541,7 +541,7 @@ public sealed class RtlTcpIqSourceTests
         Stream(5, 100_000);
         source.SessionLive.Should().BeTrue();
         _journal.Should().Contain(l => l.Contains("again", StringComparison.Ordinal));
-        Eventually.Until(() => Volatile.Read(ref lastGeneration) == 1, "the first block back, as a fresh start");
+        await lastGeneration.WhenAsync(g => g == 1, "the first block back, as a fresh start");
         Volatile.Read(ref lastLost).Should().BeGreaterThan(0, "what was dropped is reported as lost");
 
         reading.Cancel();

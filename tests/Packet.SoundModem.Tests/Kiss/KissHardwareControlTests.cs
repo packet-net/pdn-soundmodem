@@ -202,7 +202,7 @@ public class KissHardwareControlTests : IAsyncLifetime
         using TcpClient client = await ConnectAsync(_server);
         NetworkStream stream = client.GetStream();
 
-        var frames = new List<KissFrame>();
+        var frames = new SignalledList<KissFrame>();
         var decoder = new KissDecoder(frames.Add);
         var reader = Task.Run(async () =>
         {
@@ -229,15 +229,7 @@ public class KissHardwareControlTests : IAsyncLifetime
                 new KissFrame(0, KissCommand.AckModeData, [(byte)i, 0xAA])));
         }
 
-        await Eventually.UntilAsync(
-            () =>
-            {
-                lock (frames)
-                {
-                    return frames.Count >= idOnly;
-                }
-            },
-            "every ack to come back");
+await frames.WhenCountAsync(idOnly, "every ack to come back");
 
         lock (frames)
         {

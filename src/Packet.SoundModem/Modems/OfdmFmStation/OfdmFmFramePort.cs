@@ -81,6 +81,9 @@ public sealed class OfdmFmFramePort : ISubChannelPort, IDisposable
     /// <summary>Datagrams heard whose protocol byte is not 0x00 (a whole AX.25 frame). They are not delivered as frames.</summary>
     public long NonAx25Datagrams => Interlocked.Read(ref _nonAx25);
 
+    /// <summary>Raised after <see cref="NonAx25Datagrams"/> has moved, on the thread that heard it. For tests, which wait on it instead of looking again after a pause.</summary>
+    internal event Action? NonAx25Counted;
+
     /// <summary>Received frames dropped because more than 1024 were waiting for the channel's listeners.</summary>
     public long ReceivedFramesLost => Interlocked.Read(ref _lostOnReceive);
 
@@ -253,6 +256,7 @@ public sealed class OfdmFmFramePort : ISubChannelPort, IDisposable
         if (e.Protocol != LinkProtocol.Ax25Frame)
         {
             Interlocked.Increment(ref _nonAx25);
+            NonAx25Counted?.Invoke();
             return;
         }
 

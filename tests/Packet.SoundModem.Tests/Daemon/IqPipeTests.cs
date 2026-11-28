@@ -22,8 +22,8 @@ namespace Packet.SoundModem.Tests.Daemon;
 public sealed class IqPipeTests : IDisposable
 {
     private readonly string _dir = Directory.CreateTempSubdirectory("pdnsm-iqpipe").FullName;
-    private readonly List<string> _lines = [];
-    private readonly List<string> _errors = [];
+    private readonly SignalledList<string> _lines = new();
+    private readonly SignalledList<string> _errors = new();
 
     public void Dispose()
     {
@@ -233,8 +233,8 @@ public sealed class IqPipeTests : IDisposable
             Command("echo ready >&2; exec sleep 600"), IqSampleFormat.Cu8, rate: 48_000, maxYoungRuns: 3);
         source.StartNow();
         Task<int> reading = Task.Run(() => source.Read(new float[64]));
-        await Eventually.UntilAsync(
-            () => Lines().Any(line => line.EndsWith(": ready", StringComparison.Ordinal)),
+        await _lines.WhenAsync(
+            lines => lines.Any(line => line.EndsWith(": ready", StringComparison.Ordinal)),
             "the child to say it is running");
         reading.IsCompleted.Should().BeFalse("nothing has been written");
 
@@ -254,27 +254,24 @@ public sealed class IqPipeTests : IDisposable
         // on its restart delay, so how long the writers' silence lasted is what the test says it was.
         var clock = new TimerSignalTimeProvider();
         var source = Source(new FifoIqFeedLauncher(fifo), IqSampleFormat.Cu8, rate: 10_000, maxYoungRuns: 5, clock: clock);
-        var heard = new List<(int Floats, long Lost)>();
+        var heard = new SignalledList<(int Floats, long Lost)>(h => $"{h.Floats} floats, {h.Lost} lost");
         Task reader = Task.Run(() =>
         {
             var buffer = new float[4096];
             int got;
             while ((got = source.Read(buffer)) > 0)
             {
-                lock (heard)
-                {
-                    heard.Add((got, source.SamplesLost));
-                }
+                heard.Add((got, source.SamplesLost));
             }
         });
 
         await WriteAsync(fifo, new byte[1000]);
-        await Eventually.UntilAsync(() => Heard(heard) >= 1000, "the first writer's 500 pairs are read");
+        await heard.WhenAsync(h => Heard(h) >= 1000, "the first writer's 500 pairs are read");
         await Eventually.SignalAsync(
             clock.WhenCreatedAsync(TimeSpan.FromMilliseconds(20)), "the source to park on its restart delay");
         clock.Advance(TimeSpan.FromMilliseconds(300));
         await WriteAsync(fifo, new byte[1000]);
-        await Eventually.UntilAsync(() => Heard(heard) >= 2000, "the second writer's are read too");
+        await heard.WhenAsync(h => Heard(h) >= 2000, "the second writer's are read too");
 
         long lost;
         lock (heard)
@@ -475,7 +472,7 @@ public sealed class IqPipeTests : IDisposable
 
         var clock = new FakeTimeProvider();
         using var stopping = new CancellationTokenSource();
-        var journal = new StationJournal("", line => { lock (_lines) { _lines.Add(line); } }, line => { lock (_errors) { _errors.Add(line); } });
+        var journal = new StationJournal("", _lines.Add, _errors.Add);
         using var station = new DaemonStation(
             new StationOptions
             {
@@ -488,14 +485,14 @@ public sealed class IqPipeTests : IDisposable
                 TimeProvider = clock,
             },
             stopping.Token);
-        var faults = new List<StationFault>();
+        var faults = new SignalledList<StationFault>();
         station.Faulted += faults.Add;
         Task running = Task.Factory.StartNew(station.Run, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
-        await Eventually.UntilAsync(() => counting.Delivered > 0 && counting.EmptyAfterDelivery >= 3, "the IQ came and then stopped");
+        await counting.WhenAsync(c => c.Delivered > 0 && c.EmptyAfterDelivery >= 3, "the IQ came and then stopped");
         clock.Advance(TimeSpan.FromSeconds(30));
 
-        await Eventually.UntilAsync(() => faults.Count > 0, "the starvation watch fires");
+        await faults.WhenCountAsync(1, "the starvation watch fires");
         faults[0].Reason.Should().Be(
             "receive feed starved: the SDR program (head) has delivered no IQ for 30 s - restarting the station to start afresh",
             "the device names what starved, not a sound card");
@@ -588,34 +585,22 @@ public sealed class IqPipeTests : IDisposable
 
     private void Note(string line)
     {
-        lock (_lines)
-        {
-            _lines.Add(line);
-        }
+        _lines.Add(line);
     }
 
     private void NoteError(string line)
     {
-        lock (_errors)
-        {
-            _errors.Add(line);
-        }
+        _errors.Add(line);
     }
 
     private List<string> Lines()
     {
-        lock (_lines)
-        {
-            return [.. _lines];
-        }
+        return [.. _lines];
     }
 
     private List<string> Errors()
     {
-        lock (_errors)
-        {
-            return [.. _errors];
-        }
+        return [.. _errors];
     }
 
     private static float[] ReadToEnd(IqPipeSource source)
@@ -631,13 +616,7 @@ public sealed class IqPipeTests : IDisposable
         return [.. all];
     }
 
-    private static int Heard(List<(int Floats, long Lost)> heard)
-    {
-        lock (heard)
-        {
-            return heard.Sum(h => h.Floats);
-        }
-    }
+    private static int Heard(IReadOnlyList<(int Floats, long Lost)> heard) => heard.Sum(h => h.Floats);
 
     private static async Task WriteAsync(string fifo, byte[] bytes)
     {
@@ -880,8 +859,14 @@ public sealed class IqPipeTests : IDisposable
     /// came after it had.</summary>
     private sealed class CountingInput(IqPipeAudioInput inner) : IAudioInput, IDisposable
     {
+        private readonly ChangeSignal _changes = new();
         private long _delivered;
         private long _empty;
+
+        /// <summary>Waits, without polling, until the reads so far satisfy <paramref name="condition"/>.</summary>
+        public Task WhenAsync(Func<CountingInput, bool> condition, string what) =>
+            _changes.WhenAsync(
+                () => condition(this), what, () => $"{Delivered} delivered, {EmptyAfterDelivery} empty after delivery");
 
         public long Delivered => Interlocked.Read(ref _delivered);
 
@@ -901,6 +886,7 @@ public sealed class IqPipeTests : IDisposable
                 Interlocked.Increment(ref _empty);
             }
 
+            _changes.Pulse();
             return got;
         }
 

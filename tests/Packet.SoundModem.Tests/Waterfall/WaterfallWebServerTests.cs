@@ -1569,8 +1569,8 @@ public class WaterfallWebServerTests : IAsyncLifetime
     {
         // The count is what an on-demand receiver runs on: a session while it is above zero,
         // none once it has been zero for the linger.
-        var counts = new List<int>();
-        _server.ViewersChanged += n => { lock (counts) counts.Add(n); };
+        var counts = new SignalledList<int>();
+        _server.ViewersChanged += counts.Add;
 
         using var first = new ClientWebSocket();
         await first.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
@@ -1585,14 +1585,13 @@ public class WaterfallWebServerTests : IAsyncLifetime
         // Waited for on the event rather than on the property. The two are set one after the
         // other and not under one lock, so a wait on the count can win the race to the assertion
         // below by the width of those few statements - which it did, once, in a full run.
-        int reported() { lock (counts) return counts.Count; }
 
         await first.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
-        await Eventually.UntilAsync(() => reported() == 3, "the closed page is no longer a viewer");
+        await counts.WhenAsync(c => c.Count == 3, "the closed page is no longer a viewer");
         _server.Viewers.Should().Be(1);
 
         await second.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
-        await Eventually.UntilAsync(() => reported() == 4, "the last page leaving reports nobody");
+        await counts.WhenAsync(c => c.Count == 4, "the last page leaving reports nobody");
         _server.Viewers.Should().Be(0);
 
         lock (counts)
@@ -1671,7 +1670,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
         await reader.SendAsync(
             """{"name":"pdn-mailcast-receiver","pagePort":8130}"""u8.ToArray(),
             WebSocketMessageType.Text, true, _cancellation.Token);
-        await Eventually.UntilAsync(() => server.ChannelAudio.Listeners.Count > 0, "the reader to be listed");
+        await server.ChannelAudio.WhenClientsAsync(() => server.ChannelAudio.Listeners.Count > 0, "the reader to be listed");
 
         server.ChannelAudio.Listeners.Should().HaveCount(1, "the reader did name itself");
 

@@ -61,10 +61,10 @@ public class MonitorHostTests
         await h.GetAsync($"/r/{DalgetySlug}/");
 
         using ClientWebSocket first = await h.WatchAsync(DalgetySlug);
-        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).Viewers == 1, "the viewer count to be 1");
+        await h.WhenRowsAsync(async () => (await h.RowAsync(DalgetySlug)).Viewers == 1, "the viewer count to be 1");
 
         using ClientWebSocket second = await h.WatchAsync(DalgetySlug);
-        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).Viewers == 2, "the viewer count to be 2");
+        await h.WhenRowsAsync(async () => (await h.RowAsync(DalgetySlug)).Viewers == 2, "the viewer count to be 2");
 
         Row row = await h.RowAsync(DalgetySlug);
         row.State.Should().Be("live");
@@ -80,7 +80,7 @@ public class MonitorHostTests
         await h.GetAsync($"/r/{DalgetySlug}/");
 
         using ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
-        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
+        await h.WhenRowsAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
 
         // Nothing was combined, shared or warmed up: the other receiver has not been contacted,
         // and does not even have a station.
@@ -98,11 +98,11 @@ public class MonitorHostTests
         await h.GetAsync($"/r/{DalgetySlug}/");
 
         ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
-        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
+        await h.WhenRowsAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
         FakeSession session = h.LastSession(DalgetyHost);
 
         await h.LeaveAsync(watching);
-        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "lingering", "the row to be lingering");
+        await h.WhenRowsAsync(async () => (await h.RowAsync(DalgetySlug)).State == "lingering", "the row to be lingering");
         session.Disposed.Should().BeFalse();
 
         h.Time.Advance(Harness.Linger - TimeSpan.FromSeconds(1));
@@ -122,15 +122,15 @@ public class MonitorHostTests
         await h.GetAsync($"/r/{DalgetySlug}/");
 
         ClientWebSocket first = await h.WatchAsync(DalgetySlug);
-        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
+        await h.WhenRowsAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
         FakeSession session = h.LastSession(DalgetyHost);
 
         await h.LeaveAsync(first);
-        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "lingering", "the row to be lingering");
+        await h.WhenRowsAsync(async () => (await h.RowAsync(DalgetySlug)).State == "lingering", "the row to be lingering");
         h.Time.Advance(TimeSpan.FromSeconds(30));
 
         using ClientWebSocket second = await h.WatchAsync(DalgetySlug);
-        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
+        await h.WhenRowsAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
 
         h.Sessions(DalgetyHost).Should().Be(1, "the held session is the one they came back to");
         session.Disposed.Should().BeFalse();
@@ -147,7 +147,7 @@ public class MonitorHostTests
         await using var h = await Harness.StartAsync();
         await h.GetAsync($"/r/{DalgetySlug}/");
         using ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
-        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
+        await h.WhenRowsAsync(async () => (await h.RowAsync(DalgetySlug)).State == "live", "the row to be live");
 
         using JsonDocument snapshot = JsonDocument.Parse(await h.GetAsync("/api/instances"));
         JsonElement root = snapshot.RootElement;
@@ -250,14 +250,14 @@ public class MonitorHostTests
         await h.GetAsync($"/r/{DalgetySlug}/");
 
         using ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
-        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "faulted", "the row to be faulted");
+        await h.WhenRowsAsync(async () => (await h.RowAsync(DalgetySlug)).State == "faulted", "the row to be faulted");
 
         h.Errors.Should().Contain(e => e.Contains("cannot reach") && e.Contains("hostname"));
         h.Preflights(DalgetyHost).Should().Be(1);
 
         // And the ladder picks it up again rather than the station being wedged for good.
         await AdvanceWatchingAsync(watching, h.ServerOf(DalgetySlug), h.Time, MonitorHost.RebuildAfter);
-        await Eventually.UntilAsync(() => Task.FromResult(h.Preflights(DalgetyHost) >= 2), "2 preflights to be made");
+        await h.WhenPreflightsAsync(DalgetyHost, 2, "2 preflights to be made");
     }
 
     [Fact]
@@ -271,13 +271,13 @@ public class MonitorHostTests
         await h.GetAsync($"/r/{DalgetySlug}/");
 
         ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
-        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "faulted", "the row to be faulted");
+        await h.WhenRowsAsync(async () => (await h.RowAsync(DalgetySlug)).State == "faulted", "the row to be faulted");
 
         await h.LeaveAsync(watching);
-        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).Viewers == 0, "the viewer count to be 0");
+        await h.WhenRowsAsync(async () => (await h.RowAsync(DalgetySlug)).Viewers == 0, "the viewer count to be 0");
 
         h.Time.Advance(MonitorHost.RebuildAfter);
-        await Eventually.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "idle", "the row to be idle");
+        await h.WhenRowsAsync(async () => (await h.RowAsync(DalgetySlug)).State == "idle", "the row to be idle");
         h.Preflights(DalgetyHost).Should().Be(1, "nobody was watching, so nobody was asking");
     }
 
@@ -459,6 +459,7 @@ public class MonitorHostTests
         internal static readonly TimeSpan Linger = TimeSpan.FromSeconds(60);
 
         private readonly MonitorHost _host;
+        private readonly ChangeSignal _preflights = new();
         private readonly HttpClient _http;
         private readonly Dictionary<string, Receiver> _receivers = new(StringComparer.Ordinal);
         private readonly List<ClientWebSocket> _sockets = [];
@@ -500,6 +501,7 @@ public class MonitorHostTests
                 {
                     Receiver fake = _receivers[receiver.Host];
                     Interlocked.Increment(ref fake.Preflights);
+                    _preflights.Pulse();
                     if (_openFailure is { } failure)
                     {
                         throw failure;
@@ -540,6 +542,25 @@ public class MonitorHostTests
 
         internal FakeTimeProvider Time { get; } = new();
 
+        /// <summary>
+        /// Waits, without polling, until <paramref name="condition"/> holds, looked at again whenever a
+        /// station's row may have changed (<see cref="MonitorHost.RowsChanged"/>).
+        /// </summary>
+        internal async Task WhenRowsAsync(Func<Task<bool>> condition, string what)
+        {
+            var changes = new ChangeSignal();
+            void Pulse() => changes.Pulse();
+            _host.RowsChanged += Pulse;
+            try
+            {
+                await changes.WhenTrueAsync(condition, what, () => "the rows as last read");
+            }
+            finally
+            {
+                _host.RowsChanged -= Pulse;
+            }
+        }
+
         internal WaterfallWebServer ServerOf(string slug) =>
             _host.ServerOf(slug) ?? throw new InvalidOperationException($"{slug} has no station yet");
 
@@ -567,6 +588,10 @@ public class MonitorHostTests
         /// <summary>How many times this receiver's pre-flight has been run: once per station,
         /// not once per browser.</summary>
         internal int Preflights(string host) => Volatile.Read(ref _receivers[host].Preflights);
+
+        /// <summary>Waits, without polling, until the receiver has been asked this many times.</summary>
+        internal Task WhenPreflightsAsync(string host, int count, string what) =>
+            _preflights.WhenAsync(() => Preflights(host) >= count, what, () => $"{Preflights(host)} pre-flight(s)");
 
         /// <summary>How many streaming sessions this receiver has been asked for. The number the
         /// whole design exists to keep at one.</summary>

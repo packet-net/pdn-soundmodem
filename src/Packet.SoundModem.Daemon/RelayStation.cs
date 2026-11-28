@@ -141,6 +141,7 @@ internal sealed class RelayStation : IMonitorStation
             try
             {
                 _frameLog = FrameLog.Open(path, _time);
+                _frameLog.Written += NoteChanged;
                 Journal.Write($"frame log: {_frameLog.Path}");
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException
@@ -262,6 +263,11 @@ internal sealed class RelayStation : IMonitorStation
         _routed = true;
         Journal.Write($"station: {Server.Url} for {UberSdrDirectory.Ascii(Callsign)}");
     }
+
+    /// <inheritdoc />
+    public event Action? Changed;
+
+    private void NoteChanged() => Changed?.Invoke();
 
     private UplinkAudioInput NewInput() =>
         new(Hello.AudioRate, transmit => Server.IncomingIsTransmit = transmit)
@@ -389,6 +395,7 @@ internal sealed class RelayStation : IMonitorStation
             // after this gets the new credit and the new link.
             Server.SetReceiver(Credit, hello.Site);
             Server.SetRadioStatus(Chip(_stationStatus ?? "connected"));
+            NoteChanged();
             return;
         }
 
@@ -397,6 +404,7 @@ internal sealed class RelayStation : IMonitorStation
             + $"{string.Join(" and ", Changes(was, hello))}, so its page is being rebuilt; its "
             + "frame log and its links are kept");
         await RebuildAsync().ConfigureAwait(false);
+        NoteChanged();
     }
 
     /// <summary>Whether the difference between two hellos is one the built objects hold.</summary>
@@ -545,6 +553,7 @@ internal sealed class RelayStation : IMonitorStation
         _input.MarkBreak();
         _input.Connected = true;
         Server.SetRadioStatus(Chip(_stationStatus ?? "connected"));
+        NoteChanged();
     }
 
     /// <summary>That socket has gone. The page, the log and the links stay exactly as they are.</summary>
@@ -564,6 +573,7 @@ internal sealed class RelayStation : IMonitorStation
         _input.Connected = false;
         _input.Flush();
         Server.SetRadioStatus(Chip("not connected just now"));
+        NoteChanged();
     }
 
     /// <summary>
@@ -764,6 +774,8 @@ internal sealed class RelayStation : IMonitorStation
         {
             Announce();
         }
+
+        NoteChanged();
     }
 
     private void LingerExpired()
@@ -789,6 +801,8 @@ internal sealed class RelayStation : IMonitorStation
         {
             Announce();
         }
+
+        NoteChanged();
     }
 
     // ------------------------------------------------------------------ what the picker is told
@@ -866,6 +880,7 @@ internal sealed class RelayStation : IMonitorStation
 
         Journal.WriteError(fault.Reason);
         Server.SetRadioStatus(Chip(fault.Reason));
+        NoteChanged();
 
         // Deliberately not Environment.Exit on fault.Stalled, which is what a receiver's station
         // does: this input's Read waits on an event with a timeout and cannot block for ever, so

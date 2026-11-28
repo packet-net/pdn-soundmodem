@@ -603,7 +603,7 @@ public partial class ConfigPageTests : IDisposable
 
         // The answer is written before the restart is asked for, on purpose (the caller hears
         // the outcome first), so the restart can land a moment after the response does.
-        await Eventually.UntilAsync(() => station.Restarts > 0, "the restart to be asked for");
+        await station.WhenRestartsAsync(1, "the restart to be asked for");
 
         station.Restarts.Should().Be(1);
     }
@@ -1787,7 +1787,7 @@ public partial class ConfigPageTests : IDisposable
                 key, ConfigPath, PendingPath,
                 runningJson: () => File.ReadAllText(ConfigPath),
                 ephemeralInForce: false,
-                requestRestart: () => Interlocked.Increment(ref _restarts),
+                requestRestart: () => _restarts.Increment(),
                 openConfiguration: openConfiguration,
                 time: time);
             if (discovery is not null)
@@ -1811,9 +1811,12 @@ public partial class ConfigPageTests : IDisposable
 
         public string PendingPath { get; }
 
-        private int _restarts;
+        private readonly SignalledCounter _restarts = new();
 
-        public int Restarts => Volatile.Read(ref _restarts);
+        public int Restarts => (int)_restarts.Value;
+
+        /// <summary>Waits, without polling, until a restart has been asked for.</summary>
+        public Task WhenRestartsAsync(int count, string what) => _restarts.WhenAsync(r => r >= count, what);
 
         public HttpClient Client { get; } = new();
 
