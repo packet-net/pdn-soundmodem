@@ -22,7 +22,7 @@ namespace Packet.SoundModem.Modems.OfdmFmStation;
 public sealed class OfdmFmFramePort : ISubChannelPort, IDisposable
 {
     /// <summary>The mode's name, as shown wherever a modem's would be.</summary>
-    public const string ModeName = "ofdm-fm-auto";
+    public const string ModeName = "ofdm-fm";
 
     /// <summary>How many received frames may wait for the channel's listeners before more are counted and dropped.</summary>
     private const int ReceiveQueueLimit = 1024;

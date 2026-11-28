@@ -31,7 +31,7 @@
     <!-- The adaptive OFDM-FM station: the waveform, the adaptation rules and the station that runs
          them on a sample count. AGPL-3.0-or-later, the same licence as this repository. The host
          that gives it audio (Modems/OfdmFmStation/) stays here. See docs/dev/modem-packages.md. -->
-    <PackageVersion Include="M0LTE.OfdmFm" Version="0.1.0" />
+    <PackageVersion Include="M0LTE.OfdmFm" Version="0.2.0" />
     <!-- A STANAG 5066 node (the engine, its SIS server and an MS110D modem port), started only
          by an "s5066" section; the daemon references it, the library package does not.
          AGPL-3.0-or-later. The client is tests only. -->

@@ -38,6 +38,8 @@
     <ProjectReference Include="../../tools/Packet.SoundModem.UberSdr/Packet.SoundModem.UberSdr.csproj" />
     <!-- Dev tool under test: the OTA transmit harness (Ota/*Tests). -->
     <ProjectReference Include="../../tools/Packet.SoundModem.Ota/Packet.SoundModem.Ota.csproj" />
+    <!-- Dev tool under test: pdn-ofdm, the OFDM-FM command line (OfdmFmTool/*Tests). -->
+    <ProjectReference Include="../../tools/Packet.SoundModem.OfdmFmTool/Packet.SoundModem.OfdmFmTool.csproj" />
     <!-- Dev tool under test: the unknown-mode WAV sweep (MultiDecode/*Tests). -->
     <ProjectReference Include="../../tools/Packet.SoundModem.MultiDecode/Packet.SoundModem.MultiDecode.csproj" />
     <!-- Dev tool under test: the corpus benchmark, and in particular the FLAC decoder that
