@@ -1069,11 +1069,12 @@ public class UplinkTests
 
         // Quiet with nobody watching is the whole design, so the starvation watch is stood down
         // by SessionLive rather than firing every threshold. Wound well past it, several times
-        // over, because the watch is polled from a timer and would fire on any one of them.
+        // over, because the watch is polled from a timer and would fire on any one of them. A fake
+        // clock runs the timers that fall due inside the advance itself, so each poll has been made
+        // by the time the advance returns.
         for (int i = 0; i < 5; i++)
         {
             h.Time.Advance(TimeSpan.FromSeconds(60));
-            await Task.Delay(20);
         }
 
         h.Errors.Should().NotContain(

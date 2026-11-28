@@ -27,7 +27,34 @@ public class WaterfallWebServerTests : IAsyncLifetime
         _channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         _channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
         _port = FreePorts.Next();
-        _server = new WaterfallWebServer(_channel, _port);
+        _server = new WaterfallWebServer(_channel, _port, new WaterfallOptions { TimeProvider = _clock });
+    }
+
+    private readonly FakeTimeProvider _clock = new();
+
+    /// <summary>
+    /// Sends a request and returns once the server's receive loop has acted on it. The loop handles
+    /// one message at a time and tells the test it has heard each (<see cref="WaterfallWebServer.PageHeard"/>),
+    /// so a message sent behind the request and heard is proof the request was applied first.
+    /// </summary>
+    private async Task SendAppliedAsync(ClientWebSocket socket, string json)
+    {
+        using var heard = new SemaphoreSlim(0);
+        void Heard() => heard.Release();
+        _server.PageHeard += Heard;
+        try
+        {
+            await socket.SendAsync(
+                Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, _cancellation.Token);
+            await socket.SendAsync(
+                Encoding.UTF8.GetBytes("{\"type\":\"pong\"}"), WebSocketMessageType.Text, true, _cancellation.Token);
+            await Eventually.SignalAsync(heard.WaitAsync(), "the server to read the request");
+            await Eventually.SignalAsync(heard.WaitAsync(), "the server to read the message behind it");
+        }
+        finally
+        {
+            _server.PageHeard -= Heard;
+        }
     }
 
     public ValueTask InitializeAsync()
@@ -424,6 +451,10 @@ public class WaterfallWebServerTests : IAsyncLifetime
         var output = new Channel.FakeAudioOutput(SampleRate);
         Task transmitter = _channel.RunTransmitterAsync(output, new NullPtt(), transmitCancel.Token);
         await Eventually.SignalAsync(_channel.EnqueueTransmit(0, TestFrame()), "_channel.EnqueueTransmit(0, TestFrame()) to complete");
+
+        // The server releases a transmission's lines at the rate time passes, on its own clock, so
+        // the lines come as the clock moves over the burst that is waiting to be drawn.
+        _clock.Advance(TimeSpan.FromSeconds(2));
 
         byte[]? txLine = null;
         for (int i = 0; i < 20 && txLine is null; i++)
@@ -915,25 +946,19 @@ public class WaterfallWebServerTests : IAsyncLifetime
 
         seenBefore.Should().NotContain((byte)0x02, "audio is off until the browser asks");
 
-        await socket.SendAsync(
-            System.Text.Encoding.UTF8.GetBytes("""{"type":"audio","on":true}"""),
-            WebSocketMessageType.Text, true, _cancellation.Token);
+        await SendAppliedAsync(socket, """{"type":"audio","on":true}""");
 
-        // Keep feeding and reading until audio appears: the request is applied by the server's
-        // receive loop asynchronously, and the per-client queue drops oldest when it backs up,
-        // so a single shot can race either way.
+        // The request has been applied, so the next second of tone is audio for this browser:
+        // read until it arrives (the spectrum lines come first, and the hang guard on the socket
+        // is what ends a run in which it never does).
+        _channel.ProcessReceive(tone);
         byte[]? audio = null;
-        for (int round = 0; round < 20 && audio is null; round++)
+        while (audio is null)
         {
-            await Task.Delay(50);
-            _channel.ProcessReceive(tone);
-            for (int i = 0; i < 20 && audio is null; i++)
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind == WebSocketMessageType.Binary && payload[0] == 0x02)
             {
-                (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
-                if (kind == WebSocketMessageType.Binary && payload[0] == 0x02)
-                {
-                    audio = payload;
-                }
+                audio = payload;
             }
         }
 
@@ -1031,7 +1056,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
             27.5, "the held figure is the mean of the samples, not whichever arrived last");
         held.RootElement.GetProperty("swr").GetDouble().Should().Be(1.4);
         held.RootElement.GetProperty("at").GetDateTimeOffset().Should().BeCloseTo(
-            DateTimeOffset.UtcNow, TimeSpan.FromMinutes(1),
+            _clock.GetUtcNow(), TimeSpan.Zero,
             "a held reading has to say when it was taken, or it reads as one from just now");
         held.Dispose();
 
@@ -1436,7 +1461,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
         // Three minutes, plus the clock's own period: nothing is said until the call is given up
         // on. The browser answers the server's keep-alive as it goes, because a page that says
         // nothing for a minute stops being counted and has its socket dropped (#411).
-        await WatchingFor(socket, clock, TimeSpan.FromMinutes(3) + WaterfallWebServer.LinkExpiryPeriod);
+        await WatchingFor(server, socket, clock, TimeSpan.FromMinutes(3) + WaterfallWebServer.LinkExpiryPeriod);
 
         using JsonDocument message = await NextTextAsync(socket);
         message.RootElement.GetProperty("type").GetString().Should().Be("link");
@@ -1505,18 +1530,15 @@ public class WaterfallWebServerTests : IAsyncLifetime
             tone[n] = 0.3f * MathF.Sin(2 * MathF.PI * 1700 * n / SampleRate);
         }
 
-        await socket.SendAsync(
-            Encoding.UTF8.GetBytes("""{"type":"spectrum","on":false}"""),
-            WebSocketMessageType.Text, true, _cancellation.Token);
+        await SendAppliedAsync(socket, """{"type":"spectrum","on":false}""");
 
-        // The request is applied by the server's receive loop asynchronously, so lines already
-        // queued, or produced before it lands, may still arrive. Each round feeds a second of
-        // tone and then a text message to read up to; the opt-out has taken once a whole round
-        // arrives with no spectrum line in it, and it must then hold for the round after.
+        // The request has been applied, but lines already queued before it landed may still
+        // arrive. Each round feeds a second of tone and then a text message to read up to; the
+        // opt-out has held once a whole round arrives with no spectrum line in it, and it must
+        // then hold for the round after.
         int cleanRounds = 0;
         for (int round = 0; round < 20 && cleanRounds < 2; round++)
         {
-            await Task.Delay(50);
             _channel.ProcessReceive(tone);
             _server.SetRadioStatus($"round {round}");
 
@@ -1696,24 +1718,32 @@ public class WaterfallWebServerTests : IAsyncLifetime
     /// that has said nothing for <see cref="WaterfallWebServer.KeepAliveSilence"/> and drops its
     /// socket (#411), so a test that jumped a silent socket over that deadline would be watching
     /// a page the server had rightly given up on.</para>
-    /// <para>An answer every <see cref="WaterfallWebServer.KeepAlivePeriod"/>, which is twelve per
-    /// deadline, and a millisecond of real sleep with it: a fake clock and a real socket keep
-    /// different time, and a send to loopback completes without ever yielding the thread, so
-    /// without the sleep this loop can run its whole span - minutes of clock in a millisecond of
-    /// wall time - before the server gets a turn at any of the answers.</para>
+    /// <para>An answer every <see cref="WaterfallWebServer.KeepAlivePeriod"/>, and the clock moves
+    /// on only once the server has read it (<see cref="WaterfallWebServer.PageHeard"/>), so each
+    /// answer is stamped with the instant it was sent however long loopback takes.</para>
     /// </remarks>
-    private async Task WatchingFor(ClientWebSocket socket, FakeTimeProvider clock, TimeSpan span)
+    private async Task WatchingFor(WaterfallWebServer server, ClientWebSocket socket, FakeTimeProvider clock, TimeSpan span)
     {
-        for (TimeSpan gone = TimeSpan.Zero; gone < span; gone += WaterfallWebServer.KeepAlivePeriod)
+        using var heard = new SemaphoreSlim(0);
+        void Heard() => heard.Release();
+        server.PageHeard += Heard;
+        try
         {
-            await socket.SendAsync(
-                Encoding.UTF8.GetBytes("{\"type\":\"pong\"}"),
-                WebSocketMessageType.Text, true, _cancellation.Token);
-            await Task.Delay(1, _cancellation.Token);
-            TimeSpan step = span - gone;
-            clock.Advance(step < WaterfallWebServer.KeepAlivePeriod
-                ? step
-                : WaterfallWebServer.KeepAlivePeriod);
+            for (TimeSpan gone = TimeSpan.Zero; gone < span; gone += WaterfallWebServer.KeepAlivePeriod)
+            {
+                await socket.SendAsync(
+                    Encoding.UTF8.GetBytes("{\"type\":\"pong\"}"),
+                    WebSocketMessageType.Text, true, _cancellation.Token);
+                await Eventually.SignalAsync(heard.WaitAsync(), "the server to read the answer");
+                TimeSpan step = span - gone;
+                clock.Advance(step < WaterfallWebServer.KeepAlivePeriod
+                    ? step
+                    : WaterfallWebServer.KeepAlivePeriod);
+            }
+        }
+        finally
+        {
+            server.PageHeard -= Heard;
         }
     }
 

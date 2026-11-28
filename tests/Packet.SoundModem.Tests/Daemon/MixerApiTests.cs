@@ -696,14 +696,16 @@ public class MixerApiTests : IDisposable
     /// across several calls into the card, so without a lock two overlapping POSTs can each be
     /// answered with the other's level - and the read-back is the answer, and the read-back is
     /// the whole point of this endpoint. They would also both write the state file. The card here
-    /// takes a couple of milliseconds to refresh, which is the window they would interleave in.
+    /// holds every refresh open until all eight requests have reached the server, so the window they
+    /// would interleave in is open for as long as any of them could be inside it.
     /// </remarks>
     [Fact]
     public async Task Two_Changes_At_Once_Each_Get_Their_Own_Read_Back()
     {
         FakeMixer card = FakeMixer.Cm108();
-        card.RefreshTakes = TimeSpan.FromMilliseconds(2);
         using var station = new Station(_dir, card);
+        station.ExpectRequests(8);
+        card.WhileRefreshing = () => station.AllArrived.Wait(TimeSpan.FromSeconds(60));
 
         double[] wanted = [-10, -8, -6, -4, -2, 0, 2, 4];
         JsonElement[] answers = await Task.WhenAll(wanted.Select(db =>
@@ -803,6 +805,22 @@ public class MixerApiTests : IDisposable
 
         public FakeMixer? Card { get; }
 
+        private int _accepted;
+        private int _expected = int.MaxValue;
+
+        /// <summary>Set once as many requests as <see cref="ExpectRequests"/> named have reached the server.</summary>
+        public ManualResetEventSlim AllArrived { get; } = new();
+
+        /// <summary>Names how many requests a test is about to send, for <see cref="AllArrived"/>.</summary>
+        public void ExpectRequests(int count)
+        {
+            Volatile.Write(ref _expected, count);
+            if (Volatile.Read(ref _accepted) >= count)
+            {
+                AllArrived.Set();
+            }
+        }
+
         public string ConfigPath { get; }
 
         public string StatePath { get; }
@@ -867,6 +885,11 @@ public class MixerApiTests : IDisposable
                                             or InvalidOperationException)
                 {
                     return;
+                }
+
+                if (Interlocked.Increment(ref _accepted) >= Volatile.Read(ref _expected))
+                {
+                    AllArrived.Set();
                 }
 
                 // Each request on a task of its own, as WaterfallWebServer does

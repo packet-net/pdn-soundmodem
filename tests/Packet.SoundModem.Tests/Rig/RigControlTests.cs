@@ -109,7 +109,6 @@ public sealed class RigControlTests : IAsyncDisposable
             }
 
             await RigClock.StepAsync(_time, _rigs, step);
-            await Task.Delay(1);
         }
 
         condition().Should().BeTrue(what);
@@ -1004,7 +1003,8 @@ public sealed class RigControlTests : IAsyncDisposable
         // transmitter test, ARDOP) goes through the one guard, for any window. This pins that a
         // window opened here holds all of them.
         RigControl rig = await Started();
-        var channel = new SoundModemChannel(12000, randomSeed: 29);
+        var air = new Packet.SoundModem.Tests.Channel.VirtualAir.Clock();
+        var channel = new SoundModemChannel(12000, air, randomSeed: 29);
         channel.AddModem(0, sink => ModemCatalog.Create("afsk1200", 12000, sink));
         channel.Csma.Persistence = 255;
         var line = new CountingPtt();
@@ -1039,9 +1039,14 @@ public sealed class RigControlTests : IAsyncDisposable
 
         // An ARDOP burst owns the channel's timing and passes the inhibit: refused at the key.
         Task ardop = channel.EnqueueTransmit(_ => new float[1200], rejected: null, ownsChannelTiming: true);
-        Func<Task> ardopWait = () => ardop;
+        // The transmitter is parked on the hold's poll, which does not look at the queue, so the
+        // clock is moved to the next poll, where it finds the burst that owns the channel's timing.
+        Func<Task> ardopWait = () => air.RunUntilAsync(ardop);
         (await ardopWait.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*for a receive window*");
-        await Task.Delay(TimeSpan.FromMilliseconds(300));
+
+        // Shown by what the transmitter does next: parked on the hold's poll, with the others still
+        // queued behind it, is what holding them is.
+        await Task.WhenAny(air.ParkedAsync(), Task.WhenAny(kiss, ident, page, test));
 
         rig.HoldsTransmitter.Should().BeTrue("idents read this, and are not sent while it is true");
         kiss.IsCompleted.Should().BeFalse("held, not sent and not dropped");
@@ -1054,8 +1059,8 @@ public sealed class RigControlTests : IAsyncDisposable
 
         ReceiveWindowApi.Handle(rig, channel.TransmitLease, "POST", """{"release": true}""").Status.Should().Be(200);
 
-        await Eventually.SignalAsync(Task.WhenAll(kiss, ident, page), "Task.WhenAll(kiss, ident, page) to complete");
-        (await Eventually.SignalAsync(test, "test to complete")).Ran.Should().BeTrue();
+        await air.RunUntilAsync(Task.WhenAll(kiss, ident, page, test));
+        (await test).Ran.Should().BeTrue();
         line.Keys.Should().BeGreaterThanOrEqualTo(4);
         _fake.DialHz.Should().Be(14_074_000);
         await stop.CancelAsync();
@@ -1235,10 +1240,12 @@ public sealed class RigControlTests : IAsyncDisposable
         int reads = _fake.Commands.Count(c => c.Command == "f");
         _pending = true;
 
+        // Each step is taken once every watch is waiting on the clock and acted on, and a watch that
+        // sees a transmission queued waits again without polling, so a step that polled would show
+        // as a read.
         for (int i = 0; i < 10; i++)
         {
-            _time.Advance(TimeSpan.FromSeconds(5));
-            await Task.Delay(5);
+            await RigClock.StepAsync(_time, _rigs, TimeSpan.FromSeconds(5));
         }
 
         _fake.Commands.Count(c => c.Command == "f").Should().Be(reads);

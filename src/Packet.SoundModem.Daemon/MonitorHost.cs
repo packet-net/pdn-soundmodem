@@ -349,6 +349,16 @@ internal sealed class MonitorHost : IAsyncDisposable
         }
     }
 
+    /// <summary>The page server of one built station, or null before it is built. For tests that
+    /// watch what a page's socket does.</summary>
+    internal WaterfallWebServer? ServerOf(string slug)
+    {
+        lock (_stationsLock)
+        {
+            return _stations.TryGetValue(slug, out IMonitorStation? station) ? station.Server : null;
+        }
+    }
+
     private IMonitorStation[] Stations()
     {
         lock (_stationsLock)

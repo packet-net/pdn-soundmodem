@@ -229,7 +229,7 @@ internal sealed class StubStation : IAsyncDisposable
             tx = transmitted ? true : (bool?)null,
             plain = plainIl2p ? true : (bool?)null,
             monitorOnly = monitorOnly ? true : (bool?)null,
-            at = (at ?? DateTimeOffset.UtcNow).ToString("O"),
+            at = at?.ToString("O"),
             raw = raw is null ? null : Convert.ToBase64String(raw),
         });
 
