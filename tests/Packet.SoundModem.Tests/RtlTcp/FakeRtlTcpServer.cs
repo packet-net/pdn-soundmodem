@@ -115,18 +115,15 @@ internal sealed class FakeRtlTcpServer : IDisposable
     /// pulses.</summary>
     private void WaitFor(Func<bool> condition, Func<string> failure)
     {
-        long giveUp = Environment.TickCount64 + (long)HangGuard.TotalMilliseconds;
         lock (_gate)
         {
             while (!condition())
             {
-                long left = giveUp - Environment.TickCount64;
-                if (left <= 0)
+                // Every change the condition reads pulses; a wait that is never pulsed is a hang.
+                if (!System.Threading.Monitor.Wait(_gate, HangGuard))
                 {
                     throw new TimeoutException(failure());
                 }
-
-                System.Threading.Monitor.Wait(_gate, (int)left);
             }
         }
     }

@@ -91,16 +91,7 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
 
     private static float[] ReadAtLeast(OpenWebRxAudioInput input, int count)
     {
-        var got = new List<float>();
-        var buffer = new float[4096];
-        DateTime giveUp = DateTime.UtcNow + HangGuard;
-        while (got.Count < count && DateTime.UtcNow < giveUp)
-        {
-            int n = input.Read(buffer);
-            got.AddRange(buffer.AsSpan(0, n).ToArray());
-        }
-
-        return [.. got];
+        return InputDrain.ReadAtLeast(input, count, $"{count} samples from the receiver");
     }
 
     [Fact]

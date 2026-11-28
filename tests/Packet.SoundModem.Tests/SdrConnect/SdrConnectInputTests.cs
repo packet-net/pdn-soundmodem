@@ -170,7 +170,8 @@ public sealed class SdrConnectInputTests
         Read(input, SdrConnectProtocol.AudioRate, 0.1);
 
         await fake.ChangeAsync("demodulator", "NFM");
-        await Task.Delay(200, TestContext.Current.CancellationToken);
+
+        // Same socket, same receive loop: the report is taken in before the audio sent behind it.
         await fake.SendAudioAsync(new short[2 * 4800]);
         Read(input, SdrConnectProtocol.AudioRate, 0.1);
 
@@ -258,16 +259,7 @@ public sealed class SdrConnectInputTests
 
     private static float[] Read(M0LTE.Radio.Audio.IAudioInput input, int rate, double seconds)
     {
-        var heard = new List<float>();
-        var buffer = new float[4096];
         int want = (int)(seconds * rate * 0.95);
-        DateTime giveUp = DateTime.UtcNow.AddSeconds(30);
-        while (heard.Count < want && DateTime.UtcNow < giveUp)
-        {
-            int got = input.Read(buffer);
-            heard.AddRange(buffer.AsSpan(0, got));
-        }
-
-        return [.. heard];
+        return InputDrain.ReadAtLeast(input, want, $"{seconds:0.##} s of audio from SDRconnect");
     }
 }

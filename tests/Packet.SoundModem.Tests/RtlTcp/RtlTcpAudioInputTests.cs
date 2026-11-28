@@ -73,12 +73,14 @@ public sealed class RtlTcpAudioInputTests
         int before = server.Commands.Count;
 
         (await input.TuneAsync(DialHz + 3_000, CancellationToken.None)).Should().BeTrue();
-        Thread.Sleep(100);
-        server.Commands.Count.Should().Be(before, "3 kHz along is inside the 50 kHz the front end was asked to keep");
 
+        // Shown by what comes next: commands cross one socket in order, so if the move inside the
+        // band had sent anything it would be ahead of the retune that follows, which is then the
+        // only new command.
         (await input.TuneAsync(145_500_000, CancellationToken.None)).Should().BeTrue();
         server.WaitForCommands(before + 1);
         server.Commands[^1].Should().Be((1, RtlTcpCommand.SetFrequency, 145_475_000u));
+        server.Commands.Count.Should().Be(before + 1, "3 kHz along is inside the 50 kHz the front end was asked to keep");
         input.DialHz.Should().Be(145_500_000);
     }
 
@@ -90,7 +92,11 @@ public sealed class RtlTcpAudioInputTests
         server.WaitForConnections(1);
 
         (await input.TuneAsync(145_500_000, CancellationToken.None)).Should().BeFalse();
-        Thread.Sleep(100);
+
+        // The client closing its end comes after every byte it sent has been read here, so once it
+        // has ended, nothing was sent and nothing more is coming.
+        input.Dispose();
+        server.WaitForClientsEnded(1);
         server.BytesFromClient.Should().Be(0);
     }
 
@@ -155,16 +161,7 @@ public sealed class RtlTcpAudioInputTests
 
     private static float[] ReadSeconds(RtlTcpAudioInput input, int rate, double seconds)
     {
-        var heard = new List<float>();
-        var buffer = new float[4096];
         int want = (int)(seconds * rate * 0.95);
-        DateTime giveUp = DateTime.UtcNow.AddSeconds(30);
-        while (heard.Count < want && DateTime.UtcNow < giveUp)
-        {
-            int got = input.Read(buffer);
-            heard.AddRange(buffer.AsSpan(0, got));
-        }
-
-        return [.. heard];
+        return InputDrain.ReadAtLeast(input, want, $"{seconds:0.##} s of audio from rtl_tcp");
     }
 }
