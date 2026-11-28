@@ -25,6 +25,8 @@ internal sealed class PortRig : IAsyncDisposable
             {
                 _frames.Add(frame);
             }
+
+            Recorded?.Invoke();
         };
         Rig.Channel.FrameReceivedWithQuality += (_, _, quality) =>
         {
@@ -32,6 +34,8 @@ internal sealed class PortRig : IAsyncDisposable
             {
                 _qualities.Add(quality);
             }
+
+            Recorded?.Invoke();
         };
         Rig.Channel.FrameTransmitted += (_, frame) =>
         {
@@ -56,6 +60,53 @@ internal sealed class PortRig : IAsyncDisposable
     public StationRig Rig { get; }
 
     public OfdmFmFramePort Port { get; }
+
+    /// <summary>Raised after the channel's frame or quality report has been recorded here.</summary>
+    public event Action? Recorded;
+
+    /// <summary>
+    /// Waits, without polling, until <paramref name="condition"/> holds, looked at again each time any of
+    /// <paramref name="rigs"/> records a frame or a quality report.
+    /// </summary>
+    public static async Task WhenRecordedAsync(Func<bool> condition, string what, params PortRig[] rigs)
+    {
+        var changes = new ChangeSignal();
+        void Pulse() => changes.Pulse();
+        foreach (PortRig rig in rigs)
+        {
+            rig.Recorded += Pulse;
+        }
+
+        try
+        {
+            await changes.WhenAsync(
+                condition, what,
+                () => string.Join("; ", rigs.Select(r => $"{r.Frames.Length} frame(s), {r.Qualities.Length} quality report(s)")));
+        }
+        finally
+        {
+            foreach (PortRig rig in rigs)
+            {
+                rig.Recorded -= Pulse;
+            }
+        }
+    }
+
+    /// <summary>Waits, without polling, until the port has counted at least <paramref name="count"/> datagrams that are not AX.25.</summary>
+    public async Task WhenNonAx25Async(int count, string what)
+    {
+        var changes = new ChangeSignal();
+        void Pulse() => changes.Pulse();
+        Port.NonAx25Counted += Pulse;
+        try
+        {
+            await changes.WhenAsync(() => Port.NonAx25Datagrams >= count, what, () => $"{Port.NonAx25Datagrams} counted");
+        }
+        finally
+        {
+            Port.NonAx25Counted -= Pulse;
+        }
+    }
 
     /// <summary>Frames the channel handed to its listeners as received.</summary>
     public byte[][] Frames { get { lock (_gate) { return [.. _frames]; } } }
@@ -113,7 +164,7 @@ public class OfdmFmFramePortStationTests
         Task sent = a.Port.Transmit(beacon);
         sent.IsCompleted.Should().BeFalse("nothing has gone on air");
         await StationRig.PumpAsync(() => b.Rig.Received.Length >= 1, "the frame to reach the other station", a.Rig, b.Rig);
-        await Eventually.UntilAsync(() => b.Frames.Length >= 1 && b.Qualities.Length >= 1, "the channel to report the frame");
+        await PortRig.WhenRecordedAsync(() => b.Frames.Length >= 1 && b.Qualities.Length >= 1, "the channel to report the frame", b);
         await Settled(sent, "the frame's task to complete");
 
         b.Frames.Should().ContainSingle().Which.Should().Equal(beacon);
@@ -151,7 +202,7 @@ public class OfdmFmFramePortStationTests
         await StationRig.PumpAsync(() => b.Rig.Received.Length >= 3, "both I frames to arrive", a.Rig, b.Rig);
         await Settled(first, "the first I frame's task");
         await Settled(second, "the second I frame's task");
-        await Eventually.UntilAsync(() => b.Frames.Length >= 3 && a.Frames.Length >= 1, "the channels to report every frame");
+        await PortRig.WhenRecordedAsync(() => b.Frames.Length >= 3 && a.Frames.Length >= 1, "the channels to report every frame", a, b);
 
         b.Frames.Should().HaveCount(3);
         b.Frames[0].Should().Equal(sabm);
@@ -264,7 +315,7 @@ public class OfdmFmFramePortStationTests
         await StationRig.PumpAsync(() => b.Rig.Received.Length >= 1, "the datagram to arrive", a.Rig, b.Rig);
 
         // The rig's handler runs before the port's, on the transmitting thread: wait for the port's own count.
-        await Eventually.UntilAsync(() => b.Port.NonAx25Datagrams >= 1, "the port to count the datagram");
+        await b.WhenNonAx25Async(1, "the port to count the datagram");
         b.Port.NonAx25Datagrams.Should().Be(1);
         b.Frames.Should().BeEmpty("a datagram is only queued for delivery on the other branch, so nothing is in flight");
     }

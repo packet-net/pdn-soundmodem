@@ -332,6 +332,7 @@ internal sealed class MonitorHost : IAsyncDisposable
     /// </summary>
     private IMonitorStation Ensure(string slug, DirectoryReceiver receiver)
     {
+        MonitorStation station;
         lock (_stationsLock)
         {
             if (_stations.TryGetValue(slug, out IMonitorStation? existing))
@@ -343,11 +344,23 @@ internal sealed class MonitorHost : IAsyncDisposable
             // channel and the modems are going up cannot give this slug to somebody else and
             // leave the station answering on a URL the picker no longer points at.
             _directory.Bind(slug, receiver.Host);
-            var station = new MonitorStation(this, receiver);
+            station = new MonitorStation(this, receiver);
+            station.Changed += NoteRowsChanged;
             _stations[slug] = station;
-            return station;
         }
+
+        NoteRowsChanged();
+        return station;
     }
+
+    /// <summary>
+    /// Raised after any row of <c>/api/instances</c> may have changed: a station built, or anything its
+    /// own <see cref="IMonitorStation.Changed"/> says. Outside every lock. For tests, which wait on it
+    /// instead of looking again after a pause.
+    /// </summary>
+    internal event Action? RowsChanged;
+
+    private void NoteRowsChanged() => RowsChanged?.Invoke();
 
     /// <summary>The page server of one built station, or null before it is built. For tests that
     /// watch what a page's socket does.</summary>
@@ -410,11 +423,13 @@ internal sealed class MonitorHost : IAsyncDisposable
             }
 
             var station = new RelayStation(_options, _router, entry, hello, _stopping.Token);
+            station.Changed += NoteRowsChanged;
             lock (_stationsLock)
             {
                 _stations[entry.Slug] = station;
             }
 
+            NoteRowsChanged();
             return station;
         }
         finally
@@ -631,6 +646,7 @@ internal sealed class MonitorHost : IAsyncDisposable
                     host._options.Modems, _channel, _journal, out FrameLog? log))
             {
                 _frameLog = log;
+                log!.Written += NoteChanged;
             }
 
             try
@@ -694,11 +710,21 @@ internal sealed class MonitorHost : IAsyncDisposable
             }
 
             Server.ViewersChanged += OnViewersChanged;
+            Server.ViewersChanged += OnViewersNoted;
             Server.Start();
             _host._router.Add($"/r/{Slug}/", Server);
             _routed = true;
             _journal.Write($"station: {Server.Url} for {receiver.Endpoint}");
         }
+
+        /// <inheritdoc />
+        public event Action? Changed;
+
+        private void NoteChanged() => Changed?.Invoke();
+
+        /// <summary>Subscribed after <see cref="OnViewersChanged"/>, so the row is announced once its
+        /// own handler has acted on the count.</summary>
+        private void OnViewersNoted(int viewers) => NoteChanged();
 
         /// <inheritdoc />
         public string Slug { get; }
@@ -851,7 +877,11 @@ internal sealed class MonitorHost : IAsyncDisposable
                 _input = input;
                 _fault = null;
 
-                input.PhaseChanged += (_, sentence) => Server.SetRadioStatus(Chip(sentence));
+                input.PhaseChanged += (_, sentence) =>
+                {
+                    Server.SetRadioStatus(Chip(sentence));
+                    NoteChanged();
+                };
                 if (input.ReceiverDescription is { Length: > 0 } described)
                 {
                     Server.SetReceiver(described, Receiver.PublicUrl);
@@ -883,6 +913,8 @@ internal sealed class MonitorHost : IAsyncDisposable
                 // leaving in the meantime is not lost: the handler and this see one order.
                 input.SetViewers(Server.Viewers);
             }
+
+            NoteChanged();
 
             if (input.Connection.RefusedForNow)
             {
@@ -975,6 +1007,7 @@ internal sealed class MonitorHost : IAsyncDisposable
 
             _journal.WriteError(reason);
             Server.SetRadioStatus(Chip(reason));
+            NoteChanged();
             ArmRebuild();
         }
 
@@ -991,6 +1024,8 @@ internal sealed class MonitorHost : IAsyncDisposable
                 _input = null;
                 _station = null;
             }
+
+            NoteChanged();
 
             // Off the loop's own thread would be tidier, but this IS off it: Run has returned by
             // the time this is called, so nothing here can pull the rug from under it.
@@ -1046,6 +1081,7 @@ internal sealed class MonitorHost : IAsyncDisposable
                         if (cleared)
                         {
                             Server.SetRadioStatus($"{Receiver.Description} - waiting for a viewer");
+                            NoteChanged();
                         }
                     },
                     null, RebuildAfter, Timeout.InfiniteTimeSpan);
@@ -1102,6 +1138,7 @@ internal sealed class MonitorHost : IAsyncDisposable
             }
 
             Server.ViewersChanged -= OnViewersChanged;
+            Server.ViewersChanged -= OnViewersNoted;
 
             // The input first: its Read is what the loop is sitting in, and disposing it is what
             // lets the loop notice it has been asked to stop.
@@ -1139,6 +1176,13 @@ internal interface IMonitorStation : IAsyncDisposable
 {
     /// <summary>The path segment its page is served under.</summary>
     string Slug { get; }
+
+    /// <summary>
+    /// Raised after anything a picker row says about this station has changed (its state, its viewers,
+    /// whether it is offered, its description, a frame written to its log), on the thread that changed
+    /// it and outside the station's lock.
+    /// </summary>
+    event Action? Changed;
 
     /// <summary>The page, its socket, and the viewer count that drives everything on demand.</summary>
     WaterfallWebServer Server { get; }
