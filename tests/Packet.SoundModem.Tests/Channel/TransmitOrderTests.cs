@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using Microsoft.Extensions.Time.Testing;
 using M0LTE.Radio.Audio;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems;
@@ -25,16 +24,19 @@ namespace Packet.SoundModem.Tests.Channel;
 /// continuation after the enqueue task completes, and two continuations are two thread-pool work
 /// items whose order is the pool's business. Reading the event instead made this test fail on a
 /// loaded box with the fix in place, which is the test being wrong rather than the code.</para>
-/// <para><b>Deterministic, not lucky.</b> The hold is a function of the fake clock rather than a
+/// <para><b>Deterministic, not lucky.</b> The hold is a function of the clock rather than a
 /// flag the test flips, so every waiter sees the same answer for the same instant however late
 /// the thread pool gets round to it, and the frames are handed over at virtual times chosen so
-/// that one of them has to wait on a poll and the others do not.</para>
+/// that one of them has to wait on a poll and the others do not. The clock is a
+/// <see cref="VirtualAir.Clock"/>: it moves only while the transmitter is parked on one of its
+/// delays, one step at a time, so no step can be taken before the transmitter has set the wait
+/// the step is meant to end, and nothing here waits for real time to pass.</para>
 /// </remarks>
 public class TransmitOrderTests : IAsyncLifetime
 {
     private const int SampleRate = 12000;
 
-    private readonly FakeTimeProvider _time = new();
+    private readonly VirtualAir.Clock _time = new();
     private readonly SoundModemChannel _channel;
     private readonly FakeAudioOutput _output = new(SampleRate);
     private readonly CancellationTokenSource _cancellation = new(TimeSpan.FromSeconds(60));
@@ -112,33 +114,8 @@ public class TransmitOrderTests : IAsyncLifetime
         }
     }
 
-    /// <summary>
-    /// Lets whatever the last clock move woke get as far as it is going to get.
-    /// </summary>
-    /// <remarks>
-    /// A synchronisation device and not a measurement: no assertion in this file reads the wall
-    /// clock, and every instant that decides anything is a virtual one. A waiter the pool is slow
-    /// to run simply wakes at a later virtual time, which never moves it earlier in the order.
-    /// </remarks>
-    private static async Task SettleAsync()
-    {
-        for (int i = 0; i < 20; i++)
-        {
-            await Task.Yield();
-            await Task.Delay(1, CancellationToken.None);
-        }
-    }
-
-    /// <summary>Runs the fake clock on until something has happened, or gives up.</summary>
-    private async Task RunUntilAsync(Func<bool> done, TimeSpan upTo)
-    {
-        DateTimeOffset deadline = _time.GetUtcNow() + upTo;
-        while (!done() && _time.GetUtcNow() < deadline)
-        {
-            _time.Advance(TimeSpan.FromMilliseconds(10));
-            await Task.Delay(1, CancellationToken.None);
-        }
-    }
+    /// <summary>Moves the clock on by <paramref name="span"/>, one parked wait at a time.</summary>
+    private Task AdvanceAsync(TimeSpan span) => _time.AdvanceToAsync(_time.GetUtcNow() + span);
 
     /// <summary>
     /// A frame handed over while another service held the channel goes out BEFORE frames handed
@@ -163,31 +140,29 @@ public class TransmitOrderTests : IAsyncLifetime
 
         StartTransmitter();
         Task first = Send('A');
-        await SettleAsync();
+
+        // Parked on its first poll: it has asked whether the channel is held, been told it is, and
+        // is waiting for the next look.
+        await _time.ParkedAsync();
         OnAir().Should().BeEmpty("the channel is held");
 
-        // Two of A's polls, both while the hold is still on.
-        _time.Advance(TimeSpan.FromMilliseconds(50));
-        await SettleAsync();
-        _time.Advance(TimeSpan.FromMilliseconds(50));
-        await SettleAsync();
+        // Two of A's polls, both while the hold is still on. Each advance returns once the clock is
+        // there, and the next one cannot move it until the transmitter has parked on its next poll.
+        await AdvanceAsync(TimeSpan.FromMilliseconds(50));
+        await AdvanceAsync(TimeSpan.FromMilliseconds(50));
+        await _time.ParkedAsync();
         OnAir().Should().BeEmpty("the hold does not lift until 105 ms");
 
-        // Past the lift. These two need no wait: the very first thing either of them asks is
-        // whether the channel is held, and it is not.
-        _time.Advance(TimeSpan.FromMilliseconds(20));
-        await SettleAsync();
+        // Past the lift, between two of A's polls. These two are queued behind A without the
+        // transmitter looking at the queue: it is parked on a poll, which ignores what is queued.
+        await AdvanceAsync(TimeSpan.FromMilliseconds(20));
         Task second = Send('B');
-        await SettleAsync();
 
-        _time.Advance(TimeSpan.FromMilliseconds(10));
-        await SettleAsync();
+        await AdvanceAsync(TimeSpan.FromMilliseconds(10));
         Task third = Send('C');
-        await SettleAsync();
 
         // And on far enough for A's own next poll, whenever it falls.
-        await RunUntilAsync(() => OnAir().Length == 3, TimeSpan.FromSeconds(10));
-        await Eventually.SignalAsync(Task.WhenAll(first, second, third), "Task.WhenAll(first, second, third) to complete");
+        await _time.RunUntilAsync(Task.WhenAll(first, second, third));
 
         OnAir().Should().Be("ABC",
             "the host handed them over in that order, and a link's sequence numbers are on the "
@@ -219,16 +194,17 @@ public class TransmitOrderTests : IAsyncLifetime
         held = true;
         StartTransmitter();
 
-        await SettleAsync();
-        _time.Advance(TimeSpan.FromMilliseconds(200));
-        await SettleAsync();
+        await _time.ParkedAsync();
+        await AdvanceAsync(TimeSpan.FromMilliseconds(200));
+
+        // Parked again: the poll at 200 ms has looked and been told it is held.
+        await _time.ParkedAsync();
         OnAir().Should().BeEmpty(
             "it was queued before the session started, which does not make it welcome during one");
         queued.IsCompleted.Should().BeFalse();
 
         held = false;
-        await RunUntilAsync(() => OnAir().Length == 1, TimeSpan.FromSeconds(10));
-        await Eventually.SignalAsync(queued, "queued to complete");
+        await _time.RunUntilAsync(queued);
         OnAir().Should().Be("A");
     }
 
@@ -251,15 +227,13 @@ public class TransmitOrderTests : IAsyncLifetime
         foreach (char mark in "ABCDE")
         {
             queued.Add(Send(mark));
-            await SettleAsync();
-            _time.Advance(TimeSpan.FromMilliseconds(30));
-            await SettleAsync();
+            await AdvanceAsync(TimeSpan.FromMilliseconds(30));
         }
 
+        await _time.ParkedAsync();
         OnAir().Should().BeEmpty("nothing may reach the air while another service holds the channel");
 
-        await RunUntilAsync(() => OnAir().Length == 5, TimeSpan.FromSeconds(10));
-        await Eventually.SignalAsync(Task.WhenAll(queued), "Task.WhenAll(queued) to complete");
+        await _time.RunUntilAsync(Task.WhenAll(queued));
 
         OnAir().Should().Be("ABCDE");
     }

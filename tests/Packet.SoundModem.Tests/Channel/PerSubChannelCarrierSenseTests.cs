@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Time.Testing;
 using M0LTE.Radio.Audio;
 using Packet.SoundModem.CarrierSense;
 using Packet.SoundModem.Channel;
@@ -26,8 +25,8 @@ namespace Packet.SoundModem.Tests.Channel;
 /// bandwidth, so a test double with an invented passband would prove nothing about the station
 /// that failed.</para>
 /// <para>Nothing here decides anything by the wall clock. The channel runs on a
-/// <see cref="FakeTimeProvider"/> a helper task advances, as in
-/// <see cref="TurnaroundHoldTests"/> and <see cref="HeldForTests"/>.</para>
+/// <see cref="VirtualAir.Clock"/>, which a test moves only while the transmitter is parked on it,
+/// as in <see cref="TurnaroundHoldTests"/> and <see cref="HeldForTests"/>.</para>
 /// </remarks>
 public class PerSubChannelCarrierSenseTests
 {
@@ -98,10 +97,10 @@ public class PerSubChannelCarrierSenseTests
         return [.. frame, (byte)0xF0, (byte)0x41];
     }
 
-    private static (SoundModemChannel Channel, FakeTimeProvider Time, Switch Radio,
+    private static (SoundModemChannel Channel, VirtualAir.Clock Time, Switch Radio,
         Dictionary<int, Switched> Modems) Station(bool withRadio)
     {
-        var time = new FakeTimeProvider();
+        var time = new VirtualAir.Clock();
         var radio = new Switch { Busy = withRadio ? false : null };
         var channel = new SoundModemChannel(
             SampleRate, time, randomSeed: 42, channelBusySource: withRadio ? radio : null);
@@ -127,36 +126,18 @@ public class PerSubChannelCarrierSenseTests
         return (channel, time, radio, modems);
     }
 
-    private static async Task<Task> StartAsync(
-        SoundModemChannel channel, FakeTimeProvider time, CancellationToken cancellation)
+    private static Task Start(SoundModemChannel channel, CancellationToken cancellation) =>
+        channel.RunTransmitterAsync(new Sink(SampleRate), new RecordingPtt(), cancellation);
+
+    /// <summary>
+    /// Moves the clock on for <paramref name="window"/> of virtual time, one slot at a time and only
+    /// while the transmitter is parked, and says whether the frame went. It is asked after the
+    /// transmitter has parked again, so the last look it took at carrier sense has been taken.
+    /// </summary>
+    private static async Task<bool> WentWithin(Task sent, VirtualAir.Clock time, TimeSpan window)
     {
-        Task transmitter = channel.RunTransmitterAsync(new Sink(SampleRate), new RecordingPtt(), cancellation);
-        _ = Task.Run(async () =>
-        {
-            while (!cancellation.IsCancellationRequested)
-            {
-                time.Advance(TimeSpan.FromMilliseconds(10));
-                await Task.Delay(1, CancellationToken.None);
-            }
-        }, CancellationToken.None);
-        await Task.Yield();
-        return transmitter;
-    }
-
-    /// <summary>Lets the fake clock run on for a while, and says whether the frame went.</summary>
-    private static async Task<bool> WentWithin(Task sent, FakeTimeProvider time, TimeSpan window)
-    {
-        DateTimeOffset until = time.GetUtcNow() + window;
-        while (time.GetUtcNow() < until)
-        {
-            if (sent.IsCompleted)
-            {
-                return true;
-            }
-
-            await Task.Delay(5, CancellationToken.None);
-        }
-
+        await time.AdvanceToUnlessAsync(time.GetUtcNow() + window, sent);
+        await Task.WhenAny(time.ParkedAsync(), sent);
         return sent.IsCompleted;
     }
 
@@ -167,7 +148,7 @@ public class PerSubChannelCarrierSenseTests
     [Fact]
     public async Task A_Frame_Goes_Out_While_A_Non_Overlapping_Modem_Is_Busy()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, _, Dictionary<int, Switched> modems) =
+        (SoundModemChannel channel, VirtualAir.Clock time, _, Dictionary<int, Switched> modems) =
             Station(withRadio: false);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
@@ -182,8 +163,8 @@ public class PerSubChannelCarrierSenseTests
             + "traffic 1.03 kHz away");
 
         Task sent = channel.EnqueueTransmit(Bpsk2150, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
-        await Eventually.SignalAsync(sent, "sent to complete");
+        Task transmitter = Start(channel, cancellation.Token);
+        await time.RunUntilAsync(sent);
 
         sent.IsCompletedSuccessfully.Should().BeTrue(
             "the modem with the traffic had a clear passband; GB7RDG had fourteen such gaps in "
@@ -200,7 +181,7 @@ public class PerSubChannelCarrierSenseTests
     [Fact]
     public async Task A_Frame_Defers_To_A_Modem_Sharing_Its_Passband()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, _, Dictionary<int, Switched> modems) =
+        (SoundModemChannel channel, VirtualAir.Clock time, _, Dictionary<int, Switched> modems) =
             Station(withRadio: false);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
@@ -209,13 +190,13 @@ public class PerSubChannelCarrierSenseTests
             "850 and 987 Hz are 137 Hz apart and their measured bands overlap outright");
 
         Task sent = channel.EnqueueTransmit(Afsk850, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, cancellation.Token);
 
         (await WentWithin(sent, time, TimeSpan.FromSeconds(10))).Should().BeFalse(
             "the neighbouring modem is hearing something in this frame's own passband");
 
         modems[Afsk987].Busy = false;
-        await Eventually.SignalAsync(sent, "sent to complete");
+        await time.RunUntilAsync(sent);
 
         sent.IsCompletedSuccessfully.Should().BeTrue("the passband cleared");
 
@@ -230,7 +211,7 @@ public class PerSubChannelCarrierSenseTests
     [Fact]
     public async Task A_Radio_Saying_Busy_Still_Holds_Every_Sub_Channel_Off()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, Switch radio, _) = Station(withRadio: true);
+        (SoundModemChannel channel, VirtualAir.Clock time, Switch radio, _) = Station(withRadio: true);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
         radio.Busy = true;
@@ -239,14 +220,14 @@ public class PerSubChannelCarrierSenseTests
         channel.ChannelBusyFor(Afsk1120).Should().BeTrue();
 
         Task sent = channel.EnqueueTransmit(Bpsk2150, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, cancellation.Token);
 
         (await WentWithin(sent, time, TimeSpan.FromSeconds(10))).Should().BeFalse(
             "no modem is busy, but the station's radio says the channel is occupied and that "
             + "still decides for everybody");
 
         radio.Busy = false;
-        await Eventually.SignalAsync(sent, "sent to complete");
+        await time.RunUntilAsync(sent);
         sent.IsCompletedSuccessfully.Should().BeTrue("the radio let go");
 
         await cancellation.CancelAsync();
@@ -257,7 +238,7 @@ public class PerSubChannelCarrierSenseTests
     [Fact]
     public async Task Our_Own_Transmission_Is_Busy_For_Every_Sub_Channel()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, _, _) = Station(withRadio: false);
+        (SoundModemChannel channel, VirtualAir.Clock time, _, _) = Station(withRadio: false);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
         bool? busyForAnother = null;
@@ -276,8 +257,8 @@ public class PerSubChannelCarrierSenseTests
         };
 
         Task sent = channel.EnqueueTransmit(Bpsk2150, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
-        await Eventually.SignalAsync(sent, "sent to complete");
+        Task transmitter = Start(channel, cancellation.Token);
+        await time.RunUntilAsync(sent);
 
         busyForAnother.Should().BeTrue(
             "a sub-channel 1.03 kHz away cannot be transmitted on while we are keyed either: one "
@@ -296,7 +277,7 @@ public class PerSubChannelCarrierSenseTests
     [Fact]
     public async Task A_Transmitter_That_Is_Not_A_Modem_Still_Defers_To_The_Whole_Station()
     {
-        (SoundModemChannel channel, FakeTimeProvider time, _, Dictionary<int, Switched> modems) =
+        (SoundModemChannel channel, VirtualAir.Clock time, _, Dictionary<int, Switched> modems) =
             Station(withRadio: false);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
@@ -304,14 +285,14 @@ public class PerSubChannelCarrierSenseTests
 
         var ident = new object();
         Task sent = channel.EnqueueTransmit(_ => new float[SampleRate / 10], source: ident);
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, cancellation.Token);
 
         (await WentWithin(sent, time, TimeSpan.FromSeconds(10))).Should().BeFalse(
             "nothing here knows what part of the band a paging or ident transmitter occupies, "
             + "and the conservative answer for an unknown passband is the station's");
 
         modems[Afsk850].Busy = false;
-        await Eventually.SignalAsync(sent, "sent to complete");
+        await time.RunUntilAsync(sent);
         sent.IsCompletedSuccessfully.Should().BeTrue();
 
         await cancellation.CancelAsync();
@@ -393,7 +374,7 @@ public class PerSubChannelCarrierSenseTests
     [Fact]
     public void An_Unmeasured_Modem_Still_Holds_Everything_Off()
     {
-        var time = new FakeTimeProvider();
+        var time = new VirtualAir.Clock();
         var channel = new SoundModemChannel(SampleRate, time, randomSeed: 42);
         Silent? silent = null;
         channel.AddModem(Afsk850, sink => new Afsk300MultiModem(SampleRate, sink, Afsk300Framing.Il2pCrc, 850));
