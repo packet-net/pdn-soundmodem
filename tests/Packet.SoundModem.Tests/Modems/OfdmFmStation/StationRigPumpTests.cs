@@ -79,12 +79,12 @@ public class StationRigPumpTests
     public async Task The_pump_waits_for_a_finished_transmissions_signal_before_it_feeds_the_next_block()
     {
         // A transmission's task completes on the transmitter's thread, and the host posts the signal that it is over from a continuation on the thread pool. On a busy pool that continuation can sit
-        // behind the pump, queued on the very thread the pump runs on, which feeds block after block without yielding while nothing is keyed. The host cannot queue its Morse ident until it has
-        // that signal, nor its identification burst until the Morse ident's own signal, so with both stations' signals stuck nothing more is ever keyed and the pump feeds out its ten minutes (#860).
+        // behind the pump, queued on the very thread the pump runs on, which feeds block after block without yielding while nothing is keyed. The host cannot hand over the station's next request until it has
+        // that signal, so with both stations' signals stuck nothing more is ever keyed and the pump feeds out its ten minutes (#860).
         // Built here: the pump runs on a thread of its own, and the hosts' signals run on that thread only when the pump is waiting and nothing is keyed. The pump has to wait for them to get them.
         using var pump = new PumpThread();
-        await using var a = new StationRig(seed: 11, signalScheduler: pump.WhenQuiet);
-        await using var b = new StationRig(seed: 12, signalScheduler: pump.WhenQuiet);
+        await using var a = new StationRig(seed: 11, signalScheduler: pump.WhenQuiet, cold: true);
+        await using var b = new StationRig(seed: 12, signalScheduler: pump.WhenQuiet, cold: true);
         pump.Quiet = () => !a.Air.Keyed && !b.Air.Keyed && !a.Channel.ChannelBusy && !b.Channel.ChannelBusy;
         var timeline = new Lock();
         a.Air.Timeline = timeline;

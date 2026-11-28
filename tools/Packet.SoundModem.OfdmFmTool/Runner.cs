@@ -193,8 +193,11 @@ internal static class Runner
                     TaskScheduler.Default);
             }
 
-            host = new OfdmFmStationHost(channel, new Random());
-            session = new ToolSession(host, options.Call, options.To, options.Detail, canTransmit, log, time);
+            IdentificationNote? note = canTransmit && StateFiles.NotePath(options.Call, options.Device, Environment.GetEnvironmentVariable) is { } notePath
+                ? new IdentificationNote(notePath, time, log.Write)
+                : null;
+            host = new OfdmFmStationHost(channel, new Random(), new OfdmFmStationHostOptions { LastIdentification = note?.Read(), TimeProvider = time });
+            session = new ToolSession(host, options.Call, options.To, options.Detail, canTransmit, log, time, note);
             if (session.Start() is string notReady)
             {
                 log.Write(notReady);

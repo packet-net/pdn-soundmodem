@@ -6,9 +6,9 @@ using Packet.SoundModem.Modems.OfdmFmStation;
 namespace Packet.SoundModem.Tests.Modems.OfdmFmStation;
 
 /// <summary>
-/// The Morse identification on the station's own rule, over a real channel on a virtual clock. The only time is the count of samples the test feeds: the station's clock is that count,
-/// and "ten minutes" is ten minutes of fed audio (<see cref="StationRig.FeedToCountAsync"/>), never a wait. The test feeds no block while a keyup is running (it waits for the keyup to end first),
-/// so no real background work races the count, and every outcome is decided by what the station and the channel do, not by how long anything took.
+/// The identification on the station's own rule, over a real channel on a virtual clock: before the transmission that made it due, as one key-up of the identification burst, a gap and the callsign in Morse.
+/// The only time is the count of samples the test feeds: the station's clock is that count, and "ten minutes" is ten minutes of fed audio (<see cref="StationRig.FeedToCountAsync"/>), never a wait.
+/// The test feeds no block while a keyup is running, so every outcome is decided by what the station and the channel do, not by how long anything took.
 /// </summary>
 public class OfdmFmStationHostIdentTests
 {
@@ -28,11 +28,7 @@ public class OfdmFmStationHostIdentTests
         return d;
     }
 
-    private static float[] ExpectedMorse(string callsign = "G4ABC") => StationRig.ExpectedMorse(callsign);
-
-    private static bool IsMorse(Keyup keyup, string callsign = "G4ABC") => StationRig.IsMorse(keyup, callsign);
-
-    private static int MorseKeyups(StationRig rig) => rig.Air.Keyups.Count(k => IsMorse(k));
+    private static int IdentificationKeyups(StationRig rig) => rig.Air.Keyups.Count(k => StationRig.IsIdentification(k));
 
     private static int IdentificationBursts(StationRig rig) => rig.ModemSent.Count(m => m.Kind == ModemSentKind.Identification);
 
@@ -73,50 +69,66 @@ public class OfdmFmStationHostIdentTests
     }
 
     [Fact]
-    public async Task After_the_first_transmission_one_morse_ident_is_keyed_as_silence_then_the_callsign_and_the_stations_own_burst_goes_once()
+    public async Task From_cold_the_first_keyup_is_the_identification_burst_then_the_morse_and_the_datagram_follows()
     {
         RecordingClock? clock = null;
-        await using var rig = new StationRig(clockInput: inner => clock = new RecordingClock(inner));
+        await using var rig = new StationRig(clockInput: inner => clock = new RecordingClock(inner), cold: true);
         Identify(rig);
         rig.StartTransmitter();
         SendEveryone(rig, 1).Should().Be(SendResult.Accepted);
 
-        await rig.PumpAsync(() => rig.MorseSent.Length >= 1 && IdentificationBursts(rig) >= 1, "the Morse ident and the station's identification burst to go");
+        await rig.PumpAsync(() => rig.Transmitted.Length >= 1, "the datagram to go, after the identification");
         await rig.FeedAsync(100);
         await rig.IdleAsync();
 
         Keyup[] keyups = [.. rig.Air.Keyups];
-        keyups.Should().HaveCount(3, "the datagram's burst, the Morse ident and the identification burst");
-        MorseKeyups(rig).Should().Be(1, "exactly one Morse ident, keyed as its own keyup");
-        keyups[1].Audio.Should().Equal(ExpectedMorse(), "the key-up delay as silence, the callsign at the configured tone, then the tail");
+        keyups.Should().HaveCount(2, "the identification, then the datagram");
+        (long Id, float[] Samples)[] requests = rig.Requests;
+        requests.Should().HaveCount(2);
+
+        // The first keyup: the key-up delay, the station's identification burst, a gap, the callsign in Morse, the tail. One transmission.
+        int lead = 100 * Rate / 1000;
+        int tail = 20 * Rate / 1000;
+        float[] burst = requests[0].Samples;
+        float[] morse = StationRig.ExpectedMorse();
+        float[] ident = keyups[0].Audio;
+        ident.Length.Should().Be(lead + burst.Length + (Rate / 4) + morse.Length + tail);
+        ident.AsSpan(0, lead).ToArray().Should().OnlyContain(x => x == 0f);
+        ident.AsSpan(lead, burst.Length).ToArray().Should().Equal(burst, "the station's identification burst, as it made it");
+        ident.AsSpan(lead + burst.Length, Rate / 4).ToArray().Should().OnlyContain(x => x == 0f, "a gap between the burst and the Morse");
+        ident.AsSpan(lead + burst.Length + (Rate / 4), morse.Length).ToArray().Should().Equal(morse);
+        StationRig.IsIdentification(keyups[0]).Should().BeTrue();
+
+        // The second: the datagram, as before.
+        StationRig.IsIdentification(keyups[1]).Should().BeFalse();
+        keyups[1].Audio.AsSpan(lead, requests[1].Samples.Length).ToArray().Should().Equal(requests[1].Samples);
+
         IdentificationBursts(rig).Should().Be(1);
         rig.MorseSent.Should().Equal(["G4ABC"]);
 
-        // The station was told of its own two transmissions and not of the Morse one: two starts and two ends, each at its keyup's first and last count.
+        // The station was told of each transmission once, and the identification ended where the Morse did: the end of its keyup.
         (long Id, long Index)[] starts = clock!.Starts;
         (long Id, long Index)[] ends = clock.Ends;
-        starts.Select(s => s.Index).Should().Equal(keyups[0].StartCount, keyups[2].StartCount);
-        ends.Select(e => e.Index).Should().Equal(keyups[0].EndCount, keyups[2].EndCount);
-        keyups[1].EndCount.Should().BeGreaterThan(keyups[1].StartCount);
-        starts.Concat(ends).Should().NotContain(c => c.Index > keyups[1].StartCount && c.Index < keyups[2].StartCount, "nothing of the Morse keyup was reported as the station's");
+        starts.Select(s => s.Index).Should().Equal(keyups[0].StartCount, keyups[1].StartCount);
+        ends.Select(e => e.Index).Should().Equal(keyups[0].EndCount, keyups[1].EndCount);
     }
 
     [Fact]
-    public async Task The_morse_tone_speed_and_level_are_the_options()
+    public async Task The_morse_tone_speed_and_level_are_the_options_and_the_station_is_told_how_long_it_lasts()
     {
-        await using var rig = new StationRig(morse: new OfdmFmStationHostOptions { MorseToneHz = 1000, MorseWordsPerMinute = 15, MorseAmplitude = 0.5 });
+        await using var rig = new StationRig(morse: new OfdmFmStationHostOptions { MorseToneHz = 1000, MorseWordsPerMinute = 15, MorseAmplitude = 0.5 }, cold: true);
         Identify(rig);
         rig.StartTransmitter();
         SendEveryone(rig, 1).Should().Be(SendResult.Accepted);
 
-        await rig.PumpAsync(() => rig.MorseSent.Length >= 1, "the Morse ident to go");
+        await rig.PumpAsync(() => rig.MorseSent.Length >= 1, "the identification to go");
         await rig.IdleAsync();
 
         float[] tone = MorseGenerator.Real("G4ABC", 1000, 0.5, 15, Rate);
-        int lead = 100 * Rate / 1000;
-        Keyup morse = rig.Air.Keyups[1];
-        morse.Audio.AsSpan(lead, tone.Length).ToArray().Should().Equal(tone);
-        morse.Audio.Length.Should().NotBe(ExpectedMorse().Length, "slower than the default speed, so longer");
+        int tail = 20 * Rate / 1000;
+        Keyup ident = rig.Air.Keyups[0];
+        ident.Audio.AsSpan(ident.Audio.Length - tail - tone.Length, tone.Length).ToArray().Should().Equal(tone);
+        tone.Length.Should().BeGreaterThan(StationRig.ExpectedMorse().Length, "slower than the default speed, so longer");
     }
 
     [Fact]
@@ -130,9 +142,19 @@ public class OfdmFmStationHostIdentTests
     }
 
     [Fact]
-    public async Task An_idle_station_is_never_identified_however_long_the_audio_runs_and_its_first_keyup_is_then_the_datagram()
+    public async Task A_morse_too_long_for_the_station_to_announce_is_refused_when_the_identity_is_set()
     {
-        await using var rig = new StationRig();
+        await using var rig = new StationRig(morse: new OfdmFmStationHostOptions { MorseWordsPerMinute = 5 });
+
+        Action set = () => rig.Host.SetIdentity("VK2/M0LTE/QRP-15");
+
+        set.Should().Throw<InvalidOperationException>().WithMessage("*faster speed*");
+    }
+
+    [Fact]
+    public async Task An_idle_station_is_never_identified_however_long_the_audio_runs_and_its_first_keyup_is_then_the_identification()
+    {
+        await using var rig = new StationRig(cold: true);
         Identify(rig);
         rig.StartTransmitter();
 
@@ -142,18 +164,16 @@ public class OfdmFmStationHostIdentTests
         rig.MorseSent.Should().BeEmpty();
         rig.Channel.TransmitQueued.Should().BeFalse();
 
-        // Absence is shown by what happens next: the first keyup after all that audio is the datagram's own burst.
+        // Absence is shown by what happens next: the first keyup after all that audio is the identification, ahead of the datagram.
         SendEveryone(rig, 1).Should().Be(SendResult.Accepted);
         await rig.PumpAsync(() => rig.Transmitted.Length >= 1, "the datagram to go");
-        Keyup first = rig.Air.Keyups[0];
-        first.Audio.AsSpan(100 * Rate / 1000, rig.Requests[0].Samples.Length).ToArray().Should().Equal(rig.Requests[0].Samples, "the first keyup carries the station's own burst");
-        IsMorse(first).Should().BeFalse();
+        StationRig.IsIdentification(rig.Air.Keyups[0]).Should().BeTrue();
     }
 
     [Fact]
     public async Task With_no_identity_nothing_is_keyed_and_a_send_is_refused()
     {
-        await using var rig = new StationRig();
+        await using var rig = new StationRig(cold: true);
         rig.StartTransmitter();
 
         SendEveryone(rig, 1).Should().Be(SendResult.NoIdentity);
@@ -165,17 +185,17 @@ public class OfdmFmStationHostIdentTests
     }
 
     [Fact]
-    public async Task A_second_transmission_inside_ten_minutes_brings_no_second_ident_and_one_after_ten_minutes_does()
+    public async Task A_second_transmission_inside_ten_minutes_brings_no_second_identification_and_one_after_ten_minutes_does()
     {
-        await using var rig = new StationRig();
+        await using var rig = new StationRig(cold: true);
         Identify(rig);
         rig.StartTransmitter();
         SendEveryone(rig, 1).Should().Be(SendResult.Accepted);
-        await rig.PumpAsync(() => rig.MorseSent.Length >= 1 && IdentificationBursts(rig) >= 1, "the first ident to go");
+        await rig.PumpAsync(() => rig.Transmitted.Length >= 1, "the first datagram to go");
         await rig.FeedAsync(50);
         await rig.IdleAsync();
-        long identStart = rig.Air.Keyups[2].StartCount;
-        MorseKeyups(rig).Should().Be(1);
+        long identStart = rig.Air.Keyups[0].StartCount;
+        IdentificationKeyups(rig).Should().Be(1);
 
         // Inside the ten minutes: another datagram goes and nothing else does.
         await rig.FeedToCountAsync(identStart + (5 * 60L * Rate));
@@ -184,66 +204,54 @@ public class OfdmFmStationHostIdentTests
         await rig.PumpAsync(() => rig.Transmitted.Length >= 2, "the second datagram to go");
         await rig.FeedAsync(100);
         await rig.IdleAsync();
-        rig.Air.Keyups.Count.Should().Be(keyupsBefore + 1, "only the datagram's own keyup: its transmission is covered by the identification of five minutes ago");
-        MorseKeyups(rig).Should().Be(1);
-        IdentificationBursts(rig).Should().Be(1);
+        rig.Air.Keyups.Count.Should().Be(keyupsBefore + 1, "only the datagram's own keyup: it is covered by the identification of five minutes ago");
+        IdentificationKeyups(rig).Should().Be(1);
         rig.MorseSent.Should().HaveCount(1);
 
-        // After ten minutes since the identification burst started: the next transmission is followed by a second ident, Morse and burst.
+        // After ten minutes since the identification burst started: the next transmission is preceded by a second identification.
         await rig.FeedToCountAsync(identStart + TenMinutes + Rate);
+        int before = rig.Air.Keyups.Count;
         SendEveryone(rig, 3).Should().Be(SendResult.Accepted);
-        await rig.PumpAsync(() => rig.MorseSent.Length >= 2 && IdentificationBursts(rig) >= 2, "the second ident to go");
+        await rig.PumpAsync(() => rig.Transmitted.Length >= 3, "the third datagram to go");
         await rig.FeedAsync(50);
         await rig.IdleAsync();
-        MorseKeyups(rig).Should().Be(2);
-        IdentificationBursts(rig).Should().Be(2);
+        IdentificationKeyups(rig).Should().Be(2);
+        rig.Air.Keyups.Count.Should().Be(before + 2);
+        StationRig.IsIdentification(rig.Air.Keyups[before]).Should().BeTrue("the identification goes first");
+        rig.MorseSent.Should().Equal("G4ABC", "G4ABC");
     }
 
     [Fact]
-    public async Task A_morse_ident_the_channel_refuses_does_not_stall_the_station_and_is_not_retried_until_the_station_asks_again()
+    public async Task An_identification_the_channel_refuses_is_offered_again_by_the_station_and_still_carries_the_morse()
     {
-        await using var rig = new StationRig();
+        await using var rig = new StationRig(cold: true);
         Identify(rig);
         rig.StartTransmitter();
 
-        // Key-ups are numbered in the order they are asked for: the datagram's burst, the Morse ident, then the identification burst.
-        rig.Air.FailKeyAttempt(2);
+        // The first key-up asked for is the identification: it is refused, the station offers it again, then the datagram goes.
+        rig.Air.FailKeyAttempt(1);
         SendEveryone(rig, 1).Should().Be(SendResult.Accepted);
-        await rig.PumpAsync(() => IdentificationBursts(rig) >= 1, "the station's identification burst to go though the Morse ident was refused");
+        await rig.PumpAsync(() => rig.Transmitted.Length >= 1, "the datagram to go after the identification was offered again");
         await rig.FeedAsync(50);
         await rig.IdleAsync();
 
         rig.Air.KeyAttempts.Should().Be(3);
-        MorseKeyups(rig).Should().Be(0);
-        rig.MorseSent.Should().BeEmpty("a refused ident has not gone");
-        rig.Air.Keyups.Should().HaveCount(2, "the datagram's burst and the identification burst");
-        long identStart = rig.Air.Keyups[1].StartCount;
-
-        // No timer of the host's retries it: nine minutes on, with the station quiet, nothing has been asked of the radio.
-        await rig.FeedToCountAsync(identStart + (9 * 60L * Rate));
-        rig.Air.KeyAttempts.Should().Be(3);
-
-        // The next occasion is the station's: a transmission after ten minutes brings it due again, and this time it goes.
-        await rig.FeedToCountAsync(identStart + TenMinutes + Rate);
-        SendEveryone(rig, 2).Should().Be(SendResult.Accepted);
-        await rig.PumpAsync(() => rig.MorseSent.Length >= 1 && IdentificationBursts(rig) >= 2, "the Morse ident to go at the next occasion");
-        await rig.FeedAsync(50);
-        await rig.IdleAsync();
-        MorseKeyups(rig).Should().Be(1);
+        rig.Air.Keyups.Should().HaveCount(2);
+        StationRig.IsIdentification(rig.Air.Keyups[0]).Should().BeTrue("the second offer is the identification again, with its Morse");
+        rig.MorseSent.Should().Equal(["G4ABC"]);
     }
 
     [Fact]
-    public async Task A_lease_held_by_the_hosts_own_sub_channel_lets_the_morse_ident_through()
+    public async Task A_lease_held_by_the_hosts_own_sub_channel_lets_the_identification_through()
     {
-        await using var rig = new StationRig(subChannel: 5);
+        await using var rig = new StationRig(subChannel: 5, cold: true);
         Identify(rig);
         rig.StartTransmitter();
         rig.Channel.TransmitLease.Take(5, TimeSpan.FromMinutes(30)).Granted.Should().BeTrue();
         SendEveryone(rig, 1).Should().Be(SendResult.Accepted);
 
-        // The host's own sub-channel holds the lease: the Morse ident is attributed to the same sub-channel and goes.
-        await rig.PumpAsync(() => rig.MorseSent.Length >= 1, "the Morse ident to go under the host's own lease");
-        MorseKeyups(rig).Should().Be(1);
+        await rig.PumpAsync(() => rig.MorseSent.Length >= 1, "the identification to go under the host's own lease");
+        IdentificationKeyups(rig).Should().Be(1);
     }
 
     [Fact]
@@ -265,5 +273,84 @@ public class OfdmFmStationHostIdentTests
         });
 
         allocated.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task A_host_told_it_identified_three_minutes_ago_does_not_identify_on_its_first_transmission_and_does_once_ten_minutes_have_passed_since()
+    {
+        await using var rig = new StationRig(identifiedAgo: TimeSpan.FromMinutes(3));
+        Identify(rig);
+        rig.StartTransmitter();
+
+        // Seven minutes of the station's own clock remain of the ten: a transmission at six is covered.
+        await rig.FeedToCountAsync(6 * 60L * Rate);
+        SendEveryone(rig, 1).Should().Be(SendResult.Accepted);
+        await rig.PumpAsync(() => rig.Transmitted.Length >= 1, "the first datagram to go");
+        await rig.FeedAsync(50);
+        await rig.IdleAsync();
+        rig.Air.Keyups.Should().ContainSingle("the datagram alone");
+        rig.MorseSent.Should().BeEmpty();
+        IdentificationBursts(rig).Should().Be(0);
+
+        // Past seven minutes of the station's clock the ten minutes since that identification have run out.
+        await rig.FeedToCountAsync((7 * 60L * Rate) + (5L * Rate));
+        SendEveryone(rig, 2).Should().Be(SendResult.Accepted);
+        await rig.PumpAsync(() => rig.Transmitted.Length >= 2, "the second datagram to go");
+        await rig.FeedAsync(50);
+        await rig.IdleAsync();
+        IdentificationKeyups(rig).Should().Be(1);
+        StationRig.IsIdentification(rig.Air.Keyups[1]).Should().BeTrue("the identification goes ahead of the second datagram");
+        rig.MorseSent.Should().Equal(["G4ABC"]);
+    }
+
+    [Theory]
+    [InlineData(11 * 60)]
+    [InlineData(-5 * 60)]
+    public async Task A_host_told_a_time_more_than_ten_minutes_ago_or_in_the_future_identifies_first(int agoSeconds)
+    {
+        await using var rig = new StationRig(identifiedAgo: TimeSpan.FromSeconds(agoSeconds));
+        Identify(rig);
+        rig.StartTransmitter();
+
+        SendEveryone(rig, 1).Should().Be(SendResult.Accepted);
+        await rig.PumpAsync(() => rig.Transmitted.Length >= 1, "the datagram to go");
+        await rig.FeedAsync(50);
+        await rig.IdleAsync();
+
+        rig.Air.Keyups.Should().HaveCount(2);
+        StationRig.IsIdentification(rig.Air.Keyups[0]).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task A_host_with_no_record_identifies_first()
+    {
+        await using var rig = new StationRig(cold: true);
+        Identify(rig);
+        rig.StartTransmitter();
+
+        SendEveryone(rig, 1).Should().Be(SendResult.Accepted);
+        await rig.PumpAsync(() => rig.Transmitted.Length >= 1, "the datagram to go");
+        await rig.FeedAsync(50);
+        await rig.IdleAsync();
+
+        StationRig.IsIdentification(rig.Air.Keyups[0]).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task The_host_says_when_an_identification_starts_on_its_own_clock()
+    {
+        await using var rig = new StationRig(cold: true);
+        var starts = new List<DateTimeOffset>();
+        rig.Host.IdentificationStarted += starts.Add;
+        Identify(rig);
+        rig.StartTransmitter();
+        DateTimeOffset before = rig.Clock.GetUtcNow();
+
+        SendEveryone(rig, 1).Should().Be(SendResult.Accepted);
+        await rig.PumpAsync(() => rig.Transmitted.Length >= 1, "the datagram to go");
+        await rig.IdleAsync();
+
+        DateTimeOffset when = starts.Should().ContainSingle().Subject;
+        when.Should().BeOnOrAfter(before).And.BeOnOrBefore(rig.Clock.GetUtcNow());
     }
 }

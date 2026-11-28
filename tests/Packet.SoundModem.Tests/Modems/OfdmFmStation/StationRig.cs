@@ -164,17 +164,26 @@ internal sealed class StationRig : IAsyncDisposable
     private Task? _transmitter;
     private TaskCompletionSource _keyupEnded = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <param name="cold">True: the station has no record of ever identifying, so its first transmission is preceded by its identification. False (the default): it identified at the start of the run, so the tests that are about something else are not preceded by one.</param>
+    /// <param name="startAt">How far into its life the rig's clock starts, so that a second run can begin after a first.</param>
+    /// <param name="identifiedAt">The time of its last identification, as a program would have read it from its note. Overrides the other two.</param>
+    /// <param name="identifiedAgo">When it last identified, before the start of the run (negative: in the future). Overrides <paramref name="cold"/>.</param>
     public StationRig(
         bool blockAtKey = false, FakeRadio? radio = null, bool audioFallback = false, int subChannel = 0, int seed = 1, int txDelayMilliseconds = 100, int txTailMilliseconds = 20,
         Action<bool?>? afterExternalBusy = null, Func<IStationClockInput, IStationClockInput>? clockInput = null, OfdmFmStationHostOptions? morse = null,
-        TaskScheduler? signalScheduler = null)
+        TaskScheduler? signalScheduler = null, bool cold = false, TimeSpan? identifiedAgo = null, TimeSpan? startAt = null, DateTimeOffset? identifiedAt = null)
     {
         Clock = new VirtualAir.Clock();
+        if (startAt is { } later)
+        {
+            Clock.Elapse(later);
+        }
+
         Channel = new SoundModemChannel(48000, Clock, randomSeed: 3, channelBusySource: radio, audioFallback: audioFallback);
         Channel.Csma.Persistence = 255;
         Channel.Csma.TxDelayMilliseconds = txDelayMilliseconds;
         Channel.Csma.TxTailMilliseconds = txTailMilliseconds;
-        Host = new OfdmFmStationHost(Channel, new Random(seed), new OfdmFmStationHostOptions { RunJobsInline = true, SubChannel = subChannel, AfterExternalBusy = afterExternalBusy, ClockInputWrapper = clockInput, MorseToneHz = morse?.MorseToneHz ?? 1500, MorseWordsPerMinute = morse?.MorseWordsPerMinute ?? 20, MorseAmplitude = morse?.MorseAmplitude ?? 0.8, SignalScheduler = signalScheduler });
+        Host = new OfdmFmStationHost(Channel, new Random(seed), new OfdmFmStationHostOptions { RunJobsInline = true, SubChannel = subChannel, AfterExternalBusy = afterExternalBusy, ClockInputWrapper = clockInput, MorseToneHz = morse?.MorseToneHz ?? 1500, MorseWordsPerMinute = morse?.MorseWordsPerMinute ?? 20, MorseAmplitude = morse?.MorseAmplitude ?? 0.8, SignalScheduler = signalScheduler, TimeProvider = Clock, LastIdentification = identifiedAt ?? (identifiedAgo is { } ago ? Clock.GetUtcNow() - ago : cold ? null : Clock.GetUtcNow()) });
         Air = new StationAir(Channel, Clock, () => Host.SampleCount) { BlockAtKey = blockAtKey };
         Channel.KeyupEnded += KeyupEnded;
         Channel.TransmitRejected += (_, _, _) => KeyupEnded();
@@ -246,18 +255,23 @@ internal sealed class StationRig : IAsyncDisposable
     private readonly List<IdentifiedEvent> _identified = [];
     private readonly List<string> _morseSent = [];
 
-    /// <summary>What the Morse ident keys with the default options and the rig's key-up delay and tail: silence, the callsign at 1500 Hz, 20 words a minute, 0.8, then the tail.</summary>
-    public static float[] ExpectedMorse(string callsign = "G4ABC", int delayMilliseconds = 100, int tailMilliseconds = 20)
-    {
-        float[] tone = Packet.SoundModem.Ident.MorseGenerator.Real(callsign, 1500, 0.8, 20, 48000);
-        int lead = delayMilliseconds * 48000 / 1000;
-        var audio = new float[lead + tone.Length + (tailMilliseconds * 48000 / 1000)];
-        tone.CopyTo(audio, lead);
-        return audio;
-    }
+    /// <summary>The Morse of a callsign at the default tone, speed and level, as the host renders it.</summary>
+    public static float[] ExpectedMorse(string callsign = "G4ABC") => Packet.SoundModem.Ident.MorseGenerator.Real(callsign, 1500, 0.8, 20, 48000);
 
-    /// <summary>True if the keyup is the default Morse ident of <paramref name="callsign"/>.</summary>
-    public static bool IsMorse(Keyup keyup, string callsign = "G4ABC") => keyup.Audio.AsSpan().SequenceEqual(ExpectedMorse(callsign));
+    /// <summary>
+    /// True if the keyup is an identification with the default Morse options: the key-up delay as silence, the identification burst, 0.25 s of silence, the callsign in Morse, then the tail. Read from the audio.
+    /// </summary>
+    public static bool IsIdentification(Keyup keyup, string callsign = "G4ABC", int tailMilliseconds = 20)
+    {
+        float[] tone = ExpectedMorse(callsign);
+        int tail = tailMilliseconds * 48000 / 1000;
+        int gap = 48000 / 4;
+        int morseAt = keyup.Audio.Length - tail - tone.Length;
+        return morseAt >= gap
+            && keyup.Audio.AsSpan(morseAt, tone.Length).SequenceEqual(tone)
+            && keyup.Audio.AsSpan(morseAt - gap, gap).ToArray().All(x => x == 0f)
+            && keyup.Audio.AsSpan(keyup.Audio.Length - tail).ToArray().All(x => x == 0f);
+    }
 
     public VirtualAir.Clock Clock { get; }
 

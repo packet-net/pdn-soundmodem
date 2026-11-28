@@ -20,10 +20,7 @@ internal sealed record Fate(bool Sent, string? Reason, TransmittedEvent? Burst);
 internal sealed class ToolSession : IAsyncDisposable
 {
     /// <summary>How long a ping waits for its echo.</summary>
-    internal static readonly TimeSpan PingWait = TimeSpan.FromSeconds(30);
-
-    /// <summary>How long a command that has transmitted waits for the station's first identification to go.</summary>
-    internal static readonly TimeSpan IdentWait = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan PingWait = TimeSpan.FromSeconds(60);
 
     private const long ReplyTagBase = 1L << 40;
 
@@ -39,11 +36,11 @@ internal sealed class ToolSession : IAsyncDisposable
     private readonly ConcurrentDictionary<long, TaskCompletionSource<Fate>> _fates = [];
     private readonly ConcurrentDictionary<ushort, TaskCompletionSource<long>> _answers = [];
     private readonly Channel<(byte[] Reply, uint ToKey, ushort Sequence)> _replies = System.Threading.Channels.Channel.CreateUnbounded<(byte[], uint, ushort)>();
-    private readonly TaskCompletionSource _identified = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly System.Threading.Channels.Channel<DateTimeOffset> _identifications = System.Threading.Channels.Channel.CreateUnbounded<DateTimeOffset>();
+    private readonly IdentificationNote? _note;
     private Task _replier = Task.CompletedTask;
+    private Task _noteWriter = Task.CompletedTask;
     private long _replyTag;
-    private int _morseSent;
-    private int _burstSent;
 
     /// <param name="host">The station host.</param>
     /// <param name="call">This station's callsign, and the link address it sends from and answers to.</param>
@@ -52,8 +49,10 @@ internal sealed class ToolSession : IAsyncDisposable
     /// <param name="canTransmit">False: the station only listens, and never sends an echo.</param>
     /// <param name="log">Where every line goes.</param>
     /// <param name="time">The clock the lines and the round trips are read from.</param>
-    public ToolSession(OfdmFmStationHost host, string call, string? to, bool detail, bool canTransmit, StampedLog log, TimeProvider time)
+    /// <param name="note">Where the time of each identification is written, or null for nowhere.</param>
+    public ToolSession(OfdmFmStationHost host, string call, string? to, bool detail, bool canTransmit, StampedLog log, TimeProvider time, IdentificationNote? note = null)
     {
+        _note = note;
         _host = host;
         _call = call;
         _detail = detail;
@@ -84,17 +83,10 @@ internal sealed class ToolSession : IAsyncDisposable
         _host.MorseIdentSent += text =>
         {
             _log.Write($"Identified in Morse as {text}");
-            Volatile.Write(ref _morseSent, 1);
-            CheckIdentified();
         };
-        _host.ModemSent += e =>
-        {
-            if (e.Kind == ModemSentKind.Identification)
-            {
-                Volatile.Write(ref _burstSent, 1);
-                CheckIdentified();
-            }
-        };
+
+        // The host raises this inside its lock on the audio thread: the file is written from a task of the tool's own.
+        _host.IdentificationStarted += when => _identifications.Writer.TryWrite(when);
 
         IdentityResult accepted = _host.SetIdentity(_call);
         if (accepted != IdentityResult.Accepted)
@@ -103,6 +95,7 @@ internal sealed class ToolSession : IAsyncDisposable
         }
 
         _replier = Task.Run(AnswerEchoesAsync);
+        _noteWriter = Task.Run(WriteNotesAsync);
         return null;
     }
 
@@ -149,11 +142,6 @@ internal sealed class ToolSession : IAsyncDisposable
         _log.Write(outcome.Sent
             ? $"Transmitted {Bytes(text.Length)} to {_names[to.Key]}"
             : $"Dropped {Bytes(text.Length)} to {_names[to.Key]}: {outcome.Reason}");
-        if (outcome.Sent && _canTransmit)
-        {
-            await WaitForIdentificationAsync(stop);
-        }
-
         return outcome.Sent;
     }
 
@@ -217,11 +205,6 @@ internal sealed class ToolSession : IAsyncDisposable
 
         var summary = new PingSummary(sent, answered, outRate, backRate);
         _log.Write(summary.ToString());
-        if (_canTransmit && sent > 0 && !stop.IsCancellationRequested)
-        {
-            await WaitForIdentificationAsync(stop);
-        }
-
         return summary;
     }
 
@@ -229,7 +212,9 @@ internal sealed class ToolSession : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _replies.Writer.TryComplete();
+        _identifications.Writer.TryComplete();
         await _replier;
+        await _noteWriter;
     }
 
     /// <summary>The time on the clock, hundredths of a second, as a number of seconds: 4.21 s.</summary>
@@ -297,27 +282,11 @@ internal sealed class ToolSession : IAsyncDisposable
         }
     }
 
-    private void CheckIdentified()
+    private async Task WriteNotesAsync()
     {
-        if (Volatile.Read(ref _morseSent) == 1 && Volatile.Read(ref _burstSent) == 1)
+        await foreach (DateTimeOffset when in _identifications.Reader.ReadAllAsync())
         {
-            _identified.TrySetResult();
-        }
-    }
-
-    /// <summary>
-    /// After a transmission the station says who it is, in Morse and in a burst of its own. Leaving first would cut that off, so wait for it, up to <see cref="IdentWait"/>.
-    /// It is only owed the first time in a run: after that the wait is over at once.
-    /// </summary>
-    private async Task WaitForIdentificationAsync(CancellationToken stop)
-    {
-        using var wait = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        Task timeout = Task.Delay(IdentWait, _time, wait.Token);
-        await Task.WhenAny(_identified.Task, timeout);
-        await wait.CancelAsync();
-        if (!_identified.Task.IsCompleted && !stop.IsCancellationRequested)
-        {
-            _log.Write("Left before the identification had finished");
+            _note?.Write(when);
         }
     }
 

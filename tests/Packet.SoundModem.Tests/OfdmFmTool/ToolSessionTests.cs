@@ -1,6 +1,6 @@
 using AwesomeAssertions;
 using M0LTE.OfdmFm;
-using Packet.SoundModem.Ident;
+using Packet.SoundModem.Modems.OfdmFmStation;
 using Packet.SoundModem.OfdmFmTool;
 using Packet.SoundModem.Tests.Channel;
 using Packet.SoundModem.Tests.Modems.OfdmFmStation;
@@ -16,11 +16,11 @@ public class ToolSessionTests
     {
         private readonly List<string> _lines = [];
 
-        public Side(string call, string? to, int seed, VirtualAir.Clock clock, bool canTransmit = true, bool detail = false)
+        public Side(string call, string? to, int seed, VirtualAir.Clock clock, bool canTransmit = true, bool detail = false, IdentificationNote? note = null, StationRig? rig = null)
         {
-            Rig = new StationRig(seed: seed);
+            Rig = rig ?? new StationRig(seed: seed, cold: true);
             Log = new StampedLog(clock, line => { lock (_lines) { _lines.Add(line); } });
-            Session = new ToolSession(Rig.Host, call, to, detail, canTransmit, Log, clock);
+            Session = new ToolSession(Rig.Host, call, to, detail, canTransmit, Log, clock, note);
             if (!canTransmit)
             {
                 ListenOnly.Apply(Rig.Channel);
@@ -92,8 +92,8 @@ public class ToolSessionTests
         }
     }
 
-    [Fact(Skip = "Blocked by #943: the first exchange between two cold stations keys both radios at once (the answer arrives while the pinger sends its Morse identification), which the rig refuses. Unskip when #943 is decided.")]
-    public async Task Pings_to_a_listening_station_are_answered_and_the_rate_is_reported_both_ways()
+    [Fact]
+    public async Task Pings_between_two_cold_stations_are_all_answered_and_the_rate_is_reported_both_ways()
     {
         var clock = new VirtualAir.Clock();
         await using var pinger = new Side("G4ABC-1", "M0XYZ-1", seed: 11, clock);
@@ -102,34 +102,32 @@ public class ToolSessionTests
         pinger.Begin();
         listener.Begin();
 
-        // The first run is cold: see the next test. This one is the same stations once both have identified.
-        Task<PingSummary> cold = pinger.Session.PingAsync(1, 32, CancellationToken.None);
-        await PumpAsync(clock, () => cold.IsCompleted, "the first ping run to finish", pinger.Rig, listener.Rig);
-        await cold;
-
         Task<PingSummary> ping = pinger.Session.PingAsync(5, 32, CancellationToken.None);
         await PumpAsync(clock, () => ping.IsCompleted, "the ping run to finish", pinger.Rig, listener.Rig);
 
         PingSummary summary = await ping;
         summary.Sent.Should().Be(5);
-        summary.Answered.Should().Be(5);
+        summary.Answered.Should().Be(5, "each station identifies before it first transmits, so the answer comes back into a quiet channel");
         summary.OutBitsPerSecond.Should().NotBeNull("the modem reported the rate to the other station");
         summary.BackBitsPerSecond.Should().NotBeNull("the modem reported the rate back");
         summary.BothWayBitsPerSecond.Should().BeGreaterThan(0);
 
+        // The run is the rig's own check that no two radios were keyed at once: it throws if they were.
         string[] lines = await pinger.LinesAsync();
         lines.Should().OnlyContain(l => System.Text.RegularExpressions.Regex.IsMatch(l, @"^\d\d:\d\d:\d\d\.\d\d  \S"), "every line starts with the time");
         lines.Count(l => l.Contains(": 32 bytes, ") && l.Contains(" round trip, out ") && l.Contains(", back ")).Should().Be(5);
         lines.Should().Contain(l => l.EndsWith(summary.ToString(), StringComparison.Ordinal));
-        lines.Should().Contain(l => l.Contains("Sent 1 datagram to M0XYZ-1"), "the modem's own trace is printed unchanged");
+        lines.Should().Contain(l => l.Contains("Sent 1 datagram to"), "the modem's own trace is printed unchanged");
         Console.WriteLine(string.Join(Environment.NewLine, lines));
 
         string[] heard = await listener.LinesAsync();
-        heard.Count(l => l.Contains("answering")).Should().Be(6);
+        heard.Count(l => l.Contains("answering")).Should().Be(5);
+        StationRig.IsIdentification(pinger.Rig.Air.Keyups[0], "G4ABC-1").Should().BeTrue("the pinger's first transmission is its identification");
+        StationRig.IsIdentification(listener.Rig.Air.Keyups[0], "M0XYZ-1").Should().BeTrue("and the listener's");
     }
 
-    [Fact(Skip = "Blocked by #943: this is the fault itself, two radios keyed at once, which the rig refuses to run. Unskip, with Answered == 5, when #943 is decided.")]
-    public async Task Known_fault_943_the_first_ping_of_a_cold_start_is_lost_while_the_pinger_identifies()
+    [Fact]
+    public async Task On_air_from_cold_each_station_sends_its_identification_and_Morse_before_its_data_and_the_next_transmission_waits_for_the_other_stations_Morse()
     {
         var clock = new VirtualAir.Clock();
         await using var pinger = new Side("G4ABC-1", "M0XYZ-1", seed: 11, clock);
@@ -138,16 +136,84 @@ public class ToolSessionTests
         pinger.Begin();
         listener.Begin();
 
-        Task<PingSummary> ping = pinger.Session.PingAsync(5, 32, CancellationToken.None);
-        await PumpAsync(clock, () => ping.IsCompleted, "the ping run to finish", pinger.Rig, listener.Rig);
+        Task<PingSummary> ping = pinger.Session.PingAsync(2, 32, CancellationToken.None);
+        await PumpAsync(clock, () => ping.IsCompleted, "the two pings to finish", pinger.Rig, listener.Rig);
+        (await ping).Answered.Should().Be(2);
 
-        PingSummary summary = await ping;
-        summary.Sent.Should().Be(5);
+        // The rig's record of every keyup of both radios, in the order they began. Both stations count the same audio, so the counts are on one timeline.
+        (string Who, Keyup Keyup)[] air = [.. pinger.Rig.Air.Keyups.Select(k => ("A", k)).Concat(listener.Rig.Air.Keyups.Select(k => ("B", k))).OrderBy(x => x.k.StartCount)];
+        string Describe((string Who, Keyup Keyup) x) =>
+            x.Who + (StationRig.IsIdentification(x.Keyup, x.Who == "A" ? "G4ABC-1" : "M0XYZ-1") ? " identification+morse" : " data");
+        string[] order = [.. air.Select(Describe)];
+        Console.WriteLine(string.Join(Environment.NewLine, air.Select(x => $"{Describe(x)}: {x.Keyup.StartCount / 48000.0:0.00} s to {x.Keyup.EndCount / 48000.0:0.00} s")));
 
-        // A RECORD OF A KNOWN FAULT, not a requirement: packet-net/pdn-soundmodem#943. The station identifies in Morse straight after its first transmission and is deaf to the answer, so the first ping is lost.
-        // This changes when #943 is decided; at that point it should assert Answered == 5.
-        summary.Answered.Should().BeGreaterThanOrEqualTo(4, "known fault #943: the answer to the first ping arrives while the station is keyed for its identification");
-        Console.WriteLine(string.Join(Environment.NewLine, await pinger.LinesAsync()));
+        order.Should().Equal("A identification+morse", "A data", "B identification+morse", "B data", "A data", "B data");
+
+        // Nothing overlaps, and the first station's second ping starts only after the other station's Morse has ended.
+        for (int i = 1; i < air.Length; i++)
+        {
+            air[i].Keyup.StartCount.Should().BeGreaterThanOrEqualTo(air[i - 1].Keyup.EndCount, $"keyup {i} began after keyup {i - 1} ended");
+        }
+
+        air[4].Keyup.StartCount.Should().BeGreaterThanOrEqualTo(air[2].Keyup.EndCount);
+    }
+
+    [Fact]
+    public async Task A_second_run_from_the_state_the_first_left_does_not_identify_again_inside_ten_minutes()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"pdn-ofdm-{Guid.NewGuid():N}");
+        string file = Path.Combine(dir, IdentificationNote.FileName("G4ABC-1", "pipe:a,b"));
+        try
+        {
+            // The first run, from nothing: one identification, and the time it started goes to the file.
+            var clock = new VirtualAir.Clock();
+            await using (var first = new Side("G4ABC-1", "M0XYZ-1", seed: 11, clock, note: new IdentificationNote(file, clock, _ => { })))
+            await using (var listener = new Side("M0XYZ-1", null, seed: 12, clock))
+            {
+                JoinAir(clock, first.Rig, listener.Rig);
+                first.Begin();
+                listener.Begin();
+                Task<PingSummary> ping = first.Session.PingAsync(2, 32, CancellationToken.None);
+                await PumpAsync(clock, () => ping.IsCompleted, "the first run to finish", first.Rig, listener.Rig);
+                (await ping).Answered.Should().Be(2);
+                first.Rig.Air.Keyups.Count(k => StationRig.IsIdentification(k, "G4ABC-1")).Should().Be(1);
+                await first.Session.DisposeAsync();
+            }
+
+            File.Exists(file).Should().BeTrue("the time of the identification was written");
+
+            // Three minutes later by the clock the tool reads it against, a second run is built from that file.
+            var later = new VirtualAir.Clock();
+            DateTimeOffset epoch = later.GetUtcNow();
+            var farOn = new VirtualAir.Clock();
+            farOn.Elapse(TimeSpan.FromDays(1));
+            DateTimeOffset written = new IdentificationNote(file, farOn, _ => { }).Read() ?? throw new InvalidOperationException("the first run left no time");
+            later.Elapse(written - epoch + TimeSpan.FromMinutes(3));
+            DateTimeOffset? read = new IdentificationNote(file, later, _ => { }).Read();
+            read.Should().Be(written);
+
+            var clock2 = new VirtualAir.Clock();
+            var rig2 = new StationRig(seed: 11, startAt: later.GetUtcNow() - epoch, identifiedAt: read);
+            await using var second = new Side("G4ABC-1", "M0XYZ-1", seed: 11, clock2, rig: rig2);
+            await using var listener2 = new Side("M0XYZ-1", null, seed: 12, clock2);
+            JoinAir(clock2, second.Rig, listener2.Rig);
+            second.Begin();
+            listener2.Begin();
+            Task<PingSummary> again = second.Session.PingAsync(2, 32, CancellationToken.None);
+            await PumpAsync(clock2, () => again.IsCompleted, "the second run to finish", second.Rig, listener2.Rig);
+
+            (await again).Answered.Should().Be(2);
+            second.Rig.Air.Keyups.Should().NotBeEmpty();
+            second.Rig.Air.Keyups.Count(k => StationRig.IsIdentification(k, "G4ABC-1")).Should().Be(0, "it identified three minutes ago");
+            second.Rig.MorseSent.Should().BeEmpty();
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -161,7 +227,7 @@ public class ToolSessionTests
         listener.Begin();
 
         Task<bool> sent = sender.Session.SendTextAsync("hello there"u8.ToArray(), CancellationToken.None);
-        await PumpAsync(clock, () => sent.IsCompleted, "the text to go", sender.Rig, listener.Rig);
+        await PumpAsync(clock, () => sent.IsCompleted && listener.Rig.Received.Length >= 1, "the text to go and be heard", sender.Rig, listener.Rig);
 
         (await sent).Should().BeTrue();
         (await sender.LinesAsync()).Should().Contain(l => l.EndsWith("Transmitted 11 bytes to M0XYZ-1", StringComparison.Ordinal));
@@ -203,7 +269,7 @@ public class ToolSessionTests
         listener.Rig.Air.Keyups.Should().BeEmpty();
         listener.Rig.Transmitted.Should().BeEmpty();
         (await listener.LinesAsync()).Should().Contain(l => l.Contains("not answered, receive only"));
-        (await pinger.LinesAsync()).Should().Contain(l => l.Contains("no answer in 30 s"));
+        (await pinger.LinesAsync()).Should().Contain(l => l.Contains("no answer in 60 s"));
     }
 
     [Fact]
@@ -219,7 +285,7 @@ public class ToolSessionTests
 
         (await ping).Should().Be(new PingSummary(2, 0, null, null));
         string[] lines = await pinger.LinesAsync();
-        lines.Count(l => l.Contains("no answer in 30 s")).Should().Be(2);
+        lines.Count(l => l.Contains("no answer in 60 s")).Should().Be(2);
         lines.Should().Contain(l => l.EndsWith("2 sent, 0 answered", StringComparison.Ordinal));
     }
 
@@ -264,19 +330,25 @@ public class ToolSessionTests
 
         // One datagram too big for a 2.5 s burst goes alone and whole, and the biggest the modem accepts at the slowest rate takes about 10.6 s on air.
         sender.Rig.Air.Keyups.Should().NotBeEmpty();
-        foreach (Keyup keyup in sender.Rig.Air.Keyups.Where(k => !StationRig.IsMorse(k)))
+        foreach (Keyup keyup in sender.Rig.Air.Keyups.Where(k => !StationRig.IsIdentification(k, "G4ABC-1")))
         {
-            Console.WriteLine($"keyup {keyup.Audio.Length / 48000.0:0.000} s");
+            Console.WriteLine($"data keyup {keyup.Audio.Length / 48000.0:0.000} s");
             (keyup.Audio.Length / 48000.0).Should().BeLessThanOrEqualTo(12.0);
         }
     }
 
     [Fact]
-    public void The_Morse_identification_of_the_longest_callsign_is_the_longest_thing_the_tool_keys()
+    public async Task The_identification_of_the_longest_callsign_is_the_longest_keyup_and_is_under_twenty_seconds()
     {
-        float[] tone = MorseGenerator.Real("VK2/M0LTE/QRP-15", 1500, 0.8, 20, 48000);
+        await using var sender = new Side("VK2/M0LTE/QRP-15", "M0XYZ-1", seed: 11, new VirtualAir.Clock());
+        sender.Begin();
+        sender.Rig.Host.Send(new byte[10], LinkAddress.FromAscii("M0XYZ-1"), LinkAddress.FromAscii("VK2/M0LTE/QRP-15"), LinkProtocol.NoLayer3, new HostTag(1)).Should().Be(SendResult.Accepted);
 
-        Console.WriteLine($"morse of the longest callsign: {tone.Length / 48000.0:0.00} s");
-        (tone.Length / 48000.0).Should().BeLessThan(15, "the longest callsign the station accepts, at the host's default speed");
+        await StationRig.PumpAsync(() => sender.Rig.Transmitted.Length >= 1, "the datagram to go after the identification", sender.Rig);
+
+        Keyup ident = sender.Rig.Air.Keyups[0];
+        StationRig.IsIdentification(ident, "VK2/M0LTE/QRP-15").Should().BeTrue();
+        Console.WriteLine($"identification keyup of the longest callsign {ident.Audio.Length / 48000.0:0.000} s");
+        (ident.Audio.Length / 48000.0).Should().BeLessThan(20);
     }
 }
