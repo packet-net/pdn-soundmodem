@@ -145,6 +145,7 @@ internal sealed class StationRig : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly Lock _gate = new();
     private Task? _transmitter;
+    private TaskCompletionSource _keyupEnded = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public StationRig(
         bool blockAtKey = false, FakeRadio? radio = null, bool audioFallback = false, int subChannel = 0, int seed = 1, int txDelayMilliseconds = 100, int txTailMilliseconds = 20,
@@ -157,6 +158,8 @@ internal sealed class StationRig : IAsyncDisposable
         Channel.Csma.TxTailMilliseconds = txTailMilliseconds;
         Host = new OfdmFmStationHost(Channel, new Random(seed), new OfdmFmStationHostOptions { RunJobsInline = true, SubChannel = subChannel, AfterExternalBusy = afterExternalBusy, ClockInputWrapper = clockInput, MorseToneHz = morse?.MorseToneHz ?? 1500, MorseWordsPerMinute = morse?.MorseWordsPerMinute ?? 20, MorseAmplitude = morse?.MorseAmplitude ?? 0.8 });
         Air = new StationAir(Channel, Clock, () => Host.SampleCount) { BlockAtKey = blockAtKey };
+        Channel.KeyupEnded += KeyupEnded;
+        Channel.TransmitRejected += (_, _, _) => KeyupEnded();
         Host.StationForTests.TransmitRequest += e =>
         {
             lock (_gate)
@@ -267,12 +270,40 @@ internal sealed class StationRig : IAsyncDisposable
     /// <summary>Starts the channel's transmitter on a thread of its own.</summary>
     public void StartTransmitter() => _transmitter = Task.Run(() => Channel.RunTransmitterAsync(Air, Air, _stop.Token));
 
-    /// <summary>Waits until no keyup is queued or running. A keyup is the transmitter's thread feeding this channel; the caller must not feed it meanwhile.</summary>
+    /// <summary>Completes the signal the next <see cref="IdleAsync"/> look is waiting on: a keyup has ended, or a queued frame has been turned away, which are the two ways the queue and the keyed state change without the test doing it.</summary>
+    private void KeyupEnded()
+    {
+        TaskCompletionSource ended;
+        lock (_gate)
+        {
+            ended = _keyupEnded;
+            _keyupEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        ended.TrySetResult();
+    }
+
+    /// <summary>
+    /// Waits until no keyup is queued or running. A keyup is the transmitter's thread feeding this channel; the caller must not feed it meanwhile.
+    /// Woken by the channel's own end-of-keyup signal (<see cref="SoundModemChannel.KeyupEnded"/>, raised after receive has reopened), never by looking again after a pause.
+    /// </summary>
     public async Task IdleAsync()
     {
-        if (WaitForTransmitter && (Channel.TransmitQueued || Channel.ChannelBusy))
+        while (WaitForTransmitter)
         {
-            await Eventually.UntilAsync(() => !Channel.TransmitQueued && !Channel.ChannelBusy, "the keyup to finish");
+            // Taken before the state is read, so a keyup that ends in between is not lost: it completes this one.
+            Task ended;
+            lock (_gate)
+            {
+                ended = _keyupEnded.Task;
+            }
+
+            if (!Channel.TransmitQueued && !Channel.ChannelBusy)
+            {
+                return;
+            }
+
+            await Eventually.SignalAsync(ended, "the keyup to finish");
         }
     }
 

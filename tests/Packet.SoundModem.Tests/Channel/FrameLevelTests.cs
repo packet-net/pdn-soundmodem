@@ -854,7 +854,16 @@ public class FrameLevelTests
         }
     }
 
-    /// <summary>A card that hands out one recording over and over, at the loop's block size.</summary>
+    /// <summary>
+    /// A card that hands out one recording over and over, at the loop's block size, as fast as the
+    /// loop asks.
+    /// </summary>
+    /// <remarks>
+    /// Not paced like a real card: nothing the tests here read depends on how long a block takes to
+    /// arrive (a frame's level and clip flag are placed by sample position, and the real-time watch
+    /// only reports), and the run ends when the first frame is decoded, which is in the first pass of the
+    /// recording at the most, so the loop does not spin for long.
+    /// </remarks>
     private sealed class CardInput(int sampleRate, float[] audio) : IAudioInput
     {
         private int _position;
@@ -863,8 +872,6 @@ public class FrameLevelTests
 
         public int Read(Span<float> buffer)
         {
-            // As slow as a real card, so the station's loop does not spin a core.
-            Thread.Sleep(buffer.Length * 1000 / SampleRate);
             for (int n = 0; n < buffer.Length; n++)
             {
                 buffer[n] = audio[_position];

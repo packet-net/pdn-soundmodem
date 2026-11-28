@@ -125,17 +125,23 @@ public class TransmitAnnouncementOrderTests
 
     /// <summary>
     /// Records, for each frame the channel says it dropped, whether its caller could already see
-    /// the answer at that moment. The handler takes its time over saying so, as a slow log does,
-    /// which gives a task ended first every chance to be seen ending first; it changes nothing
-    /// when the order is right, because then the task cannot end until the handler has returned.
+    /// the answer when the handler ran.
     /// </summary>
+    /// <remarks>
+    /// The channel says a frame is dropped and then ends its task, one after the other on the
+    /// transmitter's own thread. So the order this test is about is a fact of the sequence and
+    /// not of any timing: a task that ended first is ended already when the handler starts, and is
+    /// seen so at its first instruction. This used to sleep 200 ms in the handler before looking,
+    /// to widen a window for a task ended concurrently by another thread; the channel has no such
+    /// thread, and a regression to answering first is seen without the wait. When the order is
+    /// right the task cannot end until the handler has returned, so it is never seen ended.
+    /// </remarks>
     private static List<(byte Marker, bool CallerAnsweredFirst)> WatchDrops(
         SoundModemChannel channel, Func<byte, Task> taskFor)
     {
         var drops = new List<(byte, bool)>();
         channel.TransmitRejected += (_, frame, _) =>
         {
-            Thread.Sleep(200);
             bool answered = taskFor(frame[^1]).IsCompleted;
             lock (drops)
             {

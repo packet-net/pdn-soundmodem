@@ -42,9 +42,9 @@ public class TurnaroundHoldTests
         return [.. frame, (byte)0xF0, (byte)0x41];
     }
 
-    private static (SoundModemChannel Channel, FakeTimeProvider Time) Station()
+    private static (SoundModemChannel Channel, VirtualAir.Clock Time) Station()
     {
-        var time = new FakeTimeProvider();
+        var time = new VirtualAir.Clock();
         var channel = new SoundModemChannel(SampleRate, time, randomSeed: 42);
         channel.AddModem(0, sink => new Afsk300MultiModem(SampleRate, sink, Afsk300Framing.Il2pCrc, 850, 5));
         channel.AddModem(2, sink => new BpskMultiModem(SampleRate, sink, crc: true, 2150, baud: 300, offsetPairs: 4));
@@ -54,23 +54,20 @@ public class TurnaroundHoldTests
         return (channel, time);
     }
 
-    /// <summary>Runs the transmitter, letting the fake clock run so CSMA delays complete.</summary>
-    private static async Task<Task> StartAsync(
-        SoundModemChannel channel, FakeTimeProvider time, CancellationToken cancellation)
-    {
-        var ptt = new RecordingPtt();
-        Task transmitter = channel.RunTransmitterAsync(new Sink(SampleRate), ptt, cancellation);
-        _ = Task.Run(async () =>
-        {
-            while (!cancellation.IsCancellationRequested)
-            {
-                time.Advance(TimeSpan.FromMilliseconds(10));
-                await Task.Delay(1, CancellationToken.None);
-            }
-        }, CancellationToken.None);
-        await Task.Yield();
-        return transmitter;
-    }
+    /// <summary>
+    /// Starts the transmitter. The clock does not move until a test moves it, and only while the
+    /// transmitter is parked on it (<see cref="VirtualAir.Clock.RunUntilAsync"/>).
+    /// </summary>
+    private static Task Start(SoundModemChannel channel, CancellationToken cancellation) =>
+        channel.RunTransmitterAsync(new Sink(SampleRate), new RecordingPtt(), cancellation);
+
+    /// <summary>
+    /// The transmitter has done everything it can on a clock that is not moving: either it is
+    /// parked waiting for time, or <paramref name="early"/> went out. The caller then asserts on
+    /// what it did not send.
+    /// </summary>
+    private static Task ParkedOrAsync(VirtualAir.Clock time, Task early) =>
+        Task.WhenAny(time.ParkedAsync(), early);
 
     [Fact]
     public void The_Window_Is_Calculated_From_The_Channels_Own_Parameters()
@@ -99,20 +96,23 @@ public class TurnaroundHoldTests
     [Fact]
     public async Task A_Frame_That_Expects_A_Reply_Holds_The_Other_Modem_Off()
     {
-        (SoundModemChannel channel, FakeTimeProvider time) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time) = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
         Task poll = channel.EnqueueTransmit(2, Poll());       // an RR poll: an answer is owed
         Task other = channel.EnqueueTransmit(0, Broadcast()); // the other link, queued behind it
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, cancellation.Token);
 
+        // The clock has not moved, so the poll goes out at once (no roll to lose, nothing to
+        // sense) and the transmitter then parks on the turnaround, with the other frame queued.
         await Eventually.SignalAsync(poll, "poll to complete");
+        await ParkedOrAsync(time, other);
         // The polling modem is done; the other one must still be waiting out the turnaround.
         other.IsCompleted.Should().BeFalse(
             "the reply to the poll has not had its chance yet, and keying over it is exactly "
             + "what this station was doing 97 % of the time");
 
-        await Eventually.SignalAsync(other, "other to complete");
+        await time.RunUntilAsync(other);
         await cancellation.CancelAsync();
         await Ignore(transmitter);
     }
@@ -120,14 +120,14 @@ public class TurnaroundHoldTests
     [Fact]
     public async Task A_Broadcast_Holds_Nobody()
     {
-        (SoundModemChannel channel, FakeTimeProvider time) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time) = Station();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
         Task ident = channel.EnqueueTransmit(2, Broadcast());
         Task other = channel.EnqueueTransmit(0, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, cancellation.Token);
 
-        await Eventually.SignalAsync(Task.WhenAll(ident, other), "Task.WhenAll(ident, other) to complete");
+        await time.RunUntilAsync(Task.WhenAll(ident, other));
         await cancellation.CancelAsync();
         await Ignore(transmitter);
         // Reaching here at all is the assertion: neither frame expects an answer, so neither
@@ -137,15 +137,15 @@ public class TurnaroundHoldTests
     [Fact]
     public async Task With_No_Hook_The_Channel_Behaves_As_It_Always_Did()
     {
-        (SoundModemChannel channel, FakeTimeProvider time) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time) = Station();
         channel.QuietAfterTransmit = null; // a channel that says nothing about reply timing
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
         Task poll = channel.EnqueueTransmit(2, Poll());
         Task other = channel.EnqueueTransmit(0, Poll());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, cancellation.Token);
 
-        await Eventually.SignalAsync(Task.WhenAll(poll, other), "Task.WhenAll(poll, other) to complete");
+        await time.RunUntilAsync(Task.WhenAll(poll, other));
         await cancellation.CancelAsync();
         await Ignore(transmitter);
     }
@@ -157,7 +157,7 @@ public class TurnaroundHoldTests
         // round robin, so the hold generalises to however many share the half-duplex resource -
         // four packet modems, or three modems and a pager, or anything else that makes a receiver
         // go deaf by keying up.
-        var time = new FakeTimeProvider();
+        var time = new VirtualAir.Clock();
         var channel = new SoundModemChannel(SampleRate, time, randomSeed: 42);
         channel.AddModem(0, sink => new Afsk300MultiModem(SampleRate, sink, Afsk300Framing.Il2pCrc, 850, 5));
         channel.AddModem(2, sink => new BpskMultiModem(SampleRate, sink, crc: true, 2150, baud: 300, offsetPairs: 4));
@@ -171,15 +171,16 @@ public class TurnaroundHoldTests
         Task second = channel.EnqueueTransmit(0, Broadcast());
         Task third = channel.EnqueueTransmit(3, Broadcast());
         Task service = channel.EnqueueTransmit(_ => new float[SampleRate / 20]);
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, cancellation.Token);
 
         await Eventually.SignalAsync(poll, "poll to complete");
+        await ParkedOrAsync(time, Task.WhenAny(second, third, service));
         second.IsCompleted.Should().BeFalse("every other transmitter waits out the turnaround");
         third.IsCompleted.Should().BeFalse();
         service.IsCompleted.Should().BeFalse("a service transmitter is one of them too");
 
         // And none of them is starved: once the window lapses unanswered they all get the air.
-        await Eventually.SignalAsync(Task.WhenAll(second, third, service), "Task.WhenAll(second, third, service) to complete");
+        await time.RunUntilAsync(Task.WhenAll(second, third, service));
         await cancellation.CancelAsync();
         await Ignore(transmitter);
     }
@@ -192,7 +193,7 @@ public class TurnaroundHoldTests
         // because a zero-length poll is a core spinning for the length of every hold. The
         // observable part is that the held frame still goes out; the wait being a single sleep
         // rather than a spin is what RemainingHold buys.
-        (SoundModemChannel channel, FakeTimeProvider time) = Station();
+        (SoundModemChannel channel, VirtualAir.Clock time) = Station();
         channel.Csma.SlotTimeMilliseconds = 0;
         channel.TurnaroundHold.Should().Be(TimeSpan.FromMilliseconds(600),
             "the window must not collapse with the slot time");
@@ -200,11 +201,12 @@ public class TurnaroundHoldTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         Task poll = channel.EnqueueTransmit(2, Poll());
         Task held = channel.EnqueueTransmit(0, Broadcast());
-        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+        Task transmitter = Start(channel, cancellation.Token);
 
         await Eventually.SignalAsync(poll, "poll to complete");
+        await ParkedOrAsync(time, held);
         held.IsCompleted.Should().BeFalse("the turnaround is still running");
-        await Eventually.SignalAsync(held, "held to complete"); // must release, not hang
+        await time.RunUntilAsync(held); // must release, not hang
 
         await cancellation.CancelAsync();
         await Ignore(transmitter);

@@ -1,5 +1,4 @@
 using M0LTE.Radio.Audio;
-using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems;
 using M0LTE.Ms110d;
@@ -13,7 +12,8 @@ namespace Packet.SoundModem.Tests.Channel;
 /// </summary>
 /// <remarks>
 /// Native 9600 Hz and WN6 to keep the audio short. Everything is queued before the transmitter
-/// starts, or the clock is fake, so nothing here depends on how fast the box is.
+/// starts, or the clock is a <see cref="VirtualAir.Clock"/> that a test moves only while the
+/// transmitter is parked on it, so nothing here depends on how fast the box is.
 /// </remarks>
 public class PackedBurstTests
 {
@@ -69,19 +69,6 @@ public class PackedBurstTests
         channel.Csma.TxDelayMilliseconds = 100;
         return (channel, modem!);
     }
-
-    /// <summary>Runs a fake clock forward in 50 ms steps until cancelled.</summary>
-    private static void Crank(FakeTimeProvider time, CancellationToken cancellation) =>
-        _ = Task.Run(
-            async () =>
-            {
-                while (!cancellation.IsCancellationRequested)
-                {
-                    VirtualAir.Tick(time, TimeSpan.FromMilliseconds(50));
-                    await Task.Delay(1, CancellationToken.None);
-                }
-            },
-            CancellationToken.None);
 
     private static FramePacking Packing(double maxSeconds = 30, double gatherSeconds = 0) =>
         new(TimeSpan.FromSeconds(maxSeconds), TimeSpan.FromSeconds(gatherSeconds));
@@ -220,7 +207,7 @@ public class PackedBurstTests
     [Fact]
     public async Task The_Gather_Holds_The_First_Frame_So_The_Next_One_Joins_Its_Burst()
     {
-        var time = new FakeTimeProvider();
+        var time = new VirtualAir.Clock();
         (SoundModemChannel channel, _) = Station(Packing(gatherSeconds: 2), time);
         var reports = new List<TransmitReport>();
         channel.FrameTransmittedWithReport += (_, _, report) => { lock (reports) { reports.Add(report); } };
@@ -232,16 +219,14 @@ public class PackedBurstTests
         Task transmitter = channel.RunTransmitterAsync(output, ptt, cancellation.Token);
         Task second = channel.EnqueueTransmit(0, UiFrame(2, 80));
 
-        // The fake clock has not moved, so the gather cannot have run out: nothing has keyed.
+        // The clock has not moved, so the gather cannot have run out: nothing has keyed. Parked
+        // first, so the transmitter has had its look at what is queued and chosen to wait.
+        await time.ParkedAsync();
         output.Writes.Should().BeEmpty();
 
-        // Then the clock runs. Cranked rather than jumped: the transmitter sets its wait for the
-        // gather's end on its own thread, and a single jump taken before it has done so would be
-        // a jump nothing was waiting for.
-        using var crank = new CancellationTokenSource();
-        Crank(time, crank.Token);
-        await Eventually.SignalAsync(Task.WhenAll(first, second), "Task.WhenAll(first, second) to complete");
-        await crank.CancelAsync();
+        // Then the clock runs, to the end of the gather and no further, once the transmitter has set
+        // its wait for it. The second frame was queued before the clock moved at all.
+        await time.RunUntilAsync(Task.WhenAll(first, second));
         await cancellation.CancelAsync();
         try
         {
@@ -421,7 +406,7 @@ public class PackedBurstTests
     {
         // The clock never moves until the end, so the gather cannot end: whatever goes out before
         // then went out while it was gathering, not after it.
-        var time = new FakeTimeProvider();
+        var time = new VirtualAir.Clock();
         var channel = new SoundModemChannel(SampleRate, time, randomSeed: 42);
         channel.AddModem(0, sink => new Ms110dModem(SampleRate, sink) { Packing = Packing(gatherSeconds: 5) });
         channel.AddModem(1, sink => new Ms110dModem(SampleRate, sink));
@@ -437,13 +422,12 @@ public class PackedBurstTests
         using var cancellation = new CancellationTokenSource();
         Task transmitter = channel.RunTransmitterAsync(new BurstRecorder(SampleRate), ptt, cancellation.Token);
         await Eventually.SignalAsync(Task.WhenAll(plain, urgent), "Task.WhenAll(plain, urgent) to complete");
+
+        // Parked on the gather: the others have gone, and what is left has chosen to wait.
+        await Task.WhenAny(time.ParkedAsync(), gathering);
         gathering.IsCompleted.Should().BeFalse("its gather has not run out on a clock that has not moved");
 
-        // Cranked rather than jumped, for the reason the gather test above gives.
-        using var crank = new CancellationTokenSource();
-        Crank(time, crank.Token);
-        await Eventually.SignalAsync(gathering, "gathering to complete");
-        await crank.CancelAsync();
+        await time.RunUntilAsync(gathering);
         await cancellation.CancelAsync();
         try
         {
@@ -526,19 +510,24 @@ public class PackedBurstTests
             }
         };
         var busy = new LoggingBusyModem(log);
-        var channel = new SoundModemChannel(SampleRate, randomSeed: 42);
+        var time = new VirtualAir.Clock();
+        var channel = new SoundModemChannel(SampleRate, time, randomSeed: 42);
         channel.AddModem(0, _ => packer);
         channel.AddModem(1, _ => busy);
         channel.Csma.Persistence = 255;
-        channel.Csma.SlotTimeMilliseconds = 10; // a real slot, so a busy channel is not a spin
+        channel.Csma.SlotTimeMilliseconds = 10; // a slot of virtual time, so a busy channel is not a spin
 
         Task send = channel.EnqueueTransmit(0, UiFrame(1, 20));
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         Task transmitter = channel.RunTransmitterAsync(new BurstRecorder(SampleRate), new LoggingPtt(log), cancellation.Token);
         await Eventually.SignalAsync(busy.Asked.Task, "busy.Asked.Task to complete");
+
+        // Parked on the slot: the question has been answered busy and the transmitter is waiting
+        // to ask again, so what changes now is seen by the next ask and by no earlier one.
+        await time.ParkedAsync();
         channel.Csma.TxDelayMilliseconds = 120;
         busy.Clear();
-        await Eventually.SignalAsync(send, "send to complete");
+        await time.RunUntilAsync(send);
         await cancellation.CancelAsync();
         try
         {

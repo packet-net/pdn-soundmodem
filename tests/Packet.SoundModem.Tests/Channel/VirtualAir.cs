@@ -45,20 +45,6 @@ internal static class VirtualAir
     private static readonly TimeSpan GiveUpAfter = TimeSpan.FromMinutes(10);
 
     /// <summary>
-    /// The one place a <see cref="FakeTimeProvider"/> is moved by tests that crank one themselves,
-    /// so that two crankers cannot lose an advance to each other.
-    /// </summary>
-    private static readonly object Crank = new();
-
-    internal static void Tick(FakeTimeProvider time, TimeSpan step)
-    {
-        lock (Crank)
-        {
-            time.Advance(step);
-        }
-    }
-
-    /// <summary>
     /// A clock that moves only when told to, and knows when the code under test is waiting on it.
     /// </summary>
     /// <remarks>
@@ -194,6 +180,27 @@ internal static class VirtualAir
             }
 
             await done.ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Completes once a <c>Task.Delay</c> on this clock is armed, which is the transmitter parked
+        /// on it, without moving the clock. For a test that shows that something does not happen yet:
+        /// the transmitter has looked at everything it was going to look at and is waiting for time,
+        /// so what it left alone, it chose to leave alone.
+        /// </summary>
+        internal async Task ParkedAsync()
+        {
+            while (true)
+            {
+                // The signal is taken before the clock is read, never after: see RunUntilAsync.
+                (Task changed, long? due) = Look();
+                if (due is not null)
+                {
+                    return;
+                }
+
+                await WaitAsync(changed, "to park on the clock").ConfigureAwait(false);
+            }
         }
 
         /// <summary>

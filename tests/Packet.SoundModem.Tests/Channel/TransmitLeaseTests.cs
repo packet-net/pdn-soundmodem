@@ -624,7 +624,7 @@ public class TransmitLeaseTests
     [Fact]
     public async Task A_Lease_With_A_Carrier_Wait_Sends_The_Holders_Frame_Once_It_Runs_Out()
     {
-        var time = new FakeTimeProvider();
+        var time = new VirtualAir.Clock();
         var channel = new SoundModemChannel(SampleRate, time, randomSeed: 42);
         var busy = new AlwaysBusyModem();
         channel.AddModem(3, sink => new Afsk1200Modem(SampleRate, sink));
@@ -642,24 +642,12 @@ public class TransmitLeaseTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         Task transmitter = channel.RunTransmitterAsync(new FakeAudioOutput(SampleRate), ptt, cancellation.Token);
 
-        // The first time carrier sense finds the channel busy starts the wait. The clock is then
-        // cranked rather than jumped: each slot's wait is set on the transmitter's own thread, and
-        // a jump taken before one was set would be a jump nothing was waiting for.
+        // The first time carrier sense finds the channel busy starts the wait. The clock then runs
+        // a slot at a time, each only once the transmitter has set that slot's wait, until the
+        // lease's limit has passed and the frame goes out regardless.
         frame.IsCompleted.Should().BeFalse("the channel is busy and the clock has not moved");
         await Eventually.SignalAsync(busy.Asked.Task, "busy.Asked.Task to complete");
-        using var crank = new CancellationTokenSource();
-        _ = Task.Run(
-            async () =>
-            {
-                while (!crank.IsCancellationRequested)
-                {
-                    VirtualAir.Tick(time, TimeSpan.FromMilliseconds(100));
-                    await Task.Delay(1, CancellationToken.None);
-                }
-            },
-            CancellationToken.None);
-        await Eventually.SignalAsync(frame, "frame to complete");
-        await crank.CancelAsync();
+        await time.RunUntilAsync(frame);
         await cancellation.CancelAsync();
         try
         {
