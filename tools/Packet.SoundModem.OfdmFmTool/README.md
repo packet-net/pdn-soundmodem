@@ -14,28 +14,30 @@ pdn-ofdm ping   --device SPEC  --ptt SPEC  --call CALL --to ADDRESS [--count N] 
 
 - `listen` prints the modem's trace and every datagram received. With `--ptt` it answers pings. Without it the station is receive-only and cannot key.
   `pdn-ofdm listen --device plughw:CARD=Device,DEV=0 --ptt cm108:/dev/hidraw0 --call M0XYZ-1`
-- `send` sends the text as one datagram, says whether it was transmitted or dropped, and exits. A text too big for one datagram is refused. It waits for the station's first identification to finish before it exits.
+- `send` sends the text as one datagram, says whether it was transmitted or dropped, and exits. A text too big for one datagram is refused.
   `pdn-ofdm send --device plughw:CARD=Device,DEV=0 --ptt cm108:/dev/hidraw0 --call G4ABC-1 --to M0XYZ-1 hello`
-- `ping` sends `--count` datagrams (default 5) of `--size` bytes (default 32), one at a time, each asking for a report. For each it prints the round trip, from handing the datagram to the modem to the echo arriving, and the rate in each direction. The summary gives the rate the link supports both ways: the lower of the two. An echo not back in 30 s is counted as no answer.
+- `ping` sends `--count` datagrams (default 5) of `--size` bytes (default 32), one at a time, each asking for a report. For each it prints the round trip, from handing the datagram to the modem to the echo arriving, and the rate in each direction. The first ping from cold includes both stations identifying. The summary gives the rate the link supports both ways: the lower of the two. An echo not back in 60 s is counted as no answer.
   `pdn-ofdm ping --device plughw:CARD=Device,DEV=0 --ptt cm108:/dev/hidraw0 --call G4ABC-1 --to M0XYZ-1 --count 10`
 
 `--detail` raises the trace to detail level. `--log FILE` appends every line to a file. `--record FILE.wav` writes the received audio, 48 kHz mono. Ctrl-C stops cleanly and releases the PTT.
 
 ## Output
 
-Every line starts with UTC time, then the modem's own words. This is a simulated run, so the clock starts at zero:
+Every line starts with UTC time, then the modem's own words. This is a simulated run from two cold stations, so the clock starts at zero:
 
 ```
-00:00:05.80  Sent 1 datagram to everyone for M0XYZ-1 at 0.25 kbit/s, 2.24 s on air
-00:00:14.00  Identified in Morse as G4ABC-1
-00:00:30.00  ping 1 of 5: no answer in 30 s
-00:00:33.34  Heard M0XYZ-1: 1 datagram, signal 127 dB
-00:00:33.34  ping 2 of 5: 32 bytes, 3.26 s round trip, out 70.4 kbit/s, back not known yet
-00:00:36.28  ping 3 of 5: 32 bytes, 2.94 s round trip, out 70.4 kbit/s, back 70.4 kbit/s
-00:00:41.29  5 sent, 4 answered, 70.4 kbit/s both ways
+00:00:05.80  Sent identification as G4ABC-1, 1.36 s on air
+00:00:13.25  Identified in Morse as G4ABC-1
+00:00:13.39  Sent 1 datagram to everyone for M0XYZ-1 at 0.25 kbit/s, 2.24 s on air
+00:00:24.98  Heard M0XYZ-1: 1 datagram, signal 87 dB
+00:00:24.98  ping 1 of 5: 32 bytes, 24.98 s round trip, out 70.4 kbit/s, back not known yet
+00:00:27.90  ping 2 of 5: 32 bytes, 2.92 s round trip, out 70.4 kbit/s, back 70.4 kbit/s
+00:00:35.86  5 sent, 5 answered, 70.4 kbit/s both ways
 ```
 
-The first ping of a cold start is often lost: the station identifies in Morse straight after its first transmission and is keyed when the answer arrives. Run ping again, or send once first (known fault, packet-net/pdn-soundmodem#943).
+The first ping includes both stations identifying; the rest take what the radio takes.
+
+The station identifies before it first transmits: its identification burst, then the callsign in Morse, then the data. The time of each identification is kept in `${XDG_STATE_HOME:-$HOME/.local/state}/pdn-ofdm/`, one file for each callsign and device, so that running the tool again within ten minutes does not identify again.
 
 ## The echo
 

@@ -53,10 +53,10 @@ public class OfdmFmStationHostTwoStationTests
     }
 
     [Fact]
-    public async Task Each_station_identifies_after_its_first_transmission_and_the_other_hears_its_callsign()
+    public async Task Each_station_identifies_before_its_first_transmission_and_the_other_hears_its_callsign()
     {
-        await using var a = new StationRig(seed: 11);
-        await using var b = new StationRig(seed: 12);
+        await using var a = new StationRig(seed: 11, cold: true);
+        await using var b = new StationRig(seed: 12, cold: true);
         var timeline = new Lock();
         a.Air.Timeline = timeline;
         b.Air.Timeline = timeline;

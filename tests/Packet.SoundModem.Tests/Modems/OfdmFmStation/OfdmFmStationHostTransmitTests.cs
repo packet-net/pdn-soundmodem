@@ -32,8 +32,7 @@ public class OfdmFmStationHostTransmitTests
     {
         int lead = delayMilliseconds * Rate / 1000;
         int tail = tailMilliseconds * Rate / 1000;
-        // The Morse ident is its own keyup and not a request of the station's: it is looked at in the ident tests.
-        Keyup[] keyups = [.. rig.Air.Keyups.Where(k => !StationRig.IsMorse(k))];
+        Keyup[] keyups = [.. rig.Air.Keyups];
         keyups.Should().HaveCount(played.Count, "each keyup carried one request");
         for (int i = 0; i < keyups.Length; i++)
         {
