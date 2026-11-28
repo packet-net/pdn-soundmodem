@@ -44,6 +44,7 @@ internal static class Runner
 
         Action<string>[] sinks = fileWriter is null ? [console] : [console, fileWriter.WriteLine];
         await using var log = new StampedLog(time, sinks);
+        log.Write(Versions.Line());
         try
         {
             return await RunOpenAsync(options, time, stop, log);
