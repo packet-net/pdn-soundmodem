@@ -21,7 +21,7 @@ pdn-ofdm call   --device SPEC  --ptt SPEC  --call CALL --to CALLSIGN [--get BYTE
 - `ping` sends `--count` datagrams (default 5) of `--size` bytes (default 32), one at a time, each asking for a report. For each it prints the round trip, from handing the datagram to the modem to the echo arriving, and the rate in each direction. The first ping from cold includes both stations identifying. The summary gives the rate the link supports both ways: the lower of the two. An echo not back in 60 s is counted as no answer.
   `pdn-ofdm ping --device plughw:CARD=Device,DEV=0 --ptt cm108:/dev/hidraw0 --call G4ABC-1 --to M0XYZ-1 --count 10`
 
-`--detail` raises the trace to detail level. `--log FILE` appends every line to a file. `--record FILE.wav` writes the received audio, 48 kHz mono. Ctrl-C stops cleanly and releases the PTT.
+`--carrier tait:DEVICE` takes the radio's own carrier indication from a Tait's control port (28800 baud, carrier detect only): it asks the radio to report carrier changes and sends nothing else. `--detail` raises the trace to detail level. `--log FILE` appends every line to a file. `--record FILE.wav` writes the received audio, 48 kHz mono. Ctrl-C stops cleanly and releases the PTT.
 
 - `answer` accepts AX.25 connections to `--call`. It sends a one-line banner, echoes each line, sends `n` bytes of a printable pattern on `SEND n`, reports its frame counts on `STATS` and disconnects on `BYE`.
 - `call` connects to a callsign and is interactive: each line typed is sent, each line received is printed. With `--get BYTES` it asks for that many bytes, times them from the request to the last byte, prints the throughput and how many frames the other side sent again, and disconnects.

@@ -1,4 +1,5 @@
 using M0LTE.Radio.Audio;
+using Packet.SoundModem.CarrierSense;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
 using Packet.SoundModem.FlexRadio;
@@ -55,6 +56,51 @@ internal static class Runner
         }
     }
 
+    /// <summary>
+    /// Opens the radio's carrier source through the daemon's own code, which asks the radio once to report carrier changes and sends nothing else (no RSSI polling is set up). What it prints goes through the log.
+    /// </summary>
+    private static IDisposable? OpenCarrier(string? spec, StampedLog log, ref IChannelBusySource? carrier, ref bool audioFallback)
+    {
+        if (spec is null || CarrierSpec.Parse(spec, out string port) is not null)
+        {
+            return null;
+        }
+
+        var said = new StringWriter();
+        TextWriter outWas = Console.Out;
+        TextWriter errWas = Console.Error;
+        Console.SetOut(said);
+        Console.SetError(said);
+        IChannelBusySource? source;
+        IDisposable? owned;
+        try
+        {
+            source = StationCarrierSense.Open(new CarrierSenseConfig { Radio = "tait", Port = port }, text => log.Write(text), out owned, out audioFallback);
+        }
+        finally
+        {
+            Console.SetOut(outWas);
+            Console.SetError(errWas);
+        }
+
+        foreach (string line in said.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            // The one line about where the indication comes from is the tool's own, below.
+            if (!line.StartsWith("carrier sense: from the radio on", StringComparison.Ordinal))
+            {
+                log.Write(line);
+            }
+        }
+
+        if (source is not null)
+        {
+            log.Write($"Carrier indication from the radio on {port}, carrier detect only");
+            carrier = new LoggedCarrier(source, $"the radio on {port}", log.Write);
+        }
+
+        return owned;
+    }
+
     private static async Task<int> RunOpenAsync(ToolOptions options, TimeProvider time, CancellationToken stop, StampedLog log)
     {
         bool canTransmit = options.Ptt is not null;
@@ -87,7 +133,10 @@ internal static class Runner
         }
 
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        var channel = new SoundModemChannel(Rate, time, channelBusySource: null, audioFallback: true);
+        IChannelBusySource? carrier = null;
+        bool audioFallback = true;
+        using IDisposable? carrierLifetime = OpenCarrier(options.Carrier, log, ref carrier, ref audioFallback);
+        var channel = new SoundModemChannel(Rate, time, channelBusySource: carrier, audioFallback: audioFallback);
         if (!canTransmit)
         {
             ListenOnly.Apply(channel);

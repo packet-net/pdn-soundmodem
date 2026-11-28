@@ -34,6 +34,9 @@ internal sealed record ToolOptions
     /// <summary>For call: ask for this many bytes and time them, instead of an interactive session.</summary>
     public int? Get { get; init; }
 
+    /// <summary>Where the radio's own carrier indication comes from (<c>tait:DEVICE</c>), or null for none.</summary>
+    public string? Carrier { get; init; }
+
     public bool Detail { get; init; }
 
     public string? LogFile { get; init; }
@@ -60,7 +63,7 @@ internal static class CommandLine
 {
     private const string SeeHelp = ": see pdn-ofdm --help";
 
-    private static readonly string[] ValueOptions = ["--device", "--ptt", "--call", "--to", "--count", "--size", "--get", "--log", "--record"];
+    private static readonly string[] ValueOptions = ["--device", "--ptt", "--call", "--to", "--count", "--size", "--get", "--carrier", "--log", "--record"];
 
     public static ParseResult Parse(IReadOnlyList<string> args)
     {
@@ -227,6 +230,11 @@ internal static class CommandLine
             return ParseResult.Fail($"--size needs a whole number from {Echo.HeaderSize} to 4000");
         }
 
+        if (values.TryGetValue("--carrier", out string? carrier) && CarrierSpec.Parse(carrier, out _) is { } carrierProblem)
+        {
+            return ParseResult.Fail(carrierProblem);
+        }
+
         int? get = null;
         if (values.TryGetValue("--get", out string? getText))
         {
@@ -249,6 +257,7 @@ internal static class CommandLine
             Count = count,
             Size = size,
             Get = get,
+            Carrier = carrier,
             Detail = detail,
             LogFile = values.GetValueOrDefault("--log"),
             RecordFile = values.GetValueOrDefault("--record"),
