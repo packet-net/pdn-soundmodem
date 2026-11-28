@@ -116,10 +116,14 @@ internal sealed class FakeSdrConnect
     /// <summary>What a set value becomes, by property: SDRconnect choosing a rate of its own.</summary>
     public Dictionary<string, Func<string, string>> Coerce { get; } = new(StringComparer.Ordinal);
 
-    /// <summary>How long a set takes to land, by property: until then a <c>get_property</c> answers
-    /// the old value, as the real one does for a rate (#701: about half a second), and the change is
-    /// reported when it lands.</summary>
-    public Dictionary<string, TimeSpan> Lag { get; } = new(StringComparer.Ordinal);
+    /// <summary>How many <c>get_property</c> answers a set outlasts, by property: until the client has
+    /// been answered that many gets for it, each with the old value, as the real one answers while a
+    /// rate is changing (#701: about half a second), the set has not landed; it lands, and is
+    /// reported, straight after the last of them. Counted in answers and not in time, so it lands
+    /// at the same point in the client's conversation on every run.</summary>
+    public Dictionary<string, int> LandAfterGets { get; } = new(StringComparer.Ordinal);
+
+    private readonly Dictionary<string, (string Value, int Gets)> _pending = new(StringComparer.Ordinal);
 
     /// <summary>Whether a set that changes a value is reported back to the client that made it, as
     /// a real SDRconnect does (#701); false stands for one that reports only other clients' changes.</summary>
@@ -306,16 +310,25 @@ internal sealed class FakeSdrConnect
                     await SendJsonAsync("get_property_response", message.Property, value);
                 }
 
+                if (_pending.TryGetValue(message.Property, out (string Value, int Gets) waiting))
+                {
+                    if (waiting.Gets <= 1)
+                    {
+                        _pending.Remove(message.Property);
+                        await LandAsync(message.Property, waiting.Value);
+                    }
+                    else
+                    {
+                        _pending[message.Property] = (waiting.Value, waiting.Gets - 1);
+                    }
+                }
+
                 break;
             case "set_property":
                 string set = Coerce.TryGetValue(message.Property, out Func<string, string>? coerce) ? coerce(message.Value) : message.Value;
-                if (Lag.TryGetValue(message.Property, out TimeSpan lag))
+                if (LandAfterGets.TryGetValue(message.Property, out int gets))
                 {
-                    _ = Task.Run(async () =>
-                    {
-                        await Task.Delay(lag);
-                        await LandAsync(message.Property, set);
-                    });
+                    _pending[message.Property] = (set, gets);
                     break;
                 }
 

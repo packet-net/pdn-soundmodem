@@ -113,7 +113,7 @@ public sealed class SdrConnectIqSourceTests : IDisposable
         // While a set is under way SDRconnect answers a get with the value it is leaving (#701
         // measured half a second for a rate). Taken at the open, an old LO 75 kHz away puts the
         // channel where the IQ input refuses it, or a long way from the dial.
-        using var host = new FakeSdrConnectHost(f => f.Lag["device_center_frequency"] = TimeSpan.FromMilliseconds(300));
+        using var host = new FakeSdrConnectHost(f => f.LandAfterGets["device_center_frequency"] = 1);
 
         (SdrConnectIqSource source, FakeSdrConnect fake) = await OpenAsync(host, Options());
 

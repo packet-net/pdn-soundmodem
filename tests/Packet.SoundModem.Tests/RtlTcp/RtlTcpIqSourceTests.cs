@@ -573,21 +573,26 @@ public sealed class RtlTcpIqSourceTests
             block[k] = (byte)(124 + (block[k] & 7));
         }
 
+        // The feeder sends one eighth of a block each time the reader is about to read, and only
+        // then, so a read that finds nothing waiting has a chunk on its way and waits for it: the
+        // chunk is a quarter of what a read asks for, so after a read has taken what there is the
+        // next one waits again, warm-up included. A read that waits is the one that would allocate
+        // on a socket left non-blocking. Nothing is paced by a clock: the reader's own reads are
+        // the pace, and a read never waits for a byte that has not been sent after it began.
         using var streaming = new CancellationTokenSource();
+        using var wanted = new SemaphoreSlim(0);
         Task feeder = Task.Run(() =>
         {
             try
             {
                 while (!streaming.IsCancellationRequested)
                 {
-                    // A pause now and then, so the reader often has to wait, warm-up included:
-                    // a read that waits is the one that would allocate on a socket left
-                    // non-blocking.
-                    server.Send(block);
-                    Thread.Sleep(1);
+                    wanted.Wait(streaming.Token);
+                    server.Send(block.AsSpan(0, block.Length / 8));
                 }
             }
-            catch (Exception e) when (e is IOException or InvalidOperationException or ObjectDisposedException)
+            catch (Exception e) when (e is IOException or InvalidOperationException or ObjectDisposedException
+                                        or OperationCanceledException)
             {
             }
         });
@@ -595,12 +600,18 @@ public sealed class RtlTcpIqSourceTests
         // The reads move the clock on by exactly what they returned, so the rate watch closes its
         // windows on a stream at its rate and has nothing to say either: the steady state.
         var buffer = new float[16384];
+        int ReadWanted()
+        {
+            wanted.Release();
+            return source.Read(buffer);
+        }
+
         void AdvanceBy(int got) => clock.Advance(TimeSpan.FromTicks(TimeSpan.TicksPerSecond * (got / 2) / rate));
 
         // Warm-up: a hundred reads, the clock moved on after each.
         for (int read = 0; read < 100; read++)
         {
-            int got = source.Read(buffer);
+            int got = ReadWanted();
             got.Should().BeGreaterThan(0);
             AdvanceBy(got);
         }
@@ -618,7 +629,7 @@ public sealed class RtlTcpIqSourceTests
             pending = 0;
             for (int read = 0; read < 100; read++)
             {
-                pending += source.Read(buffer);
+                pending += ReadWanted();
             }
         };
         Action advance = () =>
@@ -630,6 +641,7 @@ public sealed class RtlTcpIqSourceTests
         long allocated = AllocationMeasure.Smallest(stretch, advance);
         AdvanceBy(pending);
 
+        await streaming.CancelAsync();
         allocated.Should().Be(0, "a read of a steady stream, rate watch and all, allocates nothing");
         source.ProfileDrops.Should().Be(0);
         source.SuspectedProfileChanges.Should().Be(0);
