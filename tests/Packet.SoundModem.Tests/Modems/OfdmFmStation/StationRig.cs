@@ -29,6 +29,10 @@ internal sealed class StationAir(SoundModemChannel channel, VirtualAir.Clock clo
     public const int Block = 960;
 
     private static readonly float[] Silence = new float[Block];
+
+    /// <summary>How many radios are keyed on each timeline.</summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Lock, System.Runtime.CompilerServices.StrongBox<int>> KeyedOn = new();
+
     private readonly Lock _gate = new();
     private readonly List<Keyup> _keyups = [];
     private List<float> _audio = [];
@@ -37,6 +41,7 @@ internal sealed class StationAir(SoundModemChannel channel, VirtualAir.Clock clo
     private int _failKeys;
     private int _failAttempt;
     private volatile bool _keyed;
+    private volatile bool _overlapped;
 
     /// <summary>Where a block of what this radio radiates goes (the far station's receiver). Null: nowhere. Set before the first keyup.</summary>
     public Action<ReadOnlySpan<float>>? Radiated { get; set; }
@@ -57,6 +62,12 @@ internal sealed class StationAir(SoundModemChannel channel, VirtualAir.Clock clo
 
     /// <summary>True from key to unkey.</summary>
     public bool Keyed => _keyed;
+
+    /// <summary>
+    /// True once this radio keyed while another on its timeline was keyed. The two transmitters' writes then take turns on <see cref="Timeline"/> in whatever order the threads reach it, so the audio
+    /// each channel hears is the thread scheduler's choice and the run cannot be reproduced. <see cref="StationRig.PumpAsync(Func{bool}, string, StationRig[])"/> fails on it rather than carry on.
+    /// </summary>
+    public bool Overlapped => _overlapped;
 
     /// <summary>How many times the PTT was taken down, counting the ones that threw.</summary>
     public int KeyAttempts => Volatile.Read(ref _keys);
@@ -96,6 +107,11 @@ internal sealed class StationAir(SoundModemChannel channel, VirtualAir.Clock clo
         _startCount = count();
         _audio = [];
         _keyed = true;
+        if (Interlocked.Increment(ref KeyedOn.GetValue(Timeline, _ => new()).Value) > 1)
+        {
+            _overlapped = true;
+        }
+
         OnKey?.Invoke();
         if (BlockAtKey)
         {
@@ -131,6 +147,7 @@ internal sealed class StationAir(SoundModemChannel channel, VirtualAir.Clock clo
             _keyups.Add(new Keyup(_startCount, count(), [.. _audio]));
         }
 
+        Interlocked.Decrement(ref KeyedOn.GetValue(Timeline, _ => new()).Value);
         _keyed = false;
     }
 }
@@ -149,17 +166,19 @@ internal sealed class StationRig : IAsyncDisposable
 
     public StationRig(
         bool blockAtKey = false, FakeRadio? radio = null, bool audioFallback = false, int subChannel = 0, int seed = 1, int txDelayMilliseconds = 100, int txTailMilliseconds = 20,
-        Action<bool?>? afterExternalBusy = null, Func<IStationClockInput, IStationClockInput>? clockInput = null, OfdmFmStationHostOptions? morse = null)
+        Action<bool?>? afterExternalBusy = null, Func<IStationClockInput, IStationClockInput>? clockInput = null, OfdmFmStationHostOptions? morse = null,
+        TaskScheduler? signalScheduler = null)
     {
         Clock = new VirtualAir.Clock();
         Channel = new SoundModemChannel(48000, Clock, randomSeed: 3, channelBusySource: radio, audioFallback: audioFallback);
         Channel.Csma.Persistence = 255;
         Channel.Csma.TxDelayMilliseconds = txDelayMilliseconds;
         Channel.Csma.TxTailMilliseconds = txTailMilliseconds;
-        Host = new OfdmFmStationHost(Channel, new Random(seed), new OfdmFmStationHostOptions { RunJobsInline = true, SubChannel = subChannel, AfterExternalBusy = afterExternalBusy, ClockInputWrapper = clockInput, MorseToneHz = morse?.MorseToneHz ?? 1500, MorseWordsPerMinute = morse?.MorseWordsPerMinute ?? 20, MorseAmplitude = morse?.MorseAmplitude ?? 0.8 });
+        Host = new OfdmFmStationHost(Channel, new Random(seed), new OfdmFmStationHostOptions { RunJobsInline = true, SubChannel = subChannel, AfterExternalBusy = afterExternalBusy, ClockInputWrapper = clockInput, MorseToneHz = morse?.MorseToneHz ?? 1500, MorseWordsPerMinute = morse?.MorseWordsPerMinute ?? 20, MorseAmplitude = morse?.MorseAmplitude ?? 0.8, SignalScheduler = signalScheduler });
         Air = new StationAir(Channel, Clock, () => Host.SampleCount) { BlockAtKey = blockAtKey };
         Channel.KeyupEnded += KeyupEnded;
         Channel.TransmitRejected += (_, _, _) => KeyupEnded();
+        Host.SignalPosted += KeyupEnded;
         Host.StationForTests.TransmitRequest += e =>
         {
             lock (_gate)
@@ -270,7 +289,10 @@ internal sealed class StationRig : IAsyncDisposable
     /// <summary>Starts the channel's transmitter on a thread of its own.</summary>
     public void StartTransmitter() => _transmitter = Task.Run(() => Channel.RunTransmitterAsync(Air, Air, _stop.Token));
 
-    /// <summary>Completes the signal the next <see cref="IdleAsync"/> look is waiting on: a keyup has ended, or a queued frame has been turned away, which are the two ways the queue and the keyed state change without the test doing it.</summary>
+    /// <summary>
+    /// Completes the signal the next <see cref="IdleAsync"/> look is waiting on: a keyup has ended, a queued frame has been turned away, or the host has posted the signal that one of its transmissions is over,
+    /// which are the ways the queue, the keyed state and the host's owed signals change without the test doing it.
+    /// </summary>
     private void KeyupEnded()
     {
         TaskCompletionSource ended;
@@ -284,26 +306,53 @@ internal sealed class StationRig : IAsyncDisposable
     }
 
     /// <summary>
-    /// Waits until no keyup is queued or running. A keyup is the transmitter's thread feeding this channel; the caller must not feed it meanwhile.
-    /// Woken by the channel's own end-of-keyup signal (<see cref="SoundModemChannel.KeyupEnded"/>, raised after receive has reopened), never by looking again after a pause.
+    /// Waits until the station is at rest: no keyup is queued or running, and the host has every signal its transmissions owe it. A keyup is the transmitter's thread feeding this channel; the caller
+    /// must not feed it meanwhile. A finished transmission's signal is posted from a thread-pool continuation after the keyup has ended, and it decides what the host does at the next block (its Morse
+    /// ident waits for it, and its identification burst for the Morse ident's), so a block fed before it lands puts that decision wherever the pool happened to be, which is not a reproducible run.
+    /// Woken by the channel's own end-of-keyup signal (<see cref="SoundModemChannel.KeyupEnded"/>, raised after receive has reopened) and the host's <see cref="OfdmFmStationHost.SignalPosted"/>, never by looking again after a pause.
     /// </summary>
     public async Task IdleAsync()
     {
         while (WaitForTransmitter)
         {
-            // Taken before the state is read, so a keyup that ends in between is not lost: it completes this one.
-            Task ended;
-            lock (_gate)
-            {
-                ended = _keyupEnded.Task;
-            }
-
-            if (!Channel.TransmitQueued && !Channel.ChannelBusy)
+            Task changed = Changed();
+            if (AtRest)
             {
                 return;
             }
 
-            await Eventually.SignalAsync(ended, "the keyup to finish");
+            await Eventually.SignalAsync(changed, "the keyup to finish and the host to have its signals");
+        }
+    }
+
+    /// <summary>The signal for the next change. Taken before the state is read, so a change in between is not lost: it completes this one.</summary>
+    private Task Changed()
+    {
+        lock (_gate)
+        {
+            return _keyupEnded.Task;
+        }
+    }
+
+    /// <summary>Nothing queued, nothing keyed, nothing owed by the host. Read after <see cref="Changed"/>.</summary>
+    private bool AtRest => !WaitForTransmitter || (!Channel.TransmitQueued && !Channel.ChannelBusy && !Host.SignalsOwed);
+
+    /// <summary>
+    /// Waits until every rig is at rest at once. One pass waiting on each in turn is not enough: while it waits out one rig's keyup, that keyup radiates into the others, and one of those can queue a keyup
+    /// of its own after it was looked at. So a rig found busy is waited for and the look starts again from the first, and the wait ends only on a pass that found every rig at rest.
+    /// </summary>
+    private static async Task AllAtRestAsync(StationRig[] rigs)
+    {
+        while (true)
+        {
+            Task[] changed = [.. rigs.Select(r => r.Changed())];
+            int busy = Array.FindIndex(rigs, r => !r.AtRest);
+            if (busy < 0)
+            {
+                return;
+            }
+
+            await Eventually.SignalAsync(changed[busy], "every rig's keyup to finish and its host to have its signals");
         }
     }
 
@@ -328,8 +377,8 @@ internal sealed class StationRig : IAsyncDisposable
     }
 
     /// <summary>
-    /// Feeds quiet blocks to every rig in turn until <paramref name="until"/> holds. With more than one rig, every rig's keyup is waited out after each block fed to any of them: a block can make a station queue a keyup,
-    /// whose thread then radiates into the other rigs' channels, and feeding one of those meanwhile would put two threads in one channel's receive path (<c>StationRigPumpTests</c> builds that case).
+    /// Feeds quiet blocks to every rig in turn until <paramref name="until"/> holds. With more than one rig, after each block fed to any of them the pump waits until every rig is at rest at once: a block can make a station queue a keyup,
+    /// whose thread then radiates into the other rigs' channels, and feeding one of those meanwhile would put two threads in one channel's receive path (<c>StationRigPumpTests</c> builds that case and the case of a host signal still to land).
     /// With one rig the keyup is waited out before each block instead, so a test can stop on a keyup being queued. The block count is a limit that turns "never" into a failure, ten minutes of audio; no outcome depends on it.
     /// </summary>
     public static async Task PumpAsync(Func<bool> until, string because, params StationRig[] rigs)
@@ -347,9 +396,11 @@ internal sealed class StationRig : IAsyncDisposable
             foreach (StationRig rig in rigs)
             {
                 rig.Channel.ProcessReceive(Quiet);
-                foreach (StationRig other in rigs)
+                await AllAtRestAsync(rigs);
+                if (rigs.Any(r => r.Air.Overlapped))
                 {
-                    await other.IdleAsync();
+                    throw new InvalidOperationException(
+                        "two radios on one timeline were keyed at once: the order of their writes is the thread scheduler's, so this run is not reproducible");
                 }
             }
         }

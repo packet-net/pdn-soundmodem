@@ -41,6 +41,9 @@ public sealed class OfdmFmStationHostOptions
 
     /// <summary>A test's hook, called on the receive thread after each time the host gave the station a carrier indication, with what it gave.</summary>
     internal Action<bool?>? AfterExternalBusy { get; init; }
+
+    /// <summary>A test's hook: where the continuation that posts a finished transmission's signal runs, so that a test can choose when it runs. Null: the thread pool.</summary>
+    internal TaskScheduler? SignalScheduler { get; init; }
 }
 
 /// <summary>
@@ -99,6 +102,8 @@ public sealed class OfdmFmStationHost : IDisposable
     private readonly Action<bool?>? _afterExternalBusy;
     private readonly IChannelBusySource? _radio;
     private readonly ConcurrentQueue<Signal> _inbox = new();
+    private readonly TaskScheduler _signalScheduler;
+    private int _signalsOwed;
     private readonly Dictionary<long, Outstanding> _requests = [];
     private bool? _indicated;
     private bool _noticed;
@@ -146,6 +151,7 @@ public sealed class OfdmFmStationHost : IDisposable
         _channel = channel;
         _beforeJob = options.BeforeJob;
         _afterExternalBusy = options.AfterExternalBusy;
+        _signalScheduler = options.SignalScheduler ?? TaskScheduler.Default;
         _station = new OfdmStation(random, options.RunJobsInline);
         IStationClockInput clock = new StationInput(_station);
         _book = new TransmitBook(options.ClockInputWrapper?.Invoke(clock) ?? clock);
@@ -282,6 +288,15 @@ public sealed class OfdmFmStationHost : IDisposable
             return _station.Snapshot();
         }
     }
+
+    /// <summary>
+    /// True while a transmission handed to the channel has not yet posted the signal that says it is over. Its task completes on the transmitter's thread and the signal is posted from a continuation
+    /// the thread pool runs, so once the channel is idle this is the one thing still to happen. For a test that feeds the channel by hand: the next block must not go in before the signal has.
+    /// </summary>
+    internal bool SignalsOwed => Volatile.Read(ref _signalsOwed) > 0;
+
+    /// <summary>Raised, on whatever thread posted it, after a transmission's end signal has been posted. For the same tests as <see cref="SignalsOwed"/>.</summary>
+    internal event Action? SignalPosted;
 
     /// <summary>The station, for tests that look at what it was asked.</summary>
     internal OfdmStation StationForTests => _station;
@@ -475,6 +490,7 @@ public sealed class OfdmFmStationHost : IDisposable
     // Apart from QueueMorse for the same reason as Enqueue: the closures are made only when an ident really goes, not on every block.
     private void EnqueueMorse(string text)
     {
+        Interlocked.Increment(ref _signalsOwed);
         Task sent = _channel.EnqueueTransmit(
             txDelay => RenderMorse(text, txDelay),
             rejected: null,
@@ -485,11 +501,11 @@ public sealed class OfdmFmStationHost : IDisposable
             finished =>
             {
                 _ = finished.Exception;
-                _inbox.Enqueue(new Signal(finished.IsCompletedSuccessfully ? SignalKind.MorseSent : SignalKind.MorseRefused, 0));
+                Post(new Signal(finished.IsCompletedSuccessfully ? SignalKind.MorseSent : SignalKind.MorseRefused, 0));
             },
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
+            _signalScheduler);
     }
 
     /// <summary>The key-up delay as silence, then the callsign in Morse. Runs on the transmitter's thread.</summary>
@@ -506,6 +522,7 @@ public sealed class OfdmFmStationHost : IDisposable
     private void Enqueue(long id, Outstanding request)
     {
         request.Cancellation = new CancellationTokenSource();
+        Interlocked.Increment(ref _signalsOwed);
         Task sent = _channel.EnqueueTransmit(
             txDelay => request.Render(txDelay, _channel.SampleRate),
             rejected: _ => _inbox.Enqueue(new Signal(SignalKind.Refused, id)),
@@ -517,11 +534,19 @@ public sealed class OfdmFmStationHost : IDisposable
             finished =>
             {
                 _ = finished.Exception;
-                _inbox.Enqueue(new Signal(SignalKind.Finished, id));
+                Post(new Signal(SignalKind.Finished, id));
             },
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
+            _signalScheduler);
+    }
+
+    /// <summary>Posts the signal that a transmission handed to the channel is over: its last word, so it is no longer owed.</summary>
+    private void Post(Signal signal)
+    {
+        _inbox.Enqueue(signal);
+        Interlocked.Decrement(ref _signalsOwed);
+        SignalPosted?.Invoke();
     }
 
     /// <summary>What the transmitter's thread left since the last block, in the order it happened.</summary>
