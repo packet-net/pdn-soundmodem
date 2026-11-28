@@ -96,10 +96,13 @@ internal sealed class PipeAudioInput : IAudioInput, IDisposable
     private readonly FileStream _fifo;
     private readonly byte[] _bytes;
     private long _delivered;
+    private readonly IPacer _pacer;
     private long _startMilliseconds = -1;
 
-    public PipeAudioInput(string path, int sampleRate)
+    /// <param name="pacer">What reads are paced against; null is the wall clock.</param>
+    public PipeAudioInput(string path, int sampleRate, IPacer? pacer = null)
     {
+        _pacer = pacer ?? RealTimePacer.Instance;
         PipeAudio.EnsureFifo(path);
 
         // Opened read-write, which on a FIFO is the one mode that neither blocks waiting for a
@@ -123,16 +126,16 @@ internal sealed class PipeAudioInput : IAudioInput, IDisposable
 
         if (_startMilliseconds < 0)
         {
-            _startMilliseconds = Environment.TickCount64;
+            _startMilliseconds = _pacer.NowMilliseconds;
         }
 
         // Paced like a capture device: hand back no more than wall clock has had time to produce,
         // so a burst written in one go is heard over the time it actually occupies.
-        long due = ((Environment.TickCount64 - _startMilliseconds) * SampleRate / 1000) - _delivered;
+        long due = ((_pacer.NowMilliseconds - _startMilliseconds) * SampleRate / 1000) - _delivered;
         while (due <= 0)
         {
-            Thread.Sleep(5);
-            due = ((Environment.TickCount64 - _startMilliseconds) * SampleRate / 1000) - _delivered;
+            _pacer.Pause(5);
+            due = ((_pacer.NowMilliseconds - _startMilliseconds) * SampleRate / 1000) - _delivered;
         }
 
         int want = (int)Math.Min(Math.Min(due, destination.Length), _bytes.Length / sizeof(float));

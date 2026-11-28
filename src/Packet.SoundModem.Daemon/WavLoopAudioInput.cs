@@ -14,10 +14,13 @@ internal sealed class WavLoopAudioInput : IAudioInput
 {
     private readonly float[] _samples;
     private long _position;
+    private readonly IPacer _pacer;
     private long _startMilliseconds = -1;
 
-    public WavLoopAudioInput(string path)
+    /// <param name="pacer">What reads are paced against; null is the wall clock.</param>
+    public WavLoopAudioInput(string path, IPacer? pacer = null)
     {
+        _pacer = pacer ?? RealTimePacer.Instance;
         (float[] audio, int rate) = WavFile.ReadMono(path);
         SampleRate = rate;
         _samples = new float[audio.Length + rate / 2];
@@ -30,16 +33,16 @@ internal sealed class WavLoopAudioInput : IAudioInput
     {
         if (_startMilliseconds < 0)
         {
-            _startMilliseconds = Environment.TickCount64;
+            _startMilliseconds = _pacer.NowMilliseconds;
         }
 
         // Hold each read until wall clock catches up with the sample clock, so the daemon
         // sees the recording at the rate a capture device would deliver it.
         long dueMilliseconds = _position * 1000 / SampleRate;
-        long aheadBy = _startMilliseconds + dueMilliseconds - Environment.TickCount64;
+        long aheadBy = _startMilliseconds + dueMilliseconds - _pacer.NowMilliseconds;
         if (aheadBy > 0)
         {
-            Thread.Sleep((int)aheadBy);
+            _pacer.Pause((int)aheadBy);
         }
 
         for (int n = 0; n < buffer.Length; n++)

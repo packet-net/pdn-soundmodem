@@ -86,7 +86,7 @@ public class PipeAudioTests : IDisposable
     {
         string air = Path.Combine(_dir, "air");
         using var output = new PipeAudioOutput(air, 48000);
-        using var input = new PipeAudioInput(air, 48000);
+        using var input = new PipeAudioInput(air, 48000, new VirtualPacer());
 
         float[] sent = [.. Enumerable.Range(0, 480).Select(n => (float)Math.Sin(n * 0.1))];
         output.Write(sent);
@@ -94,8 +94,10 @@ public class PipeAudioTests : IDisposable
 
         var heard = new List<float>();
         var buffer = new float[4800];
-        DateTime deadline = DateTime.UtcNow.AddSeconds(5);
-        while (heard.Count < sent.Length && DateTime.UtcNow < deadline)
+
+        // The count ends it: every read hands back at least a sample, because it waits on the
+        // pacer, which moves on by the wait, until the sample clock is owed some.
+        while (heard.Count < sent.Length)
         {
             int read = input.Read(buffer);
             heard.AddRange(buffer.AsSpan(0, read).ToArray());
@@ -115,7 +117,7 @@ public class PipeAudioTests : IDisposable
         // A capture device that blocked between transmissions would stall the receive loop: the
         // DCD would freeze at whatever it last saw, and the dead-feed watch would eventually call
         // an input dead that is merely quiet. A sound card hands up silence, so this does too.
-        using var input = new PipeAudioInput(Path.Combine(_dir, "quiet"), 48000);
+        using var input = new PipeAudioInput(Path.Combine(_dir, "quiet"), 48000, new VirtualPacer());
         var buffer = new float[480];
 
         int read = input.Read(buffer);
