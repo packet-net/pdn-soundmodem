@@ -184,7 +184,7 @@ public partial class ConfigPageTests
         applied.Should().Be(HttpStatusCode.OK);
         JsonNode.Parse(answer)!["restarting"]!.GetValue<bool>().Should().BeTrue();
         // The restart is asked for just after the answer goes out.
-        await Eventually.UntilAsync(() => site.Restarts == 1, "the site to ask for a restart");
+        await site.WhenRestartsAsync(1, "the site to ask for a restart");
         File.ReadAllText(site.PendingPath).Should().Contain("A better site");
         File.ReadAllText(site.ConfigPath).Should().Contain("\"A site\"", "a one-run change leaves the file alone");
 
@@ -695,7 +695,7 @@ public partial class ConfigPageTests
     private sealed class SiteHost : IAsyncDisposable
     {
         private readonly MonitorHost _host;
-        private int _restarts;
+        private readonly SignalledCounter _restarts = new();
 
         private SiteHost(string dir, string key)
         {
@@ -717,7 +717,7 @@ public partial class ConfigPageTests
                     key, ConfigPath, PendingPath,
                     runningJson: () => File.ReadAllText(ConfigPath),
                     ephemeralInForce: false,
-                    requestRestart: () => Interlocked.Increment(ref _restarts),
+                    requestRestart: () => _restarts.Increment(),
                     openConfiguration: false).HandleAsync;
             }
 
@@ -751,7 +751,10 @@ public partial class ConfigPageTests
 
         public string PendingPath { get; }
 
-        public int Restarts => Volatile.Read(ref _restarts);
+        public int Restarts => (int)_restarts.Value;
+
+        /// <summary>Waits, without polling, until a restart has been asked for.</summary>
+        public Task WhenRestartsAsync(int count, string what) => _restarts.WhenAsync(r => r >= count, what);
 
         public HttpClient Client { get; } = new();
 

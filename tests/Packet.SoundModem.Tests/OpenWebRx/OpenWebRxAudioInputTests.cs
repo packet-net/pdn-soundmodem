@@ -21,6 +21,7 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
     private readonly System.Threading.Channels.Channel<FakeReceiver> _accepted =
         System.Threading.Channels.Channel.CreateUnbounded<FakeReceiver>();
     private readonly ConcurrentQueue<string> _journal = new();
+    private readonly ChangeSignal _journalChanged = new();
     private readonly List<IDisposable> _owned = [];
 
     /// <summary>
@@ -69,7 +70,7 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
     /// needs one of them, or the pause before a reconnect, advances the clock itself.</remarks>
     private Task<OpenWebRxAudioInput> OpenAsync(OpenWebRxTuning tuning, TimeProvider? time = null) =>
         OpenWebRxAudioInput.OpenAsync(
-            Endpoint, tuning, ConnectAsync, line => _journal.Enqueue(line), TestContext.Current.CancellationToken,
+            Endpoint, tuning, ConnectAsync, line => { _journal.Enqueue(line); _journalChanged.Pulse(); }, TestContext.Current.CancellationToken,
             time ?? new FakeTimeProvider());
 
     private async Task<FakeReceiver> NextReceiverAsync()
@@ -283,7 +284,9 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
 
         input.RefusedAtStartup.Should().Be("Too many clients");
         input.SessionLive.Should().BeFalse();
-        await Eventually.UntilAsync(() => _journal.Any(l => l.Contains("is refusing us for now (Too many clients); asking again in 1 min", StringComparison.Ordinal)), "the refusal to be journalled");
+        await _journalChanged.WhenAsync(
+            () => _journal.Any(l => l.Contains("is refusing us for now (Too many clients); asking again in 1 min", StringComparison.Ordinal)),
+            "the refusal to be journalled", () => $"{_journal.Count} journal line(s)");
     }
 
     [Fact]
@@ -422,9 +425,9 @@ public sealed class OpenWebRxAudioInputTests : IAsyncDisposable
         // The open is decided after the session's silence clock has been set for the started
         // demodulator, so the clock is on its way to 30 s from now and the test moves it there, once.
         time.Advance(OpenWebRxAudioInput.FirstAudioTimeout);
-        await Eventually.UntilAsync(
+        await _journalChanged.WhenAsync(
             () => _journal.Any(l => l.Contains("no audio within 30 s of starting the demodulator", StringComparison.Ordinal)),
-            "the silent-input warning");
+            "the silent-input warning", () => $"{_journal.Count} journal line(s)");
 
         input.SessionLive.Should().BeFalse();
     }

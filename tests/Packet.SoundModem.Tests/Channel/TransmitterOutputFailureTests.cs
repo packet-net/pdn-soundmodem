@@ -72,7 +72,7 @@ public class TransmitterOutputFailureTests
         var channel = new SoundModemChannel(SampleRate, randomSeed: 5);
         channel.AddModem(0, sink => ModemCatalog.Create("afsk1200", SampleRate, sink));
         channel.Csma.Persistence = 255;
-        var rejections = new List<Exception>();
+        var rejections = new SignalledList<Exception>();
         channel.TransmitRejected += (_, _, reason) => rejections.Add(reason);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         Task transmitter = channel.RunTransmitterAsync(
@@ -87,7 +87,7 @@ public class TransmitterOutputFailureTests
         // The drop is journalled like any other. Waited for rather than asserted flat: the
         // faulted task releases this test's await on a pool thread, which can win the race
         // against the transmitter thread still invoking the rejected callback.
-        await Eventually.UntilAsync(() => rejections.Count > 0, "the rejected write to be journalled");
+        await rejections.WhenCountAsync(1, "the rejected write to be journalled");
 
         rejections.Should().ContainSingle().Which.Should().BeOfType<IOException>();
 
@@ -109,12 +109,12 @@ public class TransmitterOutputFailureTests
         // The witness: at the moment the channel announces the transmission over (which is
         // also when taps like the id-beacon ghosts reset), the modem sweep must already
         // have happened - both run while receive is still gated.
-        int resetsWhenAnnounced = -1;
+        var announced = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         channel.TransmittingChanged += transmitting =>
         {
             if (!transmitting)
             {
-                resetsWhenAnnounced = Volatile.Read(ref modem.Resets);
+                announced.TrySetResult(Volatile.Read(ref modem.Resets));
             }
         };
 
@@ -123,7 +123,7 @@ public class TransmitterOutputFailureTests
             new FakeAudioOutput(SampleRate), new NullPtt(), cancellation.Token);
         await Eventually.SignalAsync(channel.EnqueueTransmit(0, SampleFrame()), "channel.EnqueueTransmit(0, SampleFrame()) to complete");
 
-        await Eventually.UntilAsync(() => resetsWhenAnnounced >= 0, "the end of the transmission to be announced");
+        int resetsWhenAnnounced = await Eventually.SignalAsync(announced.Task, "the end of the transmission to be announced");
 
         resetsWhenAnnounced.Should().BeGreaterThan(0,
             "the demodulator sweep must precede the end-of-transmission announcement");

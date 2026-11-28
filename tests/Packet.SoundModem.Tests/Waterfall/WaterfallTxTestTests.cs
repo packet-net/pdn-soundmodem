@@ -24,8 +24,8 @@ public class WaterfallTxTestTests : IAsyncLifetime
     private const int Rate = 12000;
 
     private readonly CancellationTokenSource _cancellation = new(TimeSpan.FromSeconds(30));
-    private readonly List<TxTestRequest> _asked = [];
-    private int _stops;
+    private readonly SignalledList<TxTestRequest> _asked = new();
+    private readonly SignalledCounter _stops = new();
 
     public ValueTask InitializeAsync() => ValueTask.CompletedTask;
 
@@ -41,7 +41,7 @@ public class WaterfallTxTestTests : IAsyncLifetime
         MaxSeconds = 30,
         Presets = [.. TestTone.BesselNullTonesHz.Select(TxTestPreset.For)],
         Start = _asked.Add,
-        Stop = () => _stops++,
+        Stop = () => _stops.Increment(),
     };
 
     private static SoundModemChannel Channel()
@@ -156,7 +156,7 @@ public class WaterfallTxTestTests : IAsyncLifetime
                 DefaultSeconds = 5,
                 MaxSeconds = 30,
                 Start = _asked.Add,
-                Stop = () => _stops++,
+                Stop = () => _stops.Increment(),
                 IsRunning = () => running,
             },
         });
@@ -227,11 +227,11 @@ public class WaterfallTxTestTests : IAsyncLifetime
         await second.SendAsync(
             Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":7}"""),
             WebSocketMessageType.Text, true, _cancellation.Token);
-        await Eventually.UntilAsync(() => _asked.Count > 0, "the second request to be asked for");
+        await _asked.WhenCountAsync(1, "the second request to be asked for");
 
         _asked.Should().ContainSingle().Which.Should().Be(new TxTestRequest(true, 700, 7),
             "the request with nowhere to go was dropped, and only the one after it was asked for");
-        _stops.Should().Be(0);
+        _stops.Value.Should().Be(0);
     }
 
     [Fact]
@@ -251,16 +251,16 @@ public class WaterfallTxTestTests : IAsyncLifetime
         await socket.SendAsync(
             Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":false,"toneHz":999,"seconds":600}"""),
             WebSocketMessageType.Text, true, _cancellation.Token);
-        await Eventually.UntilAsync(() => _asked.Count > 0, "the test transmission to be asked for");
+        await _asked.WhenCountAsync(1, "the test transmission to be asked for");
 
         _asked.Should().ContainSingle().Which.Should().Be(new TxTestRequest(false, 999, 600));
 
         await socket.SendAsync(
             Encoding.UTF8.GetBytes("""{"type":"txtest","stop":true}"""),
             WebSocketMessageType.Text, true, _cancellation.Token);
-        await Eventually.UntilAsync(() => _stops > 0, "the stop to reach the transmitter");
+        await _stops.WhenAsync(stops => stops > 0, "the stop to reach the transmitter");
 
-        _stops.Should().Be(1);
+        _stops.Value.Should().Be(1);
         _asked.Should().ContainSingle("a stop is not a second test");
     }
 
@@ -272,12 +272,12 @@ public class WaterfallTxTestTests : IAsyncLifetime
         // this station and key the transmitter. The default bind is loopback, which does not help
         // in the slightest: the attacking page runs in the operator's own browser.
         int port = FreePorts.Next();
-        var journal = new List<string>();
+        var journal = new SignalledList<string>();
         await using var server = new WaterfallWebServer(
             Channel(), port, new WaterfallOptions
             {
                 TxTest = Control(),
-                Log = line => { lock (journal) { journal.Add(line); } },
+                Log = journal.Add,
                 TimeProvider = new FakeTimeProvider(),
             });
         server.Start();
@@ -352,13 +352,13 @@ public class WaterfallTxTestTests : IAsyncLifetime
         // The message costs its sender nothing, so one journal line each is a way to push
         // everything else the station has to say out of the journal.
         var clock = new FakeTimeProvider();
-        var journal = new List<string>();
+        var journal = new SignalledList<string>();
         int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(Channel(), port, new WaterfallOptions
         {
             TxTest = Control(),
             TimeProvider = clock,
-            Log = line => { lock (journal) { journal.Add(line); } },
+            Log = journal.Add,
         });
         server.Start();
 
@@ -395,14 +395,8 @@ public class WaterfallTxTestTests : IAsyncLifetime
 
         // Only the refusal lines: winding the clock below also runs the keep-alive sweep, which
         // has its own line to write about a page that has stopped answering.
-        List<string> Refusals()
-        {
-            lock (journal)
-            {
-                return [.. journal.Where(line => line.Contains(
-                    "refused a transmit test", StringComparison.Ordinal))];
-            }
-        }
+        List<string> Refusals() =>
+            [.. journal.Where(line => line.Contains("refused a transmit test", StringComparison.Ordinal))];
 
         Refusals().Should().ContainSingle("fifty refusals are one line, not fifty");
 
@@ -417,7 +411,7 @@ public class WaterfallTxTestTests : IAsyncLifetime
             Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":30}"""),
             WebSocketMessageType.Text, true, _cancellation.Token);
 
-        await Eventually.UntilAsync(() => Refusals().Count >= 2, "the second refusal to be journalled");
+        await journal.WhenAsync(_ => Refusals().Count >= 2, "the second refusal to be journalled");
 
         Refusals()[1].Should().Contain($"and {Asks - 1} more like it in the last minute");
         _asked.Should().BeEmpty("none of them keyed anything");
@@ -463,11 +457,11 @@ public class WaterfallTxTestTests : IAsyncLifetime
         // again. A background tab retrying every couple of seconds catches that window on every
         // restart, which on a live station is every upgrade.
         int port = FreePorts.Next();
-        var journal = new List<string>();
+        var journal = new SignalledList<string>();
         await using var server = new WaterfallWebServer(
             Channel(), port, new WaterfallOptions
             {
-                Log = line => { lock (journal) { journal.Add(line); } },
+                Log = journal.Add,
                 TimeProvider = new FakeTimeProvider(),
             });
         server.Start();
@@ -508,7 +502,7 @@ public class WaterfallTxTestTests : IAsyncLifetime
         await page.SendAsync(
             Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":3}"""),
             WebSocketMessageType.Text, true, _cancellation.Token);
-        await Eventually.UntilAsync(() => _asked.Count > 0, "the test transmission to be asked for");
+        await _asked.WhenCountAsync(1, "the test transmission to be asked for");
 
         _asked.Should().ContainSingle().Which.Should().Be(new TxTestRequest(true, 700, 3));
     }
