@@ -59,7 +59,7 @@ public class BackfillLinksTests : IDisposable
         log.Record(0, Frame("G0AAA", "GB7RDG"), Verified(), audioHz: 1500, rfHz: 7_051_600);
         log.Record(0, Frame("G0BBB", "GB7RDG"), Withheld(), audioHz: 1500, rfHz: 7_051_600);
 
-        await Eventually.UntilAsync(() => log.Recent(10).Count >= 2, "2 frames to reach the log");
+        await log.WhenWrittenAsync(() => log.Recent(10).Count >= 2, "2 frames to reach the log");
 
         await using var server = new WaterfallWebServer(
             new SoundModemChannel(SampleRate, randomSeed: 11), FreePorts.Next());
@@ -93,7 +93,7 @@ public class BackfillLinksTests : IDisposable
             "afsk1200", FrameBytes: 24, CorrectedBytes: null, CrcValid: null), null, null);
         log.RecordTransmitted(0, Frame("M0LTE", "G0CCC"), "afsk1200", 1500, 7_051_600);
 
-        await Eventually.UntilAsync(() => log.Recent(10).Count >= 2, "2 frames to reach the log");
+        await log.WhenWrittenAsync(() => log.Recent(10).Count >= 2, "2 frames to reach the log");
 
         await using var server = new WaterfallWebServer(
             new SoundModemChannel(SampleRate, randomSeed: 12), FreePorts.Next());

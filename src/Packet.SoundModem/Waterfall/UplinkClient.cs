@@ -303,6 +303,22 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     /// <summary>Inbound messages that were not a <c>demand</c> and were dropped (4.6).</summary>
     internal int IgnoredMessages => Volatile.Read(ref _ignoredMessages);
 
+    /// <summary>
+    /// Raised after any of <see cref="Publishing"/>, <see cref="Wanted"/>, <see cref="Viewers"/>,
+    /// <see cref="ConnectAttempts"/>, <see cref="IgnoredMessages"/> or <see cref="RetryWaits"/> has
+    /// changed, on whichever thread changed it and outside every lock this client holds. For tests,
+    /// which wait on it instead of looking again after a pause.
+    /// </summary>
+    internal event Action? StateChanged;
+
+    private void Changed() => StateChanged?.Invoke();
+
+    private void NoteIgnored()
+    {
+        Interlocked.Increment(ref _ignoredMessages);
+        Changed();
+    }
+
     /// <summary>Queued messages the bounded send queue dropped because the upstream could not keep up.</summary>
     internal long DroppedMessages => Interlocked.Read(ref _droppedMessages);
 
@@ -555,6 +571,8 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                 }
             }
 
+            Changed();
+
             if (outcome == UberSdrReconnectOutcome.Refused)
             {
                 SayRefused(reason, wait);
@@ -579,6 +597,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     private async Task<(UberSdrReconnectOutcome Outcome, string Reason)> SessionAsync()
     {
         Interlocked.Increment(ref _connectAttempts);
+        Changed();
         Interlocked.Exchange(ref _sessionOpenedAt, 0);
         using var session = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token);
         using ClientWebSocket socket = await ConnectAsync(session.Token).ConfigureAwait(false);
@@ -645,6 +664,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             // accumulated for a socket that has gone.
             _outgoing = null;
             Volatile.Write(ref _viewers, 0);
+            Changed();
             _saidWatching = false;
             Interlocked.Increment(ref _generation);
             outgoing.Writer.TryComplete();
@@ -827,7 +847,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                 Volatile.Write(ref _lastHeardAt, _time.GetTimestamp());
                 if (result.MessageType != WebSocketMessageType.Text)
                 {
-                    Interlocked.Increment(ref _ignoredMessages);
+                    NoteIgnored();
                     continue;
                 }
 
@@ -870,13 +890,13 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             if (document.RootElement.ValueKind != JsonValueKind.Object
                 || !document.RootElement.TryGetProperty("type", out JsonElement type))
             {
-                Interlocked.Increment(ref _ignoredMessages);
+                NoteIgnored();
                 return default;
             }
 
             if (type.ValueKind != JsonValueKind.String)
             {
-                Interlocked.Increment(ref _ignoredMessages);
+                NoteIgnored();
                 return default;
             }
 
@@ -901,7 +921,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                         // A refusal with no sentence in it, or one whose reason is not a string.
                         // Counted and dropped like anything else this station cannot read, and
                         // the session runs on until the site closes it, which it is about to.
-                        Interlocked.Increment(ref _ignoredMessages);
+                        NoteIgnored();
                     }
 
                     return refusal;
@@ -909,7 +929,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                 default:
                     // No arm reaches anything: the station has nothing here that could act on a
                     // message even if the site were taken over.
-                    Interlocked.Increment(ref _ignoredMessages);
+                    NoteIgnored();
                     return default;
             }
         }
@@ -919,7 +939,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             // dropped: 4.6's promise is that nothing the monitor sends can do anything to this
             // station, and a message this station could not even read ending the session would be
             // doing something.
-            Interlocked.Increment(ref _ignoredMessages);
+            NoteIgnored();
             return default;
         }
     }
@@ -936,7 +956,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
         if (_outgoing is not null)
         {
             // A second welcome says nothing new and must not restart anything.
-            Interlocked.Increment(ref _ignoredMessages);
+            NoteIgnored();
             return;
         }
 
@@ -947,6 +967,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
         // assembled for a socket the far end has not agreed to.
         Interlocked.Increment(ref _generation);
         _outgoing = outgoing;
+        Changed();
         _freshOutage = true;
         Say(url is { Length: > 0 }
             ? $"live at {Site(url)}"
@@ -980,7 +1001,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
         {
             // A demand before the welcome. Heard, so the watchdog is satisfied, and otherwise
             // ignored: the handshake is not finished.
-            Interlocked.Increment(ref _ignoredMessages);
+            NoteIgnored();
             return;
         }
 
@@ -999,6 +1020,11 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
         if ((before > 0) == (viewers > 0))
         {
             Volatile.Write(ref _viewers, viewers);
+            if (viewers != before)
+            {
+                Changed();
+            }
+
             return;
         }
 
@@ -1009,6 +1035,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
         Interlocked.Increment(ref _generation);
         BetweenGenerationAndCount?.Invoke();
         Volatile.Write(ref _viewers, viewers);
+        Changed();
 
         // Said in pairs or not at all. Rate-limiting both halves through one gate let a viewer who
         // arrived and left inside a minute leave "1 watching, sending audio" as the last word on

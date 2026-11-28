@@ -179,6 +179,15 @@ internal sealed class ChannelAudioStream
     internal int ClientCount => _clients.Length;
 
     /// <summary>
+    /// Raised after the set of connections, the named readers or the band they ask for has changed,
+    /// on the thread that changed it and outside this stream's lock. For tests, which wait on it
+    /// instead of looking again after a pause.
+    /// </summary>
+    internal event Action? ClientsChanged;
+
+    private void NoteClientsChanged() => ClientsChanged?.Invoke();
+
+    /// <summary>
     /// True for a loopback address (<c>127.0.0.1</c>, <c>::1</c>, and anything else
     /// <see cref="IPAddress.IsLoopback"/> calls loopback); false for null (no remote address at
     /// all, which is refused rather than trusted) or anything else.
@@ -376,6 +385,8 @@ internal sealed class ChannelAudioStream
         {
             client.Queue.Complete();
         }
+
+        NoteClientsChanged();
     }
 
     /// <summary>
@@ -521,6 +532,8 @@ internal sealed class ChannelAudioStream
         {
             _clients = [.. _clients, client];
         }
+
+        NoteClientsChanged();
     }
 
     private void RemoveClient(Client client)
@@ -532,6 +545,8 @@ internal sealed class ChannelAudioStream
             RecomputeBandLocked();
             RecomputeListenersLocked();
         }
+
+        NoteClientsChanged();
     }
 
     /// <summary>
@@ -570,6 +585,8 @@ internal sealed class ChannelAudioStream
         {
             RecomputeListenersLocked();
         }
+
+        NoteClientsChanged();
     }
 
     /// <summary>Under <see cref="_gate"/>, so each change is reported in order.</summary>
@@ -614,6 +631,8 @@ internal sealed class ChannelAudioStream
             client.Band = band;
             RecomputeBandLocked();
         }
+
+        NoteClientsChanged();
     }
 
     /// <summary>Under <see cref="_gate"/>, so each change is computed and reported in order.</summary>
