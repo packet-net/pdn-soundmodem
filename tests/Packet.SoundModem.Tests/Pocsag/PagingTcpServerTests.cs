@@ -22,6 +22,7 @@ public class PagingTcpServerTests : IAsyncLifetime
     private readonly FakeAudioOutput _output = new(SampleRate);
     private readonly SignallingPtt _ptt = new();
     private readonly CancellationTokenSource _cancellation = new(TimeSpan.FromSeconds(20));
+    private readonly TaskCompletionSource _keyupEnded = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task? _transmitter;
 
     public PagingTcpServerTests()
@@ -30,6 +31,7 @@ public class PagingTcpServerTests : IAsyncLifetime
         _channel.Csma.Persistence = 255;
         _channel.Csma.TxDelayMilliseconds = 100;
         _server = new PagingTcpServer(_channel, port: 0);
+        _channel.KeyupEnded += () => _keyupEnded.TrySetResult();
     }
 
     public ValueTask InitializeAsync()
@@ -118,15 +120,21 @@ public class PagingTcpServerTests : IAsyncLifetime
         }
     }
 
-    /// <summary>A PTT that records its events and says when it has been let go, which is after
-    /// the transmitter's last write: so the audio is complete when it does.</summary>
+    /// <summary>A PTT that records its events and says when it has been let go, and can hold the
+    /// transmitter there, inside its keyup, until a test lets it carry on.</summary>
     private sealed class SignallingPtt : IPttControl
     {
         private readonly TaskCompletionSource _unkeyed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ManualResetEventSlim _carryOn = new(initialState: true);
 
         public List<string> Events { get; } = [];
 
         public Task Unkeyed => _unkeyed.Task;
+
+        /// <summary>From now on the transmitter stops in the unkey until <see cref="CarryOn"/>.</summary>
+        public void HoldInUnkey() => _carryOn.Reset();
+
+        public void CarryOn() => _carryOn.Set();
 
         public void Key() => Events.Add("key");
 
@@ -134,13 +142,22 @@ public class PagingTcpServerTests : IAsyncLifetime
         {
             Events.Add("unkey");
             _unkeyed.TrySetResult();
+            if (!_carryOn.Wait(Eventually.HangGuard))
+            {
+                throw new TimeoutException("the test never let the transmitter finish its unkey");
+            }
         }
     }
 
+    /// <summary>
+    /// The transmission, once the keyup has ended. Not once the PTT is let go: the unkey is only
+    /// the start of ending a keyup, and receive stays gated until the transmitter has finished it
+    /// (<see cref="SoundModemChannel.KeyupEnded"/>), so audio played back before then is taken as
+    /// this station's own and never reaches the decoder.
+    /// </summary>
     private async Task<float[]> CaptureTransmissionAsync()
     {
-        // The transmitter has rendered and finished once it lets the PTT go.
-        await Eventually.SignalAsync(_ptt.Unkeyed, "the transmitter to finish and unkey");
+        await Eventually.SignalAsync(_keyupEnded.Task, "the transmitter to finish the keyup");
         return _output.Snapshot();
     }
 
@@ -176,6 +193,37 @@ public class PagingTcpServerTests : IAsyncLifetime
             (await SendAsync(client, reader, "PAGE 42 1 TONE")).Should().StartWith("OK ");
             float[] transmitted = await CaptureTransmissionAsync();
             _channel.ProcessReceive([.. transmitted, .. new float[SampleRate / 2]]);
+
+            (await ReadLineAsync(reader)).Should().Be("HEARD 42 1 TONE");
+        }
+    }
+
+    [Fact]
+    public async Task The_Capture_Is_Not_Played_Back_While_The_Transmitter_Is_Still_Ending_Its_Keyup()
+    {
+        // What a loaded box found: the transmitter let the PTT go and was then held off its thread
+        // before it had reopened receive; the test, woken by the unkey, played the page back into
+        // a channel still gated for transmit, the decoder never saw it, and the HEARD line never
+        // came. Built here every time: the transmitter is held in the unkey, and the playback goes
+        // in the moment the capture says the transmission is complete.
+        _ptt.HoldInUnkey();
+        var (client, reader) = await ConnectAsync();
+        using (client)
+        {
+            (await SendAsync(client, reader, "PAGE 42 1 TONE")).Should().StartWith("OK ");
+            await Eventually.SignalAsync(_ptt.Unkeyed, "the transmitter to let the PTT go");
+
+            Task<float[]> capture = CaptureTransmissionAsync();
+            if (capture.IsCompleted)
+            {
+                _channel.ProcessReceive([.. await capture, .. new float[SampleRate / 2]]);
+                _ptt.CarryOn();
+            }
+            else
+            {
+                _ptt.CarryOn();
+                _channel.ProcessReceive([.. await capture, .. new float[SampleRate / 2]]);
+            }
 
             (await ReadLineAsync(reader)).Should().Be("HEARD 42 1 TONE");
         }
