@@ -8,6 +8,8 @@ internal enum Verb
     Listen,
     Send,
     Ping,
+    Answer,
+    Call,
 }
 
 /// <summary>What the command line asked for. Addresses are upper case, as they go on the air.</summary>
@@ -28,6 +30,9 @@ internal sealed record ToolOptions
     public int Count { get; init; } = DefaultCount;
 
     public int Size { get; init; } = DefaultSize;
+
+    /// <summary>For call: ask for this many bytes and time them, instead of an interactive session.</summary>
+    public int? Get { get; init; }
 
     public bool Detail { get; init; }
 
@@ -55,7 +60,7 @@ internal static class CommandLine
 {
     private const string SeeHelp = ": see pdn-ofdm --help";
 
-    private static readonly string[] ValueOptions = ["--device", "--ptt", "--call", "--to", "--count", "--size", "--log", "--record"];
+    private static readonly string[] ValueOptions = ["--device", "--ptt", "--call", "--to", "--count", "--size", "--get", "--log", "--record"];
 
     public static ParseResult Parse(IReadOnlyList<string> args)
     {
@@ -75,6 +80,12 @@ internal static class CommandLine
                 break;
             case "ping":
                 verb = Verb.Ping;
+                break;
+            case "answer":
+                verb = Verb.Answer;
+                break;
+            case "call":
+                verb = Verb.Call;
                 break;
             default:
                 return ParseResult.Fail($"unknown command {args[0]}{SeeHelp}");
@@ -131,8 +142,9 @@ internal static class CommandLine
         {
             bool applies = option switch
             {
-                "--to" => verb != Verb.Listen,
+                "--to" => verb is Verb.Send or Verb.Ping or Verb.Call,
                 "--count" or "--size" => verb == Verb.Ping,
+                "--get" => verb == Verb.Call,
                 _ => true,
             };
             if (!applies)
@@ -158,8 +170,18 @@ internal static class CommandLine
         }
 
         values.TryGetValue("--ptt", out string? ptt);
+        if (verb is Verb.Answer or Verb.Call && !Packet.Core.Callsign.TryParse(call, out _))
+        {
+            return ParseResult.Fail("--call must be a callsign with an SSID of 0 to 15, such as G4ABC-1");
+        }
+
         string? to = null;
-        if (verb != Verb.Listen)
+        if (verb == Verb.Answer && ptt is null)
+        {
+            return ParseResult.Fail($"--ptt is needed{SeeHelp}");
+        }
+
+        if (verb is Verb.Send or Verb.Ping or Verb.Call)
         {
             if (ptt is null)
             {
@@ -175,6 +197,11 @@ internal static class CommandLine
             if (to.Length is < 1 or > 32 || to.Any(c => c is < '!' or > '~'))
             {
                 return ParseResult.Fail("--to must be 1 to 32 printable characters, no spaces");
+            }
+
+            if (verb == Verb.Call && !Packet.Core.Callsign.TryParse(to, out _))
+            {
+                return ParseResult.Fail("--to must be a callsign with an SSID of 0 to 15, such as M0XYZ-1");
             }
         }
 
@@ -200,6 +227,17 @@ internal static class CommandLine
             return ParseResult.Fail($"--size needs a whole number from {Echo.HeaderSize} to 4000");
         }
 
+        int? get = null;
+        if (values.TryGetValue("--get", out string? getText))
+        {
+            if (!TryWhole(getText, 1, 1_000_000, out int bytes))
+            {
+                return ParseResult.Fail("--get needs a whole number from 1 to 1000000");
+            }
+
+            get = bytes;
+        }
+
         return ParseResult.Ok(new ToolOptions
         {
             Verb = verb,
@@ -210,6 +248,7 @@ internal static class CommandLine
             Text = text,
             Count = count,
             Size = size,
+            Get = get,
             Detail = detail,
             LogFile = values.GetValueOrDefault("--log"),
             RecordFile = values.GetValueOrDefault("--record"),
