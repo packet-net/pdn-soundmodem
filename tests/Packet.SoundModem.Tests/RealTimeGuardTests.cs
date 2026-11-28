@@ -158,8 +158,6 @@ public class RealTimeGuardTests
             "real-time deadline and settle waits on a real socket and paced audio; removed by #872"),
         Allow("tests/Packet.SoundModem.Tests/RtlTcp/RtlTcpIqSourceTests.cs", "Thread.Sleep",
             "paces blocks into a real socket; removed by #872"),
-        Allow("tests/Packet.SoundModem.Tests/S5066/S5066StationTests.cs", "Stopwatch",
-            "two-station bench times itself off real audio pacing; removed by #871"),
         Allow("tests/Packet.SoundModem.Tests/SdrConnect/SdrConnectInputTests.cs", "wall-clock",
             "real-time deadline draining a real-paced input; removed by #872"),
         Allow("tests/Packet.SoundModem.Tests/UberSdr/UberSdrLiveStreamTests.cs", "Stopwatch",
@@ -192,8 +190,6 @@ public class RealTimeGuardTests
             "yield loop of a few milliseconds against a fake clock or a real reader; to move under #860"),
         Allow("tests/Packet.SoundModem.Tests/Waterfall/WaterfallPageTests.cs", "Task.Delay",
             "keep-alive loop that waits on real audio pacing; removed by #872"),
-        Allow("tests/Packet.SoundModem.Tests/S5066/S5066StationTests.cs", "Task.Delay",
-            "two-station bench blocks and linger on real time; removed by #871"),
         Allow("tests/Packet.SoundModem.Tests/SdrConnect/FakeSdrConnect.cs", "Task.Delay",
             "fake server lag on a real thread pool; removed by #872"),
         Allow("tests/Packet.SoundModem.Tests/SdrConnect/SdrConnectInputTests.cs", "Task.Delay",
@@ -212,8 +208,6 @@ public class RealTimeGuardTests
             "yield loops plus a real 300 ms wait to show nothing happens; to move under #860"),
         Allow("tests/Packet.SoundModem.Tests/Ardop/ArdopSharedChannelSessionTests.cs", "Task.Delay",
             "real audio block pacing and a real 3 s wait; removed by #872"),
-        Allow("tests/Packet.SoundModem.Tests/S5066/S5066StationTests.cs", "Thread.Sleep",
-            "real-time sink pacing in the two-station bench; removed by #871"),
     ];
 
     [Fact]

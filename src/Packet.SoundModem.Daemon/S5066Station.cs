@@ -38,6 +38,10 @@ internal sealed class S5066Station : IAsyncDisposable
         _modem = modem;
     }
 
+    /// <summary>The node's host, for a test that drives it on a fake clock (<c>Waiting</c>,
+    /// <c>Idle</c>, <c>OutputProduced</c>).</summary>
+    internal NodeHost Host => _host;
+
     /// <summary>The SIS endpoint actually listening.</summary>
     public IPEndPoint SisEndpoint => _host.SisEndpoint ?? throw new InvalidOperationException("not started");
 
@@ -117,9 +121,13 @@ internal sealed class S5066Station : IAsyncDisposable
     /// journal and the frame log. Called on a thread-pool thread.</param>
     /// <param name="heard">Told of each burst the modem locked to, once it has ended, with the
     /// blocks it decoded. Called on the receive thread, so it must return promptly.</param>
+    /// <param name="time">The clock the node and the busy input run on; null is the system clock.</param>
+    /// <param name="audio">Wraps the channel's audio before the modem gets it, so a test can see
+    /// each burst handed over and played; null leaves it as it is.</param>
     internal static S5066Station Start(
         SoundModemChannel channel, S5066Config config, IPAddress listen, Action<string> say,
-        Action<Burst>? sent = null, Action<Burst>? heard = null)
+        Action<Burst>? sent = null, Action<Burst>? heard = null, TimeProvider? time = null,
+        Func<IAudioChannel, IAudioChannel>? audio = null)
     {
         ArgumentNullException.ThrowIfNull(channel);
         ArgumentNullException.ThrowIfNull(config);
@@ -127,12 +135,18 @@ internal sealed class S5066Station : IAsyncDisposable
         void Log(string line) => say($"s5066: {line}");
 
         BusyInput? modem = null;
-        var audio = new ChannelAudio(channel, Log, () => modem?.NoteSent());
-        modem = new BusyInput(new Ms110dHostModem(audio, log: Log), channel, sent, heard);
+        IAudioChannel channelAudio = new ChannelAudio(channel, Log, () => modem?.NoteSent());
+        if (audio is not null)
+        {
+            channelAudio = audio(channelAudio);
+        }
+
+        modem = new BusyInput(new Ms110dHostModem(channelAudio, log: Log), channel, sent, heard, time);
         var host = new NodeHost(node.Node, node.PrngSeed, modem, new NodeHostOptions
         {
             SisEndpoint = new IPEndPoint(listen, config.Port),
             Log = Log,
+            Time = time,
         });
         host.Start();
 
