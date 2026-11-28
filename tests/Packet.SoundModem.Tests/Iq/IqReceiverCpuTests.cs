@@ -12,7 +12,7 @@ namespace Packet.SoundModem.Tests.Iq;
 /// <para>The check is on the work per input sample the receiver reports for its coarse stage
 /// (<see cref="HalfbandDecimator"/> design, the same figure on every machine): a front end that
 /// needs more arithmetic per sample than that is slower on every box. That runs always.</para>
-/// <para>The speed is a measurement and not a check, so it runs only when asked
+/// <para>The speed is a measurement and not a check, so a separate benchmark runs only when asked
 /// (<c>IQ_BENCH=1</c>) and nothing asserts on it. Run on the box in question with
 /// <c>Packet.SoundModem.Tests -class Packet.SoundModem.Tests.Iq.IqReceiverCpuTests</c>; it
 /// prints how many times faster than real time one core gets through the stream.</para>
@@ -51,8 +51,27 @@ public sealed class IqReceiverCpuTests(ITestOutputHelper output)
 
     [Theory]
     [MemberData(nameof(Configurations))]
-    public void Front_End_Cost_At_2_4_Msps(string name, int dspRate, IqChannelSpec[] channels, double macsPerInputSample)
+    public void The_Coarse_Stage_Does_The_Designed_Work_Per_Input_Sample(
+        string name, int dspRate, IqChannelSpec[] channels, double macsPerInputSample)
     {
+        var source = new LoopingIqSource(new float[2], Rate, Rate);
+        using var receiver = new IqReceiver(source, channels, new IqReceiverOptions { DspRate = dspRate });
+
+        // Fixed by the filter design, so the same on every machine: a change here is a change to
+        // the front end's arithmetic, which is what this pins.
+        receiver.Coarse.MacsPerInputSample.Should().BeApproximately(
+            macsPerInputSample, 1e-9, $"{name}: the coarse stage's work per input sample");
+    }
+
+    [Theory]
+    [MemberData(nameof(Configurations))]
+    public void Front_End_Speed_At_2_4_Msps(
+        string name, int dspRate, IqChannelSpec[] channels, double macsPerInputSample)
+    {
+        Assert.SkipWhen(Environment.GetEnvironmentVariable("IQ_BENCH") != "1",
+            "set IQ_BENCH=1 to measure the front end's CPU cost");
+        _ = macsPerInputSample;
+
         // One second of noise with a carrier in it, played round and round: the arithmetic does
         // not care what the samples are, and a fresh 20 s capture would be 384 MB.
         var second = new float[2 * Rate];
@@ -62,14 +81,6 @@ public sealed class IqReceiverCpuTests(ITestOutputHelper output)
         IqSynth.AddDsb(second, carrier, Rate, 25_000);
         var source = new LoopingIqSource(second, Rate, (long)Seconds * Rate);
         using var receiver = new IqReceiver(source, channels, new IqReceiverOptions { DspRate = dspRate });
-
-        // Fixed by the filter design, so the same on every machine: a change here is a change to
-        // the front end's arithmetic, which is what this pins.
-        receiver.Coarse.MacsPerInputSample.Should().BeApproximately(
-            macsPerInputSample, 1e-9, $"{name}: the coarse stage's work per input sample");
-
-        Assert.SkipWhen(Environment.GetEnvironmentVariable("IQ_BENCH") != "1",
-            "set IQ_BENCH=1 to measure the front end's CPU cost");
 
         var buffer = new float[16384];
 

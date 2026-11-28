@@ -243,6 +243,10 @@ internal sealed class ChannelAudioStream
         _inputGapPending = true;
     }
 
+    /// <summary>Raised on a connection's own thread, immediately before its hello is written and after the
+    /// connection has joined the fan-out. For a test that drives audio into the channel at that point.</summary>
+    internal event Action? HelloSending;
+
     /// <summary>Serves one already-accepted, already-checked WebSocket until it closes.</summary>
     /// <param name="socket">The accepted socket.</param>
     /// <param name="remoteDescription">For the journal: who connected, e.g. an address and port.</param>
@@ -263,6 +267,10 @@ internal sealed class ChannelAudioStream
             // the hello is still always the first message.
             AddClient(client);
             added = true;
+
+            // Raised once the connection is in the fan-out and before its hello is written: the
+            // moment audio can arrive for a connection that has not yet said hello. For tests.
+            HelloSending?.Invoke();
             byte[] hello = JsonSerializer.SerializeToUtf8Bytes(new
             {
                 type = "hello",
