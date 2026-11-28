@@ -120,6 +120,108 @@ public class TransmitInhibitTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_Held_Frame_That_Expires_Leaves_The_Transmitter_Waiting_For_Work_Not_Polling()
+    {
+        // The expiry removes the frame while the transmitter is in its inhibit poll. The
+        // transmitter used to stay in that loop with nothing queued, polling every millisecond, and
+        // on the clock that is a delay armed again inside every step, so the step loop never
+        // yields its thread. The frame's answer reaches the test from a continuation the thread
+        // pool has to run, and when that continuation is queued on the very thread doing the
+        // stepping, which is what a busy pool does, it never runs: the clock was driven ten
+        // virtual minutes past a frame that had been rejected at 300 ms (#860). Here that
+        // continuation is put on the stepping thread on purpose, every time.
+        //
+        // A station of its own, so that its transmitter can be started on the stepping thread
+        // with the frame already queued: it then runs straight to its first inhibit poll and is
+        // parked on it before that call returns, and from there every delay fires on this thread
+        // and every next one is armed inside the step that fired it. Nothing is left to the pool.
+        var time = new VirtualAir.Clock();
+        var channel = new SoundModemChannel(SampleRate, time, randomSeed: 5);
+        var output = new VirtualAir.PacedSink(SampleRate, time);
+        channel.AddModem(0, sink => ModemCatalog.Create("afsk1200", SampleRate, sink));
+        channel.Csma.Persistence = 255;
+        channel.TransmitInhibit = () => true;
+        channel.TransmitInhibitTimeout = TimeSpan.FromMilliseconds(300);
+        using var stop = new CancellationTokenSource();
+        using var stepper = new OneThreadScheduler();
+        Task transmitter = Task.CompletedTask;
+
+        Task run = stepper.Start(() =>
+        {
+            Task frame = channel.EnqueueTransmit(0, Frame());
+            transmitter = channel.RunTransmitterAsync(output, new NullPtt(), stop.Token);
+            Task answered = frame
+                .ContinueWith(t => t, CancellationToken.None, TaskContinuationOptions.None, stepper)
+                .Unwrap();
+            return time.RunUntilAsync(answered);
+        });
+
+        try
+        {
+            Func<Task> outcome = () => run;
+            await outcome.Should().ThrowAsync<InvalidOperationException>()
+                .Where(e => e.Message.Contains("holding the channel"));
+            output.Written.Should().BeEmpty();
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            try
+            {
+                await transmitter;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+    }
+
+    /// <summary>
+    /// One thread of its own that first makes one call, outside any task so that continuations may
+    /// run inline on it as they would on a pool thread, and then runs whatever was scheduled on it
+    /// meanwhile, in order.
+    /// </summary>
+    private sealed class OneThreadScheduler : TaskScheduler, IDisposable
+    {
+        private readonly System.Collections.Concurrent.BlockingCollection<Task> _work = [];
+
+        public Task Start(Func<Task> first)
+        {
+            var started = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    started.SetResult(first());
+                }
+                catch (Exception e)
+                {
+                    started.SetException(e);
+                }
+
+                foreach (Task task in _work.GetConsumingEnumerable())
+                {
+                    TryExecuteTask(task);
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "virtual-clock stepper",
+            };
+            thread.Start();
+            return started.Task.Unwrap();
+        }
+
+        public void Dispose() => _work.CompleteAdding();
+
+        protected override void QueueTask(Task task) => _work.Add(task);
+
+        protected override bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued) => false;
+
+        protected override IEnumerable<Task> GetScheduledTasks() => [.. _work];
+    }
+
+    [Fact]
     public async Task A_Timing_Owner_Skips_The_Persistence_Roll_As_Well_As_The_Inhibit()
     {
         // ARDOP runs its own channel discipline against ARQ turnaround budgets, and the busy it
