@@ -3079,6 +3079,16 @@ public sealed class SoundModemChannel
                     bool packing = gatherEnds is not null || PackedRenderPending() || RenderEndedSince(rendersDone);
                     if (!packing)
                     {
+                        // Nothing queued at all: the queue emptied while this loop waited, because
+                        // a held frame expired, a caller withdrew one or a lease swept the queue.
+                        // Back to waiting for work. Without this the loop stayed here with no
+                        // hold to wait out, and RemainingHold's one-millisecond floor made it a
+                        // poll every millisecond until the next frame was queued.
+                        if (NothingQueued())
+                        {
+                            break;
+                        }
+
                         EnterWait(WaitSlot.TurnaroundHold, null);
                         await Delay(RemainingHold(), cancellation).ConfigureAwait(false);
                         continue;
@@ -3109,6 +3119,11 @@ public sealed class SoundModemChannel
                     source = null;
                     await Delay(InhibitPollInterval, cancellation).ConfigureAwait(false);
                 }
+            }
+
+            if (source is null)
+            {
+                continue;
             }
 
             // Classic p-persistence (AX.25 §6.4): when the channel is clear, roll p; on
@@ -3492,6 +3507,15 @@ public sealed class SoundModemChannel
             }
 
             return false;
+        }
+    }
+
+    /// <summary>Whether no transmitter has anything queued, the condition <see cref="WaitForWorkAsync"/> waits on.</summary>
+    private bool NothingQueued()
+    {
+        lock (_txGate)
+        {
+            return _txOrder.Count == 0;
         }
     }
 
