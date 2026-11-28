@@ -1670,7 +1670,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
         await reader.SendAsync(
             """{"name":"pdn-mailcast-receiver","pagePort":8130}"""u8.ToArray(),
             WebSocketMessageType.Text, true, _cancellation.Token);
-        await Eventually.UntilAsync(() => server.ChannelAudio.Listeners.Count > 0, "the reader to be listed");
+        await server.ChannelAudio.WhenClientsAsync(() => server.ChannelAudio.Listeners.Count > 0, "the reader to be listed");
 
         server.ChannelAudio.Listeners.Should().HaveCount(1, "the reader did name itself");
 

@@ -294,7 +294,7 @@ public class FrameLogTests : IDisposable
             audioHz: 1500, rfHz: 7_051_600);
         log.RecordTransmitted(0, Frame(from: "M0LTE"), "qpsk3600-il2pc", 1500, 7_051_600);
 
-        await Eventually.UntilAsync(() => log.Recent(10).Count >= 2, "2 frames to reach the log");
+        await log.WhenWrittenAsync(() => log.Recent(10).Count >= 2, "2 frames to reach the log");
 
         IReadOnlyList<Packet.SoundModem.Waterfall.LoggedFrame> recent = log.Recent(10);
         recent.Should().HaveCount(2);
@@ -357,7 +357,7 @@ public class FrameLogTests : IDisposable
                     BusySubChannels = TransmitWaits.RadioBit,
                 });
 
-            await Eventually.UntilAsync(() => log.Recent(10).Count >= 2, "2 frames to reach the log");
+            await log.WhenWrittenAsync(() => log.Recent(10).Count >= 2, "2 frames to reach the log");
         }
 
         using var reader = new SqliteConnection($"Data Source={DbPath}");
@@ -412,7 +412,7 @@ public class FrameLogTests : IDisposable
             new FrameQuality("bpsk300-il2pc", FrameBytes: 20, CorrectedBytes: 0, CrcValid: true),
             audioHz: 2150, rfHz: 7_051_600);
 
-        await Eventually.UntilAsync(() => log.Recent(10).Count >= 3, "3 frames to reach the log");
+        await log.WhenWrittenAsync(() => log.Recent(10).Count >= 3, "3 frames to reach the log");
 
         IReadOnlyList<Packet.SoundModem.Waterfall.LoggedFrame> recent = log.Recent(10);
         recent.Should().HaveCount(3);
@@ -476,7 +476,7 @@ public class FrameLogTests : IDisposable
                 Quality: 78, ArdopSnDb: -3.0),
             null, null, modeName: "ARDOP IDFrame");
 
-        await Eventually.UntilAsync(() => log.Recent(10).Count >= 1, "the frame to reach the log");
+        await log.WhenWrittenAsync(() => log.Recent(10).Count >= 1, "the frame to reach the log");
 
         IReadOnlyList<Packet.SoundModem.Waterfall.LoggedFrame> recent = log.Recent(10);
         recent[0].Quality.Should().Be(78);
@@ -916,7 +916,7 @@ public class FrameLogTests : IDisposable
             PlainIl2p: true, MonitorOnly: true), audioHz: 2150, rfHz: 7_051_600);
         log.Record(0, Frame(from: "G0AAA"), Quality(), audioHz: 2150, rfHz: 7_051_600);
 
-        await Eventually.UntilAsync(() => log.Recent(10).Count >= 2, "2 frames to reach the log");
+        await log.WhenWrittenAsync(() => log.Recent(10).Count >= 2, "2 frames to reach the log");
 
         IReadOnlyList<Packet.SoundModem.Waterfall.LoggedFrame> recent = log.Recent(10);
         recent.Select(f => f.From).Should().Equal("GB7BPQ", "G0AAA");
@@ -999,7 +999,7 @@ public class FrameLogTests : IDisposable
         await using FrameLog log = FrameLog.Open(DbPath, _time);
         log.Record(0, Frame(), Quality(), null, null);
 
-        await Eventually.UntilAsync(
+        await log.WhenWrittenAsync(
             () =>
             {
                 using var connection = new SqliteConnection($"Data Source={DbPath};Mode=ReadOnly");
@@ -1056,7 +1056,7 @@ public class FrameLogTests : IDisposable
         log.RecordTransmitted(0, Frame(from: "M0LTE"), "bpsk300-il2pc", 1500, 7_051_600);
         log.Record(0, Frame(from: "G0BBB"), Quality(), audioHz: 1500, rfHz: 7_051_600);
 
-        await Eventually.UntilAsync(() => log.Recent(10).Count >= 3, "3 frames to reach the log");
+        await log.WhenWrittenAsync(() => log.Recent(10).Count >= 3, "3 frames to reach the log");
 
         IReadOnlyList<Packet.SoundModem.Waterfall.LoggedFrame> recent = log.Recent(10);
         recent.Select(f => f.From).Should().Equal("G0AAA", "M0LTE", "G0BBB");
@@ -1075,12 +1075,12 @@ public class FrameLogTests : IDisposable
         await using FrameLog log = FrameLog.Open(DbPath, _time);
         log.Record(0, Frame(from: "G0AAA"), Quality(), null, null);
 
-        await Eventually.UntilAsync(() => log.Recent(10).Count >= 1, "the frame to reach the log");
+        await log.WhenWrittenAsync(() => log.Recent(10).Count >= 1, "the frame to reach the log");
 
         log.Recent(10).Should().ContainSingle().Which.From.Should().Be("G0AAA");
 
         log.Record(0, Frame(from: "G0BBB"), Quality(), null, null);
-        await Eventually.UntilAsync(() => log.Recent(10).Count >= 2, "2 frames to reach the log");
+        await log.WhenWrittenAsync(() => log.Recent(10).Count >= 2, "2 frames to reach the log");
 
         log.Recent(10).Select(f => f.From).Should().Equal("G0AAA", "G0BBB");
         log.Dropped.Should().Be(0, "nothing was lost to the concurrent read");
@@ -1112,7 +1112,7 @@ public class FrameLogTests : IDisposable
         log.RecordTransmitted(0, Frame(from: "M0LTE"), "bpsk300-il2pc", 1500, 7_051_600);
         log.Record(1, [1, 2, 3, 4], Quality("freedv-datac1"), null, null);
 
-        await Eventually.UntilAsync(() => log.Recent(10).Count >= 3, "3 frames to reach the log");
+        await log.WhenWrittenAsync(() => log.Recent(10).Count >= 3, "3 frames to reach the log");
 
         IReadOnlyList<(Packet.SoundModem.Waterfall.LoggedFrame Frame, byte[] Payload)> replay =
             log.RecentWithPayload(2);
@@ -1170,7 +1170,7 @@ public class FrameLogTests : IDisposable
             release.ExecuteNonQuery();
         }
 
-        await Eventually.UntilAsync(
+        await log.WhenWrittenAsync(
             () =>
             {
                 using var reader = new SqliteConnection($"Data Source={DbPath};Mode=ReadOnly");

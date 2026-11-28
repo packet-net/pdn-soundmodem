@@ -652,6 +652,13 @@ internal sealed class FrameLog : IAsyncDisposable
         _ => "mixed",
     };
 
+    /// <summary>
+    /// Raised on the writer thread after each frame has been inserted, so a reader of the file will
+    /// find it, and outside every lock. For tests, which wait on it instead of looking again after a
+    /// pause.
+    /// </summary>
+    internal event Action? Written;
+
     private void WriteLoop()
     {
         using SqliteCommand insert = _connection.CreateCommand();
@@ -722,6 +729,7 @@ internal sealed class FrameLog : IAsyncDisposable
                 insert.Parameters["$rf"].Value = (object?)entry.RfHz ?? DBNull.Value;
                 insert.Parameters["$payload"].Value = entry.Payload;
                 insert.ExecuteNonQuery();
+                Written?.Invoke();
             }
             catch (SqliteException)
             {

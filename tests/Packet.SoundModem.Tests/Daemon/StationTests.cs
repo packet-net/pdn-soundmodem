@@ -614,9 +614,22 @@ public class StationTests : IDisposable
 
         Task runningOne = RunAsync(stationOne);
         Task runningTwo = RunAsync(stationTwo);
-        await Eventually.UntilAsync(
-            () => first.Recent(10).Count > 0 && second.Recent(10).Count > 0,
-            "each station decoded its own recording into its own log");
+        var logged = new ChangeSignal();
+        void Pulse() => logged.Pulse();
+        first.Written += Pulse;
+        second.Written += Pulse;
+        try
+        {
+            await logged.WhenAsync(
+                () => first.Recent(10).Count > 0 && second.Recent(10).Count > 0,
+                "each station decoded its own recording into its own log",
+                () => $"{first.Recent(10).Count} frame(s) in the first log, {second.Recent(10).Count} in the second");
+        }
+        finally
+        {
+            first.Written -= Pulse;
+            second.Written -= Pulse;
+        }
 
         await stoppingOne.CancelAsync();
         await stoppingTwo.CancelAsync();

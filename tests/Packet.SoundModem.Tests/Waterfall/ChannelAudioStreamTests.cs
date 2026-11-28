@@ -402,7 +402,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
         socket.Dispose();
 
-        await Eventually.UntilAsync(() => Stream().ClientCount == 0, "the dropped client must be removed, not leaked");
+        await Stream().WhenClientsAsync(() => Stream().ClientCount == 0, "the dropped client must be removed, not leaked");
     }
 
     [Fact]
@@ -418,7 +418,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         await SendText(receiver, """{"name":"pdn-mailcast-receiver","pagePort":8130}""");
         await SendText(recorder, """{"name":"recorder"}""");
 
-        await Eventually.UntilAsync(() => Stream().Listeners.Count == 2, "both named readers are listed");
+        await Stream().WhenClientsAsync(() => Stream().Listeners.Count == 2, "both named readers are listed");
         Stream().Listeners.Should().BeEquivalentTo(
             [new Listener("pdn-mailcast-receiver", 8130), new Listener("recorder", null)],
             "a reader that gave no page port is listed without one, and one that gave no name not at all");
@@ -426,7 +426,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         await receiver.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
         receiver.Dispose();
 
-        await Eventually.UntilAsync(() => Stream().Listeners.Count == 1, "a reader that goes is taken off the list");
+        await Stream().WhenClientsAsync(() => Stream().Listeners.Count == 1, "a reader that goes is taken off the list");
         Stream().Listeners.Should().Equal(new Listener("recorder", null));
     }
 
@@ -473,7 +473,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         using var socket = await ConnectAsync();
         await Receive(socket); // hello
         await SendText(socket, """{"band":{"lowHz":500,"highHz":5000}}""");
-        await Eventually.UntilAsync(() => FirstClientBand() is not null, "the band is recorded");
+        await Stream().WhenClientsAsync(() => FirstClientBand() is not null, "the band is recorded");
 
         var seen = new SignalledList<(int LowHz, int HighHz)?>();
         _server.ReceiveBandRequested = seen.Add;
