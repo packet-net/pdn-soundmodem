@@ -17,6 +17,9 @@ internal sealed class FakeRadio : IChannelBusySource
     public void Set(bool? busy) => _state = busy is null ? -1 : busy.Value ? 1 : 0;
 }
 
+/// <summary>Something besides a rig that a pump waits for: it is at rest or it is not, and its signal says when that may have changed (taken before the look).</summary>
+internal sealed record RestSource(Func<bool> AtRest, Func<Task> Changed);
+
 /// <summary>One keyup as the sound card and the PTT saw it, and the receive count at each edge.</summary>
 internal sealed record Keyup(long StartCount, long EndCount, float[] Audio);
 
@@ -355,19 +358,55 @@ internal sealed class StationRig : IAsyncDisposable
     /// Waits until every rig is at rest at once. One pass waiting on each in turn is not enough: while it waits out one rig's keyup, that keyup radiates into the others, and one of those can queue a keyup
     /// of its own after it was looked at. So a rig found busy is waited for and the look starts again from the first, and the wait ends only on a pass that found every rig at rest.
     /// </summary>
-    private static async Task AllAtRestAsync(StationRig[] rigs)
+    private static async Task AllAtRestAsync(StationRig[] rigs, IReadOnlyList<RestSource>? others = null)
     {
+        others ??= [];
         while (true)
         {
-            Task[] changed = [.. rigs.Select(r => r.Changed())];
+            // Every signal is taken before any state is looked at, so a change between the two is not lost.
+            Task[] changed = [.. rigs.Select(r => r.Changed()), .. others.Select(o => o.Changed())];
             int busy = Array.FindIndex(rigs, r => !r.AtRest);
             if (busy < 0)
+            {
+                busy = rigs.Length + others.ToList().FindIndex(o => !o.AtRest());
+                if (busy < rigs.Length)
+                {
+                    return;
+                }
+            }
+
+            await Eventually.SignalAsync(changed[busy], "every rig's keyup to finish, its host to have its signals and everything else to be at rest");
+        }
+    }
+
+    /// <summary>
+    /// The pump with something more than the rigs to wait for: before <paramref name="until"/> is looked at and after each block fed, every rig and every <paramref name="others"/> is at rest at once.
+    /// <paramref name="until"/> is where a test moves a clock of its own: it runs only when nothing is in hand anywhere.
+    /// </summary>
+    public static async Task PumpAsync(IReadOnlyList<RestSource> others, Func<bool> until, string because, params StationRig[] rigs)
+    {
+        const int GiveUpBlocks = 10 * 60 * 50;
+        for (int i = 0; i < GiveUpBlocks; i++)
+        {
+            await AllAtRestAsync(rigs, others);
+            if (until())
             {
                 return;
             }
 
-            await Eventually.SignalAsync(changed[busy], "every rig's keyup to finish and its host to have its signals");
+            foreach (StationRig rig in rigs)
+            {
+                rig.Channel.ProcessReceive(Quiet);
+                await AllAtRestAsync(rigs, others);
+                if (rigs.Any(r => r.Air.Overlapped))
+                {
+                    throw new InvalidOperationException(
+                        "two radios on one timeline were keyed at once: the order of their writes is the thread scheduler's, so this run is not reproducible");
+                }
+            }
         }
+
+        throw new TimeoutException($"ten minutes of audio were fed and this never happened: {because}");
     }
 
     /// <summary>Feeds <paramref name="blocks"/> quiet blocks, waiting out any keyup in between. For a rig on its own: where rigs radiate into each other use <see cref="PumpAsync(Func{bool}, string, StationRig[])"/>.</summary>

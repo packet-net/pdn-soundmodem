@@ -33,8 +33,13 @@ internal sealed class ToolSession : IAsyncDisposable
     private readonly LinkAddress _from;
     private readonly LinkAddress? _to;
     private readonly Dictionary<uint, string> _names = [];
-    private readonly ConcurrentDictionary<long, TaskCompletionSource<Fate>> _fates = [];
-    private readonly ConcurrentDictionary<ushort, TaskCompletionSource<long>> _answers = [];
+    private readonly ConcurrentDictionary<long, Action<Fate>> _fates = [];
+    private readonly ConcurrentDictionary<ushort, Action<long>> _answers = [];
+    private readonly Lock _restGate = new();
+    private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _repliesOwed;
+    private int _wakesOwed;
+    private int _notesOwed;
     private readonly Channel<(byte[] Reply, uint ToKey, ushort Sequence)> _replies = System.Threading.Channels.Channel.CreateUnbounded<(byte[], uint, ushort)>();
     private readonly System.Threading.Channels.Channel<DateTimeOffset> _identifications = System.Threading.Channels.Channel.CreateUnbounded<DateTimeOffset>();
     private readonly IdentificationNote? _note;
@@ -68,6 +73,64 @@ internal sealed class ToolSession : IAsyncDisposable
         }
     }
 
+    /// <summary>A test's hook: called on whichever thread is about to act on something the host reported (send an echo, or carry on with a command that was waiting), before it does. A test holds it to make the session slow.</summary>
+    internal Action? BeforeAct { get; init; }
+
+    /// <summary>
+    /// True when the session has nothing in hand: no echo is queued or being sent, no command has been woken and not yet carried on to its next wait or its end, and no identification time is waiting to be written.
+    /// The session acts on the host's reports from tasks of its own, so a bench that moves a clock or feeds audio must wait for this, with <see cref="Changed"/> taken before the look.
+    /// </summary>
+    public bool AtRest
+    {
+        get
+        {
+            lock (_restGate)
+            {
+                return _repliesOwed == 0 && _wakesOwed == 0 && _notesOwed == 0;
+            }
+        }
+    }
+
+    /// <summary>The signal for the next change of <see cref="AtRest"/>'s inputs. Take it before looking, never after.</summary>
+    public Task Changed()
+    {
+        lock (_restGate)
+        {
+            return _changed.Task;
+        }
+    }
+
+    private void Owe(ref int counter, int delta)
+    {
+        TaskCompletionSource old;
+        lock (_restGate)
+        {
+            counter += delta;
+            old = _changed;
+            _changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        old.TrySetResult();
+    }
+
+    /// <summary>
+    /// Completes what a command waits on and counts the command as woken until it has carried on. The count goes up before the task completes: the continuation runs on another thread, and a look
+    /// between the completion and the count would find the session at rest with its next move still to make.
+    /// </summary>
+    private bool Wake<T>(TaskCompletionSource<T> source, T value)
+    {
+        Owe(ref _wakesOwed, 1);
+        if (source.TrySetResult(value))
+        {
+            return true;
+        }
+
+        Owe(ref _wakesOwed, -1);
+        return false;
+    }
+
+    private void Carried() => Owe(ref _wakesOwed, -1);
+
     /// <summary>
     /// Gives the station its callsign and starts listening to what it reports. Call it once, before the first command.
     /// </summary>
@@ -86,7 +149,14 @@ internal sealed class ToolSession : IAsyncDisposable
         };
 
         // The host raises this inside its lock on the audio thread: the file is written from a task of the tool's own.
-        _host.IdentificationStarted += when => _identifications.Writer.TryWrite(when);
+        _host.IdentificationStarted += when =>
+        {
+            Owe(ref _notesOwed, 1);
+            if (!_identifications.Writer.TryWrite(when))
+            {
+                Owe(ref _notesOwed, -1);
+            }
+        };
 
         IdentityResult accepted = _host.SetIdentity(_call);
         if (accepted != IdentityResult.Accepted)
@@ -119,7 +189,7 @@ internal sealed class ToolSession : IAsyncDisposable
         LinkAddress to = _to ?? throw new InvalidOperationException("no address to send to");
         var tag = new HostTag(1);
         var fate = new TaskCompletionSource<Fate>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _fates[tag.Value] = fate;
+        _fates[tag.Value] = f => Wake(fate, f);
         SendResult result = _host.Send(text, to, _from, LinkProtocol.NoLayer3, tag);
         if (result != SendResult.Accepted)
         {
@@ -128,21 +198,32 @@ internal sealed class ToolSession : IAsyncDisposable
             return false;
         }
 
-        Fate outcome;
         try
         {
-            outcome = await fate.Task.WaitAsync(stop);
-        }
-        catch (OperationCanceledException)
-        {
-            _log.Write("Stopped before it was sent");
-            return false;
-        }
+            Fate outcome;
+            try
+            {
+                outcome = await fate.Task.WaitAsync(stop);
+            }
+            catch (OperationCanceledException)
+            {
+                _log.Write("Stopped before it was sent");
+                return false;
+            }
 
-        _log.Write(outcome.Sent
-            ? $"Transmitted {Bytes(text.Length)} to {_names[to.Key]}"
-            : $"Dropped {Bytes(text.Length)} to {_names[to.Key]}: {outcome.Reason}");
-        return outcome.Sent;
+            BeforeAct?.Invoke();
+            _log.Write(outcome.Sent
+                ? $"Transmitted {Bytes(text.Length)} to {_names[to.Key]}"
+                : $"Dropped {Bytes(text.Length)} to {_names[to.Key]}: {outcome.Reason}");
+            return outcome.Sent;
+        }
+        finally
+        {
+            if (fate.Task.IsCompletedSuccessfully)
+            {
+                Carried();
+            }
+        }
     }
 
     /// <summary>Sends <paramref name="count"/> echo requests one at a time and prints what came back. Ends early when <paramref name="stop"/> is cancelled.</summary>
@@ -153,60 +234,104 @@ internal sealed class ToolSession : IAsyncDisposable
         int answered = 0;
         double? outRate = null;
         double? backRate = null;
-        for (int number = 1; number <= count && !stop.IsCancellationRequested; number++)
+        bool unsettled = false;
+        try
         {
-            ushort sequence = (ushort)number;
-            byte[] request = Echo.MakeRequest(sequence, size);
-            var tag = new HostTag(number);
-            var fate = new TaskCompletionSource<Fate>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var answer = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
-            _fates[tag.Value] = fate;
-            _answers[sequence] = answer;
-            string label = $"ping {number} of {count}";
-            long start = _time.GetTimestamp();
-            SendResult result = _host.Send(request, to, _from, Echo.Protocol, tag, reportWanted: true);
-            if (result != SendResult.Accepted)
+            for (int number = 1; number <= count && !stop.IsCancellationRequested; number++)
             {
+                ushort sequence = (ushort)number;
+                byte[] request = Echo.MakeRequest(sequence, size);
+                var tag = new HostTag(number);
+
+                // One outcome for the ping, whichever comes first: the echo, the datagram dropped, or the wait running out on the session's clock. Each is completed by Wake, which counts it until this loop has carried on.
+                var outcome = new TaskCompletionSource<PingWake>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _fates[tag.Value] = fate =>
+                {
+                    if (!fate.Sent)
+                    {
+                        Wake(outcome, new PingWake(PingWakeKind.Dropped, fate.Reason, 0));
+                    }
+                };
+                _answers[sequence] = timestamp => Wake(outcome, new PingWake(PingWakeKind.Answered, null, timestamp));
+                string label = $"ping {number} of {count}";
+                long start = _time.GetTimestamp();
+                using ITimer timer = _time.CreateTimer(_ => Wake(outcome, new PingWake(PingWakeKind.TimedOut, null, 0)), null, PingWait, Timeout.InfiniteTimeSpan);
+                SendResult result = _host.Send(request, to, _from, Echo.Protocol, tag, reportWanted: true);
+                if (result != SendResult.Accepted)
+                {
+                    _fates.TryRemove(tag.Value, out _);
+                    _answers.TryRemove(sequence, out _);
+                    _log.Write($"{label}: {Refusal(result, request.Length, to)}");
+                    break;
+                }
+
+                sent++;
+
+                // The previous wake has been carried on from, up to this wait.
+                if (unsettled)
+                {
+                    unsettled = false;
+                    Carried();
+                }
+
+                PingWake woken;
+                try
+                {
+                    woken = await outcome.Task.WaitAsync(stop);
+                }
+                catch (OperationCanceledException)
+                {
+                    unsettled = outcome.Task.IsCompletedSuccessfully;
+                    _fates.TryRemove(tag.Value, out _);
+                    _answers.TryRemove(sequence, out _);
+                    _log.Write($"{label}: stopped");
+                    break;
+                }
+
+                unsettled = true;
+                BeforeAct?.Invoke();
                 _fates.TryRemove(tag.Value, out _);
                 _answers.TryRemove(sequence, out _);
-                _log.Write($"{label}: {Refusal(result, request.Length, to)}");
-                break;
+                switch (woken.Kind)
+                {
+                    case PingWakeKind.Answered:
+                        TimeSpan trip = _time.GetElapsedTime(start, woken.Timestamp);
+                        answered++;
+                        LinkStateEvent? link = LinkTo(to);
+                        outRate = link?.RateBitsPerSecond ?? outRate;
+                        backRate = link?.RecommendedRateBitsPerSecond ?? backRate;
+                        _log.Write($"{label}: {Bytes(request.Length)}, {Seconds(trip)} round trip, out {PingSummary.RateOrUnknown(outRate)}, back {PingSummary.RateOrUnknown(backRate)}");
+                        break;
+                    case PingWakeKind.Dropped:
+                        _log.Write($"{label}: dropped, {woken.Reason}");
+                        break;
+                    default:
+                        _log.Write($"{label}: no answer in {PingWait.TotalSeconds.ToString("0", CultureInfo.InvariantCulture)} s");
+                        break;
+                }
             }
 
-            sent++;
-            using var wait = CancellationTokenSource.CreateLinkedTokenSource(stop);
-            await Task.WhenAny(answer.Task, WhenDroppedAsync(fate.Task, wait.Token), Task.Delay(PingWait, _time, wait.Token));
-            await wait.CancelAsync();
-            _fates.TryRemove(tag.Value, out _);
-            if (answer.Task.IsCompletedSuccessfully)
-            {
-                TimeSpan trip = _time.GetElapsedTime(start, answer.Task.Result);
-                answered++;
-                LinkStateEvent? link = LinkTo(to);
-                outRate = link?.RateBitsPerSecond ?? outRate;
-                backRate = link?.RecommendedRateBitsPerSecond ?? backRate;
-                _log.Write($"{label}: {Bytes(request.Length)}, {Seconds(trip)} round trip, out {PingSummary.RateOrUnknown(outRate)}, back {PingSummary.RateOrUnknown(backRate)}");
-            }
-            else if (fate.Task.IsCompletedSuccessfully && !fate.Task.Result.Sent)
-            {
-                _log.Write($"{label}: dropped, {fate.Task.Result.Reason}");
-            }
-            else if (stop.IsCancellationRequested)
-            {
-                _log.Write($"{label}: stopped");
-            }
-            else
-            {
-                _log.Write($"{label}: no answer in {PingWait.TotalSeconds.ToString("0", CultureInfo.InvariantCulture)} s");
-            }
-
-            _answers.TryRemove(sequence, out _);
+            var summary = new PingSummary(sent, answered, outRate, backRate);
+            _log.Write(summary.ToString());
+            return summary;
         }
-
-        var summary = new PingSummary(sent, answered, outRate, backRate);
-        _log.Write(summary.ToString());
-        return summary;
+        finally
+        {
+            if (unsettled)
+            {
+                Carried();
+            }
+        }
     }
+
+    private enum PingWakeKind
+    {
+        Answered,
+        Dropped,
+        TimedOut,
+    }
+
+    private readonly record struct PingWake(PingWakeKind Kind, string? Reason, long Timestamp);
 
     /// <summary>Stops answering and waits for the queue of lines to be written.</summary>
     public async ValueTask DisposeAsync()
@@ -259,26 +384,11 @@ internal sealed class ToolSession : IAsyncDisposable
         return null;
     }
 
-    /// <summary>Completes when the datagram is dropped; never if it is sent.</summary>
-    private static async Task WhenDroppedAsync(Task<Fate> fate, CancellationToken stop)
-    {
-        try
-        {
-            if ((await fate.WaitAsync(stop)).Sent)
-            {
-                await Task.Delay(Timeout.InfiniteTimeSpan, stop);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-    }
-
     private void Settle(HostTag tag, Fate fate)
     {
-        if (_fates.TryRemove(tag.Value, out TaskCompletionSource<Fate>? waiting))
+        if (_fates.TryRemove(tag.Value, out Action<Fate>? waiting))
         {
-            waiting.TrySetResult(fate);
+            waiting(fate);
         }
     }
 
@@ -286,7 +396,14 @@ internal sealed class ToolSession : IAsyncDisposable
     {
         await foreach (DateTimeOffset when in _identifications.Reader.ReadAllAsync())
         {
-            _note?.Write(when);
+            try
+            {
+                _note?.Write(when);
+            }
+            finally
+            {
+                Owe(ref _notesOwed, -1);
+            }
         }
     }
 
@@ -298,9 +415,9 @@ internal sealed class ToolSession : IAsyncDisposable
         {
             if (kind == Echo.Reply)
             {
-                if (_to is { } to && e.FromKey == to.Key && _answers.TryRemove(sequence, out TaskCompletionSource<long>? waiting))
+                if (_to is { } to && e.FromKey == to.Key && _answers.TryRemove(sequence, out Action<long>? deliver))
                 {
-                    waiting.TrySetResult(_time.GetTimestamp());
+                    deliver(_time.GetTimestamp());
                 }
 
                 return;
@@ -318,7 +435,11 @@ internal sealed class ToolSession : IAsyncDisposable
             else
             {
                 _log.Write($"Ping {sequence} from {who}, {Bytes(datagram.Length)}: answering");
-                _replies.Writer.TryWrite((Echo.MakeReply(datagram), e.FromKey, sequence));
+                Owe(ref _repliesOwed, 1);
+                if (!_replies.Writer.TryWrite((Echo.MakeReply(datagram), e.FromKey, sequence)))
+                {
+                    Owe(ref _repliesOwed, -1);
+                }
             }
 
             return;
@@ -353,10 +474,18 @@ internal sealed class ToolSession : IAsyncDisposable
     {
         await foreach ((byte[] reply, uint toKey, ushort sequence) in _replies.Reader.ReadAllAsync())
         {
-            SendResult result = _host.Send(reply, LinkAddress.FromKey(toKey), _from, Echo.Protocol, new HostTag(ReplyTagBase + Interlocked.Increment(ref _replyTag)), reportWanted: false, SendPriority.Expedited);
-            if (result != SendResult.Accepted)
+            try
             {
-                _log.Write($"Ping {sequence} from {Name(toKey)}: not answered, {Refusal(result, reply.Length, LinkAddress.FromKey(toKey))}");
+                BeforeAct?.Invoke();
+                SendResult result = _host.Send(reply, LinkAddress.FromKey(toKey), _from, Echo.Protocol, new HostTag(ReplyTagBase + Interlocked.Increment(ref _replyTag)), reportWanted: false, SendPriority.Expedited);
+                if (result != SendResult.Accepted)
+                {
+                    _log.Write($"Ping {sequence} from {Name(toKey)}: not answered, {Refusal(result, reply.Length, LinkAddress.FromKey(toKey))}");
+                }
+            }
+            finally
+            {
+                Owe(ref _repliesOwed, -1);
             }
         }
     }
