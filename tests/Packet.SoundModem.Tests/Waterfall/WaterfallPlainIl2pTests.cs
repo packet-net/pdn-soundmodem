@@ -224,21 +224,19 @@ public class WaterfallPlainIl2pTests : IAsyncLifetime
         // about one failure per four full parallel runs, and none at all in 40 runs of this class
         // on its own, which is the signature of a queue that only overflows when the send loop is
         // competing for a thread.
-        Task<JsonDocument> reader = Task.Run(() => ReadUntilFrameAsync(socket));
-        for (int at = 0; at < audio.Length; at += SampleRate / 10)
-        {
-            _channel.ProcessReceive(audio.AsSpan(at, Math.Min(SampleRate / 10, audio.Length - at)));
-            await Task.Delay(1);   // let the reader drain what that tenth of a second produced
-        }
+        var pacing = new ReaderPacedFeed();
+        Task<JsonDocument> reader = Task.Run(() => ReadUntilFrameAsync(socket, pacing));
+        await pacing.FeedAsync(block => _channel.ProcessReceive(block.Span), audio, SampleRate / 10, reader);
 
         return await reader;
     }
 
-    private static async Task<JsonDocument> ReadUntilFrameAsync(ClientWebSocket socket)
+    private static async Task<JsonDocument> ReadUntilFrameAsync(ClientWebSocket socket, ReaderPacedFeed pacing)
     {
         while (true)
         {
             (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            pacing.Taken();
             if (kind != WebSocketMessageType.Text)
             {
                 continue;
