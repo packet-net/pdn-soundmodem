@@ -510,10 +510,19 @@ public class UplinkClientTests
             server.ReportFrame(0, "afsk1200", "M0LTE", "GB7RDG", 32, 12.0, true);
         }
 
-        await Task.Delay(250);
-
         monitor.Attempts.Should().Be(0, "nothing on this station has anywhere to dial out to");
         monitor.Received.Should().BeEmpty();
+
+        // Shown by what happens next: a station that does publish, beside it and on the same clock,
+        // reaches this monitor and is the only one that ever has. The first one's frames were
+        // offered before it started, and had there been a socket for them they would have gone up
+        // ahead of its hello.
+        await using WaterfallWebServer publishing = StationServer(clock);
+        await using var client = new UplinkClient(publishing, SettingsFor(monitor.Url), clock);
+        client.Start();
+        await Eventually.UntilAsync(() => client.Publishing, "the publishing station's welcome");
+        monitor.Attempts.Should().Be(1, "only the station with a publish block ever dialled");
+        monitor.TextMessagesOfType("frame").Should().BeEmpty("none of the first station's frames went anywhere");
     }
 
     /// <summary>The hello is first on the wire, and it says what this station is.</summary>
@@ -584,8 +593,11 @@ public class UplinkClientTests
             clock.Advance(TimeSpan.FromMilliseconds(40));
         }
 
-        await Task.Delay(250);
-        monitor.BytesAfterHello.Should().Be(0,
+        // Everything the client sends goes up one queue in order, so a frame queued behind the
+        // audio is on the wire after every byte of it that was ever going to be.
+        client.Frame(AFrame());
+        await Eventually.UntilAsync(() => monitor.TextMessagesOfType("frame").Count() == 1, "the frame behind the audio");
+        monitor.AudioMessages.Should().BeEmpty(
             "ten seconds of a station's audio, and not a byte of it is anybody's business until "
             + "somebody opens the page");
 
@@ -641,7 +653,9 @@ public class UplinkClientTests
             client.Audio(Tone(ChannelRate * 40 / 1000), transmitted: false);
         }
 
-        await Task.Delay(250);
+        // A frame queued behind the audio is on the wire after every block of it that was going to be.
+        client.Frame(AFrame());
+        await Eventually.UntilAsync(() => monitor.TextMessagesOfType("frame").Count() == 1, "the frame behind the audio");
         monitor.AudioMessages.Should().HaveCount(sent, "nobody is watching any more");
 
         // Said in pairs. A viewer who arrives and leaves inside a minute used to leave "1
@@ -811,7 +825,9 @@ public class UplinkClientTests
         client.Audio(second, transmitted: false);
         await Eventually.UntilAsync(() => monitor.AudioMessages.Count >= 25, "a second of decimated audio");
 
-        await Task.Delay(100);
+        // A frame queued behind the audio is on the wire after every block of it that was going to be.
+        client.Frame(AFrame());
+        await Eventually.UntilAsync(() => monitor.TextMessagesOfType("frame").Count() == 1, "the frame behind the audio");
         monitor.AudioMessages.Should().HaveCount(25,
             "48 kHz in at 4:1 is 12 kHz out, and a second of it is 25 blocks and not 100");
         monitor.AudioMessages.Should().AllSatisfy(m => m.Length.Should().Be(4 + (480 * 2)));

@@ -39,8 +39,9 @@ public class StationTests : IDisposable
     }
 
     /// <summary>An input the test drives: it delivers a block of one level, or nothing at all,
-    /// and counts how many times it was asked. Paced like the real inputs, every one of which
-    /// waits inside <c>Read</c> rather than returning 0 in a spin.</summary>
+    /// and counts how many times it was asked. Not paced: no outcome here depends on how long a
+    /// read takes, and every test ends the loop as soon as it has seen what it came for, so the
+    /// loop runs for as long as the test is deciding, not for any length of time on a clock.</summary>
     private sealed class TestInput(int sampleRate, float level, bool deliver = true) : IAudioInput
     {
         private int _reads;
@@ -60,7 +61,6 @@ public class StationTests : IDisposable
                 throw death;
             }
 
-            Thread.Sleep(1);
             if (!deliver)
             {
                 return 0;
@@ -111,7 +111,6 @@ public class StationTests : IDisposable
 
         public int Read(Span<float> buffer)
         {
-            Thread.Sleep(1);
             buffer.Clear();
             int taken = Math.Min(buffer.Length, audio.Length - _position);
             if (taken > 0)
@@ -628,7 +627,6 @@ public class StationTests : IDisposable
         public int Read(Span<float> buffer)
         {
             int read = Interlocked.Increment(ref _reads) - 1;
-            Thread.Sleep(1);
             if (read == LoseOnRead)
             {
                 Interlocked.Increment(ref _lost);

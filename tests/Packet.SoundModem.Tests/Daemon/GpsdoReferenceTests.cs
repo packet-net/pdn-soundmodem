@@ -1015,6 +1015,8 @@ public sealed class GpsdoReferenceTests : IDisposable
         var config = new GpsdoConfig { Host = "broker.lan" };
         int attempts = 0;
         var sessionEnds = new TaskCompletionSource<string>();
+        var staying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var back = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var stop = new CancellationTokenSource();
 
         // Up and dropped; refused three times; then five connections the broker drops at once,
@@ -1034,16 +1036,36 @@ public sealed class GpsdoReferenceTests : IDisposable
             }
 
             connected();
+            staying.TrySetResult();
             return sessionEnds.Task.WaitAsync(cancel);
         }
 
-        Task running = new GpsdoFeed(config, reference, new StationJournal("", _lines.Add, _errors.Add), _time, Session)
+        // The clock moves only by the retry waits the feed announces, each once the feed is waiting
+        // on it, until the connection that stays has been made; then by the time that connection
+        // must last to count. The feed's own steady timer is never moved by the ladder: on the
+        // connections that drop at once it is cancelled, and moving it first would count them.
+        var waits = new RetryWaits(_time);
+        Task running = new GpsdoFeed(config, reference, new StationJournal("", line =>
+            {
+                _lines.Add(line);
+                if (line.Contains("back on", StringComparison.Ordinal))
+                {
+                    back.TrySetResult();
+                }
+            }, _errors.Add), waits, Session)
             .RunAsync(stop.Token);
-        for (int i = 0; i < 400 && (Volatile.Read(ref attempts) < 10 || _lines.Count < 2); i++)
+        while (!staying.Task.IsCompleted)
         {
-            await Task.Delay(5);
-            _time.Advance(GpsdoFeed.MaxRetry);
+            Task<TimeSpan> next = waits.NextAsync();
+            await Eventually.SignalAsync(Task.WhenAny(next, staying.Task), "the next retry wait, or the connection that stays");
+            if (next.IsCompleted)
+            {
+                _time.Advance(await next);
+            }
         }
+
+        _time.Advance(GpsdoFeed.SteadyAfter);
+        await Eventually.SignalAsync(back.Task, "the line saying the broker is back");
 
         attempts.Should().Be(10);
         _lines.Should().Equal(
@@ -1054,6 +1076,38 @@ public sealed class GpsdoReferenceTests : IDisposable
 
         await stop.CancelAsync();
         await Eventually.SignalAsync(running, "running to complete");
+    }
+
+    /// <summary>
+    /// The test clock, telling the test about each retry wait the feed starts on it: a one-shot
+    /// timer that is not the feed's steady timer.
+    /// </summary>
+    private sealed class RetryWaits(FakeTimeProvider inner) : TimeProvider
+    {
+        private readonly global::System.Threading.Channels.Channel<TimeSpan> _waits =
+            global::System.Threading.Channels.Channel.CreateUnbounded<TimeSpan>();
+
+        public Task<TimeSpan> NextAsync() => _waits.Reader.ReadAsync().AsTask();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            // Made first and only then announced, so a test that hears of a wait and moves the
+            // clock straight away cannot move it past a timer the fake clock has not been given.
+            ITimer timer = inner.CreateTimer(callback, state, dueTime, period);
+            if (period == Timeout.InfiniteTimeSpan && dueTime > TimeSpan.Zero
+                && dueTime != Timeout.InfiniteTimeSpan && dueTime != GpsdoFeed.SteadyAfter)
+            {
+                _waits.Writer.TryWrite(dueTime);
+            }
+
+            return timer;
+        }
+
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
     }
 
     // ---------------------------------------------------------------- /api/txlease

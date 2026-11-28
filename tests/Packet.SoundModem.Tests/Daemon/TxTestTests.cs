@@ -37,11 +37,11 @@ public class TxTestTests
         private readonly CancellationTokenSource _stop = new(TimeSpan.FromSeconds(30));
         private readonly Task _transmitter;
 
-        internal Rig(Func<TxTestOptions, TxTestOptions>? settings = null, IPttControl? ptt = null)
+        internal Rig(Func<TxTestOptions, TxTestOptions>? settings = null, IPttControl? ptt = null, TimeProvider? channelClock = null)
         {
             Ptt = ptt ?? new RecordingPtt();
             _counted = new CountingPtt(Ptt);
-            Channel = new SoundModemChannel(Rate, randomSeed: 5);
+            Channel = new SoundModemChannel(Rate, channelClock, randomSeed: 5);
             Channel.AddModem(0, sink => ModemCatalog.Create("afsk1200", Rate, sink));
             Channel.AddModem(9, _ => Band);
             Channel.Csma.Persistence = 255;
@@ -700,14 +700,20 @@ public class TxTestTests
         // channel discipline. While an ARQ session holds the channel the test waits, and it goes
         // out when the hold is released - the same gate a KISS frame passes through.
         var inhibited = true;
-        await using var rig = new Rig();
+        var clock = new VirtualAir.Clock();
+        await using var rig = new Rig(channelClock: clock);
         rig.Channel.TransmitInhibit = () => inhibited;
 
         Task<TxTestOutcome> running = rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
-        await Task.Delay(200);
+
+        // Parked on the hold's poll: the transmitter has looked at the channel, been told it is
+        // held and is waiting for time, so nothing was keyed because it chose not to.
+        await Task.WhenAny(clock.ParkedAsync(), running);
+        running.IsCompleted.Should().BeFalse("the channel is held");
         rig.Keying.Should().BeEmpty("the channel is held, so nothing is keyed");
 
         inhibited = false;
+        await clock.RunUntilAsync(running);
         (await running).Ran.Should().BeTrue();
         await rig.SettledAsync();
         rig.Keying.Should().Equal(["key", "unkey"]);

@@ -136,7 +136,7 @@ public class MonitorHostTests
         session.Disposed.Should().BeFalse();
 
         // And the cancelled linger must not fire later and take the session anyway.
-        await AdvanceWatchingAsync(second, h.Time, Harness.Linger * 2);
+        await AdvanceWatchingAsync(second, h.ServerOf(DalgetySlug), h.Time, Harness.Linger * 2);
         (await h.RowAsync(DalgetySlug)).State.Should().Be("live");
         session.Disposed.Should().BeFalse();
     }
@@ -256,7 +256,7 @@ public class MonitorHostTests
         h.Preflights(DalgetyHost).Should().Be(1);
 
         // And the ladder picks it up again rather than the station being wedged for good.
-        await AdvanceWatchingAsync(watching, h.Time, MonitorHost.RebuildAfter);
+        await AdvanceWatchingAsync(watching, h.ServerOf(DalgetySlug), h.Time, MonitorHost.RebuildAfter);
         await Eventually.UntilAsync(() => Task.FromResult(h.Preflights(DalgetyHost) >= 2), "2 preflights to be made");
     }
 
@@ -337,28 +337,37 @@ public class MonitorHostTests
     /// that has said nothing for <see cref="WaterfallWebServer.KeepAliveSilence"/> and drops its
     /// socket (#411), so a test that jumped a silent socket over that deadline would be measuring
     /// a receiver nobody was watching any more.</para>
-    /// <para>An answer every <see cref="WaterfallWebServer.KeepAlivePeriod"/>, which is twelve
-    /// per deadline, because a fake clock and a real socket keep different time: the jump happens
-    /// in no time at all while the answer is still crossing loopback, so the server reads it some
-    /// steps after the clock says it was sent. The millisecond is what makes twelve a margin
-    /// rather than a hope - a send to loopback completes without ever yielding the thread, so
-    /// without it this loop can run its whole span before the server gets a turn at any of the
-    /// answers.</para>
+    /// <para>An answer every <see cref="WaterfallWebServer.KeepAlivePeriod"/>, and the clock moves
+    /// on only once the server has read it (<see cref="WaterfallWebServer.PageHeard"/>), so each
+    /// answer is stamped with the instant it was sent however long loopback takes.</para>
     /// </remarks>
     private static async Task AdvanceWatchingAsync(
-        ClientWebSocket socket, FakeTimeProvider clock, TimeSpan span)
+        ClientWebSocket socket, WaterfallWebServer server, FakeTimeProvider clock, TimeSpan span)
     {
         using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        for (TimeSpan gone = TimeSpan.Zero; gone < span; gone += WaterfallWebServer.KeepAlivePeriod)
+        using var heard = new SemaphoreSlim(0);
+        void Heard() => heard.Release();
+        server.PageHeard += Heard;
+        try
         {
-            await socket.SendAsync(
-                Encoding.UTF8.GetBytes("{\"type\":\"pong\"}"),
-                WebSocketMessageType.Text, true, giveUp.Token);
-            await Task.Delay(1, giveUp.Token);
-            TimeSpan step = span - gone;
-            clock.Advance(step < WaterfallWebServer.KeepAlivePeriod
-                ? step
-                : WaterfallWebServer.KeepAlivePeriod);
+            for (TimeSpan gone = TimeSpan.Zero; gone < span; gone += WaterfallWebServer.KeepAlivePeriod)
+            {
+                await socket.SendAsync(
+                    Encoding.UTF8.GetBytes("{\"type\":\"pong\"}"),
+                    WebSocketMessageType.Text, true, giveUp.Token);
+
+                // The server has read the answer, and stamped it with the clock as it stands, before
+                // the clock moves on.
+                await Eventually.SignalAsync(heard.WaitAsync(), "the server to read the answer");
+                TimeSpan step = span - gone;
+                clock.Advance(step < WaterfallWebServer.KeepAlivePeriod
+                    ? step
+                    : WaterfallWebServer.KeepAlivePeriod);
+            }
+        }
+        finally
+        {
+            server.PageHeard -= Heard;
         }
     }
 
@@ -531,6 +540,9 @@ public class MonitorHostTests
 
         internal FakeTimeProvider Time { get; } = new();
 
+        internal WaterfallWebServer ServerOf(string slug) =>
+            _host.ServerOf(slug) ?? throw new InvalidOperationException($"{slug} has no station yet");
+
         /// <summary>Every later attempt to open a receiver throws this.</summary>
         internal void FailOpen(Exception failure) => _openFailure = failure;
 
@@ -673,7 +685,7 @@ public class MonitorHostTests
 
     /// <summary>
     /// A receiver's streaming session, without a socket: it says it is live and delivers nothing,
-    /// paced as the real one is (which waits inside Read rather than returning 0 in a spin).
+    /// as the real one does (it waits inside Read rather than returning 0 in a spin, here until it is disposed).
     /// </summary>
     private sealed class FakeSession : IUberSdrSession
     {
@@ -697,12 +709,19 @@ public class MonitorHostTests
 
         public int Read(Span<float> destination)
         {
-            // Paced as every real input is: each one waits inside Read rather than returning 0
-            // in a spin, which is what lets the receive loop have no backoff of its own.
-            Thread.Sleep(5);
+            // As a real input does, it waits inside Read rather than returning 0 in a spin, which is
+            // what lets the receive loop have no backoff of its own. It has nothing to deliver, so it
+            // waits for the one thing that ends a session: being disposed.
+            _closed.Wait();
             return 0;
         }
 
-        public void Dispose() => Disposed = true;
+        private readonly ManualResetEventSlim _closed = new();
+
+        public void Dispose()
+        {
+            Disposed = true;
+            _closed.Set();
+        }
     }
 }

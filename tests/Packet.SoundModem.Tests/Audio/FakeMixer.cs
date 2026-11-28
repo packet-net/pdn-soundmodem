@@ -202,11 +202,12 @@ internal sealed class FakeMixer : IAlsaMixer
     public int Refreshes { get; private set; }
 
     /// <summary>
-    /// How long the card takes to answer a refresh. Non-zero opens the window between a write and
-    /// the read-back that follows it, which is the window two concurrent callers would interleave
-    /// in if nothing serialised them.
+    /// Run inside every refresh, before it returns. A test that blocks here until something it is
+    /// waiting for has happened holds the window open between a write and the read-back that
+    /// follows it, which is the window two concurrent callers would interleave in if nothing
+    /// serialised them.
     /// </summary>
-    public TimeSpan RefreshTakes { get; set; }
+    public Action? WhileRefreshing { get; set; }
 
     /// <summary>Whether this fake has been disposed.</summary>
     public bool Disposed { get; private set; }
@@ -215,10 +216,7 @@ internal sealed class FakeMixer : IAlsaMixer
     public void Refresh()
     {
         Refreshes++;
-        if (RefreshTakes > TimeSpan.Zero)
-        {
-            Thread.Sleep(RefreshTakes);
-        }
+        WhileRefreshing?.Invoke();
     }
 
     /// <inheritdoc />
