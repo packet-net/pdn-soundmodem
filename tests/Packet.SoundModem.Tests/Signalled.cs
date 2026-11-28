@@ -169,6 +169,35 @@ internal sealed class ChangeSignal
     public Task WhenAsync(Func<bool> condition, string what, Func<string> held) =>
         WhenAsync(condition, what, held, Eventually.HangGuard);
 
+    /// <summary>The same for a condition that is itself asynchronous (a look over HTTP, say).</summary>
+    public async Task WhenTrueAsync(Func<Task<bool>> condition, string what, Func<string> held)
+    {
+        using var guard = new CancellationTokenSource(Eventually.HangGuard);
+        while (true)
+        {
+            Task changed = Next();
+            if (await condition())
+            {
+                return;
+            }
+
+            try
+            {
+                await changed.WaitAsync(guard.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                if (await condition())
+                {
+                    return;
+                }
+
+                throw new TimeoutException(
+                    $"waited {Eventually.HangGuard.TotalSeconds:0.###} s for {what}, and it never happened; it held {held()}");
+            }
+        }
+    }
+
     public async Task WhenAsync(Func<bool> condition, string what, Func<string> held, TimeSpan limit)
     {
         using var guard = new CancellationTokenSource(limit);
