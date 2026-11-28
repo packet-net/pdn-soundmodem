@@ -260,7 +260,7 @@ public class UnverifiedFrameRowTests
 
         await Receive(socket);   // config
 
-        Task<JsonDocument> reader = Task.Run(() => ReadUntilFrameAsync(socket));
+        Task<JsonDocument> reader = Task.Run(() => ReadUntilFrameAsync(socket, new ReaderPacedFeed()));
         modem.Emit = (frame, quality);
         channel.ProcessReceive(new float[SampleRate / 10]);
 
@@ -290,35 +290,27 @@ public class UnverifiedFrameRowTests
 
         await Receive(socket);   // config
 
-        Task<JsonDocument> reader = Task.Run(() => ReadUntilFrameAsync(socket));
+        var pacing = new ReaderPacedFeed();
+        Task<JsonDocument> reader = Task.Run(() => ReadUntilFrameAsync(socket, pacing));
 
         // Two seconds of low-level noise to bank a floor, then the burst, then the flush - the
         // shape BurstSnrTests established, because a burst that opens the stream cold warms the
         // tracker's floor from its own level and honestly reports no figure at all.
-        await FeedAsync(channel, Noise(SampleRate * 2));
-        await FeedAsync(channel, ModemCatalog.Create(mode, SampleRate, static _ => { })
+        await FeedAsync(Noise(SampleRate * 2));
+        await FeedAsync(ModemCatalog.Create(mode, SampleRate, static _ => { })
             .Modulate(Il2pReceiverTests.Gb7bpqBeacon(), txDelayMilliseconds: 300));
-        await FeedAsync(channel, Noise(SampleRate / 2));
+        await FeedAsync(Noise(SampleRate / 2));
 
         using JsonDocument message = await reader;
         qualities.Should().NotBeEmpty("the burst decodes");
         return (message.RootElement.Clone(), qualities[0]);
 
-        static async Task FeedAsync(SoundModemChannel channel, float[] audio)
-        {
-            // In tenths of a second, so the server's per-client queue drains as it fills: it is
-            // bounded at about a second of messages and drops the oldest, so pushing four seconds
-            // in one call evicts the frame message this test is waiting for. Yielded rather than
-            // slept: a pool work item that blocks is the pattern that lost the first cut of
-            // v0.50.0, and with the whole suite in parallel there are better things for that
-            // thread to be doing than waiting a millisecond.
-            for (int at = 0; at < audio.Length; at += SampleRate / 10)
-            {
-                channel.ProcessReceive(
-                    audio.AsSpan(at, Math.Min(SampleRate / 10, audio.Length - at)));
-                await Task.Delay(1);
-            }
-        }
+        // In tenths of a second, so the server's per-client queue drains as it fills: it is
+        // bounded at about a second of messages and drops the oldest, so pushing four seconds
+        // in one call evicts the frame message this test is waiting for. Each block waits for
+        // the reader to have taken what the blocks so far produced.
+        Task FeedAsync(float[] audio) =>
+            pacing.FeedAsync(block => channel.ProcessReceive(block.Span), audio, SampleRate / 10, reader);
     }
 
     /// <summary>Low-level noise, so the band tracker has a genuine floor to bank.</summary>
@@ -334,11 +326,12 @@ public class UnverifiedFrameRowTests
         return noise;
     }
 
-    private static async Task<JsonDocument> ReadUntilFrameAsync(ClientWebSocket socket)
+    private static async Task<JsonDocument> ReadUntilFrameAsync(ClientWebSocket socket, ReaderPacedFeed pacing)
     {
         while (true)
         {
             (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            pacing.Taken();
             if (kind != WebSocketMessageType.Text)
             {
                 continue;

@@ -155,43 +155,31 @@ public class ChannelAudioStreamTests : IAsyncLifetime
     [Fact]
     public async Task The_Hello_Is_The_First_Message_Even_While_Audio_Is_Flowing()
     {
-        using var feeding = new CancellationTokenSource();
-        Task feeder = Task.Run(
-            () =>
-            {
-                float[] block = new float[240];
-                // Paced at the rate real audio would arrive (240 samples at SampleRate Hz), not
-                // flat out. #667: an unpaced loop here was fast enough to peg a whole CPU core,
-                // and under a fully loaded machine that starved the listener's own thread during
-                // a connection's WebSocket upgrade, closing it before the handshake finished. The
-                // test still proves the same thing - a hello arrives before any audio on a
-                // connection opened while audio keeps flowing - just at a pace that leaves the
-                // rest of the process room to run.
-                var pace = TimeSpan.FromSeconds((double)block.Length / SampleRate);
-                while (!feeding.IsCancellationRequested)
-                {
-                    _channel.ProcessReceive(block);
-                    Thread.Sleep(pace);
-                }
-            },
-            CancellationToken.None);
-
-        try
+        // The connection joins the fan-out before its hello is written, so that no audio is lost
+        // while the hello goes out. This feeds audio from exactly that point, on every run: three
+        // whole blocks arrive for a connection that has not yet said hello. They must wait behind
+        // the hello, and come out after it, in order.
+        var server = _server.ChannelAudio;
+        float[] tone = Tone(Block, 1000);
+        void FeedWhileHelloIsPending()
         {
-            for (int attempt = 0; attempt < 20; attempt++)
+            for (int i = 0; i < 3; i++)
             {
-                using var socket = await ConnectAsync();
-                (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
-                kind.Should().Be(WebSocketMessageType.Text, "the hello must come before any audio");
-                Encoding.UTF8.GetString(payload).Should().Contain("\"hello\"");
-                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
+                _channel.ProcessReceive(tone);
             }
         }
-        finally
-        {
-            await feeding.CancelAsync();
-            await feeder;
-        }
+
+        server.HelloSending += FeedWhileHelloIsPending;
+        using var socket = await ConnectAsync();
+
+        (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+        server.HelloSending -= FeedWhileHelloIsPending;
+        kind.Should().Be(WebSocketMessageType.Text, "the hello must come before any audio");
+        Encoding.UTF8.GetString(payload).Should().Contain("\"hello\"");
+
+        List<AudioBlock> blocks = await ReceiveSamples(socket, 3 * Block);
+        blocks.Should().HaveCount(3, "the audio that arrived during the set-up follows the hello");
+        blocks.Should().OnlyContain(b => b.Samples.SequenceEqual(tone));
     }
 
     [Fact]

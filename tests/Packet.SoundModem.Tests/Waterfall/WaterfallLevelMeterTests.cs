@@ -211,13 +211,13 @@ public class WaterfallLevelMeterTests : IAsyncLifetime
     [InlineData(true)]
     public async Task A_Real_48k_Station_Lights_Clip_Only_When_The_Card_Itself_Railed(bool rail)
     {
-        // Its own server on the system clock: the station's loop runs on real time, so a meter
-        // paced by this class's FakeTimeProvider would never reach a boundary.
+        // The card moves this class's clock by the length of each block it hands over, so the
+        // meter reaches its interval boundaries by the audio it is given and by nothing else.
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
         int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(
-            channel, port, new WaterfallOptions { InputLevelMeter = true });
+            channel, port, new WaterfallOptions { InputLevelMeter = true, TimeProvider = _clock });
         server.Start();
 
         using ClientWebSocket page = await AttachToAsync(port);
@@ -233,7 +233,7 @@ public class WaterfallLevelMeterTests : IAsyncLifetime
             new StationOptions
             {
                 Channel = channel,
-                Input = new CardInput(48000, card),
+                Input = new CardInput(48000, card, _clock),
                 DspRate = SampleRate,
                 Journal = journal,
                 DeviceKind = DeadFeedDevice.Alsa,
@@ -246,8 +246,8 @@ public class WaterfallLevelMeterTests : IAsyncLifetime
             TaskScheduler.Default);
         try
         {
-            // The station's loop is on real time, so the meter is too: three blocks of 100 ms is
-            // more than one 200 ms interval whichever block the take lands on.
+            // Three blocks of 100 ms of card time is more than one 200 ms interval whichever block
+            // the take lands on.
             using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             using JsonDocument level = await NextAsync(page, "level", giveUp.Token);
 
@@ -286,8 +286,12 @@ public class WaterfallLevelMeterTests : IAsyncLifetime
         return block;
     }
 
-    /// <summary>A card that hands out one recording over and over, at the loop's block size.</summary>
-    private sealed class CardInput(int sampleRate, float[] audio) : IAudioInput
+    /// <summary>
+    /// A card that hands out one recording over and over, at the loop's block size, as fast as the
+    /// loop asks. Its pacing is the clock's: each block moves it on by the block's own length.
+    /// </summary>
+    private sealed class CardInput(int sampleRate, float[] audio, FakeTimeProvider clock)
+        : IAudioInput
     {
         private int _position;
 
@@ -295,9 +299,7 @@ public class WaterfallLevelMeterTests : IAsyncLifetime
 
         public int Read(Span<float> buffer)
         {
-            // As slow as a real card, so the station's loop does not spin a core while the test
-            // waits for one 200 ms interval to pass.
-            Thread.Sleep(buffer.Length * 1000 / SampleRate);
+            clock.Advance(TimeSpan.FromSeconds((double)buffer.Length / SampleRate));
             for (int n = 0; n < buffer.Length; n++)
             {
                 buffer[n] = audio[_position];

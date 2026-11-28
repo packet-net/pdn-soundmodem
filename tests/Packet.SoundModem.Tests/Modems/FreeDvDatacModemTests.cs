@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Packet.SoundModem.Channel;
 using M0LTE.Dsp;
 using M0LTE.Il2p;
@@ -85,18 +84,10 @@ public class FreeDvDatacModemTests(ITestOutputHelper output)
         var rx = Make(mode, received.Add);
         rx.FrameDecoded += (_, quality) => qualities.Add(quality);
 
-        var stopwatch = Stopwatch.StartNew();
         float[] audio = tx.Modulate(frame, txDelayMilliseconds: 100);
-        long modulateMs = stopwatch.ElapsedMilliseconds;
-
-        stopwatch.Restart();
         FeedBlocks(rx, [.. audio, .. new float[DspRate / 2]], DspRate);
-        stopwatch.Stop();
 
-        output.WriteLine(
-            $"{mode} {frameBytes} B: {audio.Length / (double)DspRate:F2} s of audio, " +
-            $"modulate {modulateMs} ms, demodulate {stopwatch.ElapsedMilliseconds} ms, " +
-            $"{received.Count} frame(s)");
+        output.WriteLine($"{mode} {frameBytes} B: {audio.Length / (double)DspRate:F2} s of audio, {received.Count} frame(s)");
 
         received.Should().ContainSingle();
         received[0].Should().Equal(frame);

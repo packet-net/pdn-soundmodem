@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Packet.SoundModem.Ota;
 
 namespace Packet.SoundModem.Tests.Ota;
@@ -9,31 +8,39 @@ namespace Packet.SoundModem.Tests.Ota;
 /// build that predates it) used to be silently accepted, run every requested burst anyway with the flag's
 /// effect simply missing, and report numbers for the wrong experiment as if they were the one
 /// asked for. <see cref="SimCommand.Run"/> now calls <c>Args.RejectUnknown</c> before the burst
-/// loop starts, so a bogus flag fails loudly - and fast - instead.
+/// loop starts, so a bogus flag fails loudly instead.
 /// </summary>
 public class SimCommandStrictFlagsTests
 {
     [Fact]
     public void Sim_With_A_Bogus_Flag_Throws_Naming_It_And_Runs_No_Bursts()
     {
-        // A burst count and mode that would take clearly measurable wall time if the loop ever
-        // ran, so "the exception arrives near-instantly" is real evidence no burst was rendered,
-        // channel-injected or decoded - not just that the process eventually gave up.
+        // Not quiet, so the command says what it is doing: its first line is written after the flags
+        // are checked and before the first burst, and a point line is written after each point.
+        // A rejection that comes first leaves neither, whatever the burst count.
         string[] argv =
         [
-            "--mode", "bpsk300", "--snr", "20", "--bursts", "100000", "--quiet",
+            "--mode", "bpsk300", "--snr", "20", "--bursts", "100000",
             "--impulsee", "220", // typo'd flag: sim never reads "impulsee"
         ];
 
-        var stopwatch = Stopwatch.StartNew();
-        Action act = () => SimCommand.Run(argv);
-        act.Should().Throw<ArgumentException>()
-            .WithMessage("*--impulsee*", "the message must name the exact flag that was unread")
-            .Which.Message.Should().Contain("sim", "the message should name the command too");
-        stopwatch.Stop();
+        TextWriter original = Console.Error;
+        var said = new StringWriter();
+        Console.SetError(said);
+        try
+        {
+            Action act = () => SimCommand.Run(argv);
+            act.Should().Throw<ArgumentException>()
+                .WithMessage("*--impulsee*", "the message must name the exact flag that was unread")
+                .Which.Message.Should().Contain("sim", "the message should name the command too");
+        }
+        finally
+        {
+            Console.SetError(original);
+        }
 
-        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(2),
-            "100000 bpsk300 bursts take far longer than this - a fast failure is proof none ran");
+        said.ToString().Should().NotContain("sim bpsk300", "the run announces itself only once its flags are accepted")
+            .And.NotContain(" ok ", "no point, and so no burst, was run before the rejection");
     }
 
     [Fact]
