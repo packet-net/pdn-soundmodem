@@ -80,6 +80,9 @@ internal sealed class OfdmFmAx25Transport : ITxCompletionTransport
         }
     }
 
+    /// <summary>Raised, with a plain reason, each time the modem refuses or drops a frame the stack sent (queue full, too big, address lost). Raised wherever the task fails; the stack's own recovery is left alone.</summary>
+    public event Action<string>? Refused;
+
     /// <summary>For a failing test: the counts <see cref="AtRest"/> reads.</summary>
     internal string Describe()
     {
@@ -311,6 +314,11 @@ internal sealed class OfdmFmAx25Transport : ITxCompletionTransport
                     {
                         waiter.Source.TrySetException(failure);
                     }
+                }
+
+                if (failure is not null)
+                {
+                    Refused?.Invoke(failure.Message);
                 }
 
                 if (!refusedAtOnce)

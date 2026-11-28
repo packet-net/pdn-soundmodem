@@ -25,7 +25,7 @@ pdn-ofdm call   --device SPEC  --ptt SPEC  --call CALL --to CALLSIGN [--get BYTE
 
 - `answer` accepts AX.25 connections to `--call`. It sends a one-line banner, echoes each line, sends `n` bytes of a printable pattern on `SEND n`, reports its frame counts on `STATS` and disconnects on `BYE`.
 - `call` connects to a callsign and is interactive: each line typed is sent, each line received is printed. With `--get BYTES` it asks for that many bytes, times them from the request to the last byte, prints the throughput and how many frames the other side sent again, and disconnects.
-  The link is fixed for the trial: modulo 8, window 4, 256 bytes a frame, acknowledgement timer 30 s to start (smoothed from measured round trips, and started when a frame has gone, not when it was queued), delay 1 s, idle poll 120 s, 10 retries.
+  The link is modulo 128 (SABME; the stack falls back for a peer that cannot), 256 bytes a frame. Its window and acknowledgement timer follow what the modem says about the link: one frame and 30 s until the peer is located and a rate is known each way, then as many frames as one burst carries at the rate out (at most 32) and a timer worked out from the answer's parts (at least 6 s). Delay 1 s, idle poll 120 s, 10 retries. `--get` also prints the modem's rate each way.
 
 ## Output
 

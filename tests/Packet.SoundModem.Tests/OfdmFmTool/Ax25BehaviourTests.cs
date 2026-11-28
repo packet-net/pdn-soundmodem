@@ -154,13 +154,15 @@ public class Ax25BehaviourTests
     public void The_link_settings_are_the_agreed_ones()
     {
         LinkSettings.T1.Should().Be(TimeSpan.FromSeconds(30));
+        LinkTuner.FirstContactT1.Should().Be(TimeSpan.FromSeconds(30));
         LinkSettings.T2.Should().Be(TimeSpan.FromSeconds(1));
         LinkSettings.T3.Should().Be(TimeSpan.FromSeconds(120));
         LinkSettings.Retries.Should().Be(10);
-        LinkSettings.Window.Should().Be(4);
+        LinkSettings.FirstContactWindow.Should().Be(1);
         LinkSettings.Paclen.Should().Be(256);
         var options = LinkSettings.Options(new Packet.Core.Callsign("G4ABC", 1), _ => { });
-        options.PreferExtendedConnect.Should().BeFalse("mod 8 for this slice");
+        options.PreferExtendedConnect.Should().BeTrue("modulo 128, the stack falling back for a peer that cannot");
+        options.K.Should().Be(1);
         options.RestartT1OnTxComplete.Should().BeTrue();
         options.PreConnectXidNegotiatesSrej.Should().BeFalse();
     }
