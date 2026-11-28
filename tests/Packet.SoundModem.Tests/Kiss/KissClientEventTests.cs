@@ -29,17 +29,17 @@ public class KissClientEventTests
     public async Task A_Host_Attaching_Is_Announced_With_Its_Address_And_The_Client_Count()
     {
         await using var server = new KissTcpServer(Channel(), 0, IPAddress.Loopback);
-        var connects = new List<KissClientEvent>();
+        var connects = new SignalledList<KissClientEvent>();
         server.ClientConnected += connects.Add;
         server.Start();
 
         using var first = new TcpClient();
         await first.ConnectAsync(IPAddress.Loopback, server.LocalPort);
-        await Eventually.UntilAsync(() => connects.Count == 1, "the first connect event");
+        await connects.WhenAsync(e => e.Count == 1, "the first connect event");
 
         using var second = new TcpClient();
         await second.ConnectAsync(IPAddress.Loopback, server.LocalPort);
-        await Eventually.UntilAsync(() => connects.Count == 2, "the second connect event");
+        await connects.WhenAsync(e => e.Count == 2, "the second connect event");
 
         connects[0].Remote.Should().NotBeNull();
         connects[0].Clients.Should().Be(1);
@@ -51,7 +51,7 @@ public class KissClientEventTests
     public async Task A_Clean_Close_Is_Announced_Without_A_Reason()
     {
         await using var server = new KissTcpServer(Channel(), 0, IPAddress.Loopback);
-        var goodbyes = new List<KissClientEvent>();
+        var goodbyes = new SignalledList<KissClientEvent>();
         server.ClientDisconnected += goodbyes.Add;
         server.Start();
 
@@ -59,7 +59,7 @@ public class KissClientEventTests
         await client.ConnectAsync(IPAddress.Loopback, server.LocalPort);
         client.Close();
 
-        await Eventually.UntilAsync(() => goodbyes.Count == 1, "the goodbye event");
+        await goodbyes.WhenAsync(e => e.Count == 1, "the goodbye event");
         goodbyes[0].Reason.Should().BeNull("an orderly close is not a fault and must not read like one");
         goodbyes[0].Clients.Should().Be(0);
         goodbyes[0].Remote.Should().NotBeNull("the address is captured before the socket is disposed");
@@ -69,7 +69,7 @@ public class KissClientEventTests
     public async Task A_Host_That_Vanishes_Is_Announced_With_Why()
     {
         await using var server = new KissTcpServer(Channel(), 0, IPAddress.Loopback);
-        var goodbyes = new List<KissClientEvent>();
+        var goodbyes = new SignalledList<KissClientEvent>();
         server.ClientDisconnected += goodbyes.Add;
         server.Start();
 
@@ -83,7 +83,7 @@ public class KissClientEventTests
             SocketOptionLevel.Socket, SocketOptionName.Linger, new LingerOption(true, 0));
         client.Client.Close();
 
-        await Eventually.UntilAsync(() => goodbyes.Count == 1, "the goodbye event");
+        await goodbyes.WhenAsync(e => e.Count == 1, "the goodbye event");
         goodbyes[0].Reason.Should().NotBeNullOrEmpty(
             "'the host vanished' and 'the host closed' are different problems");
     }
@@ -92,7 +92,7 @@ public class KissClientEventTests
     public async Task Shutting_The_Server_Down_Is_Not_Reported_As_A_Client_Fault()
     {
         var server = new KissTcpServer(Channel(), 0, IPAddress.Loopback);
-        var goodbyes = new List<KissClientEvent>();
+        var goodbyes = new SignalledList<KissClientEvent>();
         server.ClientDisconnected += goodbyes.Add;
         server.Start();
 
@@ -102,7 +102,7 @@ public class KissClientEventTests
 
         await server.DisposeAsync();
 
-        await Eventually.UntilAsync(() => goodbyes.Count >= 1, "the goodbye event");
+        await goodbyes.WhenAsync(e => e.Count >= 1, "the goodbye event");
         goodbyes[0].Reason.Should().BeNull(
             "the station stopping is not the host misbehaving, and a journal full of errors on a "
             + "clean shutdown teaches operators to ignore them");
@@ -119,7 +119,7 @@ public class KissClientEventTests
         // server has closed the session's socket, which the host's end sees as the connection
         // closing.
         var server = new KissTcpServer(Channel(), 0, IPAddress.Loopback);
-        var goodbyes = new List<KissClientEvent>();
+        var goodbyes = new SignalledList<KissClientEvent>();
         server.ClientDisconnected += goodbyes.Add;
         using var client = new TcpClient();
         using var connected = new ManualResetEventSlim();
@@ -151,7 +151,7 @@ public class KissClientEventTests
         Task disposed = await Eventually.SignalAsync(disposing.Task, "the connect event");
         await Eventually.SignalAsync(disposed, "the server to stop");
 
-        await Eventually.UntilAsync(() => goodbyes.Count >= 1, "the goodbye event");
+        await goodbyes.WhenAsync(e => e.Count >= 1, "the goodbye event");
         goodbyes.Should().ContainSingle().Which.Reason.Should().BeNull(
             "the station stopping is not the host misbehaving, wherever the session had got to");
     }
@@ -164,7 +164,7 @@ public class KissClientEventTests
         // sees its session end (so it can send no frame and no SETHW), with the reason in the
         // journal's disconnect line, and a new one is refused at the socket.
         await using var server = new KissTcpServer(Channel(), 0, IPAddress.Loopback);
-        var goodbyes = new List<KissClientEvent>();
+        var goodbyes = new SignalledList<KissClientEvent>();
         var acceptFailures = new List<string>();
         server.ClientDisconnected += goodbyes.Add;
         server.AcceptFailed += acceptFailures.Add;
@@ -177,7 +177,7 @@ public class KissClientEventTests
 
         server.StopTakingWork("this station is stopping");
 
-        await Eventually.UntilAsync(() => goodbyes.Count == 1, "the goodbye event");
+        await goodbyes.WhenAsync(e => e.Count == 1, "the goodbye event");
         goodbyes[0].Reason.Should().Be("this station is stopping");
         Task<int> reading = attached.GetStream().ReadAsync(new byte[16]).AsTask();
         await Eventually.CompletesAsync(reading, "the attached host's read to end");
