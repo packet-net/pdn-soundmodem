@@ -131,6 +131,9 @@ internal sealed class ToolSession : IAsyncDisposable
 
     private void Carried() => Owe(ref _wakesOwed, -1);
 
+    /// <summary>True when the AX.25 stack uses the host: the datagram, echo and send handlers stay off, and only the trace, the identity and the identification note are kept.</summary>
+    public bool Ax25Mode { get; init; }
+
     /// <summary>
     /// Gives the station its callsign and starts listening to what it reports. Call it once, before the first command.
     /// </summary>
@@ -140,9 +143,13 @@ internal sealed class ToolSession : IAsyncDisposable
         _host.Trace += e => _log.Write(e.Text);
         _host.TraceLevel = _detail ? TraceLevel.Detail : TraceLevel.Flow;
         _host.Notice += _log.Write;
-        _host.Received += OnReceived;
-        _host.Transmitted += e => Settle(e.Tag, new Fate(true, null, e));
-        _host.Dropped += e => Settle(e.Tag, new Fate(false, DropText(e.Reason), null));
+        if (!Ax25Mode)
+        {
+            _host.Received += OnReceived;
+            _host.Transmitted += e => Settle(e.Tag, new Fate(true, null, e));
+            _host.Dropped += e => Settle(e.Tag, new Fate(false, DropText(e.Reason), null));
+        }
+
         _host.MorseIdentSent += text =>
         {
             _log.Write($"Identified in Morse as {text}");
@@ -164,7 +171,7 @@ internal sealed class ToolSession : IAsyncDisposable
             return $"the modem refused the callsign {_call}";
         }
 
-        _replier = Task.Run(AnswerEchoesAsync);
+        _replier = Ax25Mode ? Task.CompletedTask : Task.Run(AnswerEchoesAsync);
         _noteWriter = Task.Run(WriteNotesAsync);
         return null;
     }

@@ -13,7 +13,7 @@ namespace Packet.SoundModem.Modems.OfdmFmStation;
 /// <remarks>
 /// <para><b>Sending.</b> The link addresses come from the frame's header through <see cref="Ax25Header"/> (the packet.net library reads the frame; nothing here looks inside it): the datagram goes to the next hop,
 /// as the station the frame is being transmitted as; a UI frame with no digipeater still to repeat it goes to everyone. Spelled as ASCII <c>CALL-SSID</c>, upper case, SSID 0 bare. An acknowledgement
-/// or response (RR, RNR, REJ, SREJ, UA, DM) is expedited, the rest ordinary. No report is asked for: AX.25 acknowledges for itself. One tag per frame, from a counter; the task completes when the host raises
+/// or response (RR, RNR, REJ, SREJ, UA, DM) is expedited, the rest ordinary, except that one is sent as ordinary while an ordinary frame to the same station is still waiting: the link needs its frames in order. No report is asked for: AX.25 acknowledges for itself. One tag per frame, from a counter; the task completes when the host raises
 /// <see cref="OfdmFmStationHost.Transmitted"/> for it and faults when it raises <see cref="OfdmFmStationHost.Dropped"/>. A frame the station refuses, or whose header does not read, faults the task and sends nothing.</para>
 /// <para><b>Threads.</b> The host raises its events on the receive thread inside its lock. The handlers here only complete tasks (with continuations run asynchronously, so no caller's code runs there) or queue a copy of
 /// a received frame; they never call the host. Received frames are handed to <see cref="SoundModemChannel.DeliverReceived"/> from a thread of this port's own, one at a time in arrival order, because the channel's
@@ -32,6 +32,8 @@ public sealed class OfdmFmFramePort : ISubChannelPort, IDisposable
     private readonly int _subChannel;
     private readonly Lock _gate = new();
     private readonly Dictionary<long, TaskCompletionSource> _outstanding = [];
+    private readonly Dictionary<long, LinkAddress> _ordinaryTo = [];
+    private readonly Dictionary<LinkAddress, int> _ordinaryAhead = [];
     private readonly Channel<(byte[] Frame, FrameQuality Quality)> _received =
         ThreadingChannel.CreateBounded<(byte[], FrameQuality)>(new BoundedChannelOptions(ReceiveQueueLimit) { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
     private readonly Thread _delivery;
@@ -85,6 +87,18 @@ public sealed class OfdmFmFramePort : ISubChannelPort, IDisposable
     /// <summary>Received frames that a listener on the channel threw on.</summary>
     public long DeliveryFaults => Interlocked.Read(ref _deliveryFaults);
 
+    /// <summary>How many frames accepted as ordinary, an acknowledgement held to the order of its station's frames among them, have not yet been reported transmitted or dropped.</summary>
+    internal int OrdinaryWaiting
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _ordinaryTo.Count;
+            }
+        }
+    }
+
     /// <summary>How many frames have been accepted by the host and not yet reported transmitted or dropped.</summary>
     public int Outstanding
     {
@@ -120,6 +134,7 @@ public sealed class OfdmFmFramePort : ISubChannelPort, IDisposable
 
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         long tag = Interlocked.Increment(ref _nextTag);
+        SendPriority priority = plan.Priority;
 
         // Registered before the call: the host may report the datagram's fate as soon as it has released its lock.
         lock (_gate)
@@ -130,12 +145,25 @@ public sealed class OfdmFmFramePort : ISubChannelPort, IDisposable
             }
 
             _outstanding.Add(tag, done);
+
+            // AX.25 relies on frames arriving in the order they were sent. The modem sends an expedited datagram ahead of ordinary ones, so an acknowledgement sent after an I frame that is still queued
+            // for the same station would arrive first, with an N(R) that the I frame then appears to take back: the receiver resets the link. An acknowledgement goes first only when nothing ordinary is ahead of it.
+            if (priority == SendPriority.Expedited && _ordinaryAhead.TryGetValue(plan.To, out int ahead) && ahead > 0)
+            {
+                priority = SendPriority.Ordinary;
+            }
+
+            if (priority == SendPriority.Ordinary)
+            {
+                _ordinaryTo[tag] = plan.To;
+                _ordinaryAhead[plan.To] = _ordinaryAhead.GetValueOrDefault(plan.To) + 1;
+            }
         }
 
         SendResult result;
         try
         {
-            result = _host.Send(frame, plan.To, plan.From, LinkProtocol.Ax25Frame, new HostTag(tag), reportWanted: false, plan.Priority);
+            result = _host.Send(frame, plan.To, plan.From, LinkProtocol.Ax25Frame, new HostTag(tag), reportWanted: false, priority);
         }
         catch
         {
@@ -180,6 +208,7 @@ public sealed class OfdmFmFramePort : ISubChannelPort, IDisposable
         lock (_gate)
         {
             _outstanding.Remove(tag);
+            ReleaseOrdinary(tag);
         }
     }
 
@@ -187,7 +216,24 @@ public sealed class OfdmFmFramePort : ISubChannelPort, IDisposable
     {
         lock (_gate)
         {
+            ReleaseOrdinary(tag);
             return _outstanding.Remove(tag, out TaskCompletionSource? done) ? done : null;
+        }
+    }
+
+    /// <summary>Under the gate: an ordinary frame is no longer ahead of the acknowledgements that follow it.</summary>
+    private void ReleaseOrdinary(long tag)
+    {
+        if (_ordinaryTo.Remove(tag, out LinkAddress to) && _ordinaryAhead.TryGetValue(to, out int count))
+        {
+            if (count <= 1)
+            {
+                _ordinaryAhead.Remove(to);
+            }
+            else
+            {
+                _ordinaryAhead[to] = count - 1;
+            }
         }
     }
 
@@ -253,6 +299,8 @@ public sealed class OfdmFmFramePort : ISubChannelPort, IDisposable
             _disposed = true;
             pending = [.. _outstanding.Values];
             _outstanding.Clear();
+            _ordinaryTo.Clear();
+            _ordinaryAhead.Clear();
         }
 
         _host.Received -= _onReceived;

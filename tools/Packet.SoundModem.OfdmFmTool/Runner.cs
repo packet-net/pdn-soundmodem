@@ -5,6 +5,7 @@ using Packet.SoundModem.FlexRadio;
 using Packet.SoundModem.Rig;
 using DaemonStation = Packet.SoundModem.Daemon.Station;
 using Packet.SoundModem.Modems.OfdmFmStation;
+using Packet.SoundModem.OfdmFmTool.Ax25;
 
 namespace Packet.SoundModem.OfdmFmTool;
 
@@ -158,6 +159,7 @@ internal static class Runner
         AudioRecorder? recorder = null;
         OfdmFmStationHost? host = null;
         ToolSession? session = null;
+        Ax25Link? ax25 = null;
         DaemonStation? station = null;
         bool faulted = false;
         try
@@ -197,7 +199,7 @@ internal static class Runner
                 ? new IdentificationNote(notePath, time, log.Write)
                 : null;
             host = new OfdmFmStationHost(channel, new Random(), new OfdmFmStationHostOptions { LastIdentification = note?.Read(), TimeProvider = time });
-            session = new ToolSession(host, options.Call, options.To, options.Detail, canTransmit, log, time, note);
+            session = new ToolSession(host, options.Call, options.To, options.Detail, canTransmit, log, time, note) { Ax25Mode = options.Verb is Verb.Answer or Verb.Call };
             if (session.Start() is string notReady)
             {
                 log.Write(notReady);
@@ -231,6 +233,13 @@ internal static class Runner
             int code = 0;
             switch (options.Verb)
             {
+                case Verb.Answer or Verb.Call:
+                    ax25 = new Ax25Link(host, channel, options.Call, time, log);
+                    await ax25.StartAsync();
+                    code = options.Verb == Verb.Answer
+                        ? await ax25.AnswerAsync(cancellation.Token)
+                        : await ax25.CallAsync(options.To!, options.Get, options.Get is null ? Console.In : null, cancellation.Token);
+                    break;
                 case Verb.Listen:
                     await session.ListenAsync(cancellation.Token);
                     break;
@@ -260,6 +269,11 @@ internal static class Runner
 
             releasable.Release();
             listening?.Join(TimeSpan.FromSeconds(5));
+            if (ax25 is not null)
+            {
+                await ax25.DisposeAsync();
+            }
+
             host?.Dispose();
             station?.Dispose();
             if (session is not null)

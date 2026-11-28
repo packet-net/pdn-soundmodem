@@ -1,11 +1,13 @@
 # pdn-ofdm
 
-A small command-line tool that drives the adaptive OFDM-FM modem directly: one sound device, one PTT, one channel. No KISS, no daemon, no config file, no AX.25. It is for bench and field trials: listen, send a datagram, and time a ping to another station running the same tool.
+A small command-line tool that drives the adaptive OFDM-FM modem directly: one sound device, one PTT, one channel. No KISS, no daemon, no config file. The raw commands carry no AX.25; `answer` and `call` run packet.net's AX.25 stack over it, in the same process. It is for bench and field trials: listen, send a datagram, and time a ping to another station running the same tool.
 
 ```
 pdn-ofdm listen --device SPEC [--ptt SPEC] --call CALL [--detail] [--log FILE] [--record FILE.wav]
 pdn-ofdm send   --device SPEC  --ptt SPEC  --call CALL --to ADDRESS [...] TEXT...
 pdn-ofdm ping   --device SPEC  --ptt SPEC  --call CALL --to ADDRESS [--count N] [--size BYTES] [...]
+pdn-ofdm answer --device SPEC  --ptt SPEC  --call CALL [...]
+pdn-ofdm call   --device SPEC  --ptt SPEC  --call CALL --to CALLSIGN [--get BYTES] [...]
 ```
 
 `--device` and `--ptt` are the daemon's own: an ALSA name or `pipe:IN,OUT[,RATE]`, and `serial:DEVICE[:rts|:dtr]` or `cm108:HIDRAW[:GPIO]`. `--call` is this station's callsign and the link address it sends from and answers to; `--to` is the other station's link address. Both are typed as written and upper-cased.
@@ -20,6 +22,10 @@ pdn-ofdm ping   --device SPEC  --ptt SPEC  --call CALL --to ADDRESS [--count N] 
   `pdn-ofdm ping --device plughw:CARD=Device,DEV=0 --ptt cm108:/dev/hidraw0 --call G4ABC-1 --to M0XYZ-1 --count 10`
 
 `--detail` raises the trace to detail level. `--log FILE` appends every line to a file. `--record FILE.wav` writes the received audio, 48 kHz mono. Ctrl-C stops cleanly and releases the PTT.
+
+- `answer` accepts AX.25 connections to `--call`. It sends a one-line banner, echoes each line, sends `n` bytes of a printable pattern on `SEND n`, reports its frame counts on `STATS` and disconnects on `BYE`.
+- `call` connects to a callsign and is interactive: each line typed is sent, each line received is printed. With `--get BYTES` it asks for that many bytes, times them from the request to the last byte, prints the throughput and how many frames the other side sent again, and disconnects.
+  The link is fixed for the trial: modulo 8, window 4, 256 bytes a frame, acknowledgement timer 30 s to start (smoothed from measured round trips, and started when a frame has gone, not when it was queued), delay 1 s, idle poll 120 s, 10 retries.
 
 ## Output
 
