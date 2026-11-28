@@ -25,7 +25,7 @@ public class StationTests : IDisposable
 {
     private readonly string _dir = Directory.CreateTempSubdirectory("pdnsm-station").FullName;
     private readonly List<string> _out = [];
-    private readonly List<string> _errors = [];
+    private readonly SignalledList<string> _errors = new();
 
     public void Dispose()
     {
@@ -47,11 +47,14 @@ public class StationTests : IDisposable
     {
         private readonly SemaphoreSlim _feed = new(0);
         private volatile bool _closed;
-        private int _reads;
+        private readonly SignalledCounter _reads = new();
 
         public int SampleRate { get; } = sampleRate;
 
-        public int Reads => Volatile.Read(ref _reads);
+        public int Reads => (int)_reads.Value;
+
+        /// <summary>Waits, without polling, until the loop has been served this many reads.</summary>
+        public Task WhenReadsAsync(int count, string what) => _reads.WhenAsync(r => r >= count, what);
 
         /// <summary>The USB-card-unplugged family: <c>Read</c> throws instead of returning.</summary>
         public Exception? Death { get; set; }
@@ -75,7 +78,7 @@ public class StationTests : IDisposable
                 return 0;
             }
 
-            Interlocked.Increment(ref _reads);
+            _reads.Increment();
             if (Death is Exception death)
             {
                 throw death;
@@ -154,15 +157,9 @@ public class StationTests : IDisposable
     private StationJournal Journal(string tag = "") => new(
         tag,
         line => { lock (_out) { _out.Add(line); } },
-        line => { lock (_errors) { _errors.Add(line); } });
+        _errors.Add);
 
-    private List<string> Errors()
-    {
-        lock (_errors)
-        {
-            return [.. _errors];
-        }
-    }
+    private List<string> Errors() => [.. _errors];
 
     /// <summary>The CT 146 shape: a receive-only UberSDR station at 12 kHz, dead-feed thresholds
     /// left at the device family's own defaults, which is how the live one runs.</summary>
@@ -196,7 +193,7 @@ public class StationTests : IDisposable
 
         // The loop is turning: it asks the input for audio as often as it is given some.
         input.Feed(5);
-        await Eventually.UntilAsync(() => input.Reads >= 5, "the loop keeps asking the input for audio");
+        await input.WhenReadsAsync(5, "the loop keeps asking the input for audio");
         running.IsCompleted.Should().BeFalse("nothing has asked the station to stop");
 
         await stopping.CancelAsync();
@@ -221,7 +218,7 @@ public class StationTests : IDisposable
 
         Task running = RunAsync(station);
         input.Feed(2);
-        await Eventually.UntilAsync(() => input.Reads >= 2, "the loop is turning");
+        await input.WhenReadsAsync(2, "the loop is turning");
 
         clock.Advance(TimeSpan.FromSeconds(30));
 
@@ -252,7 +249,7 @@ public class StationTests : IDisposable
 
         Task running = RunAsync(station);
         input.Feed(2);
-        await Eventually.UntilAsync(() => input.Reads >= 2, "the loop is turning");
+        await input.WhenReadsAsync(2, "the loop is turning");
 
         clock.Advance(TimeSpan.FromSeconds(30));
         input.Close();
@@ -338,10 +335,7 @@ public class StationTests : IDisposable
         // which is the case every live node station is in.
         foreach (string tag in new[] { "m9psy-1", "" })
         {
-            lock (_errors)
-            {
-                _errors.Clear();
-            }
+            _errors.Clear();
 
             var input = new TestInput(12000, level: 0);
             StationOptions options = UberSdrOptions(input, Journal(tag)) with
@@ -356,7 +350,7 @@ public class StationTests : IDisposable
 
             Task running = RunAsync(station);
             input.Feed(100_000);
-            await Eventually.UntilAsync(() => Errors().Count > 0, "the excused silence is journalled");
+            await _errors.WhenCountAsync(1, "the excused silence is journalled");
 
             await stopping.CancelAsync();
             input.Close();
@@ -377,7 +371,7 @@ public class StationTests : IDisposable
         int captureXruns = 0;
         int playbackXruns = 0;
         string? logDrops = null;
-        int checks = 0;
+        var checks = new SignalledCounter();
         StationOptions options = UberSdrOptions(input, Journal("m9psy-1"), clock) with
         {
             XrunCounters = () => (captureXruns, playbackXruns),
@@ -385,7 +379,7 @@ public class StationTests : IDisposable
             [
                 () =>
                 {
-                    Interlocked.Increment(ref checks);
+                    checks.Increment();
                     return logDrops;
                 },
             ],
@@ -395,7 +389,7 @@ public class StationTests : IDisposable
 
         Task running = RunAsync(station);
         input.Feed(2);
-        await Eventually.UntilAsync(() => input.Reads >= 2, "the loop is turning");
+        await input.WhenReadsAsync(2, "the loop is turning");
 
         // The loop notices the clock on its next turn, not at once, so moving it does not mean the
         // poll has happened: after each move it is given the reads for a turn or two. The host's check is the last thing a poll reads: once it has run, that
@@ -405,7 +399,7 @@ public class StationTests : IDisposable
         // wrong way round (and the audio at the poll after).
         clock.Advance(TimeSpan.FromSeconds(10));
         input.Feed(2);
-        await Eventually.UntilAsync(() => Volatile.Read(ref checks) >= 1, "the first poll has run to its end");
+        await checks.WhenAsync(c => c >= 1, "the first poll has run to its end");
         Errors().Should().BeEmpty("a healthy station's poll is silent");
 
         captureXruns = 3;
@@ -417,7 +411,7 @@ public class StationTests : IDisposable
         // a turn, and the only poll this can start is the one that finds both conditions set.
         clock.Advance(TimeSpan.FromSeconds(10));
         input.Feed(2);
-        await Eventually.UntilAsync(() => Errors().Count >= 2, "both probes have something to say");
+        await _errors.WhenCountAsync(2, "both probes have something to say");
 
         await stopping.CancelAsync();
         input.Close();
@@ -468,7 +462,7 @@ public class StationTests : IDisposable
 
         Task running = RunAsync(station);
         input.Feed(2);
-        await Eventually.UntilAsync(() => input.Reads >= 2, "the loop is turning");
+        await input.WhenReadsAsync(2, "the loop is turning");
 
         clock.Advance(TimeSpan.FromSeconds(10));
         input.Feed(2);
@@ -477,12 +471,12 @@ public class StationTests : IDisposable
         logDrops = "frame log: 2 frames dropped unwritten (2 total) - the disk cannot keep up, "
             + "is full, or is unwritable";
         resume.Set();
-        await Eventually.UntilAsync(() => Errors().Count >= 1, "the first poll reports what it saw last");
+        await _errors.WhenCountAsync(1, "the first poll reports what it saw last");
 
         // Safe to move: the first poll has reported, so the next one starts only from this.
         clock.Advance(TimeSpan.FromSeconds(10));
         input.Feed(2);
-        await Eventually.UntilAsync(() => Errors().Count >= 2, "the next poll reports the audio");
+        await _errors.WhenCountAsync(2, "the next poll reports the audio");
 
         await stopping.CancelAsync();
         input.Close();
@@ -512,7 +506,7 @@ public class StationTests : IDisposable
 
         Task running = RunAsync(station);
         input.Feed(2);
-        await Eventually.UntilAsync(() => input.Reads >= 2, "the loop is turning");
+        await input.WhenReadsAsync(2, "the loop is turning");
 
         clock.Advance(TimeSpan.FromMinutes(10));
         input.Feed(2);
@@ -544,7 +538,7 @@ public class StationTests : IDisposable
                 wedged.WaitUntilWedged();
                 clock.Advance(TimeSpan.FromSeconds(30));
                 clock.Advance(TimeSpan.FromSeconds(15));
-                await Eventually.UntilAsync(() => Errors().Count >= 2, "starved, then stalled");
+                await _errors.WhenCountAsync(2, "starved, then stalled");
                 wedged.Release();
             });
 
@@ -666,12 +660,15 @@ public class StationTests : IDisposable
     /// moves, as a sound card's overrun count or a radio's lost-packet count moves.</summary>
     private sealed class ScriptedInput(int sampleRate, bool[] delivers) : IAudioInput
     {
-        private int _reads;
+        private readonly SignalledCounter _reads = new();
         private long _lost;
 
         public int SampleRate { get; } = sampleRate;
 
-        public int Reads => Volatile.Read(ref _reads);
+        public int Reads => (int)_reads.Value;
+
+        /// <summary>Waits, without polling, until this many reads have been served.</summary>
+        public Task WhenReadsAsync(int count, string what) => _reads.WhenAsync(r => r >= count, what);
 
         public long Lost => Volatile.Read(ref _lost);
 
@@ -685,11 +682,11 @@ public class StationTests : IDisposable
 
         public int Read(Span<float> buffer)
         {
-            int read = Interlocked.Increment(ref _reads) - 1;
+            int read = (int)_reads.Increment() - 1;
             if (read >= delivers.Length)
             {
                 // The script is over: wait, as an input with nothing more to say does, to be closed.
-                Interlocked.Decrement(ref _reads);
+                _reads.Add(-1);
                 _closed.Wait();
                 return 0;
             }
@@ -727,7 +724,7 @@ public class StationTests : IDisposable
             stopping.Token);
 
         Task running = RunAsync(station);
-        await Eventually.UntilAsync(() => input.Reads >= reads, "the loop has read the whole script");
+        await input.WhenReadsAsync(reads, "the loop has read the whole script");
         await stopping.CancelAsync();
         input.Close();
         await Eventually.SignalAsync(running, "running to complete");
@@ -792,7 +789,7 @@ public class StationTests : IDisposable
             stopping.Token);
 
         Task running = RunAsync(station);
-        await Eventually.UntilAsync(() => input.Reads >= 3, "the loop has read the script");
+        await input.WhenReadsAsync(3, "the loop has read the script");
         await stopping.CancelAsync();
         input.Close();
         await Eventually.SignalAsync(running, "running to complete");

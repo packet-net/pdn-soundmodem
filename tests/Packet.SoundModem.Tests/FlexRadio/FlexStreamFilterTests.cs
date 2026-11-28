@@ -171,7 +171,7 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
     public async Task Requests_Are_Applied_In_Order_And_Only_The_Latest_Counts()
     {
         // A radio that takes its time: each command waits for the test to let it through.
-        var sent = new List<string>();
+        var sent = new SignalledList<string>();
         var pending = new Queue<TaskCompletionSource>();
         Task Send(string command)
         {
@@ -204,7 +204,7 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
         var filter = new FlexStreamFilter((300, 2700), () => "0", Send, _ => { }, _ => { });
 
         filter.Request((1000, 5000));
-        await Eventually.UntilAsync(() => Sent() == 1, "the first widening goes out");
+        await sent.WhenAsync(items => items.Count == 1, "the first widening goes out");
 
         // While it is in flight: put back, then widen again. Only the newest is still wanted.
         filter.Request(null);
@@ -212,7 +212,7 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
         Sent().Should().Be(1, "nothing is sent over the top of a command still in flight");
 
         Release();
-        await Eventually.UntilAsync(() => Sent() == 2, "then the latest target, and only that");
+        await sent.WhenAsync(items => items.Count == 2, "then the latest target, and only that");
         Release();
         await Eventually.UntilAsync(() => !filter.Busy, "done");
 
@@ -224,7 +224,7 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
         // the repeat has had its turn, and the log holds the two commands from before and this one.
         filter.Request((1000, 4000));
         filter.Request((1000, 3000));
-        await Eventually.UntilAsync(() => Sent() == 3, "the request after the repeat goes out");
+        await sent.WhenAsync(items => items.Count == 3, "the request after the repeat goes out");
         Release();
         await Eventually.UntilAsync(() => !filter.Busy, "done again");
         sent.Should().Equal("filt 0 300 5200", "filt 0 300 4200", "filt 0 300 3200");
@@ -233,7 +233,7 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
     [Fact]
     public async Task A_Rebuilt_Slice_Gets_A_Standing_Widening_Back()
     {
-        var sent = new List<string>();
+        var sent = new SignalledList<string>();
         Task Send(string command)
         {
             lock (sent)
@@ -258,7 +258,7 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
     [Fact]
     public async Task A_Slice_Rebuilt_While_A_Widening_Is_In_Flight_Is_Widened_Again()
     {
-        var sent = new List<string>();
+        var sent = new SignalledList<string>();
         var pending = new Queue<TaskCompletionSource>();
         Task Send(string command)
         {
@@ -272,18 +272,10 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
             return done.Task;
         }
 
-        int Sent()
-        {
-            lock (sent)
-            {
-                return sent.Count;
-            }
-        }
-
         string slice = "0";
         var filter = new FlexStreamFilter((300, 2700), () => slice, Send, _ => { }, _ => { });
         filter.Request((1000, 5000));
-        await Eventually.UntilAsync(() => Sent() == 1, "the widening goes out to the old slice");
+        await sent.WhenAsync(items => items.Count == 1, "the widening goes out to the old slice");
 
         // The radio rebuilds the slice while that command is still in flight; the new slice comes
         // up on the baseline, and the old command's answer must not count for it.
@@ -294,7 +286,7 @@ public sealed class FlexStreamFilterTests : IAsyncDisposable
             pending.Dequeue().SetResult();
         }
 
-        await Eventually.UntilAsync(() => Sent() == 2, "the new slice is widened too");
+        await sent.WhenAsync(items => items.Count == 2, "the new slice is widened too");
         lock (sent)
         {
             pending.Dequeue().SetResult();

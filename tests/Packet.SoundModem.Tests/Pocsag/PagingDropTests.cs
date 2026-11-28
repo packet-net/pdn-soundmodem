@@ -66,7 +66,7 @@ public class PagingDropTests
             TransmitInhibitTimeout = TimeSpan.FromMilliseconds(1),
         };
         await using var server = new PagingTcpServer(channel, port: 0);
-        var drops = new List<PageDropEvent>();
+        var drops = new SignalledList<PageDropEvent>();
         server.PageDropped += drops.Add;
         server.Start();
 
@@ -80,7 +80,7 @@ public class PagingDropTests
             // 1 ms timeout long expired and faults the page.
             clock.Advance(TimeSpan.FromMilliseconds(100));
 
-            await Eventually.UntilAsync(() => drops.Count > 0, "the page to be dropped");
+            await drops.WhenCountAsync(1, "the page to be dropped");
 
             drops.Should().ContainSingle();
             drops[0].Ric.Should().Be(1234567u);

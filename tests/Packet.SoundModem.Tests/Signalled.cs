@@ -116,6 +116,21 @@ internal sealed class SignalledCounter
         return value;
     }
 
+    /// <summary>Adds <paramref name="amount"/> and wakes whoever is waiting; returns the new value.</summary>
+    public long Add(long amount)
+    {
+        long value = Interlocked.Add(ref _value, amount);
+        _changes.Pulse();
+        return value;
+    }
+
+    /// <summary>Sets the value and wakes whoever is waiting.</summary>
+    public void Set(long value)
+    {
+        Interlocked.Exchange(ref _value, value);
+        _changes.Pulse();
+    }
+
     /// <summary>Waits until <paramref name="condition"/> holds of the value.</summary>
     public Task WhenAsync(Func<long, bool> condition, string what) =>
         WhenAsync(condition, what, Eventually.HangGuard);

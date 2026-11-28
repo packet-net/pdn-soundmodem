@@ -161,6 +161,7 @@ internal sealed class FakeSdrConnect
             Properties[property] = value;
         }
 
+        _changed.Pulse();
         return SendJsonAsync("property_changed", property, value);
     }
 
@@ -248,8 +249,13 @@ internal sealed class FakeSdrConnect
         }
     }
 
+    private readonly ChangeSignal _changed = new();
+
+    /// <summary>Waits, without polling, until the fake has seen what <paramref name="condition"/> asks of it;
+    /// looked at again after every message it receives and every change it is given.</summary>
     public Task WaitForAsync(Func<FakeSdrConnect, bool> condition, string what) =>
-        Eventually.UntilAsync(() => condition(this), $"the fake SDRconnect to see {what}");
+        _changed.WhenAsync(
+            () => condition(this), $"the fake SDRconnect to see {what}", () => $"{Received.Count} message(s) received"); 
 
     private static byte[] Bytes(ReadOnlySpan<short> samples)
     {
@@ -289,7 +295,9 @@ internal sealed class FakeSdrConnect
                 }
 
                 Received.Enqueue(message);
+                _changed.Pulse();
                 await HandleAsync(message);
+                _changed.Pulse();
             }
         }
         catch (Exception e) when (e is WebSocketException or IOException or ObjectDisposedException or OperationCanceledException)

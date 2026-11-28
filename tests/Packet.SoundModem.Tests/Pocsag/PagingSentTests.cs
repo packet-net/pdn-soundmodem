@@ -48,7 +48,7 @@ public class PagingSentTests
         channel.Csma.Persistence = 255;   // never defer, so this test's own keyup is the only wait
 
         await using var server = new PagingTcpServer(channel, port: 0);
-        var sent = new List<PageSentEvent>();
+        var sent = new SignalledList<PageSentEvent>();
         server.PageSent += sent.Add;
         server.Start();
 
@@ -62,7 +62,7 @@ public class PagingSentTests
             string response = await SendAsync(client, reader, "PAGE 1234567 1 ALPHA HELLO");
             response.Should().StartWith("OK ", "the channel took it");
 
-            await Eventually.UntilAsync(() => sent.Count > 0, "the page to be announced as sent");
+            await sent.WhenCountAsync(1, "the page to be announced as sent");
         }
 
         await stopping.CancelAsync();
@@ -97,8 +97,8 @@ public class PagingSentTests
         };
 
         await using var server = new PagingTcpServer(channel, port: 0);
-        var sent = new List<PageSentEvent>();
-        var drops = new List<PageDropEvent>();
+        var sent = new SignalledList<PageSentEvent>();
+        var drops = new SignalledList<PageDropEvent>();
         server.PageSent += sent.Add;
         server.PageDropped += drops.Add;
         server.Start();
@@ -110,7 +110,7 @@ public class PagingSentTests
             response.Should().StartWith("OK ");
 
             clock.Advance(TimeSpan.FromMilliseconds(100));
-            await Eventually.UntilAsync(() => drops.Count > 0, "the drop to be announced");
+            await drops.WhenCountAsync(1, "the drop to be announced");
         }
 
         sent.Should().BeEmpty("a transmission that did not happen must not be logged as one");
