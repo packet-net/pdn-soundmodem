@@ -172,7 +172,7 @@ internal sealed class StationRig : IAsyncDisposable
     /// <param name="identifiedAt">The time of its last identification, as a program would have read it from its note. Overrides the other two.</param>
     /// <param name="identifiedAgo">When it last identified, before the start of the run (negative: in the future). Overrides <paramref name="cold"/>.</param>
     public StationRig(
-        bool blockAtKey = false, FakeRadio? radio = null, bool audioFallback = false, int subChannel = 0, int seed = 1, int txDelayMilliseconds = 100, int txTailMilliseconds = 20,
+        bool blockAtKey = false, Packet.SoundModem.CarrierSense.IChannelBusySource? radio = null, bool audioFallback = false, int subChannel = 0, int seed = 1, int txDelayMilliseconds = 100, int txTailMilliseconds = 20,
         Action<bool?>? afterExternalBusy = null, Func<IStationClockInput, IStationClockInput>? clockInput = null, OfdmFmStationHostOptions? morse = null,
         TaskScheduler? signalScheduler = null, bool cold = false, TimeSpan? identifiedAgo = null, TimeSpan? startAt = null, DateTimeOffset? identifiedAt = null)
     {

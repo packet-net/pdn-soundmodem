@@ -23,6 +23,7 @@ internal static class Usage
           --count N        Pings to send (default 5).
           --size BYTES     Ping size (default 32).
           --get BYTES      call: ask for BYTES, time them and disconnect.
+          --carrier SPEC   The radio's own carrier indication: tait:DEVICE (its control port).
           --detail         Trace in detail.
           --log FILE       Append every line to FILE.
           --record FILE    Write the received audio to FILE, 48 kHz mono WAV.
