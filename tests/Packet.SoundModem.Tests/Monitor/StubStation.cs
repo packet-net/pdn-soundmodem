@@ -34,8 +34,8 @@ internal sealed class StubStation : IAsyncDisposable
     };
 
     private readonly ClientWebSocket _socket;
-    private readonly List<int> _demands = [];
-    private readonly Lock _gate = new();
+    private readonly SignalledList<int> _demands = new();
+    private readonly TaskCompletionSource _welcomed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _reading;
     private readonly CancellationTokenSource _stopping = new();
 
@@ -54,16 +54,12 @@ internal sealed class StubStation : IAsyncDisposable
     internal int BlockSamples { get; }
 
     /// <summary>Every viewer count the monitor has sent, in order.</summary>
-    internal IReadOnlyList<int> Demands
-    {
-        get
-        {
-            lock (_gate)
-            {
-                return [.. _demands];
-            }
-        }
-    }
+    internal IReadOnlyList<int> Demands => _demands;
+
+    /// <summary>Waits, without polling, until the viewer counts sent so far satisfy <paramref name="condition"/>;
+    /// looked at again on every one.</summary>
+    internal Task WhenDemandsAsync(Func<IReadOnlyList<int>, bool> condition, string what) =>
+        _demands.WhenAsync(condition, what);
 
     /// <summary>The welcome, once it has arrived: the slug and the path this station is under.</summary>
     internal JsonElement? Welcome { get; private set; }
@@ -270,13 +266,11 @@ internal sealed class StubStation : IAsyncDisposable
                 {
                     case "welcome":
                         Welcome = message.RootElement.Clone();
+                        _welcomed.TrySetResult();
                         break;
 
                     case "demand":
-                        lock (_gate)
-                        {
-                            _demands.Add(message.RootElement.GetProperty("viewers").GetInt32());
-                        }
+                        _demands.Add(message.RootElement.GetProperty("viewers").GetInt32());
 
                         break;
                 }
@@ -290,7 +284,7 @@ internal sealed class StubStation : IAsyncDisposable
     }
 
     /// <summary>Waits for the welcome, which is what says the monitor accepted this station.</summary>
-    internal Task WelcomedAsync() => Eventually.UntilAsync(() => Welcome is not null, "a welcome");
+    internal Task WelcomedAsync() => Eventually.SignalAsync(_welcomed.Task, "a welcome");
 
     /// <summary>
     /// Waits for the monitor to hang up and for this station to have read why: the reader ends
@@ -315,6 +309,17 @@ internal sealed class StubStation : IAsyncDisposable
         {
             throw new TimeoutException("waited 20 s for the monitor to hang up and it did not");
         }
+    }
+
+    /// <summary>
+    /// Leaves by the close handshake: the close goes behind everything sent, and the monitor answers it
+    /// only after it has read all of that, so once this returns nothing this station sent is still on its
+    /// way. Disposing the socket instead drops whatever has not been read.
+    /// </summary>
+    internal async Task LeaveAsync()
+    {
+        await _socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+        await ClosedAsync();
     }
 
     public async ValueTask DisposeAsync()

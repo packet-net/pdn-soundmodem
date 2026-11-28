@@ -85,8 +85,7 @@ public class UplinkTests
         int before = h.Time.Created(UplinkServer.BadTokenDelay);
         Task<WebSocketException> attempt = Assert.ThrowsAsync<WebSocketException>(
             () => StubStation.ConnectAsync(h.Port, "pdnsm_not-a-token-this-site-ever-issued"));
-        await Eventually.UntilAsync(
-            () => h.Time.Created(UplinkServer.BadTokenDelay) > before, "the hold on a wrong token");
+        await h.Time.WhenCreatedAsync(UplinkServer.BadTokenDelay, before, "the hold on a wrong token");
         attempt.IsCompleted.Should().BeFalse("a wrong token is held before it is told so");
         h.Time.Advance(UplinkServer.BadTokenDelay);
         WebSocketException refused = await attempt;
@@ -205,14 +204,14 @@ public class UplinkTests
         // The stub reads the close and does not answer it, as a station that has gone away does.
         // The monitor waits a deadline for the answer and then lets the connection go; that
         // deadline is on the clock the site was given, so it has not passed until the clock does.
-        await Eventually.UntilAsync(
-            () => h.Time.Created(deadline) > before, "the deadline for the close answer on the clock");
+        await h.Time.WhenCreatedAsync(deadline, before, "the deadline for the close answer on the clock");
         h.Lines.Should().NotContain(line => line.Contains("disconnected - another connection", StringComparison.Ordinal));
 
         h.Time.Advance(deadline);
 
-        await Eventually.UntilAsync(() => Task.FromResult(
-            h.Lines.ToArray().Any(line => line.Contains("disconnected - another connection", StringComparison.Ordinal))), "the line saying the old connection was dropped");
+        await h.Lines.WhenAsync(
+            lines => lines.Any(line => line.Contains("disconnected - another connection", StringComparison.Ordinal)),
+            "the line saying the old connection was dropped");
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -227,8 +226,7 @@ public class UplinkTests
         int before = h.Time.Created(UplinkServer.HelloDeadline);
         using ClientWebSocket silent = await StubStation.ConnectAsync(h.Port, h.Token);
         silent.State.Should().Be(WebSocketState.Open);
-        await Eventually.UntilAsync(
-            () => h.Time.Created(UplinkServer.HelloDeadline) > before, "the hello deadline on the clock");
+        await h.Time.WhenCreatedAsync(UplinkServer.HelloDeadline, before, "the hello deadline on the clock");
 
         h.Time.Advance(UplinkServer.HelloDeadline + TimeSpan.FromSeconds(1));
 
@@ -351,10 +349,11 @@ public class UplinkTests
         var first = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await first.WelcomedAsync();
         await using Browser browser = await h.WatchAsync(Slug);
-        await Eventually.UntilAsync(() => first.Demands.Contains(1), "a demand for one viewer");
+        await first.WhenDemandsAsync(d => d.Contains(1), "a demand for one viewer");
 
         // A local program reading the relayed station's channel audio, as a decoder would.
         var blocks = new List<(byte Flags, int Samples)>();
+        var blocksChanged = new ChangeSignal();
         var greeted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var reader = new ClientWebSocket();
         using var stop = new CancellationTokenSource();
@@ -382,6 +381,8 @@ public class UplinkTests
                         {
                             blocks.Add((buffer[1], BitConverter.ToInt32(buffer, 12)));
                         }
+
+                        blocksChanged.Pulse();
                     }
                 }
             }
@@ -389,14 +390,6 @@ public class UplinkTests
             {
             }
         });
-        int Blocks()
-        {
-            lock (blocks)
-            {
-                return blocks.Count;
-            }
-        }
-
         int Heard()
         {
             lock (blocks)
@@ -414,17 +407,26 @@ public class UplinkTests
         }
 
         int beforeTheGap = sentBlocks * first.BlockSamples;
-        await Eventually.UntilAsync(() => Blocks() >= 3, "the first connection's audio in the stream");
+        // Every whole tenth of a second the first connection sent is in the stream; the rest of it is
+        // the partial block the gap flushes, which is what this test is about.
+        int wholeBlocks = beforeTheGap / (first.AudioRate / 10) * (first.AudioRate / 10);
+        await blocksChanged.WhenAsync(
+            () => Heard() >= wholeBlocks, "the first connection's whole blocks of audio in the stream", () => $"{Heard()} samples heard");
 
+        // Leaving by the close handshake, behind all the audio, so that the gap this test is about
+        // comes after every block the first connection sent: dropping the socket instead lost
+        // whatever had not been read yet, which polling for a few milliseconds used to hide.
+        await first.LeaveAsync();
         await first.DisposeAsync();
         await Eventually.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean(), "the station to stop being offered");
         await using var again = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await again.WelcomedAsync();
-        await Eventually.UntilAsync(() => again.Demands.Contains(1), "the viewer's demand, again");
+        await again.WhenDemandsAsync(d => d.Contains(1), "the viewer's demand, again");
         await again.SendSecondsAsync(0.5);
-        await Eventually.UntilAsync(
+        await blocksChanged.WhenAsync(
             () => Heard() >= beforeTheGap + (beforeTheGap / 2), // the last partial block waits for more
-            "the second connection's audio in the stream");
+            "the second connection's audio in the stream",
+            () => $"{Heard()} samples heard");
 
         await stop.CancelAsync();
         await reading;
@@ -647,7 +649,7 @@ public class UplinkTests
         await station.WelcomedAsync();
         await using Browser browser = await h.WatchAsync(Slug);
         await browser.UntilTextAsync("config");
-        await Eventually.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
+        await station.WhenDemandsAsync(d => d.Contains(1), "a demand for one viewer");
 
         await station.SendSecondsAsync(0.5);
 
@@ -788,8 +790,7 @@ public class UplinkTests
         int before = h.Time.Created(UplinkServer.BadTokenDelay);
         Task<WebSocketException> attempt = Assert.ThrowsAsync<WebSocketException>(
             () => StubStation.ConnectAsync(h.Port, new string('x', 600)));
-        await Eventually.UntilAsync(
-            () => h.Time.Created(UplinkServer.BadTokenDelay) > before, "the hold on an unusable value");
+        await h.Time.WhenCreatedAsync(UplinkServer.BadTokenDelay, before, "the hold on an unusable value");
         attempt.IsCompleted.Should().BeFalse("an unusable value is held before it is refused");
         h.Time.Advance(UplinkServer.BadTokenDelay);
         WebSocketException refused = await attempt;
@@ -811,8 +812,7 @@ public class UplinkTests
             int before = h.Time.Created(UplinkServer.BadTokenDelay);
             Task<WebSocketException> attempt = Assert.ThrowsAsync<WebSocketException>(
                 () => StubStation.ConnectAsync(h.Port, $"pdnsm_guess-{i}"));
-            await Eventually.UntilAsync(
-                () => h.Time.Created(UplinkServer.BadTokenDelay) > before, "the hold on a wrong token");
+            await h.Time.WhenCreatedAsync(UplinkServer.BadTokenDelay, before, "the hold on a wrong token");
             h.Time.Advance(UplinkServer.BadTokenDelay);
             await attempt;
         }
@@ -822,7 +822,7 @@ public class UplinkTests
             "the first is said at once, and the rest are inside the quiet minute");
 
         h.Time.Advance(TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(1));
-        await Eventually.UntilAsync(() => Task.FromResult(h.Errors.Count == 2), "2 error line(s) to be logged");
+        await h.Errors.WhenAsync(errors => errors.Count == 2, "2 error line(s) to be logged");
         h.Errors[1].Should().Contain("refused 4 connections").And.Contain("5 in all");
     }
 
@@ -880,14 +880,13 @@ public class UplinkTests
 
         await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await station.WelcomedAsync();
-        await Eventually.UntilAsync(
-            () => station.Demands.Count >= 1, "the demand a station gets on connecting");
+        await station.WhenDemandsAsync(d => d.Count >= 1, "the demand a station gets on connecting");
         station.Demands[0].Should().Be(0, "nothing flows until somebody is watching");
         await Eventually.UntilAsync(
             () => h.Time.Created(UplinkServer.DemandHeartbeat) > beats, "the station's heartbeat timer on the clock");
 
         Browser browser = await h.WatchAsync(Slug);
-        await Eventually.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
+        await station.WhenDemandsAsync(d => d.Contains(1), "a demand for one viewer");
 
         await browser.DisposeAsync();
         await Eventually.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("viewers").GetInt32() == 0, "the viewer count to be 0");
@@ -902,7 +901,7 @@ public class UplinkTests
         {
             int sent = station.Demands.Count;
             h.Time.Advance(UplinkServer.DemandHeartbeat);
-            await Eventually.UntilAsync(() => station.Demands.Count > sent, "a heartbeat inside the linger");
+            await station.WhenDemandsAsync(d => d.Count > sent, "a heartbeat inside the linger");
         }
 
         h.Time.Advance(Harness.Linger - (2 * UplinkServer.DemandHeartbeat) - TimeSpan.FromSeconds(1));
@@ -911,8 +910,7 @@ public class UplinkTests
             0, "nothing is stopped inside the linger, however many heartbeats pass");
 
         h.Time.Advance(TimeSpan.FromSeconds(1));
-        await Eventually.UntilAsync(
-            () => station.Demands[^1] == 0, "the demand after the linger");
+        await station.WhenDemandsAsync(d => d[^1] == 0, "the demand after the linger");
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -959,19 +957,17 @@ public class UplinkTests
 
         await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await station.WelcomedAsync();
-        await Eventually.UntilAsync(() => station.Demands.Count >= 1, "the demand on connecting");
-        await Eventually.UntilAsync(
-            () => h.Time.Created(UplinkServer.DemandHeartbeat) > before, "the station's heartbeat timer on the clock");
+        await station.WhenDemandsAsync(d => d.Count >= 1, "the demand on connecting");
+        await h.Time.WhenCreatedAsync(UplinkServer.DemandHeartbeat, before, "the station's heartbeat timer on the clock");
 
         // The station's client reconnects after 45 s of silence, so something has to come down
         // this socket well inside that. The count repeated every twenty seconds is that
         // something, which is why the heartbeat is the demand rather than a message of its own.
         h.Time.Advance(UplinkServer.DemandHeartbeat + TimeSpan.FromSeconds(1));
-        await Eventually.UntilAsync(
-            () => station.Demands.Count >= 2, "the viewer count repeated on the heartbeat");
+        await station.WhenDemandsAsync(d => d.Count >= 2, "the viewer count repeated on the heartbeat");
 
         h.Time.Advance(UplinkServer.DemandHeartbeat);
-        await Eventually.UntilAsync(() => station.Demands.Count >= 3, "and again");
+        await station.WhenDemandsAsync(d => d.Count >= 3, "and again");
         station.Demands.Should().AllSatisfy(v => v.Should().Be(0));
     }
 
@@ -1044,13 +1040,12 @@ public class UplinkTests
 
         // The demand a station is sent on connecting carries the count at that moment, so the
         // first browser waits for it: arriving first, it would make that demand a 1.
-        await Eventually.UntilAsync(
-            () => station.Demands.Count >= 1, "the demand a station gets on connecting");
+        await station.WhenDemandsAsync(d => d.Count >= 1, "the demand a station gets on connecting");
 
         await using Browser first = await h.WatchAsync(Slug);
-        await Eventually.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
+        await station.WhenDemandsAsync(d => d.Contains(1), "a demand for one viewer");
         await using Browser second = await h.WatchAsync(Slug);
-        await Eventually.UntilAsync(() => station.Demands.Contains(2), "a demand for two viewers");
+        await station.WhenDemandsAsync(d => d.Contains(2), "a demand for two viewers");
 
         // Ten people watching cost the station one stream, exactly as ten people watching a
         // receiver cost its operator one session. The monitor fans it out.
@@ -1305,13 +1300,21 @@ public class UplinkTests
     private sealed class TimerCountingTimeProvider : FakeTimeProvider
     {
         private readonly System.Collections.Concurrent.ConcurrentDictionary<TimeSpan, int> _created = new();
+        private readonly ChangeSignal _timers = new();
 
         internal int Created(TimeSpan dueTime) => _created.GetValueOrDefault(dueTime);
+
+        /// <summary>Waits, without polling, until more timers than <paramref name="before"/> have been
+        /// created with this first due time.</summary>
+        internal Task WhenCreatedAsync(TimeSpan dueTime, int before, string what) =>
+            _timers.WhenAsync(
+                () => Created(dueTime) > before, what, () => $"{Created(dueTime)} timer(s) at {dueTime} (had {before})");
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             ITimer timer = base.CreateTimer(callback, state, dueTime, period);
             _created.AddOrUpdate(dueTime, 1, (_, n) => n + 1);
+            _timers.Pulse();
             return timer;
         }
     }
@@ -1376,9 +1379,9 @@ public class UplinkTests
 
         internal TimerCountingTimeProvider Time { get; } = new();
 
-        internal List<string> Lines { get; } = [];
+        internal SignalledList<string> Lines { get; } = new();
 
-        internal List<string> Errors { get; } = [];
+        internal SignalledList<string> Errors { get; } = new();
 
         internal static async Task<Harness> StartAsync(
             string? directoryJson = null, string publicUrl = "")
@@ -1522,7 +1525,8 @@ public class UplinkTests
     private sealed class Browser : IAsyncDisposable
     {
         private readonly ClientWebSocket _socket = new();
-        private readonly List<(bool Binary, byte[] Payload)> _messages = [];
+        private readonly SignalledList<(bool Binary, byte[] Payload)> _messages = new(
+            m => m.Binary ? $"binary {m.Payload.Length} bytes" : $"text {Encoding.UTF8.GetString(m.Payload)}");
         private readonly Lock _gate = new();
         private readonly CancellationTokenSource _stopping = new();
         private Task? _reading;
@@ -1594,21 +1598,18 @@ public class UplinkTests
         internal async Task<JsonElement> UntilTextAsync(string type, Func<JsonElement, bool> matches)
         {
             JsonElement? found = null;
-            await Eventually.UntilAsync(
-                () =>
+            await _messages.WhenAsync(
+                messages =>
                 {
-                    lock (_gate)
+                    foreach ((bool binary, byte[] payload) in messages)
                     {
-                        foreach ((bool binary, byte[] payload) in _messages)
+                        if (!binary && TypeOf(payload) == type)
                         {
-                            if (!binary && TypeOf(payload) == type)
+                            JsonElement message = JsonDocument.Parse(payload).RootElement.Clone();
+                            if (matches(message))
                             {
-                                JsonElement message = JsonDocument.Parse(payload).RootElement.Clone();
-                                if (matches(message))
-                                {
-                                    found = message;
-                                    return true;
-                                }
+                                found = message;
+                                return true;
                             }
                         }
                     }
@@ -1622,8 +1623,8 @@ public class UplinkTests
         /// <summary>Waits for the first binary message of this type and returns it.</summary>
         internal async Task<byte[]> UntilBinaryAsync(byte type)
         {
-            await Eventually.UntilAsync(
-                () => Binaries(type).Length > 0, $"a binary message of type {type}");
+            await _messages.WhenAsync(
+                _ => Binaries(type).Length > 0, $"a binary message of type {type}");
             return Binaries(type)[0];
         }
 
@@ -1665,12 +1666,9 @@ public class UplinkTests
                         return;
                     }
 
-                    lock (_gate)
-                    {
-                        _messages.Add((
-                            result.MessageType == WebSocketMessageType.Binary,
-                            buffer[..at]));
-                    }
+                    _messages.Add((
+                        result.MessageType == WebSocketMessageType.Binary,
+                        buffer[..at]));
                 }
             }
             catch (Exception e) when (e is OperationCanceledException or WebSocketException

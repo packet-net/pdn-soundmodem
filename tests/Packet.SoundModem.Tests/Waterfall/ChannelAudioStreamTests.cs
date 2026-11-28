@@ -333,14 +333,14 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         await Receive(slow); // hello; then it reads nothing until the end
         await Receive(fast); // hello
 
-        int fastBlocks = 0;
+        var fastBlocks = new SignalledCounter();
         bool fastSawGap = false;
         ulong expected = ulong.MaxValue;
         bool fastContinuous = true;
         Task fastReader = Task.Run(async () =>
         {
             var buffer = new byte[64 * 1024];
-            while (Volatile.Read(ref fastBlocks) < blocks)
+            while (fastBlocks.Value < blocks)
             {
                 (_, byte[] payload) = await Receive(fast, buffer);
                 AudioBlock got = Parse(payload);
@@ -351,7 +351,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
                 }
 
                 expected = got.Index + (ulong)got.Samples.Length;
-                Interlocked.Increment(ref fastBlocks);
+                fastBlocks.Increment();
             }
         });
 
@@ -363,8 +363,8 @@ public class ChannelAudioStreamTests : IAsyncLifetime
 
             // Paced by the fast reader, never by the slow one: it is never more than a few
             // blocks behind, so its own queue never overflows.
-            await Eventually.UntilAsync(
-                () => i - Volatile.Read(ref fastBlocks) <= 16, "the fast reader to be within 16 blocks");
+            await fastBlocks.WhenAsync(
+                taken => i - taken <= 16, "the fast reader to be within 16 blocks");
         }
 
         await fastReader.WaitAsync(_cancellation.Token);
@@ -446,21 +446,22 @@ public class ChannelAudioStreamTests : IAsyncLifetime
     [Fact]
     public async Task Asking_For_A_Band_Fires_The_Hook_And_Clearing_It_Fires_Null()
     {
-        var seen = new List<(int LowHz, int HighHz)?>();
-        _server.ReceiveBandRequested = requested => { lock (seen) { seen.Add(requested); } };
+        var seen = new SignalledList<(int LowHz, int HighHz)?>();
+        _server.ReceiveBandRequested = seen.Add;
 
         var socket = await ConnectAsync();
         await Receive(socket); // hello
 
         await SendText(socket, """{"name":"test","band":{"lowHz":1000,"highHz":2000}}""");
 
-        await Eventually.UntilAsync(() => Count(seen) >= 1, "the identify message must trigger the band hook");
+        await seen.WhenCountAsync(1, "the identify message must trigger the band hook");
         Last(seen).Should().Be((1000, 2000));
 
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
         socket.Dispose();
 
-        await Eventually.UntilAsync(() => Count(seen) >= 2 && Last(seen) is null,
+        await seen.WhenAsync(
+            bands => bands.Count >= 2 && bands[^1] is null,
             "no connection asking for a band any more must fire null");
     }
 
@@ -474,8 +475,8 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         await SendText(socket, """{"band":{"lowHz":500,"highHz":5000}}""");
         await Eventually.UntilAsync(() => FirstClientBand() is not null, "the band is recorded");
 
-        var seen = new List<(int LowHz, int HighHz)?>();
-        _server.ReceiveBandRequested = requested => { lock (seen) { seen.Add(requested); } };
+        var seen = new SignalledList<(int LowHz, int HighHz)?>();
+        _server.ReceiveBandRequested = seen.Add;
 
         Count(seen).Should().Be(1, "installing the handler hands it the band already asked for");
         Last(seen).Should().Be((500, 5000));
@@ -484,14 +485,14 @@ public class ChannelAudioStreamTests : IAsyncLifetime
     [Fact]
     public async Task A_Band_Is_Clamped_To_What_The_Channel_Can_Carry()
     {
-        var seen = new List<(int LowHz, int HighHz)?>();
-        _server.ReceiveBandRequested = requested => { lock (seen) { seen.Add(requested); } };
+        var seen = new SignalledList<(int LowHz, int HighHz)?>();
+        _server.ReceiveBandRequested = seen.Add;
         using var socket = await ConnectAsync();
         await Receive(socket); // hello
 
         await SendText(socket, """{"band":{"lowHz":-300,"highHz":20000}}""");
 
-        await Eventually.UntilAsync(() => Count(seen) >= 1, "a band partly outside the channel is still a band");
+        await seen.WhenCountAsync(1, "a band partly outside the channel is still a band");
         Last(seen).Should().Be((0, SampleRate / 2));
     }
 
@@ -505,14 +506,14 @@ public class ChannelAudioStreamTests : IAsyncLifetime
     [InlineData("{not json")]
     public async Task An_Identify_Message_It_Does_Not_Understand_Is_Ignored_And_The_Audio_Keeps_Coming(string message)
     {
-        var seen = new List<(int LowHz, int HighHz)?>();
-        _server.ReceiveBandRequested = requested => { lock (seen) { seen.Add(requested); } };
+        var seen = new SignalledList<(int LowHz, int HighHz)?>();
+        _server.ReceiveBandRequested = seen.Add;
         using var socket = await ConnectAsync();
         await Receive(socket); // hello
 
         await SendText(socket, message);
         await SendText(socket, """{"band":{"lowHz":1000,"highHz":2000}}""");
-        await Eventually.UntilAsync(() => Count(seen) >= 1, "a good message after a bad one is still read");
+        await seen.WhenCountAsync(1, "a good message after a bad one is still read");
         Last(seen).Should().Be((1000, 2000));
         Count(seen).Should().Be(1, "the bad message asked for nothing");
 
@@ -524,8 +525,8 @@ public class ChannelAudioStreamTests : IAsyncLifetime
     [Fact]
     public async Task A_Fragmented_Identify_Message_Is_Read_Whole()
     {
-        var seen = new List<(int LowHz, int HighHz)?>();
-        _server.ReceiveBandRequested = requested => { lock (seen) { seen.Add(requested); } };
+        var seen = new SignalledList<(int LowHz, int HighHz)?>();
+        _server.ReceiveBandRequested = seen.Add;
         using var socket = await ConnectAsync();
         await Receive(socket); // hello
 
@@ -534,15 +535,15 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         await socket.SendAsync(whole.AsMemory(10, 20), WebSocketMessageType.Text, false, _cancellation.Token);
         await socket.SendAsync(whole.AsMemory(30), WebSocketMessageType.Text, true, _cancellation.Token);
 
-        await Eventually.UntilAsync(() => Count(seen) >= 1, "the pieces make one message");
+        await seen.WhenCountAsync(1, "the pieces make one message");
         Last(seen).Should().Be((700, 2300));
     }
 
     [Fact]
     public async Task An_Identify_Message_Over_The_Cap_Is_Ignored_Whole()
     {
-        var seen = new List<(int LowHz, int HighHz)?>();
-        _server.ReceiveBandRequested = requested => { lock (seen) { seen.Add(requested); } };
+        var seen = new SignalledList<(int LowHz, int HighHz)?>();
+        _server.ReceiveBandRequested = seen.Add;
         using var socket = await ConnectAsync();
         await Receive(socket); // hello
 
@@ -550,7 +551,7 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         await SendText(socket, "{\"band\":{\"lowHz\":100,\"highHz\":200}," + padding + "\"name\":\"long\"}");
         await SendText(socket, """{"band":{"lowHz":1000,"highHz":2000}}""");
 
-        await Eventually.UntilAsync(() => Count(seen) >= 1, "the message after the long one is read");
+        await seen.WhenCountAsync(1, "the message after the long one is read");
         Count(seen).Should().Be(1);
         Last(seen).Should().Be((1000, 2000), "nothing from the over-long message was applied");
     }
@@ -710,21 +711,9 @@ public class ChannelAudioStreamTests : IAsyncLifetime
         return clients.Length == 0 ? null : clients[0].Band;
     }
 
-    private static int Count(List<(int LowHz, int HighHz)?> seen)
-    {
-        lock (seen)
-        {
-            return seen.Count;
-        }
-    }
+    private static int Count(SignalledList<(int LowHz, int HighHz)?> seen) => seen.Count;
 
-    private static (int LowHz, int HighHz)? Last(List<(int LowHz, int HighHz)?> seen)
-    {
-        lock (seen)
-        {
-            return seen[^1];
-        }
-    }
+    private static (int LowHz, int HighHz)? Last(SignalledList<(int LowHz, int HighHz)?> seen) => seen[^1];
 
     private static float[] Tone(int samples, double hz)
     {

@@ -111,9 +111,9 @@ public class RealTimeGuardTests
         Allow("tests/Packet.SoundModem.Tests/Ardop/ArdopHostLiveTests.cs", "wall-clock",
             "live session against a real ardopcf process on a real audio loopback; the other party runs on the real clock, so this stays real"),
         Allow("tests/Packet.SoundModem.Tests/Ardop/ArdopSharedChannelSessionTests.cs", "Stopwatch",
-            "paces or waits on real audio; removed by the real-audio-pacing design (#872)"),
+            "blocked on the ARDOP package: its ARQ transmit worker waits on real time with no clock to inject (M0LTE/M0LTE.Ardop issue 8); the bench's paced sink and capture loop stay real until that is released"),
         Allow("tests/Packet.SoundModem.Tests/Ardop/ArdopSharedChannelSessionTests.cs", "Thread.Sleep",
-            "paces or waits on real audio; removed by the real-audio-pacing design (#872)"),
+            "blocked on the ARDOP package: its ARQ transmit worker waits on real time with no clock to inject (M0LTE/M0LTE.Ardop issue 8); the bench's paced sink and capture loop stay real until that is released"),
         Allow("tests/Packet.SoundModem.Tests/Channel/ReceiveLevelSweepProbe.cs", "Stopwatch",
             "manual probe (RX_LEVELS=1); the elapsed marker in its report is for the person running it by hand"),
         Allow("tests/Packet.SoundModem.Tests/Eventually.cs", "Stopwatch",
@@ -135,7 +135,7 @@ public class RealTimeGuardTests
         Allow("tests/Packet.SoundModem.Tests/Waterfall/WaterfallPageTests.cs", "Task.Delay",
             "winds the server clock while a real node process running the page on real time, over a real socket; the page's own audio player and probe are the clock, so this stays real"),
         Allow("tests/Packet.SoundModem.Tests/Ardop/ArdopSharedChannelSessionTests.cs", "Task.Delay",
-            "real audio block pacing and a real 3 s wait; removed by #872"),
+            "blocked on the ARDOP package: its ARQ transmit worker waits on real time with no clock to inject (M0LTE/M0LTE.Ardop issue 8); the bench's paced sink and capture loop stay real until that is released"),
     ];
 
     [Fact]
